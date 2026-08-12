@@ -4,12 +4,51 @@ on:
   push:
     branches: [main]
 
+# Serialize releases for main: if a run is already in progress when a new
+# push arrives, the new run waits instead of racing it. If several pushes
+# queue up while one is running, only the most recently queued run survives
+# (GitHub cancels the older *pending* ones automatically) — the in-progress
+# run is never killed mid-publish, so a release never ends up with assets
+# from two different commits.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
 env:
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
   NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
 
 jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          npm version patch --no-git-tag-version
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump version to v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main
+          # Pushes made with the default GITHUB_TOKEN don't trigger further
+          # "push" workflow runs, so this doesn't recurse.
+
   build:
+    needs: bump-version
     strategy:
       matrix:
         include:
@@ -25,6 +64,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -46,18 +87,9 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [bump-version, build]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Read version
-        id: pkg
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -66,6 +98,6 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.pkg.outputs.version }}
-          name: v${{ steps.pkg.outputs.version }}
+          tag_name: v${{ needs.bump-version.outputs.version }}
+          name: v${{ needs.bump-version.outputs.version }}
           files: dist/**/*
