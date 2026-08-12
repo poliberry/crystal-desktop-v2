@@ -1,0 +1,191 @@
+import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
+import { mutation, query, type QueryCtx } from "./_generated/server";
+import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+
+async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
+  const row = await ctx.db
+    .query("friendships")
+    .withIndex("by_owner_friend", (q) => q.eq("ownerId", a).eq("friendId", b))
+    .unique();
+  return !!row;
+}
+
+async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
+  const user = await ctx.db.get(userId);
+  if (!user) return null;
+  return { id: user._id, name: user.name, username: user.username, imageUrl: user.imageUrl };
+}
+
+function dmKeyFor(a: Id<"users">, b: Id<"users">) {
+  return [a, b].sort().join(":");
+}
+
+async function otherMembers(ctx: QueryCtx, conversationId: Id<"conversations">, me: Id<"users">) {
+  const allMembers = await ctx.db
+    .query("conversationMembers")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+    .collect();
+  const others = await Promise.all(
+    allMembers.filter((m) => m.userId !== me).map((m) => summarizeUser(ctx, m.userId))
+  );
+  return others.filter((o): o is NonNullable<typeof o> => o !== null);
+}
+
+export const listMine = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const memberships = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    const conversations = await Promise.all(
+      memberships.map(async (membership) => {
+        const conversation = await ctx.db.get(membership.conversationId);
+        if (!conversation) return null;
+
+        const [lastMessage] = await ctx.db
+          .query("messages")
+          .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
+          .order("desc")
+          .take(1);
+
+        return {
+          id: conversation._id,
+          type: conversation.type,
+          name: conversation.name,
+          members: await otherMembers(ctx, conversation._id, me._id),
+          lastMessageText: lastMessage?.text ?? null,
+          lastMessageAt: lastMessage?._creationTime ?? conversation.createdAt,
+          unread: (lastMessage?._creationTime ?? 0) > membership.lastReadAt,
+        };
+      })
+    );
+
+    return conversations
+      .filter((c): c is NonNullable<typeof c> => c !== null)
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+  },
+});
+
+export const get = query({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) return null;
+
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) return null;
+
+    return {
+      id: conversation._id,
+      type: conversation.type,
+      name: conversation.name,
+      members: await otherMembers(ctx, conversationId, me._id),
+    };
+  },
+});
+
+export const getOrCreateDirect = mutation({
+  args: { friendId: v.id("users") },
+  handler: async (ctx, { friendId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (friendId === me._id) throw new Error("You can't DM yourself.");
+    if (!(await areFriends(ctx, me._id, friendId))) {
+      throw new Error("You can only message friends.");
+    }
+
+    const key = dmKeyFor(me._id, friendId);
+    const existing = await ctx.db
+      .query("conversations")
+      .withIndex("by_dm_key", (q) => q.eq("dmKey", key))
+      .unique();
+    if (existing) return existing._id;
+
+    const now = Date.now();
+    const conversationId = await ctx.db.insert("conversations", {
+      type: "dm",
+      dmKey: key,
+      createdBy: me._id,
+      createdAt: now,
+    });
+    await ctx.db.insert("conversationMembers", {
+      conversationId,
+      userId: me._id,
+      joinedAt: now,
+      lastReadAt: now,
+    });
+    await ctx.db.insert("conversationMembers", {
+      conversationId,
+      userId: friendId,
+      joinedAt: now,
+      lastReadAt: 0,
+    });
+    return conversationId;
+  },
+});
+
+export const createGroup = mutation({
+  args: { memberIds: v.array(v.id("users")), name: v.optional(v.string()) },
+  handler: async (ctx, { memberIds, name }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const uniqueMemberIds = Array.from(new Set(memberIds.filter((id) => id !== me._id)));
+    if (uniqueMemberIds.length < 2) {
+      throw new Error("Pick at least 2 friends to start a group DM.");
+    }
+    for (const id of uniqueMemberIds) {
+      if (!(await areFriends(ctx, me._id, id))) {
+        throw new Error("You can only add friends to a group.");
+      }
+    }
+
+    const now = Date.now();
+    const conversationId = await ctx.db.insert("conversations", {
+      type: "group",
+      name,
+      createdBy: me._id,
+      createdAt: now,
+    });
+    await ctx.db.insert("conversationMembers", {
+      conversationId,
+      userId: me._id,
+      joinedAt: now,
+      lastReadAt: now,
+    });
+    for (const id of uniqueMemberIds) {
+      await ctx.db.insert("conversationMembers", {
+        conversationId,
+        userId: id,
+        joinedAt: now,
+        lastReadAt: 0,
+      });
+    }
+    return conversationId;
+  },
+});
+
+export const markRead = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) return;
+    await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
+  },
+});

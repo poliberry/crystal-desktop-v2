@@ -1,0 +1,32 @@
+appId: dev.crystal.desktop
+productName: Crystal
+copyright: Copyright © 2026 Crystal
+directories:
+  output: release
+files:
+  - dist-electron/**
+  - out/**
+  - package.json
+asarUnpack:
+  - resources/**
+mac:
+  category: public.app-category.social-networking
+  extraResources:
+    - from: native/SystemAudioCapture/.build/release/CrystalSystemAudio
+      to: CrystalSystemAudio
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Network
+  maintainer: crystal
+  syncDesktopName: true
