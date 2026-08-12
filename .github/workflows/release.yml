@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
 
-# Serialize releases for main: if a run is already in progress when a new
-# push arrives, the new run waits instead of racing it. If several pushes
-# queue up while one is running, only the most recently queued run survives
+# Serialize runs for main: if one is already in progress when a new push
+# arrives, the new run waits instead of racing it. If several pushes queue
+# up while one is running, only the most recently queued run survives
 # (GitHub cancels the older *pending* ones automatically) — the in-progress
 # run is never killed mid-publish, so a release never ends up with assets
 # from two different commits.
@@ -16,16 +16,51 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
   NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
 
 jobs:
-  bump-version:
+  # Decide whether this push already carries an unreleased version (in which
+  # case it should be built and published) or whether it's still sitting on
+  # the last-released version (in which case we need to propose the next
+  # one via a PR before anything gets built).
+  check:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.bump.outputs.version }}
+      needs_release: ${{ steps.compare.outputs.needs_release }}
+      current_version: ${{ steps.compare.outputs.current_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Compare current version to latest release
+        id: compare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT="$(node -p "require('./package.json').version")"
+          LATEST="$(gh release view --json tagName -q .tagName 2>/dev/null | sed 's/^v//')"
+          echo "current version: $CURRENT, latest released: ${LATEST:-<none>}"
+          if [ "$CURRENT" != "$LATEST" ]; then
+            echo "needs_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "current_version=$CURRENT" >> "$GITHUB_OUTPUT"
+
+  # No unreleased version pending: open (or update) a bot-authored PR that
+  # bumps package.json. Merging it is what actually triggers a release, so
+  # main only ever gets a new version through a reviewable PR, never a
+  # direct bot push.
+  bump-pr:
+    needs: check
+    if: needs.check.outputs.needs_release == 'false'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,17 +73,25 @@ jobs:
           npm version patch --no-git-tag-version
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore: bump version to v${{ steps.bump.outputs.version }}"
-          git push origin HEAD:main
-          # Pushes made with the default GITHUB_TOKEN don't trigger further
-          # "push" workflow runs, so this doesn't recurse.
+      - name: Open version bump PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: bump version to v${{ steps.bump.outputs.version }}"
+          title: "chore: bump version to v${{ steps.bump.outputs.version }}"
+          body: |
+            Automated version bump — the current release (`v${{ needs.check.outputs.current_version }}`) is already published, so this proposes the next one.
 
+            Merging this PR is what triggers the build & publish workflow for `v${{ steps.bump.outputs.version }}`.
+          branch: chore/bump-version
+          base: main
+          delete-branch: true
+          labels: version-bump
+
+  # An unreleased version is already on main (i.e. a bump PR was just
+  # merged) — build installers for it.
   build:
-    needs: bump-version
+    needs: check
+    if: needs.check.outputs.needs_release == 'true'
     strategy:
       matrix:
         include:
@@ -87,7 +130,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [bump-version, build]
+    needs: [check, build]
+    if: needs.check.outputs.needs_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -98,6 +142,6 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.bump-version.outputs.version }}
-          name: v${{ needs.bump-version.outputs.version }}
+          tag_name: v${{ needs.check.outputs.current_version }}
+          name: v${{ needs.check.outputs.current_version }}
           files: dist/**/*
