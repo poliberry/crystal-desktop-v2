@@ -7,6 +7,10 @@ files:
   - dist-electron/**
   - out/**
   - package.json
+  # The main process now requires electron-serve at runtime (see
+  # electron/main.ts); it has no dependencies of its own, so this is the
+  # only node_modules entry needed.
+  - node_modules/electron-serve/**
 asarUnpack:
   - resources/**
 mac:

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } from "electron";
+import serve from "electron-serve";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -7,6 +8,17 @@ import systemAudio from "./systemAudio";
 
 const isDev = !!process.env.ELECTRON_START_URL;
 const PRELOAD = path.join(__dirname, "preload.js");
+
+// Packaged builds serve the static export over a privileged app:// origin
+// instead of file://. Cookies, storage and CORS/fetch semantics don't behave
+// like a real origin under file:// (Chromium treats it as opaque), which
+// broke Clerk's session persistence: signing in would "succeed" but the app
+// could never rehydrate the session afterwards, bouncing back to the login
+// screen. app:// is registered as a standard, secure scheme, so it behaves
+// like any other origin and Clerk's session survives across the handshake
+// redirect. Must be created before app.whenReady() — electron-serve
+// registers the scheme as privileged at call time.
+const loadApp = isDev ? null : serve({ directory: path.join(__dirname, "..", "out") });
 
 // Linux: capture the virtual sink's monitor with parec/pw-record and stream
 // interleaved Float32 PCM (48 kHz stereo) to the renderer over IPC. The
@@ -67,13 +79,11 @@ function createWindow(): void {
     },
   });
 
-  const appIndex = path.join(__dirname, "..", "out", "index.html");
-
   if (isDev) {
     void win.loadURL(process.env.ELECTRON_START_URL as string);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void win.loadFile(appIndex);
+    void loadApp!(win);
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -82,36 +92,18 @@ function createWindow(): void {
     }
     return { action: "deny" };
   });
-
-  // Clerk's post-sign-in handshake does a top-level redirect back to the
-  // page it started from. It computes that return URL from the app's own
-  // location, but the app is a single static file loaded over file://, so
-  // the redirect target it builds (e.g. a bare "/") doesn't resolve back to
-  // out/index.html — it lands on an empty file:// document instead, and the
-  // window goes blank even though sign-in itself succeeded. Cross-origin
-  // hops (to Clerk's domain, an OAuth provider, etc.) are left alone; only
-  // navigations that land back on file:// get redirected to the one page
-  // this app actually has.
-  if (!isDev) {
-    win.webContents.on("will-navigate", (event, navUrl) => {
-      if (new URL(navUrl).protocol === "file:") {
-        event.preventDefault();
-        void win.loadFile(appIndex);
-      }
-    });
-  }
 }
 
 app.whenReady().then(() => {
   const ses = session.defaultSession;
 
-  // The packaged app loads over file://, and Chromium sends no Origin header
-  // at all for requests made from a file:// document. Clerk's frontend API
-  // rejects those with "Origin header missing" (origin_missing) — it doesn't
-  // allowlist specific origins, it just requires the header to be present.
-  // Stamp a stable origin on outgoing Clerk requests so they look like a
-  // normal browser request. Dev mode already runs at http://localhost:3000
-  // and doesn't need this.
+  // Clerk's frontend API rejects requests with no Origin header at all
+  // ("Origin header missing" / origin_missing) — it doesn't allowlist
+  // specific origins, it just requires the header to be present. The
+  // packaged app's app:// origin (see loadApp above) may or may not satisfy
+  // that on its own depending on Chromium version, so stamp a known-good
+  // origin on outgoing Clerk requests to be safe. Dev mode already runs at
+  // http://localhost:3000 and doesn't need this.
   if (!isDev) {
     ses.webRequest.onBeforeSendHeaders(
       { urls: ["*://*.clerk.accounts.dev/*"] },
