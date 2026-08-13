@@ -1,24 +1,42 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } from "electron";
-import serve from "electron-serve";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session, shell } from "electron";
 import * as fs from "node:fs";
+import { createServer } from "node:http";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
+import serveHandler from "serve-handler";
 
 import systemAudio from "./systemAudio";
 
 const isDev = !!process.env.ELECTRON_START_URL;
 const PRELOAD = path.join(__dirname, "preload.js");
 
-// Packaged builds serve the static export over a privileged app:// origin
-// instead of file://. Cookies, storage and CORS/fetch semantics don't behave
-// like a real origin under file:// (Chromium treats it as opaque), which
+// Packaged builds serve the static export over a real http:// origin instead
+// of file://. file:// is treated as an opaque origin by Chromium, which
 // broke Clerk's session persistence: signing in would "succeed" but the app
-// could never rehydrate the session afterwards, bouncing back to the login
-// screen. app:// is registered as a standard, secure scheme, so it behaves
-// like any other origin and Clerk's session survives across the handshake
-// redirect. Must be created before app.whenReady() — electron-serve
-// registers the scheme as privileged at call time.
-const loadApp = isDev ? null : serve({ directory: path.join(__dirname, "..", "out") });
+// could never rehydrate the session afterwards. A privileged custom scheme
+// (app://) isn't a fix either — Clerk's client explicitly checks
+// window.location.protocol and only accepts http/https; anything else logs
+// '"app:" is not a valid protocol. Redirecting to "/" instead.' and force-
+// navigates to a bare "/", which reloads the page and loses the in-flight
+// session context. A plain local HTTP server sidesteps both problems.
+let localServerPort: number | null = null;
+
+function startLocalServer(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      void serveHandler(req, res, { public: path.join(__dirname, "..", "out") });
+    });
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object") {
+        resolve(address.port);
+      } else {
+        reject(new Error("Could not determine local server port"));
+      }
+    });
+  });
+}
 
 // Linux: capture the virtual sink's monitor with parec/pw-record and stream
 // interleaved Float32 PCM (48 kHz stereo) to the renderer over IPC. The
@@ -83,7 +101,7 @@ function createWindow(): void {
     void win.loadURL(process.env.ELECTRON_START_URL as string);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void loadApp!(win);
+    void win.loadURL(`http://127.0.0.1:${localServerPort}/`);
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -94,7 +112,20 @@ function createWindow(): void {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (!isDev) {
+    try {
+      localServerPort = await startLocalServer();
+    } catch (err) {
+      dialog.showErrorBox(
+        "Crystal failed to start",
+        `Could not start the local server the app is served from: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      app.exit(1);
+      return;
+    }
+  }
+
   const ses = session.defaultSession;
 
   // Prime pactl / recorder detection so the first share starts faster.
