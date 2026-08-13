@@ -7,10 +7,22 @@ files:
   - dist-electron/**
   - out/**
   - package.json
-  # The main process now requires electron-serve at runtime (see
-  # electron/main.ts); it has no dependencies of its own, so this is the
-  # only node_modules entry needed.
-  - node_modules/electron-serve/**
+  # The main process runs a local static server at runtime (see
+  # electron/main.ts) via serve-handler. Listing its full dependency tree
+  # explicitly (rather than all of node_modules) keeps devDependencies like
+  # electron/typescript themselves out of the packaged app.
+  - node_modules/serve-handler/**
+  - node_modules/bytes/**
+  - node_modules/content-disposition/**
+  - node_modules/mime-types/**
+  - node_modules/mime-db/**
+  - node_modules/minimatch/**
+  - node_modules/brace-expansion/**
+  - node_modules/balanced-match/**
+  - node_modules/concat-map/**
+  - node_modules/path-is-inside/**
+  - node_modules/path-to-regexp/**
+  - node_modules/range-parser/**
 asarUnpack:
   - resources/**
 mac:
