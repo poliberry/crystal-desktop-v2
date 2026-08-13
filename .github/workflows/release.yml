@@ -76,6 +76,12 @@ jobs:
       - name: Open version bump PR
         uses: peter-evans/create-pull-request@v7
         with:
+          # poliberry's org policy blocks the default GITHUB_TOKEN from
+          # creating pull requests, so this step needs a PAT instead — see
+          # the RELEASE_PAT secret set up in repo Settings > Secrets and
+          # variables > Actions (fine-grained PAT scoped to this repo,
+          # Contents: read/write + Pull requests: read/write).
+          token: ${{ secrets.RELEASE_PAT }}
           commit-message: "chore: bump version to v${{ steps.bump.outputs.version }}"
           title: "chore: bump version to v${{ steps.bump.outputs.version }}"
           body: |
