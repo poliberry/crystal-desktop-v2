@@ -67,11 +67,13 @@ function createWindow(): void {
     },
   });
 
+  const appIndex = path.join(__dirname, "..", "out", "index.html");
+
   if (isDev) {
     void win.loadURL(process.env.ELECTRON_START_URL as string);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void win.loadFile(path.join(__dirname, "..", "out", "index.html"));
+    void win.loadFile(appIndex);
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -80,6 +82,24 @@ function createWindow(): void {
     }
     return { action: "deny" };
   });
+
+  // Clerk's post-sign-in handshake does a top-level redirect back to the
+  // page it started from. It computes that return URL from the app's own
+  // location, but the app is a single static file loaded over file://, so
+  // the redirect target it builds (e.g. a bare "/") doesn't resolve back to
+  // out/index.html — it lands on an empty file:// document instead, and the
+  // window goes blank even though sign-in itself succeeded. Cross-origin
+  // hops (to Clerk's domain, an OAuth provider, etc.) are left alone; only
+  // navigations that land back on file:// get redirected to the one page
+  // this app actually has.
+  if (!isDev) {
+    win.webContents.on("will-navigate", (event, navUrl) => {
+      if (new URL(navUrl).protocol === "file:") {
+        event.preventDefault();
+        void win.loadFile(appIndex);
+      }
+    });
+  }
 }
 
 app.whenReady().then(() => {
