@@ -85,6 +85,22 @@ function createWindow(): void {
 app.whenReady().then(() => {
   const ses = session.defaultSession;
 
+  // The packaged app loads over file://, and Chromium sends no Origin header
+  // at all for requests made from a file:// document. Clerk's frontend API
+  // rejects those with "Origin header missing" (origin_missing) — it doesn't
+  // allowlist specific origins, it just requires the header to be present.
+  // Stamp a stable origin on outgoing Clerk requests so they look like a
+  // normal browser request. Dev mode already runs at http://localhost:3000
+  // and doesn't need this.
+  if (!isDev) {
+    ses.webRequest.onBeforeSendHeaders(
+      { urls: ["*://*.clerk.accounts.dev/*"] },
+      (details, callback) => {
+        callback({ requestHeaders: { ...details.requestHeaders, Origin: "http://localhost:3000" } });
+      },
+    );
+  }
+
   // Prime pactl / recorder detection so the first share starts faster.
   void systemAudio.warmUp().catch(() => {});
 
