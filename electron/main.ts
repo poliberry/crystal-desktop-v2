@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session, shell } from "electron";
 import * as fs from "node:fs";
 import { createServer } from "node:http";
 import * as path from "node:path";
@@ -114,7 +114,16 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   if (!isDev) {
-    localServerPort = await startLocalServer();
+    try {
+      localServerPort = await startLocalServer();
+    } catch (err) {
+      dialog.showErrorBox(
+        "Crystal failed to start",
+        `Could not start the local server the app is served from: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      app.exit(1);
+      return;
+    }
   }
 
   const ses = session.defaultSession;
