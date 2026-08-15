@@ -278,6 +278,11 @@ class LinuxSystemAudio {
         continue;
       }
 
+      if (isSelf) {
+        await this.pactl(["move-sink-input", id, target]).catch(() => {});
+        continue;
+      }
+
       const flapState = this.streamMoveState.get(id);
       if (flapState && flapState.target === target) {
         if (Date.now() < flapState.backoffUntil) continue;
