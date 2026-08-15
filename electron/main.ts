@@ -81,6 +81,8 @@ function toTransferable(buf: Buffer): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
 }
 
+let mainWindow: BrowserWindow | null = null;
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -110,6 +112,12 @@ function createWindow(): void {
     }
     return { action: "deny" };
   });
+
+  win.on("closed", () => {
+    mainWindow = null;
+  });
+
+  mainWindow = win;
 }
 
 let settingsWindow: BrowserWindow | null = null;
@@ -407,7 +415,8 @@ app.whenReady().then(async () => {
   createWindow();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    else mainWindow.focus();
   });
 });
 
