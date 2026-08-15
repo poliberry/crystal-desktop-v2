@@ -75,8 +75,16 @@ export function ProfileTab() {
     setSaving(true);
     setError(null);
     setSaved(false);
+
+    const submittedName = name;
+    const submittedUsername = username;
+    const submittedBio = bio;
+
     try {
-      await updateProfile({ name, username, bio });
+      const result = await updateProfile({ name: submittedName, username: submittedUsername, bio: submittedBio });
+      if (name === submittedName) setName(result.name);
+      if (username === submittedUsername) setUsername(result.username);
+      if (bio === submittedBio) setBio(result.bio ?? "");
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save profile.");
