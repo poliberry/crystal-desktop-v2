@@ -61,7 +61,11 @@ class Updater {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
 
-    autoUpdater.on("checking-for-update", () => this.setState({ phase: "checking", error: null }));
+    autoUpdater.on("checking-for-update", () => {
+      if (this.state.phase !== "ready") {
+        this.setState({ phase: "checking", error: null });
+      }
+    });
     autoUpdater.on("update-available", (info) =>
       this.setState({ phase: "available", availableVersion: info.version, error: null })
     );
