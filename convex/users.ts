@@ -174,3 +174,23 @@ export const getCurrentUserIdInternal = internalQuery({
     return me?._id ?? null;
   },
 });
+
+/** Check if a storage id is still referenced by any attachment row (DM or
+ * channel messages). Used before deleting orphaned files to avoid breaking
+ * attachments that may still be in use. */
+export async function isReferencedByAttachment(
+  ctx: QueryCtx,
+  storageId: string
+): Promise<boolean> {
+  const dmRef = await ctx.db
+    .query("messageAttachments")
+    .withIndex("by_storageId", (q) => q.eq("storageId", storageId as never))
+    .first();
+  if (dmRef) return true;
+
+  const channelRef = await ctx.db
+    .query("channelMessageAttachments")
+    .withIndex("by_storageId", (q) => q.eq("storageId", storageId as never))
+    .first();
+  return channelRef !== null;
+}

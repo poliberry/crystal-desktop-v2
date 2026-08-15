@@ -87,7 +87,9 @@ export default defineSchema({
     fileName: v.string(),
     fileType: v.string(),
     fileSize: v.number(),
-  }).index("by_message", ["messageId"]),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_storageId", ["storageId"]),
 
   messageReactions: defineTable({
     messageId: v.id("messages"),
@@ -213,7 +215,9 @@ export default defineSchema({
     fileName: v.string(),
     fileType: v.string(),
     fileSize: v.number(),
-  }).index("by_message", ["messageId"]),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_storageId", ["storageId"]),
 
   channelMessageReactions: defineTable({
     messageId: v.id("channelMessages"),
