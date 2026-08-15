@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
 import { PlaceholderTab } from "@/components/settings/tabs/placeholder-tab";
+import { ProfileTab } from "@/components/settings/tabs/profile-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
 
 const TABS = [
@@ -20,7 +21,7 @@ const TABS = [
 export function SettingsShell() {
   return (
     <div className="flex h-full flex-col bg-background">
-      <Tabs defaultValue="voice" className="h-full min-h-0 gap-0">
+      <Tabs defaultValue="profile" className="h-full min-h-0 gap-0">
         <div className="flex justify-center border-b bg-background/60 px-4 pt-4 pb-2">
           <TabsList variant="line" className="h-auto gap-1">
             {TABS.map(({ value, label, icon: Icon }) => (
@@ -35,10 +36,7 @@ export function SettingsShell() {
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-2xl px-6 py-6">
             <TabsContent value="profile">
-              <PlaceholderTab
-                title="Profile"
-                description="Display name, username, avatar, and bio are coming soon."
-              />
+              <ProfileTab />
             </TabsContent>
             <TabsContent value="account">
               <PlaceholderTab

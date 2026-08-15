@@ -7,6 +7,10 @@ export default defineSchema({
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    /** Storage id backing `imageUrl` when it's a user-uploaded avatar, so the
+     * old file can be deleted when it's replaced or removed. */
+    avatarStorageId: v.optional(v.id("_storage")),
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_username", ["username"]),
