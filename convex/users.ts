@@ -127,17 +127,23 @@ export const generateAvatarUploadUrl = mutation({
   },
 });
 
-/** Whether a storage object is still in use as a message attachment — an
- * avatar's previous storage id shouldn't be deleted out from under an
- * attachment that happens to point at the same object (e.g. a client
- * passing setAvatar an existing attachment's storageId instead of a fresh
- * upload from generateAvatarUploadUrl). */
+/** Whether a storage object is still in use as a message attachment (DM or
+ * channel) — an avatar's previous storage id shouldn't be deleted out from
+ * under an attachment that happens to point at the same object (e.g. a
+ * client passing setAvatar an existing attachment's storageId instead of a
+ * fresh upload from generateAvatarUploadUrl). */
 async function isReferencedByAttachment(ctx: MutationCtx, storageId: Id<"_storage">): Promise<boolean> {
-  const attachment = await ctx.db
-    .query("messageAttachments")
-    .filter((q) => q.eq(q.field("storageId"), storageId))
-    .first();
-  return !!attachment;
+  const [dmAttachment, channelAttachment] = await Promise.all([
+    ctx.db
+      .query("messageAttachments")
+      .filter((q) => q.eq(q.field("storageId"), storageId))
+      .first(),
+    ctx.db
+      .query("channelMessageAttachments")
+      .filter((q) => q.eq(q.field("storageId"), storageId))
+      .first(),
+  ]);
+  return !!dmAttachment || !!channelAttachment;
 }
 
 export const setAvatar = mutation({
