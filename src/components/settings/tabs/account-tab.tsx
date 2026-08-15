@@ -1,6 +1,6 @@
 "use client";
 
-import { useUser } from "@clerk/clerk-react";
+import { useReverification, useUser } from "@clerk/clerk-react";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 
 export function AccountTab() {
   const { user, isLoaded } = useUser();
+  const { reverify } = useReverification();
 
   const [newEmail, setNewEmail] = useState("");
   const [pendingEmailId, setPendingEmailId] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export function AccountTab() {
     setEmailError(null);
     setEmailSuccess(false);
     try {
-      const email = await user.createEmailAddress({ email: trimmed });
+      const email = await reverify(() => user.createEmailAddress({ email: trimmed }));
       // Set as soon as the address exists (not after prepareVerification
       // succeeds) so a failure below — or the user hitting Cancel — can
       // still find and destroy it instead of leaking an unverified address
@@ -114,10 +115,12 @@ export function AccountTab() {
     }
     setPasswordBusy(true);
     try {
-      await user.updatePassword({
-        newPassword,
-        currentPassword: user.passwordEnabled ? currentPassword : undefined,
-      });
+      await reverify(() =>
+        user.updatePassword({
+          newPassword,
+          currentPassword: user.passwordEnabled ? currentPassword : undefined,
+        })
+      );
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
