@@ -49,9 +49,29 @@ const CAPTURE_LATENCY_MS = "50";
 const INPUT_GUARD_INTERVAL_MS = 400;
 const CAPTURE_RESTART_DELAY_MS = 600;
 const CAPTURE_MAX_RESTARTS = 8;
+/** How many input-guard ticks between hardware-sink revalidation (~4.8s). */
+const HARDWARE_SINK_REVALIDATE_TICKS = 12;
+/** Consecutive fought-over rounds before we stop trying to move a stream. */
+const STREAM_FLAP_THRESHOLD = 3;
+const STREAM_FLAP_BACKOFF_MS = 15_000;
 
 /** application.process.binary values that must never be moved into the capture sink. */
 const SELF_BINARIES = new Set(["electron", "Electron", "Crystal", "crystal", "pulseaudio", "pipewire"]);
+
+/**
+ * PulseAudio/PipeWire module types that back a software sink rather than real
+ * hardware output. Third-party audio processors (EasyEffects and similar)
+ * insert themselves this way — if one has been set as the system default, it
+ * must never be mistaken for "the" hardware sink (see `listVirtualSinkNames`).
+ */
+const VIRTUAL_SINK_MODULES = new Set([
+  "module-null-sink",
+  "module-filter-chain",
+  "module-remap-sink",
+  "module-combine-sink",
+  "module-ladspa-sink",
+  "module-echo-cancel",
+]);
 
 export type SystemAudioMode = "system" | "app";
 
@@ -89,6 +109,15 @@ class LinuxSystemAudio {
   private available = false;
   private availabilityChecked = false;
   private hardwareSink: string | null = null;
+  private hardwareSinkGuardTicks = 0;
+  private hardwareSinkRevalidation: Promise<void> | null = null;
+  /**
+   * Per sink-input flap tracking: detects a competing audio processor (e.g.
+   * EasyEffects) repeatedly reclaiming a stream right after we move it onto
+   * the capture sink. Fighting that every guardian tick is what produces
+   * audible crackle, so once a stream flaps a few times we back off instead.
+   */
+  private streamMoveState = new Map<string, { target: string; flips: number; backoffUntil: number }>();
 
   private mode: SystemAudioMode = "system";
   private selectedApps = new Set<string>();
@@ -201,7 +230,10 @@ class LinuxSystemAudio {
     if (!this.hardwareSink) return;
     const inputs = await this.pactl(["list", "sink-inputs"]).catch(() => "");
     const blocks = inputs.split(/Sink Input #/).slice(1);
-    if (blocks.length === 0) return;
+    if (blocks.length === 0) {
+      this.streamMoveState.clear();
+      return;
+    }
 
     const sinks = await this.pactl(["list", "short", "sinks"]).catch(() => "");
     const nameByIndex = new Map<string, string>();
@@ -210,9 +242,13 @@ class LinuxSystemAudio {
       if (idx && name) nameByIndex.set(idx, name);
     }
 
+    const seenIds = new Set<string>();
+
     for (const block of blocks) {
       const idMatch = block.match(/^(\d+)/);
       if (!idMatch) continue;
+      const id = idMatch[1];
+      seenIds.add(id);
 
       // Daemon/module streams (e.g. the monitor loopback) have no client.
       const clientMatch = block.match(/Client: (\d+|n\/a)/);
@@ -240,8 +276,38 @@ class LinuxSystemAudio {
         target = null; // "app" mode, not selected → leave alone
       }
 
-      if (target === null || currentSink === target) continue;
-      await this.pactl(["move-sink-input", idMatch[1], target]).catch(() => {});
+      if (target === null) {
+        this.streamMoveState.delete(id);
+        continue;
+      }
+      if (currentSink === target) continue;
+
+      if (isSelf) {
+        await this.pactl(["move-sink-input", id, target]).catch(() => {});
+        continue;
+      }
+
+      const flapState = this.streamMoveState.get(id);
+      if (flapState && flapState.target === target) {
+        if (Date.now() < flapState.backoffUntil) continue;
+        if (flapState.flips >= STREAM_FLAP_THRESHOLD) {
+          console.warn(
+            `[system-audio] "${appName || binary || id}" keeps getting pulled off the capture sink by another audio app (e.g. an effects processor) — leaving it alone for ${STREAM_FLAP_BACKOFF_MS / 1000}s instead of fighting it.`
+          );
+          flapState.backoffUntil = Date.now() + STREAM_FLAP_BACKOFF_MS;
+          flapState.flips = 0;
+          continue;
+        }
+      } else {
+        this.streamMoveState.set(id, { target, flips: 0, backoffUntil: 0 });
+      }
+
+      const moved = await this.pactl(["move-sink-input", id, target]).then(() => true).catch(() => false);
+      if (moved && flapState) flapState.flips += 1;
+    }
+
+    for (const id of this.streamMoveState.keys()) {
+      if (!seenIds.has(id)) this.streamMoveState.delete(id);
     }
   }
 
@@ -284,15 +350,106 @@ class LinuxSystemAudio {
 
   private startInputGuard(): void {
     if (this.inputGuard) return;
+    this.hardwareSinkGuardTicks = 0;
     this.inputGuard = setInterval(() => {
       void this.routeSinkInputs();
+      this.hardwareSinkGuardTicks += 1;
+      if (this.hardwareSinkGuardTicks >= HARDWARE_SINK_REVALIDATE_TICKS) {
+        this.hardwareSinkGuardTicks = 0;
+        if (!this.hardwareSinkRevalidation) {
+          this.hardwareSinkRevalidation = this.revalidateHardwareSink().finally(() => {
+            this.hardwareSinkRevalidation = null;
+          });
+        }
+      }
     }, INPUT_GUARD_INTERVAL_MS);
   }
 
-  private stopInputGuard(): void {
+  private async stopInputGuard(): Promise<void> {
     if (this.inputGuard) {
       clearInterval(this.inputGuard);
       this.inputGuard = null;
+    }
+    if (this.hardwareSinkRevalidation) {
+      await this.hardwareSinkRevalidation.catch(() => {});
+      this.hardwareSinkRevalidation = null;
+    }
+  }
+
+  /**
+   * The hardware sink is resolved once when sharing starts, but the real
+   * output can change afterward — the user switching devices in pavucontrol,
+   * or a conflicting app (e.g. EasyEffects) reclaiming the default. Staying
+   * pinned to a stale or now-virtual sink is what breaks playback entirely;
+   * re-check periodically and re-wire the "hear what you're sharing" loopback
+   * if the right target moved.
+   */
+  private async revalidateHardwareSink(): Promise<void> {
+    if (!this.enabled || !this.hardwareSink) return;
+    try {
+      let sinksShort: string;
+      let virtualNames: Set<string>;
+      let currentDefault: string | null;
+      try {
+        [sinksShort, virtualNames, currentDefault] = await Promise.all([
+          this.pactl(["list", "short", "sinks"]).catch(() => ""),
+          this.listVirtualSinkNames(),
+          this.pactl(["get-default-sink"]).catch(() => null),
+        ]);
+      } catch (err) {
+        console.error("[system-audio] sink detection failed, skipping revalidation:", err);
+        return;
+      }
+      const sinkNames = new Set(
+        sinksShort
+          .split("\n")
+          .map((l) => l.split("\t")[1])
+          .filter((n): n is string => !!n)
+      );
+
+      const stillValid = sinkNames.has(this.hardwareSink) && !virtualNames.has(this.hardwareSink);
+      const candidateDefault =
+        currentDefault && currentDefault !== SINK_NAME && !virtualNames.has(currentDefault)
+          ? currentDefault
+          : null;
+
+      let nextHardwareSink = this.hardwareSink;
+      if (!stillValid) {
+        nextHardwareSink = candidateDefault ?? (await this.firstHardwareSink()) ?? this.hardwareSink;
+      } else if (candidateDefault && candidateDefault !== this.hardwareSink) {
+        // The user picked a different real output device — follow it.
+        nextHardwareSink = candidateDefault;
+      }
+
+      if (nextHardwareSink !== this.hardwareSink) {
+        await this.retargetLoopback(nextHardwareSink);
+      }
+    } catch (err) {
+      console.error("[system-audio] hardware sink revalidation failed:", err);
+    }
+  }
+
+  /** Re-point the "hear what you're sharing" loopback at a new hardware sink. */
+  private async retargetLoopback(nextHardwareSink: string): Promise<void> {
+    if (!this.enabled) return;
+    const staleModuleIndexes = this.moduleIndexes.slice(1); // [0] is the null-sink itself
+    const loopbackIndexStr = await this.pactl([
+      "load-module",
+      "module-loopback",
+      `source=${SINK_NAME}.monitor`,
+      `sink=${nextHardwareSink}`,
+      `latency_msec=${LOOPBACK_LATENCY_MS}`,
+      "channels=2",
+    ]).catch(() => null);
+    if (loopbackIndexStr === null) return;
+
+    this.hardwareSink = nextHardwareSink;
+    this.playbackSink = nextHardwareSink;
+    this.moduleIndexes.push(parseInt(loopbackIndexStr, 10));
+
+    for (const index of staleModuleIndexes) {
+      const unloaded = await this.pactl(["unload-module", String(index)]).then(() => true).catch(() => false);
+      if (unloaded) this.moduleIndexes = this.moduleIndexes.filter((i) => i !== index);
     }
   }
 
@@ -332,16 +489,23 @@ class LinuxSystemAudio {
     if (this.enabled) return this.getInfo();
 
     // Independent lookups in parallel: leftover modules + the current default.
-    const [, defaultSink] = await Promise.all([
+    const [, defaultSink, virtualSinkNames] = await Promise.all([
       this.cleanupStale(),
       this.pactl(["get-default-sink"]).catch(() => null),
+      this.listVirtualSinkNames(),
     ]);
     this.originalDefaultSink = defaultSink;
 
+    // If the current default is itself virtual (e.g. an effects processor
+    // like EasyEffects that made itself the default output), it isn't a
+    // usable playback target for the "hear what you're sharing" loopback —
+    // looping back into it would just re-run captured audio through the
+    // processor a second time. Find a real hardware sink instead.
     const hardwareSink =
-      defaultSink ??
+      (defaultSink && !virtualSinkNames.has(defaultSink) ? defaultSink : null) ??
       (await this.firstHardwareSink()) ??
-      (await this.pactl(["get-default-sink"]).catch(() => null));
+      defaultSink ??
+      null;
 
     if (!hardwareSink) {
       throw new Error("No PulseAudio output sink available.");
@@ -517,7 +681,9 @@ class LinuxSystemAudio {
     // Mark disabled first so a recorder exit (async) can't schedule a restart
     // that would re-enable capture right after we tear everything down.
     this.enabled = false;
-    this.stopInputGuard();
+    await this.stopInputGuard();
+    this.streamMoveState.clear();
+    this.hardwareSinkGuardTicks = 0;
     await this.stopCapture();
     if (this.originalDefaultSink) {
       await this.pactl(["set-default-sink", this.originalDefaultSink]).catch(() => {});
@@ -563,11 +729,48 @@ class LinuxSystemAudio {
   }
 
   private async firstHardwareSink(): Promise<string | null> {
-    const sinks = await this.pactl(["list", "short", "sinks"]).catch(() => "");
-    const line = sinks
-      .split("\n")
-      .find((l) => !l.includes(SINK_NAME) && l.trim().length > 0);
-    return line?.split("\t")[1] ?? null;
+    const [sinks, virtualNames] = await Promise.all([
+      this.pactl(["list", "short", "sinks"]).catch(() => ""),
+      this.listVirtualSinkNames(),
+    ]);
+    for (const line of sinks.split("\n")) {
+      const name = line.split("\t")[1];
+      if (name && !virtualNames.has(name)) return name;
+    }
+    return null;
+  }
+
+  /**
+   * Sink names that are software-backed rather than real hardware output:
+   * our own capture sink, and anything owned by a filter/remap/combine
+   * module. Covers third-party audio processors (EasyEffects and similar)
+   * that route through a virtual sink of their own, so they're never
+   * mistaken for "the" hardware output.
+   */
+  private async listVirtualSinkNames(): Promise<Set<string>> {
+    const [sinksRaw, modulesRaw] = await Promise.all([
+      this.pactl(["list", "sinks"]),
+      this.pactl(["list", "short", "modules"]),
+    ]);
+
+    const moduleNameByIndex = new Map<string, string>();
+    for (const line of modulesRaw.split("\n")) {
+      const [idx, name] = line.split("\t");
+      if (idx && name) moduleNameByIndex.set(idx, name);
+    }
+
+    const virtual = new Set<string>([SINK_NAME]);
+    const blocks = sinksRaw.split(/Sink #/).slice(1);
+    for (const block of blocks) {
+      const nameMatch = block.match(/Name: (\S+)/);
+      const ownerMatch = block.match(/Owner Module: (\d+)/);
+      if (!nameMatch || !ownerMatch) continue;
+      const moduleName = moduleNameByIndex.get(ownerMatch[1]);
+      if (moduleName && VIRTUAL_SINK_MODULES.has(moduleName)) {
+        virtual.add(nameMatch[1]);
+      }
+    }
+    return virtual;
   }
 
   private static s16leToFloat32(buf: Buffer): ArrayBuffer {
