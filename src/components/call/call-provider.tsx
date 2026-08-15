@@ -118,7 +118,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           // Superseded (navigated away, or a different join started) while
           // we were connecting — leave immediately instead of surfacing a
           // call for something the user's no longer looking at.
-          await disconnect();
+          // Only disconnect if no newer join has since taken over the Room —
+          // if gen advanced beyond our immediate successor, let them handle it.
+          if (joinGenerationRef.current === myGeneration + 1) {
+            await disconnect();
+          }
           await leaveDmAction({ conversationId }).catch(() => {});
           return;
         }
@@ -152,7 +156,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         await connect({ url, token });
 
         if (joinGenerationRef.current !== myGeneration) {
-          await disconnect();
+          // Superseded while connecting — only disconnect if no newer join
+          // has since taken over the Room.
+          if (joinGenerationRef.current === myGeneration + 1) {
+            await disconnect();
+          }
           await leaveChannelAction({ channelId }).catch(() => {});
           return;
         }
