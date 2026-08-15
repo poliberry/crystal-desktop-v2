@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  ParticipantEvent,
   RoomEvent,
   Track,
   type Participant,
@@ -14,6 +15,10 @@ import { cn } from "@/lib/utils";
 interface ParticipantTileProps {
   participant: Participant;
   isLocal?: boolean;
+  /** Fill the parent's box exactly (grid/focused view) instead of the
+   * default fixed 16:9 card (bottom rail thumbnails). */
+  fill?: boolean;
+  onClick?: () => void;
 }
 
 /**
@@ -22,11 +27,21 @@ interface ParticipantTileProps {
  * additionally routed to the hardware sink (Linux) so the app never
  * accidentally re-captures itself.
  */
-export function ParticipantTile({ participant, isLocal = false }: ParticipantTileProps) {
+export function ParticipantTile({ participant, isLocal = false, fill = false, onClick }: ParticipantTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
   const [hasVideo, setHasVideo] = useState(false);
   const [micMuted, setMicMuted] = useState(true);
+  const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
+
+  useEffect(() => {
+    setIsSpeaking(participant.isSpeaking);
+    const onSpeakingChanged = (speaking: boolean) => setIsSpeaking(speaking);
+    participant.on(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+    return () => {
+      participant.off(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+    };
+  }, [participant]);
 
   useEffect(() => {
     const attachVideo = (pub: TrackPublication | undefined) => {
@@ -114,9 +129,13 @@ export function ParticipantTile({ participant, isLocal = false }: ParticipantTil
 
   return (
     <div
+      onClick={onClick}
       className={cn(
-        "relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/40",
-        isLocal && "border-dashed"
+        "relative flex w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/40 ring-2 ring-transparent transition-shadow",
+        fill ? "h-full" : "aspect-video",
+        isLocal && "border-dashed",
+        onClick && "cursor-pointer",
+        isSpeaking && "ring-emerald-500"
       )}
     >
       <video

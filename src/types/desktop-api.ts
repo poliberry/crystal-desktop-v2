@@ -117,12 +117,29 @@ export interface ScreenSource {
   thumbnail: string | null;
 }
 
+/** What's currently focused in the renderer — reported to the main process
+ * so a background notification isn't fired for the thing you're already
+ * looking at (see electron/backgroundNotifier.ts). */
+export type ActiveNotificationView = { kind: "conversation" | "channel"; id: string } | null;
+
+/** Where to jump to after clicking a background notification. */
+export type NavigateTarget =
+  | { kind: "conversation"; conversationId: string }
+  | { kind: "channel"; communityId: string; channelId: string };
+
 export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
   appInfo(): Promise<AppInfo>;
   settings: {
     open(): Promise<void>;
+  };
+  window: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    close(): Promise<void>;
+    isMaximized(): Promise<boolean>;
+    onMaximizedChange(cb: (maximized: boolean) => void): () => void;
   };
   updater: {
     getState(): Promise<UpdaterState>;
@@ -154,5 +171,10 @@ export interface DesktopAPI {
   screenShare?: {
     getSources(): Promise<ScreenSource[]>;
     setSource(id: string): Promise<boolean>;
+  };
+  notifications: {
+    configure(url: string, token: string | null, userId: string | null): Promise<void>;
+    setActiveView(view: ActiveNotificationView): Promise<void>;
+    onNavigate(cb: (target: NavigateTarget) => void): () => void;
   };
 }

@@ -1,12 +1,22 @@
 appId: dev.crystal.desktop
 productName: Crystal
 copyright: Copyright © 2026 Crystal
+# A single 512x512 build/icon.png is enough — electron-builder generates the
+# platform-specific formats (.icns/.ico/Linux icon set) from it automatically.
+icon: build/icon.png
 directories:
   output: release
 publish:
   provider: github
   owner: poliberry
   repo: crystal-desktop-v2
+# Also ship the raw PNG as a resource so the app itself can set it as the
+# BrowserWindow icon at runtime (electron/main.ts) — mainly for Linux, where
+# window managers don't derive the taskbar/window icon from the packaged app
+# the way Windows/macOS do.
+extraResources:
+  - from: build/icon.png
+    to: icon.png
 files:
   - dist-electron/**
   - out/**

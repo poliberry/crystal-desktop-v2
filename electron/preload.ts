@@ -9,6 +9,17 @@ const api = {
   settings: {
     open: () => ipcRenderer.invoke("settings:open"),
   },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
+    close: () => ipcRenderer.invoke("window:close"),
+    isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+    onMaximizedChange: (cb: (maximized: boolean) => void) => {
+      const handler = (_e: IpcRendererEvent, maximized: boolean) => cb(maximized);
+      ipcRenderer.on("window:maximized-changed", handler);
+      return () => ipcRenderer.removeListener("window:maximized-changed", handler);
+    },
+  },
   updater: {
     getState: () => ipcRenderer.invoke("updater:state"),
     check: () => ipcRenderer.invoke("updater:check"),
@@ -53,6 +64,21 @@ const api = {
     getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
     setSource: (id: string) => ipcRenderer.invoke("screen-share:set-source", id),
   },
+  notifications: {
+    configure: (url: string, token: string | null, userId: string | null) =>
+      ipcRenderer.invoke("notifications:configure", url, token, userId),
+    setActiveView: (view: { kind: "conversation" | "channel"; id: string } | null) =>
+      ipcRenderer.invoke("notifications:set-active-view", view),
+    onNavigate: (cb: (target: NavigateTarget) => void) => {
+      const handler = (_e: IpcRendererEvent, target: NavigateTarget) => cb(target);
+      ipcRenderer.on("notifications:navigate", handler);
+      return () => ipcRenderer.removeListener("notifications:navigate", handler);
+    },
+  },
 };
+
+type NavigateTarget =
+  | { kind: "conversation"; conversationId: string }
+  | { kind: "channel"; communityId: string; channelId: string };
 
 contextBridge.exposeInMainWorld("desktopAPI", api);

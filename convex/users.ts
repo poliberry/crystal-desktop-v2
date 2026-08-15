@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
@@ -162,5 +162,15 @@ export const searchByUsername = query({
       .unique();
     if (!match || match._id === me._id) return null;
     return { id: match._id, name: match.name, username: match.username, imageUrl: match.imageUrl };
+  },
+});
+
+/** Resolves the caller's Convex user id from a `"use node"` action, which
+ * can't touch `ctx.db` itself (see callTokens.ts / channelCalls.ts's `leave` actions). */
+export const getCurrentUserIdInternal = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    return me?._id ?? null;
   },
 });

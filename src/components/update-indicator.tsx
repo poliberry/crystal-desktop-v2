@@ -17,6 +17,7 @@ export function UpdateIndicator() {
           <Button
             variant="ghost"
             size="icon"
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className="text-blue-500 hover:text-blue-400"
             onClick={() => void download()}
           >
@@ -34,7 +35,13 @@ export function UpdateIndicator() {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" className="text-blue-500" disabled>
+          <Button
+            variant="ghost"
+            size="icon"
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="text-blue-500"
+            disabled
+          >
             <Loader2 className="size-4 animate-spin" />
           </Button>
         </TooltipTrigger>
@@ -52,6 +59,7 @@ export function UpdateIndicator() {
           <Button
             variant="ghost"
             size="icon"
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className="text-emerald-500 hover:text-emerald-400"
             onClick={() => install()}
           >

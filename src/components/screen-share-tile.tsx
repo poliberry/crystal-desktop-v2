@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 interface ScreenShareTileProps {
   participant: Participant;
   isLocal?: boolean;
+  fill?: boolean;
+  onClick?: () => void;
 }
 
 /**
@@ -22,7 +24,7 @@ interface ScreenShareTileProps {
  * from their camera tile. Screen-share audio (if any) is played back for
  * remote participants only.
  */
-export function ScreenShareTile({ participant, isLocal = false }: ScreenShareTileProps) {
+export function ScreenShareTile({ participant, isLocal = false, fill = false, onClick }: ScreenShareTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
   const [hasScreen, setHasScreen] = useState(false);
@@ -106,13 +108,20 @@ export function ScreenShareTile({ participant, isLocal = false }: ScreenShareTil
   const name = participant.name || participant.identity;
 
   return (
-    <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/40">
+    <div
+      onClick={onClick}
+      className={cn(
+        "relative flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/40",
+        fill ? "h-full w-full" : "aspect-video w-full",
+        onClick && "cursor-pointer"
+      )}
+    >
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={isLocal}
-        className={cn("h-full w-full object-cover", !hasScreen && "hidden")}
+        className={cn("h-full w-full object-contain", !hasScreen && "hidden")}
       />
 
       {!hasScreen && (

@@ -58,6 +58,7 @@ export const listMine = query({
           id: conversation._id,
           type: conversation.type,
           name: conversation.name,
+          imageUrl: conversation.imageUrl,
           members: await otherMembers(ctx, conversation._id, me._id),
           lastMessageText: lastMessage?.text ?? null,
           lastMessageAt: lastMessage?._creationTime ?? conversation.createdAt,
@@ -92,8 +93,82 @@ export const get = query({
       id: conversation._id,
       type: conversation.type,
       name: conversation.name,
+      imageUrl: conversation.imageUrl,
       members: await otherMembers(ctx, conversationId, me._id),
     };
+  },
+});
+
+/** All members (including yourself) with live presence — for the group DM
+ * member list, which only groups by online/offline (no roles, unlike
+ * communities). */
+export const listMembersWithPresence = query({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) return [];
+
+    const allMembers = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+      .collect();
+
+    return Promise.all(
+      allMembers.map(async (m) => {
+        const user = await ctx.db.get(m.userId);
+        const presence = await ctx.db
+          .query("presence")
+          .withIndex("by_user", (q) => q.eq("userId", m.userId))
+          .unique();
+        return {
+          userId: m.userId,
+          name: user?.name ?? "Unknown",
+          username: user?.username ?? "unknown",
+          imageUrl: user?.imageUrl,
+          bio: user?.bio,
+          status: presence?.effective ?? "offline",
+        };
+      })
+    );
+  },
+});
+
+export const generateGroupIconUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+export const setGroupIcon = mutation({
+  args: { conversationId: v.id("conversations"), storageId: v.id("_storage") },
+  handler: async (ctx, { conversationId, storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) throw new Error("Conversation not found.");
+    if (conversation.type !== "group") throw new Error("Only group conversations have an icon.");
+
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("Not a member of this conversation.");
+
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Icon upload failed.");
+    const previous = conversation.iconStorageId;
+    await ctx.db.patch(conversationId, { imageUrl: url, iconStorageId: storageId });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
   },
 });
 

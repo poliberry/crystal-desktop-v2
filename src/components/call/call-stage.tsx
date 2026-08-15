@@ -1,10 +1,9 @@
 "use client";
 
-import { useQuery } from "convex/react";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
-import { api } from "../../../convex/_generated/api";
 import { useCall } from "@/components/call/call-provider";
+import { useCallTitle } from "@/components/call/use-call-title";
 import { RoomView, type RoomController } from "@/components/room-view";
 import { Button } from "@/components/ui/button";
 
@@ -15,18 +14,9 @@ import { Button } from "@/components/ui/button";
 export function CallStage() {
   const { activeCall, controller, collapse, leaveCall } = useCall();
   const { status, error } = controller;
-  const conversation = useQuery(
-    api.conversations.get,
-    activeCall ? { conversationId: activeCall.conversationId } : "skip"
-  );
+  const roomName = useCallTitle(activeCall);
 
   if (!activeCall) return null;
-
-  const roomName = conversation
-    ? conversation.type === "group"
-      ? conversation.name || conversation.members.map((m) => m.name).join(", ")
-      : (conversation.members[0]?.name ?? "Call")
-    : "Call";
 
   const isConnected = status === "connected" || status === "connecting";
 
@@ -35,7 +25,7 @@ export function CallStage() {
       <div className="flex shrink-0 items-center border-b bg-background/60 px-2 py-1.5">
         <Button variant="ghost" size="sm" className="gap-1.5" onClick={collapse}>
           <ArrowLeft className="size-4" />
-          Back to chat
+          Back
         </Button>
       </div>
 
@@ -48,7 +38,7 @@ export function CallStage() {
               <>
                 <p className="text-destructive">{error}</p>
                 <Button variant="secondary" size="sm" onClick={collapse}>
-                  Back to chat
+                  Back
                 </Button>
               </>
             ) : (

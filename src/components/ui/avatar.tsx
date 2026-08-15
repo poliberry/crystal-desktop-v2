@@ -17,7 +17,12 @@ function Avatar({
       data-slot="avatar"
       data-size={size}
       className={cn(
-        "group/avatar relative flex size-8 shrink-0 overflow-hidden rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6",
+        // rounded-full without overflow-hidden: keeps a ring/border applied
+        // directly to this root circular instead of square, without
+        // clipping AvatarBadge, a sibling positioned at this box's corner.
+        // The actual circular clip of the image/fallback content lives on
+        // AvatarImage/AvatarFallback themselves, below.
+        "group/avatar relative flex size-8 shrink-0 rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6",
         className
       )}
       {...props}
@@ -32,7 +37,7 @@ function AvatarImage({
   return (
     <AvatarPrimitive.Image
       data-slot="avatar-image"
-      className={cn("aspect-square size-full", className)}
+      className={cn("aspect-square size-full rounded-full object-cover", className)}
       {...props}
     />
   )
