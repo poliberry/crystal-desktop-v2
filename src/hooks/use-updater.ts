@@ -19,7 +19,14 @@ export function useUpdater() {
   const api = getDesktopAPI()?.updater;
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      // Plain browser / Next.js dev server — there's no Electron updater to
+      // subscribe to at all. Without this, state.phase stays "idle" forever,
+      // which UpdatesTab reads as "haven't checked yet" and permanently
+      // disables checking instead of showing the GitHub releases fallback.
+      setState((prev) => (prev.phase === "unsupported" ? prev : { ...IDLE_STATE, phase: "unsupported" }));
+      return;
+    }
     void api.getState().then(setState);
     return api.onStateChange(setState);
   }, [api]);

@@ -19,6 +19,7 @@ export function UpdateIndicator() {
             size="icon"
             className="text-blue-500 hover:text-blue-400"
             onClick={() => void download()}
+            aria-label={`Download update${state.availableVersion ? ` v${state.availableVersion}` : ""}`}
           >
             <CircleArrowDown className="size-4" />
           </Button>
@@ -54,6 +55,7 @@ export function UpdateIndicator() {
             size="icon"
             className="text-emerald-500 hover:text-emerald-400"
             onClick={() => install()}
+            aria-label={`Restart and install update${state.availableVersion ? ` v${state.availableVersion}` : ""}`}
           >
             <RefreshCw className="size-4" />
           </Button>
