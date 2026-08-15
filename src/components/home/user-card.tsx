@@ -4,6 +4,7 @@ import { useQuery } from "convex/react";
 import { Settings } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
+import { useCall } from "@/components/call/call-provider";
 import { PresenceDot } from "@/components/presence-dot";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ export function UserCard() {
   const me = useQuery(api.users.getCurrentUser);
   const { status } = useMyPresence();
   const setStatus = useSetPresenceStatus();
+  const { activeCall } = useCall();
 
   if (!me) return null;
 
@@ -54,7 +56,7 @@ export function UserCard() {
                 <p className="truncate text-sm font-medium">{me.name}</p>
                 <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                   <PresenceDot status={status} />
-                  {STATUS_LABEL[status]}
+                  {activeCall ? "In voice" : STATUS_LABEL[status]}
                 </p>
               </button>
             </DropdownMenuTrigger>

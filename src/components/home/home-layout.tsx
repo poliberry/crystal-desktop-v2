@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 
+import { CallStage } from "@/components/call/call-stage";
+import { useCall } from "@/components/call/call-provider";
 import { ChatView } from "@/components/home/chat-view";
 import { CommunityRail } from "@/components/home/community-rail";
-import { DmCallView } from "@/components/home/dm-call-view";
 import { FriendsPanel } from "@/components/home/friends-panel";
 import { NavSidebar } from "@/components/home/nav-sidebar";
 import type { Id } from "../../../convex/_generated/dataModel";
 
-type View = "friends" | "dm" | "call";
+type View = "friends" | "dm";
 
 export function HomeLayout() {
   const [view, setView] = useState<View>("friends");
@@ -17,15 +18,22 @@ export function HomeLayout() {
     null
   );
   const [search, setSearch] = useState("");
+  const { activeCall, expanded, joinCall, collapse } = useCall();
 
+  // Navigating anywhere always shows that content — an in-progress call
+  // keeps running (see the mini bar) but stops being the focused pane.
   const openConversation = (id: Id<"conversations">) => {
     setActiveConversationId(id);
     setView("dm");
+    collapse();
   };
 
-  if (view === "call" && activeConversationId) {
-    return <DmCallView conversationId={activeConversationId} onBack={() => setView("dm")} />;
-  }
+  const selectFriends = () => {
+    setView("friends");
+    collapse();
+  };
+
+  const showCallStage = expanded && !!activeCall;
 
   return (
     <div className="flex h-full">
@@ -35,11 +43,16 @@ export function HomeLayout() {
         onSearchChange={setSearch}
         isFriendsActive={view === "friends"}
         activeConversationId={view === "dm" ? activeConversationId : null}
-        onSelectFriends={() => setView("friends")}
+        onSelectFriends={selectFriends}
         onSelectConversation={openConversation}
       />
-      {view === "dm" && activeConversationId ? (
-        <ChatView conversationId={activeConversationId} onStartCall={() => setView("call")} />
+      {showCallStage ? (
+        <CallStage />
+      ) : view === "dm" && activeConversationId ? (
+        <ChatView
+          conversationId={activeConversationId}
+          onStartCall={() => void joinCall(activeConversationId)}
+        />
       ) : (
         <FriendsPanel search={search} onMessageFriend={openConversation} />
       )}
