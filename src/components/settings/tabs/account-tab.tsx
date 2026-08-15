@@ -1,7 +1,7 @@
 "use client";
 
 import { useReverification, useUser } from "@clerk/clerk-react";
-import type { EmailAddressResource } from "@clerk/types";
+import type { EmailAddressResource } from "@clerk/shared/types";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
@@ -12,7 +12,22 @@ import { Label } from "@/components/ui/label";
 
 export function AccountTab() {
   const { user, isLoaded } = useUser();
-  const { reverify } = useReverification();
+  // useReverification wraps one specific fetcher and returns an "enhanced"
+  // version of that same fetcher (not a generic reverify-anything helper) —
+  // one call per sensitive action. `user` can still be null/undefined here
+  // (before the isLoaded/user guard below), so each closure re-checks it;
+  // by the time these are actually invoked from the handlers below, the
+  // guard has already passed and user is guaranteed non-null.
+  const createEmailAddress = useReverification((email: string) => {
+    if (!user) throw new Error("Not signed in.");
+    return user.createEmailAddress({ email });
+  });
+  const updatePassword = useReverification(
+    (params: { newPassword: string; currentPassword?: string }) => {
+      if (!user) throw new Error("Not signed in.");
+      return user.updatePassword(params);
+    }
+  );
 
   const [newEmail, setNewEmail] = useState("");
   const [pendingEmail, setPendingEmail] = useState<EmailAddressResource | null>(null);
@@ -44,7 +59,7 @@ export function AccountTab() {
     setEmailError(null);
     setEmailSuccess(false);
     try {
-      const email = await reverify(() => user.createEmailAddress({ email: trimmed }));
+      const email = await createEmailAddress(trimmed);
       // Set as soon as the address exists (not after prepareVerification
       // succeeds) so a failure below — or the user hitting Cancel — can
       // still find and destroy it instead of leaking an unverified address
@@ -117,12 +132,10 @@ export function AccountTab() {
     }
     setPasswordBusy(true);
     try {
-      await reverify(() =>
-        user.updatePassword({
-          newPassword,
-          currentPassword: user.passwordEnabled ? currentPassword : undefined,
-        })
-      );
+      await updatePassword({
+        newPassword,
+        currentPassword: user.passwordEnabled ? currentPassword : undefined,
+      });
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
