@@ -294,12 +294,12 @@ class LinuxSystemAudio {
           flapState.flips = 0;
           continue;
         }
-        flapState.flips += 1;
       } else {
         this.streamMoveState.set(id, { target, flips: 0, backoffUntil: 0 });
       }
 
-      await this.pactl(["move-sink-input", id, target]).catch(() => {});
+      const moved = await this.pactl(["move-sink-input", id, target]).then(() => true).catch(() => false);
+      if (moved && flapState) flapState.flips += 1;
     }
 
     for (const id of this.streamMoveState.keys()) {
