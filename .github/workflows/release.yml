@@ -103,12 +103,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux
+            # *.yml/*.blockmap are electron-updater's update-metadata files
+            # (latest-linux.yml + AppImage blockmap) — without them on the
+            # release, the auto-updater has nothing to check against.
             artifact-glob: |
               release/*.AppImage
               release/*.deb
+              release/*.yml
+              release/*.blockmap
           - os: windows-latest
             target: win
-            artifact-glob: release/*.exe
+            artifact-glob: |
+              release/*.exe
+              release/*.yml
+              release/*.blockmap
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout

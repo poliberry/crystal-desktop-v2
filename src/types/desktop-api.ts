@@ -43,6 +43,24 @@ export interface AppInfo {
   };
 }
 
+export type UpdaterPhase =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "not-available"
+  | "unsupported"
+  | "error";
+
+export interface UpdaterState {
+  phase: UpdaterPhase;
+  currentVersion: string;
+  availableVersion: string | null;
+  progressPercent: number | null;
+  error: string | null;
+}
+
 /**
  * Result of starting the macOS ScreenCaptureKit helper. `started === true`
  * means raw interleaved Float32 PCM at `sampleRate` Hz is being streamed.
@@ -105,6 +123,14 @@ export interface DesktopAPI {
   appInfo(): Promise<AppInfo>;
   settings: {
     open(): Promise<void>;
+  };
+  updater: {
+    getState(): Promise<UpdaterState>;
+    check(): Promise<UpdaterState>;
+    download(): Promise<UpdaterState>;
+    install(): Promise<void>;
+    openReleases(): Promise<void>;
+    onStateChange(cb: (state: UpdaterState) => void): () => void;
   };
   systemAudio: {
     enable(): Promise<SystemAudioState>;
