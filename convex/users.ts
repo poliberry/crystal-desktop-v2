@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
-import type { Doc } from "./_generated/dataModel";
-import { internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
@@ -107,7 +107,15 @@ export const updateProfile = mutation({
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(me._id, patch);
     }
-    return me._id;
+    // Returns the actual persisted (trimmed/normalized) values, not just the
+    // id — the caller's local form state should mirror exactly what got
+    // saved, not whatever untrimmed/differently-cased text was submitted.
+    return {
+      id: me._id,
+      name: patch.name ?? me.name,
+      username: patch.username ?? me.username,
+      bio: patch.bio ?? me.bio ?? "",
+    };
   },
 });
 
@@ -119,6 +127,25 @@ export const generateAvatarUploadUrl = mutation({
   },
 });
 
+/** Whether a storage object is still in use as a message attachment (DM or
+ * channel) — an avatar's previous storage id shouldn't be deleted out from
+ * under an attachment that happens to point at the same object (e.g. a
+ * client passing setAvatar an existing attachment's storageId instead of a
+ * fresh upload from generateAvatarUploadUrl). */
+async function isReferencedByAttachment(ctx: MutationCtx, storageId: Id<"_storage">): Promise<boolean> {
+  const [dmAttachment, channelAttachment] = await Promise.all([
+    ctx.db
+      .query("messageAttachments")
+      .filter((q) => q.eq(q.field("storageId"), storageId))
+      .first(),
+    ctx.db
+      .query("channelMessageAttachments")
+      .filter((q) => q.eq(q.field("storageId"), storageId))
+      .first(),
+  ]);
+  return !!dmAttachment || !!channelAttachment;
+}
+
 export const setAvatar = mutation({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }) => {
@@ -128,8 +155,11 @@ export const setAvatar = mutation({
 
     const previous = me.avatarStorageId;
     await ctx.db.patch(me._id, { imageUrl: url, avatarStorageId: storageId });
-    if (previous && previous !== storageId) {
-      await ctx.storage.delete(previous).catch(() => {});
+    if (previous && previous !== storageId && !(await isReferencedByAttachment(ctx, previous))) {
+      // Not caught: a failed delete should abort the whole mutation (Convex
+      // mutations are all-or-nothing) rather than silently commit the avatar
+      // change while leaving the old object undeleted-but-unreferenced.
+      await ctx.storage.delete(previous);
     }
     return url;
   },
@@ -141,7 +171,9 @@ export const removeAvatar = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.avatarStorageId;
     await ctx.db.patch(me._id, { imageUrl: undefined, avatarStorageId: undefined });
-    if (previous) await ctx.storage.delete(previous).catch(() => {});
+    if (previous && !(await isReferencedByAttachment(ctx, previous))) {
+      await ctx.storage.delete(previous);
+    }
   },
 });
 

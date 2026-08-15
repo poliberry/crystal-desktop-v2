@@ -76,7 +76,14 @@ export function ProfileTab() {
     setError(null);
     setSaved(false);
     try {
-      await updateProfile({ name, username, bio });
+      const result = await updateProfile({ name, username, bio });
+      // Mirror exactly what got persisted (trimmed name/bio, trimmed +
+      // lowercased username) — otherwise e.g. saving " Alice " leaves the
+      // input showing " Alice " while the server stored "Alice", so `dirty`
+      // never clears and Save stays enabled despite nothing left to save.
+      setName(result.name);
+      setUsername(result.username);
+      setBio(result.bio);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save profile.");
