@@ -26,7 +26,7 @@ export function ChannelChatView({ channelId, communityId, name, topic }: Channel
   const canManageMessages = hasPermission(myPermissions, PERMISSIONS.MANAGE_MESSAGES);
 
   return (
-    <div className="flex min-w-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <Hash className="size-4 shrink-0 text-muted-foreground" />
