@@ -347,12 +347,18 @@ class LinuxSystemAudio {
   private startInputGuard(): void {
     if (this.inputGuard) return;
     this.hardwareSinkGuardTicks = 0;
+    let revalidationInFlight = false;
     this.inputGuard = setInterval(() => {
       void this.routeSinkInputs();
       this.hardwareSinkGuardTicks += 1;
       if (this.hardwareSinkGuardTicks >= HARDWARE_SINK_REVALIDATE_TICKS) {
         this.hardwareSinkGuardTicks = 0;
-        void this.revalidateHardwareSink();
+        if (!revalidationInFlight) {
+          revalidationInFlight = true;
+          this.revalidateHardwareSink().finally(() => {
+            revalidationInFlight = false;
+          });
+        }
       }
     }, INPUT_GUARD_INTERVAL_MS);
   }
