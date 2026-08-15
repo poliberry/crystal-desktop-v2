@@ -23,7 +23,7 @@ import type { AudioApp, ScreenSource } from "@/types/desktop-api";
 interface ScreenSharePickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onShare: (sourceId: string, audio: SystemAudioChoice) => void;
+  onShare: (sourceId: string, sourceName: string, audio: SystemAudioChoice) => void;
 }
 
 /**
@@ -96,7 +96,7 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
 
   const handleShare = () => {
     if (!selected) return;
-    onShare(selected.id, audioChoice);
+    onShare(selected.id, selected.name, audioChoice);
   };
 
   const setAudioChoice = (choice: SystemAudioChoice) => {

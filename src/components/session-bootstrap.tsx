@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 
 import { api } from "../../convex/_generated/api";
 import { usePresenceHeartbeat } from "@/hooks/use-presence";
+import { useSyncNotifications } from "@/hooks/use-sync-notifications";
 
 /** Bootstraps the current session: syncs the Convex user row and starts the presence heartbeat. Renders nothing. */
 export function SessionBootstrap() {
@@ -18,6 +19,7 @@ export function SessionBootstrap() {
   }, [ensureUser]);
 
   usePresenceHeartbeat();
+  useSyncNotifications();
 
   return null;
 }

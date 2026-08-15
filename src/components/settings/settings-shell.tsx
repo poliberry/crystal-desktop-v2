@@ -10,6 +10,7 @@ import { PlaceholderTab } from "@/components/settings/tabs/placeholder-tab";
 import { ProfileTab } from "@/components/settings/tabs/profile-tab";
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
+import { WindowControls } from "@/components/window-controls";
 
 const TABS = [
   { value: "profile", label: "Profile", icon: User },
@@ -23,6 +24,14 @@ const TABS = [
 export function SettingsShell() {
   return (
     <div className="flex h-full flex-col bg-background">
+      <div
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        className="flex h-9 shrink-0 items-center justify-between border-b pl-4"
+      >
+        <span className="text-xs font-medium text-muted-foreground">Crystal Settings</span>
+        <WindowControls />
+      </div>
+
       <Tabs defaultValue="profile" className="h-full min-h-0 gap-0">
         <div className="flex justify-center border-b bg-background/60 px-4 pt-4 pb-2">
           <TabsList variant="line" className="h-auto gap-1">

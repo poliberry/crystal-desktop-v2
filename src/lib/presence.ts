@@ -1,4 +1,4 @@
-export type ManualStatus = "online" | "dnd" | "invisible";
+export type ManualStatus = "online" | "idle" | "dnd" | "invisible";
 export type DisplayStatus = "online" | "dnd" | "idle" | "invisible";
 export type FriendStatus = "online" | "dnd" | "idle" | "offline";
 
@@ -6,6 +6,7 @@ export type FriendStatus = "online" | "dnd" | "idle" | "offline";
 export function displayStatus(manualStatus: ManualStatus, isIdle: boolean): DisplayStatus {
   if (manualStatus === "invisible") return "invisible";
   if (manualStatus === "dnd") return "dnd";
+  if (manualStatus === "idle") return "idle";
   return isIdle ? "idle" : "online";
 }
 

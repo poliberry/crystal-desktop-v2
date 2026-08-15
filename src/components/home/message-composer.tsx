@@ -92,7 +92,7 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
   };
 
   return (
-    <div className="shrink-0 border-t p-3">
+    <div className="shrink-0 p-3">
       {pending.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {pending.map((attachment, index) => (
@@ -113,7 +113,7 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
         </div>
       )}
 
-      <div className="flex items-end gap-2">
+      <div className="flex items-end gap-1 rounded-md border border-input bg-transparent px-1.5 py-1 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
         <input
           ref={fileInputRef}
           type="file"
@@ -125,6 +125,7 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
           type="button"
           variant="ghost"
           size="icon"
+          className="size-8 shrink-0"
           disabled={uploading}
           onClick={() => fileInputRef.current?.click()}
         >
@@ -137,13 +138,13 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Message…"
-          className="max-h-40 min-h-9 flex-1 resize-none"
+          className="max-h-40 min-h-8 flex-1 resize-none border-0 bg-transparent! px-1 py-1.5 shadow-none focus-visible:ring-0"
           rows={1}
         />
 
         <Popover>
           <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="icon">
+            <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0">
               <Smile className="size-4" />
             </Button>
           </PopoverTrigger>
@@ -166,7 +167,13 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
           </PopoverContent>
         </Popover>
 
-        <Button type="button" size="icon" disabled={sending || uploading} onClick={() => void handleSend()}>
+        <Button
+          type="button"
+          size="icon"
+          className="size-8 shrink-0"
+          disabled={sending || uploading}
+          onClick={() => void handleSend()}
+        >
           <Send className="size-4" />
         </Button>
       </div>

@@ -1,55 +1,129 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CallStage } from "@/components/call/call-stage";
 import { useCall } from "@/components/call/call-provider";
+import { ChannelView } from "@/components/community/channel-view";
+import { CommunitySidebar } from "@/components/community/community-sidebar";
 import { ChatView } from "@/components/home/chat-view";
 import { CommunityRail } from "@/components/home/community-rail";
 import { FriendsPanel } from "@/components/home/friends-panel";
 import { NavSidebar } from "@/components/home/nav-sidebar";
+import { useNavigation, useRegisterNavigation } from "@/components/home/navigation-context";
 import { Button } from "@/components/ui/button";
+import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
 
-type View = "friends" | "dm";
+type DmView = "friends" | "dm";
 
 export function HomeLayout() {
-  const [view, setView] = useState<View>("friends");
+  const [dmView, setDmView] = useState<DmView>("friends");
   const [activeConversationId, setActiveConversationId] = useState<Id<"conversations"> | null>(
     null
   );
   const [search, setSearch] = useState("");
-  const { activeCall, expanded, joinCall, collapse, joinError, dismissJoinError } = useCall();
+
+  const [selectedCommunityId, setSelectedCommunityId] = useState<Id<"communities"> | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<Id<"channels"> | null>(null);
+
+  const { activeCall, expanded, joinDmCall, joinChannelCall, collapse, joinError, dismissJoinError } = useCall();
 
   // Navigating anywhere always shows that content — an in-progress call
   // keeps running (see the mini bar) but stops being the focused pane.
   const openConversation = (id: Id<"conversations">) => {
     setActiveConversationId(id);
-    setView("dm");
+    setDmView("dm");
+    setSelectedCommunityId(null);
     collapse();
   };
 
   const selectFriends = () => {
-    setView("friends");
+    setDmView("friends");
+    setSelectedCommunityId(null);
     collapse();
   };
 
+  const selectCommunity = (id: Id<"communities">, channelId?: Id<"channels">) => {
+    setSelectedCommunityId(id);
+    setSelectedChannelId(channelId ?? null);
+    collapse();
+  };
+
+  const selectChannel = (channelId: Id<"channels">, type: "text" | "voice") => {
+    if (type === "voice") {
+      if (selectedCommunityId) {
+        dismissJoinError();
+        void joinChannelCall(channelId, selectedCommunityId);
+      }
+      return;
+    }
+    setSelectedChannelId(channelId);
+    collapse();
+  };
+
+  useRegisterNavigation({ openConversation, openCommunity: selectCommunity });
+
+  const nav = useNavigation();
+
   const showCallStage = expanded && !!activeCall;
+
+  // Tells the Electron main process what's on screen right now, so the
+  // background notifier (electron/backgroundNotifier.ts) doesn't also pop an
+  // OS notification for the conversation/channel you're already looking at.
+  // While the call stage is expanded it covers whatever conversation/channel
+  // was selected underneath it, so this must report null there — otherwise
+  // messages in that now-hidden conversation/channel get silently suppressed.
+  useEffect(() => {
+    const view = showCallStage
+      ? null
+      : dmView === "dm" && activeConversationId
+        ? { kind: "conversation" as const, id: activeConversationId }
+        : selectedCommunityId && selectedChannelId
+          ? { kind: "channel" as const, id: selectedChannelId }
+          : null;
+    void getDesktopAPI()?.notifications.setActiveView(view);
+  }, [showCallStage, dmView, activeConversationId, selectedCommunityId, selectedChannelId]);
+
+  // Clicking a background notification lands here.
+  useEffect(() => {
+    return getDesktopAPI()?.notifications.onNavigate((target) => {
+      if (target.kind === "conversation") {
+        nav.openConversation(target.conversationId as Id<"conversations">);
+      } else {
+        nav.openCommunity(target.communityId as Id<"communities">, target.channelId as Id<"channels">);
+      }
+    });
+  }, [nav]);
 
   return (
     <div className="flex h-full">
-      <CommunityRail />
-      <NavSidebar
-        search={search}
-        onSearchChange={setSearch}
-        isFriendsActive={view === "friends"}
-        activeConversationId={view === "dm" ? activeConversationId : null}
-        onSelectFriends={selectFriends}
-        onSelectConversation={openConversation}
+      <CommunityRail
+        selectedCommunityId={selectedCommunityId}
+        onSelectHome={selectFriends}
+        onSelectCommunity={selectCommunity}
       />
+
+      {selectedCommunityId ? (
+        <CommunitySidebar
+          communityId={selectedCommunityId}
+          selectedChannelId={selectedChannelId}
+          onSelectChannel={selectChannel}
+        />
+      ) : (
+        <NavSidebar
+          search={search}
+          onSearchChange={setSearch}
+          isFriendsActive={dmView === "friends"}
+          activeConversationId={dmView === "dm" ? activeConversationId : null}
+          onSelectFriends={selectFriends}
+          onSelectConversation={openConversation}
+        />
+      )}
+
       {showCallStage ? (
         <CallStage />
-      ) : view === "dm" && activeConversationId ? (
+      ) : (
         <div className="flex min-w-0 flex-1 flex-col">
           {joinError && (
             <div className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -59,16 +133,25 @@ export function HomeLayout() {
               </Button>
             </div>
           )}
-          <ChatView
-            conversationId={activeConversationId}
-            onStartCall={() => {
-              dismissJoinError();
-              void joinCall(activeConversationId);
-            }}
-          />
+
+          {selectedCommunityId && selectedChannelId ? (
+            <ChannelView channelId={selectedChannelId} />
+          ) : selectedCommunityId ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Select a channel
+            </div>
+          ) : dmView === "dm" && activeConversationId ? (
+            <ChatView
+              conversationId={activeConversationId}
+              onStartCall={() => {
+                dismissJoinError();
+                void joinDmCall(activeConversationId);
+              }}
+            />
+          ) : (
+            <FriendsPanel search={search} onMessageFriend={openConversation} />
+          )}
         </div>
-      ) : (
-        <FriendsPanel search={search} onMessageFriend={openConversation} />
       )}
     </div>
   );

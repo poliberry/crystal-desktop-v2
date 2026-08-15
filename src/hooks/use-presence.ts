@@ -50,9 +50,15 @@ export function usePresenceHeartbeat() {
 
 export function useMyPresence() {
   const presence = useQuery(api.presence.getMine);
-  if (!presence) return { status: "online" as const, loaded: presence !== undefined };
+  if (!presence) {
+    return { status: "online" as const, manualStatus: "online" as const, loaded: presence !== undefined };
+  }
   return {
     status: displayStatus(presence.manualStatus, presence.isIdle),
+    // The raw manual choice, distinct from `status` — `status` collapses to
+    // "idle" from real inactivity too, which the status switcher shouldn't
+    // show as selected unless the user actually picked "Idle" themselves.
+    manualStatus: presence.manualStatus,
     loaded: true,
   };
 }
