@@ -204,6 +204,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // leaveDmAction/leaveChannelAction are stable across renders.
   useEffect(() => {
     return () => {
+      joinGenerationRef.current++;
       const current = activeCallRef.current;
       if (!current) return;
       void disconnect();
