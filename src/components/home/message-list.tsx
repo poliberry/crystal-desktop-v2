@@ -1,14 +1,19 @@
 "use client";
 
-import { usePaginatedQuery } from "convex/react";
+import { useMutation, usePaginatedQuery } from "convex/react";
 import { File as FileIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { DeleteMessageDialog } from "@/components/home/delete-message-dialog";
 import { MessageContent } from "@/components/home/message-content";
+import { MessageContextMenu } from "@/components/home/message-context-menu";
+import { MessageHoverActions } from "@/components/home/message-hover-actions";
+import { MessageReactions } from "@/components/home/message-reactions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 interface MessageListProps {
@@ -21,6 +26,23 @@ interface AttachmentSummary {
   fileType: string;
   fileSize: number;
   url: string | null;
+}
+
+interface ReactionSummary {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
+}
+
+interface MessageDoc {
+  id: Id<"messages">;
+  text: string | null;
+  createdAt: number;
+  editedAt: number | null;
+  isMine: boolean;
+  author: { id: Id<"users">; name: string; username: string; imageUrl?: string } | null;
+  attachments: AttachmentSummary[];
+  reactions: ReactionSummary[];
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -62,6 +84,138 @@ function AttachmentView({ attachment }: { attachment: AttachmentSummary }) {
   );
 }
 
+function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup: boolean }) {
+  const updateMessage = useMutation(api.messages.update);
+  const removeMessage = useMutation(api.messages.remove);
+  const toggleReaction = useMutation(api.messages.toggleReaction);
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.text ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing) editRef.current?.focus();
+  }, [editing]);
+
+  const startEdit = () => {
+    setDraft(message.text ?? "");
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    if (trimmed !== message.text) await updateMessage({ messageId: message.id, text: trimmed });
+    setEditing(false);
+  };
+
+  const requestDelete = (shiftKey: boolean) => {
+    if (shiftKey) void removeMessage({ messageId: message.id });
+    else setConfirmDelete(true);
+  };
+
+  const content = (
+    <div
+      className={cn(
+        "group relative flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
+        startsGroup && "mt-3"
+      )}
+    >
+      <div className="w-9 shrink-0">
+        {startsGroup && (
+          <Avatar size="sm">
+            <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
+            <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+          </Avatar>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        {startsGroup && (
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-semibold">{message.author?.name ?? "Unknown"}</span>
+            <span className="text-[11px] text-muted-foreground">
+              {new Date(message.createdAt).toLocaleString()}
+            </span>
+          </div>
+        )}
+
+        {editing ? (
+          <div className="space-y-1">
+            <Textarea
+              ref={editRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void saveEdit();
+                } else if (e.key === "Escape") {
+                  setEditing(false);
+                }
+              }}
+              className="min-h-8 resize-none"
+              rows={1}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Escape to cancel · Enter to save
+            </p>
+          </div>
+        ) : (
+          <>
+            {message.text && (
+              <MessageContent
+                text={message.text}
+                suffix={
+                  message.editedAt && (
+                    <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
+                  )
+                }
+              />
+            )}
+            {message.attachments.map((attachment) => (
+              <AttachmentView key={attachment.id} attachment={attachment} />
+            ))}
+            <MessageReactions
+              reactions={message.reactions}
+              onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+            />
+          </>
+        )}
+      </div>
+
+      {!editing && (
+        <MessageHoverActions
+          canEdit={message.isMine}
+          canDelete={message.isMine}
+          onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+          onEdit={startEdit}
+          onDelete={requestDelete}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      <MessageContextMenu
+        canEdit={message.isMine}
+        canDelete={message.isMine}
+        onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+        onEdit={startEdit}
+        onDelete={requestDelete}
+      >
+        {content}
+      </MessageContextMenu>
+      <DeleteMessageDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        onConfirm={() => void removeMessage({ messageId: message.id })}
+      />
+    </>
+  );
+}
+
 export function MessageList({ conversationId }: MessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.messages.list,
@@ -83,15 +237,19 @@ export function MessageList({ conversationId }: MessageListProps) {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-2">
-      {status === "CanLoadMore" && (
-        <div className="flex justify-center py-2">
-          <Button variant="ghost" size="sm" onClick={() => loadMore(30)}>
-            Load earlier messages
-          </Button>
-        </div>
-      )}
+      {/* min-h-full + justify-end pins short conversations to the bottom of
+          the scroll area (like a normal chat) instead of leaving them
+          stranded at the top; once content overflows this behaves like a
+          regular top-down scrolling list. */}
+      <div className="flex min-h-full flex-col justify-end gap-0.5">
+        {status === "CanLoadMore" && (
+          <div className="flex justify-center py-2">
+            <Button variant="ghost" size="sm" onClick={() => loadMore(30)}>
+              Load earlier messages
+            </Button>
+          </div>
+        )}
 
-      <div className="flex flex-col gap-0.5">
         {chronological.map((message, index) => {
           const prev = chronological[index - 1];
           const startsGroup =
@@ -99,45 +257,10 @@ export function MessageList({ conversationId }: MessageListProps) {
             prev.author?.id !== message.author?.id ||
             message.createdAt - prev.createdAt > GROUP_WINDOW_MS;
 
-          return (
-            <div
-              key={message.id}
-              className={cn(
-                "flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
-                startsGroup && "mt-3"
-              )}
-            >
-              <div className="w-9 shrink-0">
-                {startsGroup && (
-                  <Avatar size="sm">
-                    <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
-                    <AvatarFallback>
-                      {(message.author?.name ?? "?").slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                {startsGroup && (
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-semibold">
-                      {message.author?.name ?? "Unknown"}
-                    </span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {new Date(message.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-                {message.text && <MessageContent text={message.text} />}
-                {message.attachments.map((attachment) => (
-                  <AttachmentView key={attachment.id} attachment={attachment} />
-                ))}
-              </div>
-            </div>
-          );
+          return <MessageRow key={message.id} message={message} startsGroup={startsGroup} />;
         })}
+        <div ref={bottomRef} />
       </div>
-      <div ref={bottomRef} />
     </div>
   );
 }

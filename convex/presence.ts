@@ -5,11 +5,17 @@ import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 const STALE_MS = 60_000;
 
-const manualStatusValidator = v.union(v.literal("online"), v.literal("dnd"), v.literal("invisible"));
+const manualStatusValidator = v.union(
+  v.literal("online"),
+  v.literal("idle"),
+  v.literal("dnd"),
+  v.literal("invisible")
+);
 
-function computeEffective(manualStatus: "online" | "dnd" | "invisible", isIdle: boolean) {
+function computeEffective(manualStatus: "online" | "idle" | "dnd" | "invisible", isIdle: boolean) {
   if (manualStatus === "invisible") return "offline" as const;
   if (manualStatus === "dnd") return "dnd" as const;
+  if (manualStatus === "idle") return "idle" as const;
   return isIdle ? ("idle" as const) : ("online" as const);
 }
 

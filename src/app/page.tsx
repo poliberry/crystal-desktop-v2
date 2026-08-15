@@ -2,7 +2,9 @@
 
 import { SignedIn, SignedOut, SignIn } from "@clerk/clerk-react";
 
+import { CallProvider } from "@/components/call/call-provider";
 import { HomeLayout } from "@/components/home/home-layout";
+import { NavigationProvider } from "@/components/home/navigation-context";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TopNav } from "@/components/top-nav";
 
@@ -17,12 +19,16 @@ export default function HomePage() {
 
       <SignedIn>
         <SessionBootstrap />
-        <div className="flex h-full flex-col">
-          <TopNav />
-          <div className="min-h-0 flex-1">
-            <HomeLayout />
-          </div>
-        </div>
+        <CallProvider>
+          <NavigationProvider>
+            <div className="flex h-full flex-col">
+              <TopNav />
+              <div className="min-h-0 flex-1">
+                <HomeLayout />
+              </div>
+            </div>
+          </NavigationProvider>
+        </CallProvider>
       </SignedIn>
     </main>
   );

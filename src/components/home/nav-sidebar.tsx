@@ -5,7 +5,9 @@ import { SearchIcon, ShoppingBag, Sparkles, Users } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { GroupAvatar } from "@/components/home/group-avatar";
 import { NewDmDialog } from "@/components/home/new-dm-dialog";
+import { UserCard } from "@/components/home/user-card";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,7 +44,8 @@ export function NavSidebar({
   );
 
   return (
-    <div className="flex w-64 shrink-0 flex-col gap-3 border-r bg-background/40 p-3">
+    <div className="flex w-64 shrink-0 flex-col border-r bg-background/40">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
       <div className="relative">
         <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -108,9 +111,7 @@ export function NavSidebar({
                 )}
               >
                 {isGroup ? (
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                    <Users className="size-4" />
-                  </div>
+                  <GroupAvatar size="sm" imageUrl={conversation.imageUrl} members={conversation.members} />
                 ) : (
                   <Avatar size="sm">
                     <AvatarImage src={avatarUser?.imageUrl} alt={title} />
@@ -136,6 +137,9 @@ export function NavSidebar({
           })}
         </div>
       </ScrollArea>
+      </div>
+
+      <UserCard />
     </div>
   );
 }

@@ -1,11 +1,15 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, screen, session, shell } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
 import * as fs from "node:fs";
 import { createServer } from "node:http";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import serveHandler from "serve-handler";
 
+import * as backgroundNotifier from "./backgroundNotifier";
 import systemAudio from "./systemAudio";
+import updater from "./updater";
+
+const RELEASES_URL = "https://github.com/poliberry/crystal-desktop-v2/releases/latest";
 
 const isDev = !!process.env.ELECTRON_START_URL;
 const PRELOAD = path.join(__dirname, "preload.js");
@@ -81,14 +85,62 @@ function toTransferable(buf: Buffer): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
 }
 
+/**
+ * Explicit window icon — mainly matters on Linux, where window managers
+ * don't derive the taskbar/window icon from the packaged app the way
+ * Windows/macOS do. Packaged builds ship it via `extraResources` (see
+ * electron-builder.yml); dev mode reads straight from `build/`.
+ */
+function appIconPath(): string | undefined {
+  const candidate = isDev
+    ? path.join(__dirname, "..", "build", "icon.png")
+    : path.join(process.resourcesPath, "icon.png");
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+/**
+ * Both windows are frameless (no native titlebar/menu — the renderer draws
+ * its own, see TopNav / SettingsShell's window-controls row) but NOT
+ * transparent. `transparent: true` disables the OS drop shadow and (on
+ * Windows) `thickFrame`, so the window would render with hard edges and no
+ * shadow at all; leaving the window opaque keeps the native chrome — shadow,
+ * rounded corners on Win11, Aero snap — while still hiding the default
+ * titlebar.
+ */
+const FRAMELESS_WINDOW_OPTIONS = {
+  frame: false,
+  backgroundColor: "#09090b",
+  hasShadow: true,
+} as const;
+
+/** Forwards native maximize/unmaximize so the custom titlebar's restore-vs-
+ * maximize icon stays correct even when triggered by the OS (double-click
+ * the titlebar, Aero snap, etc.) instead of only our own button. */
+function wireWindowStateEvents(win: BrowserWindow): void {
+  const send = () => {
+    if (!win.isDestroyed()) win.webContents.send("window:maximized-changed", win.isMaximized());
+  };
+  win.on("maximize", send);
+  win.on("unmaximize", send);
+}
+
+let mainWindow: BrowserWindow | null = null;
+
+// Set right before any *real* quit path (tray "Quit", OS shutdown, Cmd+Q on
+// mac) so the main window's `close` handler below knows to let it through
+// instead of hiding it — see the tray/background-notifications setup in
+// app.whenReady().
+let isQuitting = false;
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 940,
     minHeight: 600,
-    backgroundColor: "#09090b",
     autoHideMenuBar: true,
+    icon: appIconPath(),
+    ...FRAMELESS_WINDOW_OPTIONS,
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -110,6 +162,79 @@ function createWindow(): void {
     }
     return { action: "deny" };
   });
+
+  // Closing the window (the X button, Alt+F4, etc.) hides it instead of
+  // quitting — the app keeps running in the tray with background
+  // notifications still active. Only an explicit quit (tray menu, OS
+  // shutdown) actually tears the window down.
+  win.on("close", (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    win.hide();
+  });
+
+  wireWindowStateEvents(win);
+  mainWindow = win;
+}
+
+/** Shows/focuses the existing main window, or creates one if it was never
+ * opened this run (or was actually destroyed — e.g. macOS's `activate` with
+ * zero windows). Used by the tray's "Open" item, clicking the tray icon, and
+ * clicking a background notification. */
+function createOrFocusMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  createWindow();
+}
+
+let settingsWindow: BrowserWindow | null = null;
+
+/** Opens the Settings window, or focuses it if it's already open (singleton). */
+function createOrFocusSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 840,
+    height: 600,
+    minWidth: 720,
+    minHeight: 480,
+    autoHideMenuBar: true,
+    title: "Crystal Settings",
+    icon: appIconPath(),
+    ...FRAMELESS_WINDOW_OPTIONS,
+    webPreferences: {
+      preload: PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  if (isDev) {
+    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/settings`);
+  } else {
+    void win.loadURL(`http://127.0.0.1:${localServerPort}/settings/`);
+  }
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https:") || url.startsWith("http:")) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+  win.on("closed", () => {
+    settingsWindow = null;
+  });
+
+  wireWindowStateEvents(win);
+  settingsWindow = win;
 }
 
 app.whenReady().then(async () => {
@@ -131,16 +256,26 @@ app.whenReady().then(async () => {
   // Prime pactl / recorder detection so the first share starts faster.
   void systemAudio.warmUp().catch(() => {});
 
-  // Grant media + display capture for the renderer (LiveKit + screen share).
+  // Grant media + display capture for the renderer (LiveKit + screen share),
+  // plus clipboard-write for the invite-code copy button (navigator.clipboard
+  // .writeText is gated behind the "clipboard-sanitized-write" permission —
+  // without it Chromium rejects every write with NotAllowedError).
   ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-    const allowed = ["media", "display-capture", "notifications", "fullscreen"];
+    const allowed = [
+      "media",
+      "display-capture",
+      "notifications",
+      "fullscreen",
+      "clipboard-sanitized-write",
+    ];
     callback(allowed.includes(permission));
   });
 
-  // `getDisplayMedia` performs a permission *check* before the request; without
-  // an allowlist here the check is denied and screen share fails.
+  // `getDisplayMedia` (and clipboard writes) perform a permission *check*
+  // before the request; without an allowlist here the check is denied and
+  // the request handler above never even runs.
   ses.setPermissionCheckHandler((_webContents, permission) => {
-    return ["media", "display-capture", "fullscreen"].includes(permission);
+    return ["media", "display-capture", "fullscreen", "clipboard-sanitized-write"].includes(permission);
   });
 
   // The custom screen-share picker (see ScreenSharePicker.tsx) tells us which
@@ -213,6 +348,81 @@ app.whenReady().then(async () => {
       node: process.versions.node,
     },
   }));
+
+  ipcMain.handle("settings:open", () => {
+    createOrFocusSettingsWindow();
+  });
+
+  // Custom titlebar controls — frameless windows have no native ones. Each
+  // handler acts on whichever window actually sent the request, so the main
+  // window and the Settings window each control themselves independently.
+  ipcMain.handle("window:minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("window:toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  });
+  ipcMain.handle("window:close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle("window:is-maximized", (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+  });
+
+  // Tray icon: lets the app keep running (and keep watching for
+  // notifications) after the window is closed, per the `close` handler in
+  // createWindow() above.
+  const tray = new Tray(appIconPath() ?? nativeImage.createEmpty());
+  tray.setToolTip("Crystal");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Open Crystal", click: () => createOrFocusMainWindow() },
+      { type: "separator" },
+      {
+        label: "Quit",
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ])
+  );
+  tray.on("click", () => createOrFocusMainWindow());
+
+  backgroundNotifier.init({
+    getMainWindow: () => mainWindow,
+    onNavigate: (target) => {
+      mainWindow?.webContents.send("notifications:navigate", target);
+    },
+  });
+
+  ipcMain.handle(
+    "notifications:configure",
+    (_event, url: string, token: string | null, userId: string | null) => {
+      backgroundNotifier.configure(url, token, userId);
+    }
+  );
+  ipcMain.handle(
+    "notifications:set-active-view",
+    (_event, view: { kind: "conversation" | "channel"; id: string } | null) => {
+      backgroundNotifier.setActiveView(view);
+    }
+  );
+
+  updater.init();
+  updater.onStateChange((state) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("updater:state-changed", state);
+    }
+  });
+  ipcMain.handle("updater:state", () => updater.getState());
+  ipcMain.handle("updater:check", () => updater.check());
+  ipcMain.handle("updater:download", () => updater.download());
+  ipcMain.handle("updater:install", () => updater.quitAndInstall());
+  ipcMain.handle("updater:open-releases", () => shell.openExternal(RELEASES_URL));
 
   ipcMain.handle("system-audio:enable", () => systemAudio.enable());
   ipcMain.handle("system-audio:disable", () => systemAudio.disable());
@@ -357,16 +567,16 @@ app.whenReady().then(async () => {
 
   createWindow();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  app.on("activate", () => createOrFocusMainWindow());
 });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+// The main window hides instead of closing (see its `close` handler above),
+// so the app now only quits via the tray's "Quit" item or the OS itself —
+// never just because every window happened to be hidden/closed.
+app.on("window-all-closed", () => {});
 
 app.on("before-quit", () => {
+  isQuitting = true;
   linuxAudioSender = null;
   unsubLinuxAudio();
   void systemAudio.disable();

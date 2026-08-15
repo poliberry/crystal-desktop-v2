@@ -325,3 +325,5 @@ export function useRoom() {
     startScreenShare,
   };
 }
+
+export type RoomController = ReturnType<typeof useRoom>;

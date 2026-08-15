@@ -23,17 +23,28 @@ export const listParticipants = query({
   },
 });
 
-export const leave = mutation({
-  args: { conversationId: v.id("conversations") },
-  handler: async (ctx, { conversationId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+/**
+ * Removes the caller's participant row and reports how many participants are
+ * left, so the calling action (callTokens.ts's `leave`) knows whether to
+ * close the underlying LiveKit room. A plain mutation can't reach LiveKit's
+ * REST API itself (no outbound network access), hence the split.
+ */
+export const recordLeave = internalMutation({
+  args: { conversationId: v.id("conversations"), userId: v.id("users") },
+  handler: async (ctx, { conversationId, userId }) => {
     const row = await ctx.db
       .query("callParticipants")
       .withIndex("by_conversation_user", (q) =>
-        q.eq("conversationId", conversationId).eq("userId", me._id)
+        q.eq("conversationId", conversationId).eq("userId", userId)
       )
       .unique();
     if (row) await ctx.db.delete(row._id);
+
+    const remaining = await ctx.db
+      .query("callParticipants")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+      .collect();
+    return remaining.length;
   },
 });
 
@@ -50,6 +61,15 @@ export const recordJoin = internalMutation({
     if (existing) return;
     await ctx.db.insert("callParticipants", { conversationId, userId, joinedAt: Date.now() });
   },
+});
+
+/** Every DM call participant row, for the LiveKit reconciliation sweep
+ * (convex/lib/callReconciliation.ts) — cross-checked against who's actually
+ * still connected, since a refresh/crash never runs the explicit `leave`
+ * action. */
+export const listAllParticipants = internalQuery({
+  args: {},
+  handler: async (ctx) => ctx.db.query("callParticipants").collect(),
 });
 
 export const getJoinContext = internalQuery({

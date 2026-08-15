@@ -14,3 +14,12 @@ export function classifyUrl(url: string): UrlKind {
   if (VIDEO_EXT.test(url)) return "video";
   return "link";
 }
+
+const INVITE_RE = /joincrystal:([a-zA-Z0-9]{4,32})/g;
+
+/** Pulls every `joincrystal:<code>` invite reference out of a message so it
+ * can be rendered as a join-community embed instead of plain text. */
+export function extractInviteCodes(text: string): string[] {
+  const matches = Array.from(text.matchAll(INVITE_RE)).map((m) => m[1]);
+  return Array.from(new Set(matches));
+}
