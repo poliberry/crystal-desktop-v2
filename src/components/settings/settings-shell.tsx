@@ -8,6 +8,7 @@ import { AboutTab } from "@/components/settings/tabs/about-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { PlaceholderTab } from "@/components/settings/tabs/placeholder-tab";
 import { ProfileTab } from "@/components/settings/tabs/profile-tab";
+import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
 
 const TABS = [
@@ -52,7 +53,7 @@ export function SettingsShell() {
               />
             </TabsContent>
             <TabsContent value="updates">
-              <PlaceholderTab title="Updates" description="Update status and controls are coming soon." />
+              <UpdatesTab />
             </TabsContent>
             <TabsContent value="about">
               <AboutTab />

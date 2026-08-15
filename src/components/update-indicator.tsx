@@ -1,0 +1,69 @@
+"use client";
+
+import { CircleArrowDown, Loader2, RefreshCw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useUpdater } from "@/hooks/use-updater";
+
+/** Topbar update badge: blue while an update is available/downloading, green once it's ready to install. */
+export function UpdateIndicator() {
+  const { state, download, install } = useUpdater();
+
+  if (state.phase === "available") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-blue-500 hover:text-blue-400"
+            onClick={() => void download()}
+          >
+            <CircleArrowDown className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          Update {state.availableVersion ? `v${state.availableVersion} ` : ""}available — click to download
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  if (state.phase === "downloading") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" className="text-blue-500" disabled>
+            <Loader2 className="size-4 animate-spin" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          Downloading update{state.progressPercent != null ? ` — ${state.progressPercent}%` : "…"}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  if (state.phase === "ready") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-emerald-500 hover:text-emerald-400"
+            onClick={() => install()}
+          >
+            <RefreshCw className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          Update {state.availableVersion ? `v${state.availableVersion} ` : ""}ready — click to restart and install
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return null;
+}

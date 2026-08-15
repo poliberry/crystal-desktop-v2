@@ -3,6 +3,10 @@ productName: Crystal
 copyright: Copyright © 2026 Crystal
 directories:
   output: release
+publish:
+  provider: github
+  owner: poliberry
+  repo: crystal-desktop-v2
 files:
   - dist-electron/**
   - out/**
@@ -23,6 +27,23 @@ files:
   - node_modules/path-is-inside/**
   - node_modules/path-to-regexp/**
   - node_modules/range-parser/**
+  # electron-updater's runtime dependency tree, for the same reason.
+  - node_modules/electron-updater/**
+  - node_modules/builder-util-runtime/**
+  - node_modules/fs-extra/**
+  - node_modules/graceful-fs/**
+  - node_modules/jsonfile/**
+  - node_modules/universalify/**
+  - node_modules/js-yaml/**
+  - node_modules/argparse/**
+  - node_modules/lazy-val/**
+  - node_modules/lodash.escaperegexp/**
+  - node_modules/lodash.isequal/**
+  - node_modules/semver/**
+  - node_modules/tiny-typed-emitter/**
+  - node_modules/debug/**
+  - node_modules/sax/**
+  - node_modules/ms/**
 asarUnpack:
   - resources/**
 mac:

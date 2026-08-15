@@ -1,11 +1,25 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
+import type { UpdaterState } from "./updater";
+
 const api = {
   isElectron: true,
   platform: process.platform,
   appInfo: () => ipcRenderer.invoke("app:info"),
   settings: {
     open: () => ipcRenderer.invoke("settings:open"),
+  },
+  updater: {
+    getState: () => ipcRenderer.invoke("updater:state"),
+    check: () => ipcRenderer.invoke("updater:check"),
+    download: () => ipcRenderer.invoke("updater:download"),
+    install: () => ipcRenderer.invoke("updater:install"),
+    openReleases: () => ipcRenderer.invoke("updater:open-releases"),
+    onStateChange: (cb: (state: UpdaterState) => void) => {
+      const handler = (_e: IpcRendererEvent, state: UpdaterState) => cb(state);
+      ipcRenderer.on("updater:state-changed", handler);
+      return () => ipcRenderer.removeListener("updater:state-changed", handler);
+    },
   },
   systemAudio: {
     enable: () => ipcRenderer.invoke("system-audio:enable"),

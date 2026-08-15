@@ -6,6 +6,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import serveHandler from "serve-handler";
 
 import systemAudio from "./systemAudio";
+import updater from "./updater";
+
+const RELEASES_URL = "https://github.com/poliberry/crystal-desktop-v2/releases/latest";
 
 const isDev = !!process.env.ELECTRON_START_URL;
 const PRELOAD = path.join(__dirname, "preload.js");
@@ -270,6 +273,18 @@ app.whenReady().then(async () => {
   ipcMain.handle("settings:open", () => {
     createOrFocusSettingsWindow();
   });
+
+  updater.init();
+  updater.onStateChange((state) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("updater:state-changed", state);
+    }
+  });
+  ipcMain.handle("updater:state", () => updater.getState());
+  ipcMain.handle("updater:check", () => updater.check());
+  ipcMain.handle("updater:download", () => updater.download());
+  ipcMain.handle("updater:install", () => updater.quitAndInstall());
+  ipcMain.handle("updater:open-releases", () => shell.openExternal(RELEASES_URL));
 
   ipcMain.handle("system-audio:enable", () => systemAudio.enable());
   ipcMain.handle("system-audio:disable", () => systemAudio.disable());
