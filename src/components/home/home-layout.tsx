@@ -71,7 +71,7 @@ export function HomeLayout() {
   // OS notification for the conversation/channel you're already looking at.
   useEffect(() => {
     const view =
-      dmView === "dm" && activeConversationId
+      !selectedCommunityId && dmView === "dm" && activeConversationId
         ? { kind: "conversation" as const, id: activeConversationId }
         : selectedCommunityId && selectedChannelId
           ? { kind: "channel" as const, id: selectedChannelId }
