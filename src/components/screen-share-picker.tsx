@@ -51,6 +51,11 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
     }
     setLoading(true);
     setError(null);
+    // Re-read the persisted default fresh on every open — RoomView keeps
+    // this component mounted while the dialog is closed, so without this
+    // the picker would keep showing whatever choice was active the first
+    // time it ever opened, even after the default changed in Settings.
+    setAudioChoiceState(getDefaultAudioChoice());
     try {
       const [list, appList] = await Promise.all([
         api.screenShare.getSources(),
@@ -64,6 +69,18 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
         ordered.some((s) => s.id === prev) ? prev : (ordered[0]?.id ?? null)
       );
       setApps(appList);
+      // A restored "share this app" choice might point at an app that's
+      // since exited or changed identifier — reconcile against the just-
+      // loaded list rather than silently sharing no app audio.
+      setAudioChoiceState((prev) => {
+        if (prev.mode !== "app") return prev;
+        if (appList.some((a) => a.id === prev.appId)) return prev;
+        const fallback: SystemAudioChoice = appList[0]
+          ? { mode: "app", appId: appList[0].id }
+          : { mode: "off" };
+        setDefaultAudioChoice(fallback);
+        return fallback;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
