@@ -47,7 +47,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const avatarUser = isGroup ? undefined : conversation.members[0];
 
   return (
-    <div className="flex min-w-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
           <div className="flex items-center gap-2">
