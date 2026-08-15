@@ -110,6 +110,7 @@ class LinuxSystemAudio {
   private availabilityChecked = false;
   private hardwareSink: string | null = null;
   private hardwareSinkGuardTicks = 0;
+  private hardwareSinkRevalidation: Promise<void> | null = null;
   /**
    * Per sink-input flap tracking: detects a competing audio processor (e.g.
    * EasyEffects) repeatedly reclaiming a stream right after we move it onto
@@ -272,9 +273,14 @@ class LinuxSystemAudio {
         target = null; // "app" mode, not selected → leave alone
       }
 
-      if (target === null || currentSink === target) {
-        // Settled where we want it — any earlier flap history is stale.
+      if (target === null) {
         this.streamMoveState.delete(id);
+        continue;
+      }
+      if (currentSink === target) continue;
+
+      if (isSelf) {
+        await this.pactl(["move-sink-input", id, target]).catch(() => {});
         continue;
       }
 
@@ -289,12 +295,12 @@ class LinuxSystemAudio {
           flapState.flips = 0;
           continue;
         }
-        flapState.flips += 1;
       } else {
         this.streamMoveState.set(id, { target, flips: 0, backoffUntil: 0 });
       }
 
-      await this.pactl(["move-sink-input", id, target]).catch(() => {});
+      const moved = await this.pactl(["move-sink-input", id, target]).then(() => true).catch(() => false);
+      if (moved && flapState) flapState.flips += 1;
     }
 
     for (const id of this.streamMoveState.keys()) {
@@ -347,15 +353,23 @@ class LinuxSystemAudio {
       this.hardwareSinkGuardTicks += 1;
       if (this.hardwareSinkGuardTicks >= HARDWARE_SINK_REVALIDATE_TICKS) {
         this.hardwareSinkGuardTicks = 0;
-        void this.revalidateHardwareSink();
+        if (!this.hardwareSinkRevalidation) {
+          this.hardwareSinkRevalidation = this.revalidateHardwareSink().finally(() => {
+            this.hardwareSinkRevalidation = null;
+          });
+        }
       }
     }, INPUT_GUARD_INTERVAL_MS);
   }
 
-  private stopInputGuard(): void {
+  private async stopInputGuard(): Promise<void> {
     if (this.inputGuard) {
       clearInterval(this.inputGuard);
       this.inputGuard = null;
+    }
+    if (this.hardwareSinkRevalidation) {
+      await this.hardwareSinkRevalidation.catch(() => {});
+      this.hardwareSinkRevalidation = null;
     }
   }
 
@@ -370,11 +384,19 @@ class LinuxSystemAudio {
   private async revalidateHardwareSink(): Promise<void> {
     if (!this.enabled || !this.hardwareSink) return;
     try {
-      const [sinksShort, virtualNames, currentDefault] = await Promise.all([
-        this.pactl(["list", "short", "sinks"]).catch(() => ""),
-        this.listVirtualSinkNames(),
-        this.pactl(["get-default-sink"]).catch(() => null),
-      ]);
+      let sinksShort: string;
+      let virtualNames: Set<string>;
+      let currentDefault: string | null;
+      try {
+        [sinksShort, virtualNames, currentDefault] = await Promise.all([
+          this.pactl(["list", "short", "sinks"]).catch(() => ""),
+          this.listVirtualSinkNames(),
+          this.pactl(["get-default-sink"]).catch(() => null),
+        ]);
+      } catch (err) {
+        console.error("[system-audio] sink detection failed, skipping revalidation:", err);
+        return;
+      }
       const sinkNames = new Set(
         sinksShort
           .split("\n")
@@ -406,6 +428,7 @@ class LinuxSystemAudio {
 
   /** Re-point the "hear what you're sharing" loopback at a new hardware sink. */
   private async retargetLoopback(nextHardwareSink: string): Promise<void> {
+    if (!this.enabled) return;
     const staleModuleIndexes = this.moduleIndexes.slice(1); // [0] is the null-sink itself
     const loopbackIndexStr = await this.pactl([
       "load-module",
@@ -422,8 +445,8 @@ class LinuxSystemAudio {
     this.moduleIndexes.push(parseInt(loopbackIndexStr, 10));
 
     for (const index of staleModuleIndexes) {
-      await this.pactl(["unload-module", String(index)]).catch(() => {});
-      this.moduleIndexes = this.moduleIndexes.filter((i) => i !== index);
+      const unloaded = await this.pactl(["unload-module", String(index)]).then(() => true).catch(() => false);
+      if (unloaded) this.moduleIndexes = this.moduleIndexes.filter((i) => i !== index);
     }
   }
 
@@ -655,7 +678,7 @@ class LinuxSystemAudio {
     // Mark disabled first so a recorder exit (async) can't schedule a restart
     // that would re-enable capture right after we tear everything down.
     this.enabled = false;
-    this.stopInputGuard();
+    await this.stopInputGuard();
     this.streamMoveState.clear();
     this.hardwareSinkGuardTicks = 0;
     await this.stopCapture();
@@ -723,8 +746,8 @@ class LinuxSystemAudio {
    */
   private async listVirtualSinkNames(): Promise<Set<string>> {
     const [sinksRaw, modulesRaw] = await Promise.all([
-      this.pactl(["list", "sinks"]).catch(() => ""),
-      this.pactl(["list", "short", "modules"]).catch(() => ""),
+      this.pactl(["list", "sinks"]),
+      this.pactl(["list", "short", "modules"]),
     ]);
 
     const moduleNameByIndex = new Map<string, string>();
