@@ -1,6 +1,7 @@
 "use client";
 
-import { useUser } from "@clerk/clerk-react";
+import { useReverification, useUser } from "@clerk/clerk-react";
+import type { EmailAddressResource } from "@clerk/types";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
@@ -11,8 +12,10 @@ import { Label } from "@/components/ui/label";
 
 export function AccountTab() {
   const { user, isLoaded } = useUser();
+  const { reverify } = useReverification();
 
   const [newEmail, setNewEmail] = useState("");
+  const [pendingEmail, setPendingEmail] = useState<EmailAddressResource | null>(null);
   const [pendingEmailId, setPendingEmailId] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
@@ -41,16 +44,18 @@ export function AccountTab() {
     setEmailError(null);
     setEmailSuccess(false);
     try {
-      const email = await user.createEmailAddress({ email: trimmed });
+      const email = await reverify(() => user.createEmailAddress({ email: trimmed }));
       // Set as soon as the address exists (not after prepareVerification
       // succeeds) so a failure below — or the user hitting Cancel — can
       // still find and destroy it instead of leaking an unverified address
       // on the Clerk account.
+      setPendingEmail(email);
       setPendingEmailId(email.id);
       try {
         await email.prepareVerification({ strategy: "email_code" });
       } catch (err) {
         await email.destroy().catch(() => {});
+        setPendingEmail(null);
         setPendingEmailId(null);
         throw err;
       }
@@ -66,19 +71,19 @@ export function AccountTab() {
     setEmailBusy(true);
     setEmailError(null);
     try {
-      const email = user.emailAddresses.find((e) => e.id === pendingEmailId);
-      if (!email) throw new Error("Verification session expired — start again.");
-      await email.attemptVerification({ code: code.trim() });
-      await user.update({ primaryEmailAddressId: email.id });
+      if (!pendingEmail) throw new Error("Verification session expired — start again.");
+      await pendingEmail.attemptVerification({ code: code.trim() });
+      await user.update({ primaryEmailAddressId: pendingEmail.id });
 
       // Keep the account down to a single email address, matching what the
       // old <UserProfile /> flow presented. Not caught per-address: if a
       // stale address fails to delete, the account isn't actually down to
       // one email yet, so that should surface as an error, not a false
       // "Email address updated."
-      const stale = user.emailAddresses.filter((e) => e.id !== email.id);
+      const stale = user.emailAddresses.filter((e) => e.id !== pendingEmail.id);
       await Promise.all(stale.map((e) => e.destroy()));
 
+      setPendingEmail(null);
       setPendingEmailId(null);
       setNewEmail("");
       setCode("");
@@ -91,13 +96,11 @@ export function AccountTab() {
   };
 
   const handleCancelEmailChange = () => {
-    const id = pendingEmailId;
+    const email = pendingEmail;
+    setPendingEmail(null);
     setPendingEmailId(null);
     setCode("");
     setEmailError(null);
-    // Best-effort: the unverified address created by handleSendCode
-    // shouldn't linger on the account just because the user gave up.
-    const email = id ? user.emailAddresses.find((e) => e.id === id) : undefined;
     void email?.destroy().catch(() => {});
   };
 
@@ -114,10 +117,12 @@ export function AccountTab() {
     }
     setPasswordBusy(true);
     try {
-      await user.updatePassword({
-        newPassword,
-        currentPassword: user.passwordEnabled ? currentPassword : undefined,
-      });
+      await reverify(() =>
+        user.updatePassword({
+          newPassword,
+          currentPassword: user.passwordEnabled ? currentPassword : undefined,
+        })
+      );
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
