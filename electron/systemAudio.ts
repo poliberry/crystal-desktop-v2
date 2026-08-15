@@ -381,11 +381,19 @@ class LinuxSystemAudio {
   private async revalidateHardwareSink(): Promise<void> {
     if (!this.enabled || !this.hardwareSink) return;
     try {
-      const [sinksShort, virtualNames, currentDefault] = await Promise.all([
-        this.pactl(["list", "short", "sinks"]).catch(() => ""),
-        this.listVirtualSinkNames(),
-        this.pactl(["get-default-sink"]).catch(() => null),
-      ]);
+      let sinksShort: string;
+      let virtualNames: Set<string>;
+      let currentDefault: string | null;
+      try {
+        [sinksShort, virtualNames, currentDefault] = await Promise.all([
+          this.pactl(["list", "short", "sinks"]).catch(() => ""),
+          this.listVirtualSinkNames(),
+          this.pactl(["get-default-sink"]).catch(() => null),
+        ]);
+      } catch (err) {
+        console.error("[system-audio] sink detection failed, skipping revalidation:", err);
+        return;
+      }
       const sinkNames = new Set(
         sinksShort
           .split("\n")
@@ -734,8 +742,8 @@ class LinuxSystemAudio {
    */
   private async listVirtualSinkNames(): Promise<Set<string>> {
     const [sinksRaw, modulesRaw] = await Promise.all([
-      this.pactl(["list", "sinks"]).catch(() => ""),
-      this.pactl(["list", "short", "modules"]).catch(() => ""),
+      this.pactl(["list", "sinks"]),
+      this.pactl(["list", "short", "modules"]),
     ]);
 
     const moduleNameByIndex = new Map<string, string>();
