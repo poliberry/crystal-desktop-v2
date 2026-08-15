@@ -1,7 +1,7 @@
 "use client";
 
 import { UserButton } from "@clerk/clerk-react";
-import { ChevronDown, Radio } from "lucide-react";
+import { ChevronDown, Radio, Settings } from "lucide-react";
 
 import { PresenceDot } from "@/components/presence-dot";
 import { Button } from "@/components/ui/button";
@@ -14,8 +14,29 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
+import { getDesktopAPI } from "@/lib/desktop";
 import { STATUS_LABEL, type ManualStatus } from "@/lib/presence";
+
+// TODO(settings-window): temporary entry point — relocates into the
+// bottom-left presence card in a follow-up PR, this button goes away then.
+function SettingsButton() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => void getDesktopAPI()?.settings.open()}
+        >
+          <Settings className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Settings</TooltipContent>
+    </Tooltip>
+  );
+}
 
 const MANUAL_STATUSES: ManualStatus[] = ["online", "dnd", "invisible"];
 
@@ -60,6 +81,7 @@ export function TopNav() {
       </div>
       <div className="flex items-center gap-2">
         <StatusMenu />
+        <SettingsButton />
         <UserButton />
       </div>
     </header>

@@ -103,6 +103,9 @@ export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
   appInfo(): Promise<AppInfo>;
+  settings: {
+    open(): Promise<void>;
+  };
   systemAudio: {
     enable(): Promise<SystemAudioState>;
     disable(): Promise<void>;
