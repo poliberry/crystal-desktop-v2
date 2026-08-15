@@ -36,7 +36,7 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
   const [sources, setSources] = useState<ScreenSource[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [audioChoice, setAudioChoiceState] = useState<SystemAudioChoice>(() => getDefaultAudioChoice());
-  const [apps, setApps] = useState<AudioApp[]>([]);
+  const [apps, setApps] = useState<AudioApp[] | null>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,9 +57,9 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
     // time it ever opened, even after the default changed in Settings.
     setAudioChoiceState(getDefaultAudioChoice());
     try {
-      const [list, appList] = await Promise.all([
+      const [list, appList]: [ScreenSource[], AudioApp[] | null] = await Promise.all([
         api.screenShare.getSources(),
-        api.systemAudioLinux?.listAudioApps().catch(() => [] as AudioApp[]) ?? Promise.resolve([]),
+        api.systemAudioLinux?.listAudioApps().catch(() => null) ?? Promise.resolve([]),
       ]);
       const screens = list.filter((s) => s.type === "screen");
       const windows = list.filter((s) => s.type === "window");
@@ -74,6 +74,7 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
       // loaded list rather than silently sharing no app audio.
       setAudioChoiceState((prev) => {
         if (prev.mode !== "app") return prev;
+        if (appList === null) return prev; // Don't reconcile on failure
         if (appList.some((a) => a.id === prev.appId)) return prev;
         const fallback: SystemAudioChoice = appList[0]
           ? { mode: "app", appId: appList[0].id }
@@ -199,7 +200,7 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
                   name="audio-choice"
                   checked={audioChoice.mode === "app"}
                   onChange={() => {
-                    const first = apps[0];
+                    const first = apps?.[0];
                     setAudioChoice(first ? { mode: "app", appId: first.id } : { mode: "app", appId: "" });
                   }}
                 />
@@ -210,12 +211,12 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
 
           {audioChoice.mode === "app" && (
             <ScrollArea className="max-h-44 rounded-md border bg-background/40 p-1">
-              {apps.length === 0 ? (
+              {(apps?.length ?? 0) === 0 ? (
                 <p className="px-2 py-3 text-xs text-muted-foreground">
                   No audio-playing apps detected. Start some audio and try again.
                 </p>
               ) : (
-                apps.map((app) => (
+                apps?.map((app) => (
                   <label
                     key={app.id}
                     className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
