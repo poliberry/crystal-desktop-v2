@@ -7,11 +7,13 @@ import type { Id } from "../../../convex/_generated/dataModel";
 export interface NavigationActions {
   openConversation: (id: Id<"conversations">) => void;
   openCommunity: (id: Id<"communities">, channelId?: Id<"channels">) => void;
+  goHome: () => void;
 }
 
 const NOOP: NavigationActions = {
   openConversation: () => {},
   openCommunity: () => {},
+  goHome: () => {},
 };
 
 const NavigationContext = createContext<{ current: NavigationActions } | null>(null);

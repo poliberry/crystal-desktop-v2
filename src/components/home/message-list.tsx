@@ -13,6 +13,7 @@ import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -216,6 +217,23 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
   );
 }
 
+function MessageListSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 px-2 py-2">
+      {[48, 32, 64, 40, 56].map((w, i) => (
+        <div key={i} className="flex gap-3">
+          <Skeleton className="size-9 shrink-0 rounded-full" />
+          <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-3.5 w-28" />
+            <Skeleton className="h-3.5" style={{ width: `${w}%` }} />
+            {i % 2 === 0 && <Skeleton className="h-3.5" style={{ width: `${w - 12}%` }} />}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function MessageList({ conversationId }: MessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.messages.list,
@@ -234,6 +252,14 @@ export function MessageList({ conversationId }: MessageListProps) {
       bottomRef.current?.scrollIntoView({ block: "end" });
     }
   }, [chronological]);
+
+  if (status === "LoadingFirstPage") {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <MessageListSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">

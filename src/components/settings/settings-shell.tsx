@@ -1,19 +1,23 @@
 "use client";
 
-import { Bell, Download, Info, KeyRound, Mic, User } from "lucide-react";
+import { Bell, Download, Info, KeyRound, Mic, Palette, Server, User } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
+import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
 import { PlaceholderTab } from "@/components/settings/tabs/placeholder-tab";
 import { ProfileTab } from "@/components/settings/tabs/profile-tab";
+import { ServerProfilesTab } from "@/components/settings/tabs/server-profiles-tab";
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
 import { WindowControls } from "@/components/window-controls";
 
 const TABS = [
   { value: "profile", label: "Profile", icon: User },
+  { value: "appearance", label: "Appearance", icon: Palette },
+  { value: "servers", label: "Servers", icon: Server },
   { value: "account", label: "Account", icon: KeyRound },
   { value: "voice", label: "Voice & Video", icon: Mic },
   { value: "notifications", label: "Notifications", icon: Bell },
@@ -48,6 +52,12 @@ export function SettingsShell() {
           <div className="mx-auto w-full max-w-2xl px-6 py-6">
             <TabsContent value="profile">
               <ProfileTab />
+            </TabsContent>
+            <TabsContent value="appearance">
+              <AppearanceTab />
+            </TabsContent>
+            <TabsContent value="servers">
+              <ServerProfilesTab />
             </TabsContent>
             <TabsContent value="account">
               <AccountTab />

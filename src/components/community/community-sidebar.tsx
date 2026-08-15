@@ -1,10 +1,20 @@
 "use client";
 
-import { DndContext, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  closestCenter,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery } from "convex/react";
-import { ChevronDown, Hash, MoreVertical, Plus, Settings, UserPlus, Volume2 } from "lucide-react";
+import { ChevronDown, FolderPlus, Hash, LogOut, Settings, UserPlus, Volume2 } from "lucide-react";
 import type { Room } from "livekit-client";
 import { useEffect, useMemo, useState } from "react";
 
@@ -19,20 +29,22 @@ import { EditChannelDialog } from "@/components/community/edit-channel-dialog";
 import { InviteDialog } from "@/components/community/invite-dialog";
 import { VoiceChannelParticipants } from "@/components/community/voice-channel-participants";
 import { UserCard } from "@/components/home/user-card";
-import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
@@ -45,18 +57,52 @@ type ChannelRow = {
   position: number;
 };
 
+type ActiveDragItem =
+  | { type: "channel"; id: Id<"channels">; name: string; channelType: "text" | "voice" }
+  | { type: "category"; id: Id<"channelCategories">; name: string }
+  | null;
+
 interface CommunitySidebarProps {
   communityId: Id<"communities">;
   selectedChannelId: Id<"channels"> | null;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
 }
 
+function ChannelListSkeleton() {
+  return (
+    <div className="flex flex-col gap-3 p-2">
+      <div className="flex flex-col gap-1">
+        <Skeleton className="h-8 rounded-md" />
+        <Skeleton className="h-8 rounded-md" />
+        <Skeleton className="h-8 rounded-md" />
+      </div>
+      <Skeleton className="h-3 w-24" />
+      <div className="flex flex-col gap-1">
+        <Skeleton className="h-8 rounded-md" />
+        <Skeleton className="h-8 rounded-md" />
+      </div>
+      <Skeleton className="h-3 w-20" />
+      <div className="flex flex-col gap-1">
+        <Skeleton className="h-8 rounded-md" />
+      </div>
+    </div>
+  );
+}
+
 export function CommunitySidebar({ communityId, selectedChannelId, onSelectChannel }: CommunitySidebarProps) {
   const community = useQuery(api.communities.get, { communityId });
-  const channels = useQuery(api.channels.list, { communityId }) ?? [];
-  const categories = useQuery(api.channelCategories.list, { communityId }) ?? [];
+  const rawChannels = useQuery(api.channels.list, { communityId });
+  const rawCategories = useQuery(api.channelCategories.list, { communityId });
+  const channels = rawChannels ?? [];
+  const categories = rawCategories ?? [];
+  const isLoadingChannels = rawChannels === undefined || rawCategories === undefined;
+
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
   const { activeCall, controller } = useCall();
+  const leaveCommunity = useMutation(api.communities.leave);
+  const deleteChannel = useMutation(api.channels.remove);
+  const deleteCategory = useMutation(api.channelCategories.remove);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
@@ -72,46 +118,125 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
       const firstText = [...channels].sort((a, b) => a.position - b.position).find((c) => c.type === "text");
       if (firstText) onSelectChannel(firstText.id, "text");
     }
-    // Only auto-select once channels first load for this community.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels.length > 0]);
 
   if (!community) {
-    return <div className="flex w-64 shrink-0 flex-col border-r bg-background/40" />;
+    return (
+      <div className="flex w-64 shrink-0 flex-col border-r bg-background/40">
+        <div className="flex h-14 shrink-0 items-center border-b px-3">
+          <Skeleton className="h-4 w-36" />
+        </div>
+        <ChannelListSkeleton />
+      </div>
+    );
   }
+
+  const hasBanner = !!community.bannerUrl;
 
   return (
     <div className="flex w-64 shrink-0 flex-col border-r bg-background/40">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b px-3">
-        <p className="truncate text-sm font-semibold">{community.name}</p>
-        <div className="flex items-center gap-0.5">
-          {canCreateInvite && (
-            <Button variant="ghost" size="icon" className="size-7" onClick={() => setInviteOpen(true)}>
-              <UserPlus className="size-4" />
-            </Button>
+      <DropdownMenu>
+        {/* Banner + trigger share a relative container so the trigger can
+            overlay the bottom of the banner with a gradient backdrop */}
+        <div className={cn("relative shrink-0", hasBanner ? "h-32" : "h-12")}>
+          {hasBanner && (
+            <>
+              <div
+                className="absolute inset-0 bg-cover bg-center"
+                style={{ backgroundImage: `url(${community.bannerUrl})` }}
+              />
+              {/* Fade banner to sidebar background at the bottom */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background to-transparent" />
+            </>
           )}
-          <Button variant="ghost" size="icon" className="size-7" onClick={() => setSettingsOpen(true)}>
-            <Settings className="size-4" />
-          </Button>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="absolute inset-x-0 bottom-0 flex h-12 w-full items-center justify-between border-b px-3 text-left transition-colors hover:bg-accent/20"
+            >
+              <p className="truncate text-sm font-semibold">{community.name}</p>
+              <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
         </div>
-      </div>
+        <DropdownMenuContent className="w-56" align="start">
+          {canCreateInvite && (
+            <DropdownMenuItem onClick={() => setInviteOpen(true)}>
+              <UserPlus className="size-4" />
+              Invite People
+            </DropdownMenuItem>
+          )}
+          {canManageChannels && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setCreateChannelFor(null)}>
+                <Hash className="size-4" />
+                Create Channel
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setCreateCategoryOpen(true)}>
+                <FolderPlus className="size-4" />
+                Create Category
+              </DropdownMenuItem>
+            </>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+            <Settings className="size-4" />
+            Server Settings
+          </DropdownMenuItem>
+          {!community.isOwner && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={() => void leaveCommunity({ communityId })}
+              >
+                <LogOut className="size-4" />
+                Leave Server
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <ChannelTree
-          communityId={communityId}
-          channels={channels}
-          categories={categories}
-          selectedChannelId={selectedChannelId}
-          onSelectChannel={onSelectChannel}
-          canManageChannels={canManageChannels}
-          activeVoiceChannelId={activeCall?.kind === "channel" ? activeCall.channelId : null}
-          liveRoom={controller.room}
-          onCreateChannel={(categoryId) => setCreateChannelFor(categoryId)}
-          onEditChannel={setEditingChannel}
-          onEditCategory={setEditingCategory}
-          onCreateCategory={() => setCreateCategoryOpen(true)}
-        />
-      </ScrollArea>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <ScrollArea className="min-h-0 flex-1">
+            {isLoadingChannels ? (
+              <ChannelListSkeleton />
+            ) : (
+              <ChannelTree
+                communityId={communityId}
+                channels={channels}
+                categories={categories}
+                selectedChannelId={selectedChannelId}
+                onSelectChannel={onSelectChannel}
+                canManageChannels={canManageChannels}
+                activeVoiceChannelId={activeCall?.kind === "channel" ? activeCall.channelId : null}
+                liveRoom={controller.room}
+                onCreateChannel={(categoryId) => setCreateChannelFor(categoryId)}
+                onEditChannel={setEditingChannel}
+                onDeleteChannel={(channelId) => void deleteChannel({ channelId })}
+                onEditCategory={setEditingCategory}
+                onDeleteCategory={(categoryId) => void deleteCategory({ categoryId })}
+                onCreateCategory={() => setCreateCategoryOpen(true)}
+              />
+            )}
+          </ScrollArea>
+        </ContextMenuTrigger>
+        {canManageChannels && (
+          <ContextMenuContent>
+            <ContextMenuItem onClick={() => setCreateChannelFor(null)}>
+              <Hash className="size-4" />
+              Create Channel
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setCreateCategoryOpen(true)}>
+              <FolderPlus className="size-4" />
+              Create Category
+            </ContextMenuItem>
+          </ContextMenuContent>
+        )}
+      </ContextMenu>
 
       <UserCard />
 
@@ -127,7 +252,6 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
       <CreateCategoryDialog communityId={communityId} open={createCategoryOpen} onOpenChange={setCreateCategoryOpen} />
       <EditChannelDialog channel={editingChannel} onOpenChange={(open) => !open && setEditingChannel(null)} />
       <EditCategoryDialog category={editingCategory} onOpenChange={(open) => !open && setEditingCategory(null)} />
-
       <CommunitySettingsDialog
         communityId={communityId}
         open={settingsOpen}
@@ -153,7 +277,9 @@ interface ChannelTreeProps {
   liveRoom: Room | null;
   onCreateChannel: (categoryId: Id<"channelCategories"> | null) => void;
   onEditChannel: (channel: ChannelRow) => void;
+  onDeleteChannel: (channelId: Id<"channels">) => void;
   onEditCategory: (category: { id: Id<"channelCategories">; name: string }) => void;
+  onDeleteCategory: (categoryId: Id<"channelCategories">) => void;
   onCreateCategory: () => void;
 }
 
@@ -178,13 +304,16 @@ function ChannelTree({
   liveRoom,
   onCreateChannel,
   onEditChannel,
+  onDeleteChannel,
   onEditCategory,
+  onDeleteCategory,
   onCreateCategory,
 }: ChannelTreeProps) {
   const reorderChannels = useMutation(api.channels.reorder);
   const reorderCategories = useMutation(api.channelCategories.reorder);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const [activeItem, setActiveItem] = useState<ActiveDragItem>(null);
 
   const { uncategorized, categoryBuckets } = useMemo(() => {
     const sortedCategories = [...categories].sort((a, b) => a.position - b.position);
@@ -203,15 +332,26 @@ function ChannelTree({
     };
   }, [channels, categories]);
 
-  // Combined view (uncategorized bucket first) purely for the drag-end
-  // lookup below — rendering uses `uncategorized`/`categoryBuckets`
-  // separately so CategorySection's props stay non-nullable.
   const buckets: BucketData[] = [
     { id: null, name: null, channels: uncategorized },
     ...categoryBuckets,
   ];
 
+  const handleDragStart = (event: DragStartEvent) => {
+    const data = event.active.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
+    if (!data) return;
+
+    if (data.type === "category") {
+      const cat = categories.find((c) => categoryKey(c.id) === String(event.active.id));
+      if (cat) setActiveItem({ type: "category", id: cat.id, name: cat.name });
+    } else if (data.type === "channel") {
+      const chan = channels.find((c) => channelKey(c.id) === String(event.active.id));
+      if (chan) setActiveItem({ type: "channel", id: chan.id, name: chan.name, channelType: chan.type });
+    }
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
+    setActiveItem(null);
     const { active, over } = event;
     if (!over) return;
     const activeData = active.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
@@ -257,30 +397,32 @@ function ChannelTree({
     }
   };
 
-  return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <div className="flex flex-col gap-3 p-2">
-        <div className="flex items-center justify-between px-1">
-          <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Channels</span>
-          {canManageChannels && (
-            <div className="flex items-center gap-0.5">
-              <Button variant="ghost" size="icon" className="size-5" onClick={onCreateCategory} title="New category">
-                <Plus className="size-3.5" />
-              </Button>
-            </div>
-          )}
-        </div>
+  // Only show the uncategorized bucket when it has channels, or when
+  // there are no categories at all (so the "No channels yet" message appears).
+  const showUncategorized = uncategorized.length > 0 || categories.length === 0;
 
-        <ChannelBucket
-          bucket={{ id: null, name: null, channels: uncategorized }}
-          selectedChannelId={selectedChannelId}
-          activeVoiceChannelId={activeVoiceChannelId}
-          onSelectChannel={onSelectChannel}
-          canManageChannels={canManageChannels}
-          liveRoom={liveRoom}
-          onCreateChannel={onCreateChannel}
-          onEditChannel={onEditChannel}
-        />
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="flex flex-col gap-2 p-2">
+        {showUncategorized && (
+          <ChannelBucket
+            bucket={{ id: null, name: null, channels: uncategorized }}
+            totalChannelCount={channels.length}
+            selectedChannelId={selectedChannelId}
+            activeVoiceChannelId={activeVoiceChannelId}
+            onSelectChannel={onSelectChannel}
+            canManageChannels={canManageChannels}
+            liveRoom={liveRoom}
+            onCreateChannel={onCreateChannel}
+            onEditChannel={onEditChannel}
+            onDeleteChannel={onDeleteChannel}
+          />
+        )}
 
         <SortableContext items={categories.map((c) => categoryKey(c.id))} strategy={verticalListSortingStrategy}>
           {categoryBuckets.map((bucket) => (
@@ -294,11 +436,32 @@ function ChannelTree({
               liveRoom={liveRoom}
               onCreateChannel={onCreateChannel}
               onEditChannel={onEditChannel}
+              onDeleteChannel={onDeleteChannel}
               onEditCategory={onEditCategory}
+              onDeleteCategory={onDeleteCategory}
             />
           ))}
         </SortableContext>
       </div>
+
+      <DragOverlay dropAnimation={{ duration: 150, easing: "ease" }}>
+        {activeItem?.type === "channel" && (
+          <div className="flex items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-sm opacity-90 shadow-md">
+            {activeItem.channelType === "text" ? (
+              <Hash className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <Volume2 className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate">{activeItem.name}</span>
+          </div>
+        )}
+        {activeItem?.type === "category" && (
+          <div className="flex items-center gap-1 px-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase opacity-90 shadow-sm">
+            <ChevronDown className="size-3 shrink-0" />
+            <span className="truncate">{activeItem.name}</span>
+          </div>
+        )}
+      </DragOverlay>
     </DndContext>
   );
 }
@@ -324,7 +487,9 @@ function CategorySection({
   liveRoom,
   onCreateChannel,
   onEditChannel,
+  onDeleteChannel,
   onEditCategory,
+  onDeleteCategory,
 }: {
   bucket: CategoryBucketData;
   selectedChannelId: Id<"channels"> | null;
@@ -334,7 +499,9 @@ function CategorySection({
   liveRoom: Room | null;
   onCreateChannel: (categoryId: Id<"channelCategories"> | null) => void;
   onEditChannel: (channel: ChannelRow) => void;
+  onDeleteChannel: (channelId: Id<"channels">) => void;
   onEditCategory: (category: { id: Id<"channelCategories">; name: string }) => void;
+  onDeleteCategory: (categoryId: Id<"channelCategories">) => void;
 }) {
   const categoryId = bucket.id;
   const [collapsed, setCollapsed] = useState(false);
@@ -343,58 +510,45 @@ function CategorySection({
     id: categoryKey(categoryId),
     data: { type: "category" },
   });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 };
 
   return (
     <div ref={setNodeRef} style={style}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className="group/cat flex items-center justify-between px-1"
+            className="flex items-center px-1"
             {...attributes}
             {...listeners}
           >
             <button
               type="button"
               onClick={() => setCollapsed((v) => !v)}
-              className="flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
+              className="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
             >
               <ChevronDown className={cn("size-3 shrink-0 transition-transform", collapsed && "-rotate-90")} />
               <span className="truncate">{bucket.name}</span>
             </button>
-            {canManageChannels && (
-              <div className="flex items-center gap-0.5 opacity-0 group-hover/cat:opacity-100">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-5"
-                  onClick={() => onCreateChannel(categoryId)}
-                  title="New channel"
-                >
-                  <Plus className="size-3.5" />
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="size-5">
-                      <MoreVertical className="size-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => onEditCategory({ id: categoryId, name: bucket.name })}>
-                      Edit category
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onClick={() => onCreateChannel(categoryId)}>New channel</ContextMenuItem>
+          <ContextMenuItem onClick={() => onCreateChannel(categoryId)}>
+            <Hash className="size-4" />
+            New Channel
+          </ContextMenuItem>
           {canManageChannels && (
-            <ContextMenuItem onClick={() => onEditCategory({ id: categoryId, name: bucket.name })}>
-              Edit category
-            </ContextMenuItem>
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => onEditCategory({ id: categoryId, name: bucket.name })}>
+                Edit Category
+              </ContextMenuItem>
+              <ContextMenuItem
+                variant="destructive"
+                onClick={() => onDeleteCategory(categoryId)}
+              >
+                Delete Category
+              </ContextMenuItem>
+            </>
           )}
         </ContextMenuContent>
       </ContextMenu>
@@ -409,6 +563,7 @@ function CategorySection({
           liveRoom={liveRoom}
           onCreateChannel={onCreateChannel}
           onEditChannel={onEditChannel}
+          onDeleteChannel={onDeleteChannel}
         />
       )}
     </div>
@@ -417,6 +572,7 @@ function CategorySection({
 
 function ChannelBucket({
   bucket,
+  totalChannelCount = 0,
   selectedChannelId,
   activeVoiceChannelId,
   onSelectChannel,
@@ -424,8 +580,10 @@ function ChannelBucket({
   liveRoom,
   onCreateChannel,
   onEditChannel,
+  onDeleteChannel,
 }: {
   bucket: BucketData;
+  totalChannelCount?: number;
   selectedChannelId: Id<"channels"> | null;
   activeVoiceChannelId: Id<"channels"> | null;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
@@ -433,11 +591,14 @@ function ChannelBucket({
   liveRoom: Room | null;
   onCreateChannel: (categoryId: Id<"channelCategories"> | null) => void;
   onEditChannel: (channel: ChannelRow) => void;
+  onDeleteChannel: (channelId: Id<"channels">) => void;
 }) {
   const { setNodeRef } = useDroppable({
     id: dropzoneKey(bucket.id),
     data: { type: "channel-dropzone", categoryId: bucket.id },
   });
+
+  const noChannelsAtAll = totalChannelCount === 0;
 
   return (
     <SortableContext items={bucket.channels.map((c) => channelKey(c.id))} strategy={verticalListSortingStrategy}>
@@ -452,19 +613,11 @@ function ChannelBucket({
             canManageChannels={canManageChannels}
             liveRoom={liveRoom}
             onEditChannel={onEditChannel}
+            onDeleteChannel={onDeleteChannel}
           />
         ))}
-        {bucket.channels.length === 0 && bucket.id === null && (
-          <p className="px-2 py-1 text-xs text-muted-foreground">No channels yet.</p>
-        )}
-        {canManageChannels && bucket.id === null && bucket.channels.length === 0 && (
-          <button
-            type="button"
-            onClick={() => onCreateChannel(null)}
-            className="px-2 py-1 text-left text-xs text-muted-foreground hover:text-foreground hover:underline"
-          >
-            Create a channel
-          </button>
+        {noChannelsAtAll && bucket.id === null && (
+          <p className="px-2 py-1 text-xs text-muted-foreground">No channels yet. Right-click to create one.</p>
         )}
       </div>
     </SortableContext>
@@ -479,6 +632,7 @@ function ChannelItem({
   canManageChannels,
   liveRoom,
   onEditChannel,
+  onDeleteChannel,
 }: {
   channel: ChannelRow;
   active: boolean;
@@ -487,25 +641,29 @@ function ChannelItem({
   canManageChannels: boolean;
   liveRoom: Room | null;
   onEditChannel: (channel: ChannelRow) => void;
+  onDeleteChannel: (channelId: Id<"channels">) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: channelKey(channel.id),
     data: { type: "channel", categoryId: channel.categoryId },
   });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 };
 
   return (
     <div ref={setNodeRef} style={style}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="group/chan relative" {...attributes} {...listeners}>
+          <div {...attributes} {...listeners}>
             <button
               type="button"
               onClick={() => onSelectChannel(channel.id, channel.type)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/60",
-                active && "bg-accent text-foreground",
-                !active && "text-muted-foreground"
+                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                isVoiceActive
+                  ? "bg-emerald-500/10 text-foreground hover:bg-emerald-500/20"
+                  : active
+                  ? "bg-accent text-foreground hover:bg-accent"
+                  : "text-muted-foreground hover:bg-accent/60"
               )}
             >
               {channel.type === "text" ? (
@@ -516,29 +674,15 @@ function ChannelItem({
               <span className="truncate">{channel.name}</span>
               {isVoiceActive && <span className="ml-auto text-[10px] text-emerald-500">Connected</span>}
             </button>
-
-            {canManageChannels && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-1/2 right-1 size-5 -translate-y-1/2 opacity-0 group-hover/chan:opacity-100"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <MoreVertical className="size-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => onEditChannel(channel)}>Edit channel</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
         </ContextMenuTrigger>
         {canManageChannels && (
           <ContextMenuContent>
-            <ContextMenuItem onClick={() => onEditChannel(channel)}>Edit channel</ContextMenuItem>
+            <ContextMenuItem onClick={() => onEditChannel(channel)}>Edit Channel</ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" onClick={() => onDeleteChannel(channel.id)}>
+              Delete Channel
+            </ContextMenuItem>
           </ContextMenuContent>
         )}
       </ContextMenu>

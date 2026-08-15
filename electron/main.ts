@@ -132,6 +132,12 @@ let mainWindow: BrowserWindow | null = null;
 // app.whenReady().
 let isQuitting = false;
 
+// Windows requires the App User Model ID to be set before the app is ready
+// for OS toast notifications to be supported (Notification.isSupported()).
+if (process.platform === "win32") {
+  app.setAppUserModelId("dev.crystal.desktop");
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -275,7 +281,7 @@ app.whenReady().then(async () => {
   // before the request; without an allowlist here the check is denied and
   // the request handler above never even runs.
   ses.setPermissionCheckHandler((_webContents, permission) => {
-    return ["media", "display-capture", "fullscreen", "clipboard-sanitized-write"].includes(permission);
+    return ["media", "display-capture", "fullscreen", "clipboard-sanitized-write", "notifications"].includes(permission);
   });
 
   // The custom screen-share picker (see ScreenSharePicker.tsx) tells us which

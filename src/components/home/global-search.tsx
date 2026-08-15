@@ -53,7 +53,7 @@ export function GlobalSearch() {
           style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           className="relative mx-auto w-full max-w-md"
         >
-          <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(e) => {
@@ -62,13 +62,13 @@ export function GlobalSearch() {
             }}
             onFocus={() => setOpen(true)}
             placeholder="Search"
-            className="pl-8"
+            className="pl-8 h-7 rounded-none"
           />
         </div>
       </PopoverAnchor>
       <PopoverContent
         align="center"
-        className="w-96 max-h-80 overflow-y-auto p-1"
+        className="w-120 max-h-80 overflow-y-auto rounded-none p-1"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         {matchedConversations.length > 0 && (

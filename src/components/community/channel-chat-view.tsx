@@ -8,6 +8,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ChannelMessageComposer } from "@/components/community/channel-message-composer";
 import { ChannelMessageList } from "@/components/community/channel-message-list";
+import { TypingIndicator } from "@/components/typing-indicator";
 import { MemberList } from "@/components/community/member-list";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -28,7 +29,7 @@ export function ChannelChatView({ channelId, communityId, name, topic }: Channel
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b px-2">
           <Hash className="size-4 shrink-0 text-muted-foreground" />
           <p className="shrink-0 text-sm font-semibold">{name}</p>
           {topic && <p className="truncate text-xs text-muted-foreground">— {topic}</p>}
@@ -55,6 +56,7 @@ export function ChannelChatView({ channelId, communityId, name, topic }: Channel
         </div>
 
         <ChannelMessageList channelId={channelId} channelName={name} canManageMessages={canManageMessages} />
+        <TypingIndicator channelId={channelId} />
         <ChannelMessageComposer channelId={channelId} />
       </div>
 

@@ -7,7 +7,6 @@ import { useCall } from "@/components/call/call-provider";
 import { ChannelView } from "@/components/community/channel-view";
 import { CommunitySidebar } from "@/components/community/community-sidebar";
 import { ChatView } from "@/components/home/chat-view";
-import { CommunityRail } from "@/components/home/community-rail";
 import { FriendsPanel } from "@/components/home/friends-panel";
 import { NavSidebar } from "@/components/home/nav-sidebar";
 import { useNavigation, useRegisterNavigation } from "@/components/home/navigation-context";
@@ -27,42 +26,44 @@ export function HomeLayout() {
   const [selectedCommunityId, setSelectedCommunityId] = useState<Id<"communities"> | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<Id<"channels"> | null>(null);
 
-  const { activeCall, expanded, joinDmCall, joinChannelCall, collapse, joinError, dismissJoinError } = useCall();
+  const { activeCall, expanded, joinDmCall, joinChannelCall, expand, collapse, joinError, dismissJoinError } = useCall();
 
-  // Navigating anywhere always shows that content — an in-progress call
-  // keeps running (see the mini bar) but stops being the focused pane.
+  // Navigation never collapses an active call — the call stage stays visible
+  // until the user explicitly clicks "Back" in the call stage or disconnects.
+  // collapse() is only called by the call stage's own back button and leaveCall.
   const openConversation = (id: Id<"conversations">) => {
     setActiveConversationId(id);
     setDmView("dm");
     setSelectedCommunityId(null);
-    collapse();
   };
 
   const selectFriends = () => {
     setDmView("friends");
     setSelectedCommunityId(null);
-    collapse();
   };
 
   const selectCommunity = (id: Id<"communities">, channelId?: Id<"channels">) => {
     setSelectedCommunityId(id);
     setSelectedChannelId(channelId ?? null);
-    collapse();
   };
 
   const selectChannel = (channelId: Id<"channels">, type: "text" | "voice") => {
     if (type === "voice") {
-      if (selectedCommunityId) {
-        dismissJoinError();
-        void joinChannelCall(channelId, selectedCommunityId);
+      if (!selectedCommunityId) return;
+      // Already connected — just expand back to the full call stage
+      if (activeCall?.kind === "channel" && activeCall.channelId === channelId) {
+        expand();
+        return;
       }
+      dismissJoinError();
+      void joinChannelCall(channelId, selectedCommunityId);
       return;
     }
     setSelectedChannelId(channelId);
     collapse();
   };
 
-  useRegisterNavigation({ openConversation, openCommunity: selectCommunity });
+  useRegisterNavigation({ openConversation, openCommunity: selectCommunity, goHome: selectFriends });
 
   const nav = useNavigation();
 
@@ -98,12 +99,6 @@ export function HomeLayout() {
 
   return (
     <div className="flex h-full">
-      <CommunityRail
-        selectedCommunityId={selectedCommunityId}
-        onSelectHome={selectFriends}
-        onSelectCommunity={selectCommunity}
-      />
-
       {selectedCommunityId ? (
         <CommunitySidebar
           communityId={selectedCommunityId}

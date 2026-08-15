@@ -13,6 +13,7 @@ import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -34,9 +35,6 @@ interface ChannelMessageListProps {
 function ChannelWelcome({ channelName }: { channelName: string }) {
   return (
     <div className="px-1 pt-4 pb-6">
-      <div className="mb-3 flex size-16 items-center justify-center rounded-full bg-muted">
-        <Hash className="size-8 text-muted-foreground" />
-      </div>
       <h2 className="text-2xl font-bold">Welcome to #{channelName}!</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         This is the start of the #{channelName} channel.
@@ -248,6 +246,23 @@ function MessageRow({
   );
 }
 
+function MessageListSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 px-2 py-2">
+      {[48, 32, 64, 40, 56].map((w, i) => (
+        <div key={i} className="flex gap-3">
+          <Skeleton className="size-9 shrink-0 rounded-full" />
+          <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-3.5 w-28" />
+            <Skeleton className={`h-3.5 w-${w}`} style={{ width: `${w}%` }} />
+            {i % 2 === 0 && <Skeleton className="h-3.5" style={{ width: `${w - 12}%` }} />}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ChannelMessageList({ channelId, channelName, canManageMessages }: ChannelMessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.channelMessages.list,
@@ -266,6 +281,14 @@ export function ChannelMessageList({ channelId, channelName, canManageMessages }
       bottomRef.current?.scrollIntoView({ block: "end" });
     }
   }, [chronological]);
+
+  if (status === "LoadingFirstPage") {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <MessageListSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">

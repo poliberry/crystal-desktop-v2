@@ -28,6 +28,8 @@ import type * as notifications from "../notifications.js";
 import type * as permissions from "../permissions.js";
 import type * as presence from "../presence.js";
 import type * as roles from "../roles.js";
+import type * as serverProfiles from "../serverProfiles.js";
+import type * as typing from "../typing.js";
 import type * as users from "../users.js";
 
 import type {
@@ -57,6 +59,8 @@ declare const fullApi: ApiFromModules<{
   permissions: typeof permissions;
   presence: typeof presence;
   roles: typeof roles;
+  serverProfiles: typeof serverProfiles;
+  typing: typeof typing;
   users: typeof users;
 }>;
 

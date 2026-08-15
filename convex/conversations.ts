@@ -15,7 +15,18 @@ async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
 async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
   const user = await ctx.db.get(userId);
   if (!user) return null;
-  return { id: user._id, name: user.name, username: user.username, imageUrl: user.imageUrl };
+  const presence = await ctx.db
+    .query("presence")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .unique();
+  return {
+    id: user._id,
+    name: user.name,
+    username: user.username,
+    imageUrl: user.imageUrl,
+    customStatus: user.customStatus,
+    status: presence?.effective ?? "offline",
+  };
 }
 
 function dmKeyFor(a: Id<"users">, b: Id<"users">) {
@@ -133,6 +144,11 @@ export const listMembersWithPresence = query({
           username: user?.username ?? "unknown",
           imageUrl: user?.imageUrl,
           bio: user?.bio,
+          customStatus: user?.customStatus,
+          nameplateUrl: user?.nameplateUrl,
+          bannerUrl: user?.bannerUrl,
+          borderGradientStart: user?.borderGradientStart,
+          borderGradientEnd: user?.borderGradientEnd,
           status: presence?.effective ?? "offline",
         };
       })

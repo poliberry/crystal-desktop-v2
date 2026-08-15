@@ -117,6 +117,7 @@ export const get = query({
       id: community._id,
       name: community.name,
       imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
       ownerId: community.ownerId,
       isOwner: community.ownerId === me._id,
     };
@@ -191,6 +192,41 @@ export const setIcon = mutation({
     const previous = community.iconStorageId;
     await ctx.db.patch(communityId, { imageUrl: url, iconStorageId: storageId });
     if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+  },
+});
+
+export const generateBannerUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+export const setBanner = mutation({
+  args: { communityId: v.id("communities"), storageId: v.id("_storage") },
+  handler: async (ctx, { communityId, storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Banner upload failed.");
+    const previous = community.bannerStorageId;
+    await ctx.db.patch(communityId, { bannerUrl: url, bannerStorageId: storageId });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    return url;
+  },
+});
+
+export const removeBanner = mutation({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, { communityId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
+    const previous = community.bannerStorageId;
+    await ctx.db.patch(communityId, { bannerUrl: undefined, bannerStorageId: undefined });
+    if (previous) await ctx.storage.delete(previous).catch(() => {});
   },
 });
 
@@ -287,18 +323,31 @@ export const listMembers = query({
 
     return Promise.all(
       members.map(async (member) => {
-        const user = await ctx.db.get(member.userId);
-        const presence = await ctx.db
-          .query("presence")
-          .withIndex("by_user", (q) => q.eq("userId", member.userId))
-          .unique();
+        const [user, serverProfile, presence] = await Promise.all([
+          ctx.db.get(member.userId),
+          ctx.db
+            .query("serverProfiles")
+            .withIndex("by_user_community", (q) =>
+              q.eq("userId", member.userId).eq("communityId", communityId)
+            )
+            .unique(),
+          ctx.db
+            .query("presence")
+            .withIndex("by_user", (q) => q.eq("userId", member.userId))
+            .unique(),
+        ]);
         const roleIds = memberRoles.filter((mr) => mr.userId === member.userId).map((mr) => mr.roleId);
         return {
           userId: member.userId,
-          name: user?.name ?? "Unknown",
+          name: serverProfile?.displayName ?? user?.name ?? "Unknown",
           username: user?.username ?? "unknown",
-          imageUrl: user?.imageUrl,
-          bio: user?.bio,
+          imageUrl: serverProfile?.imageUrl ?? user?.imageUrl,
+          bio: serverProfile?.bio ?? user?.bio,
+          customStatus: serverProfile?.customStatus ?? user?.customStatus,
+          nameplateUrl: serverProfile?.nameplateUrl ?? user?.nameplateUrl,
+          bannerUrl: serverProfile?.bannerUrl ?? user?.bannerUrl,
+          borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
+          borderGradientEnd: serverProfile?.borderGradientEnd ?? user?.borderGradientEnd,
           isOwner: community.ownerId === member.userId,
           status: presence?.effective ?? "offline",
           roles: roleIds
@@ -404,6 +453,7 @@ export const resolveInvite = query({
       id: community._id,
       name: community.name,
       imageUrl: community.imageUrl,
+      bannerUrl: community.bannerUrl,
       memberCount: members.length,
     };
   },

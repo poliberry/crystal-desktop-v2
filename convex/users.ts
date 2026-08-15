@@ -127,6 +127,79 @@ export const generateAvatarUploadUrl = mutation({
   },
 });
 
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+export const updateProfileExtended = mutation({
+  args: {
+    customStatus: v.optional(v.string()),
+    borderGradientStart: v.optional(v.string()),
+    borderGradientEnd: v.optional(v.string()),
+    profileBg: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const patch: Record<string, string | undefined> = {};
+    if (args.customStatus !== undefined)
+      patch.customStatus = args.customStatus.trim().slice(0, 128) || undefined;
+    if (args.borderGradientStart !== undefined) patch.borderGradientStart = args.borderGradientStart || undefined;
+    if (args.borderGradientEnd !== undefined) patch.borderGradientEnd = args.borderGradientEnd || undefined;
+    if (args.profileBg !== undefined) patch.profileBg = args.profileBg || undefined;
+    if (Object.keys(patch).length > 0) await ctx.db.patch(me._id, patch);
+  },
+});
+
+export const setBanner = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Banner upload failed.");
+    const previous = me.bannerStorageId;
+    await ctx.db.patch(me._id, { bannerUrl: url, bannerStorageId: storageId });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    return url;
+  },
+});
+
+export const removeBanner = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.bannerStorageId;
+    await ctx.db.patch(me._id, { bannerUrl: undefined, bannerStorageId: undefined });
+    if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+export const setNameplate = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Nameplate upload failed.");
+    const previous = me.nameplateStorageId;
+    await ctx.db.patch(me._id, { nameplateUrl: url, nameplateStorageId: storageId });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    return url;
+  },
+});
+
+export const removeNameplate = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.nameplateStorageId;
+    await ctx.db.patch(me._id, { nameplateUrl: undefined, nameplateStorageId: undefined });
+    if (previous) await ctx.storage.delete(previous);
+  },
+});
+
 /** Whether a storage object is still in use as a message attachment (DM or
  * channel) — an avatar's previous storage id shouldn't be deleted out from
  * under an attachment that happens to point at the same object (e.g. a
