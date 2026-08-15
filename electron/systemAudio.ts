@@ -110,6 +110,7 @@ class LinuxSystemAudio {
   private availabilityChecked = false;
   private hardwareSink: string | null = null;
   private hardwareSinkGuardTicks = 0;
+  private hardwareSinkRevalidation: Promise<void> | null = null;
   /**
    * Per sink-input flap tracking: detects a competing audio processor (e.g.
    * EasyEffects) repeatedly reclaiming a stream right after we move it onto
@@ -347,26 +348,28 @@ class LinuxSystemAudio {
   private startInputGuard(): void {
     if (this.inputGuard) return;
     this.hardwareSinkGuardTicks = 0;
-    let revalidationInFlight = false;
     this.inputGuard = setInterval(() => {
       void this.routeSinkInputs();
       this.hardwareSinkGuardTicks += 1;
       if (this.hardwareSinkGuardTicks >= HARDWARE_SINK_REVALIDATE_TICKS) {
         this.hardwareSinkGuardTicks = 0;
-        if (!revalidationInFlight) {
-          revalidationInFlight = true;
-          this.revalidateHardwareSink().finally(() => {
-            revalidationInFlight = false;
+        if (!this.hardwareSinkRevalidation) {
+          this.hardwareSinkRevalidation = this.revalidateHardwareSink().finally(() => {
+            this.hardwareSinkRevalidation = null;
           });
         }
       }
     }, INPUT_GUARD_INTERVAL_MS);
   }
 
-  private stopInputGuard(): void {
+  private async stopInputGuard(): Promise<void> {
     if (this.inputGuard) {
       clearInterval(this.inputGuard);
       this.inputGuard = null;
+    }
+    if (this.hardwareSinkRevalidation) {
+      await this.hardwareSinkRevalidation.catch(() => {});
+      this.hardwareSinkRevalidation = null;
     }
   }
 
@@ -425,6 +428,7 @@ class LinuxSystemAudio {
 
   /** Re-point the "hear what you're sharing" loopback at a new hardware sink. */
   private async retargetLoopback(nextHardwareSink: string): Promise<void> {
+    if (!this.enabled) return;
     const staleModuleIndexes = this.moduleIndexes.slice(1); // [0] is the null-sink itself
     const loopbackIndexStr = await this.pactl([
       "load-module",
@@ -674,7 +678,7 @@ class LinuxSystemAudio {
     // Mark disabled first so a recorder exit (async) can't schedule a restart
     // that would re-enable capture right after we tear everything down.
     this.enabled = false;
-    this.stopInputGuard();
+    await this.stopInputGuard();
     this.streamMoveState.clear();
     this.hardwareSinkGuardTicks = 0;
     await this.stopCapture();
