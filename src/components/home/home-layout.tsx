@@ -11,6 +11,7 @@ import { CommunityRail } from "@/components/home/community-rail";
 import { FriendsPanel } from "@/components/home/friends-panel";
 import { NavSidebar } from "@/components/home/nav-sidebar";
 import { useNavigation, useRegisterNavigation } from "@/components/home/navigation-context";
+import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -26,7 +27,7 @@ export function HomeLayout() {
   const [selectedCommunityId, setSelectedCommunityId] = useState<Id<"communities"> | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<Id<"channels"> | null>(null);
 
-  const { activeCall, expanded, joinDmCall, joinChannelCall, collapse } = useCall();
+  const { activeCall, expanded, joinDmCall, joinChannelCall, collapse, joinError, dismissJoinError } = useCall();
 
   // Navigating anywhere always shows that content — an in-progress call
   // keeps running (see the mini bar) but stops being the focused pane.
@@ -51,7 +52,10 @@ export function HomeLayout() {
 
   const selectChannel = (channelId: Id<"channels">, type: "text" | "voice") => {
     if (type === "voice") {
-      if (selectedCommunityId) void joinChannelCall(channelId, selectedCommunityId);
+      if (selectedCommunityId) {
+        dismissJoinError();
+        void joinChannelCall(channelId, selectedCommunityId);
+      }
       return;
     }
     setSelectedChannelId(channelId);
@@ -115,19 +119,35 @@ export function HomeLayout() {
 
       {showCallStage ? (
         <CallStage />
-      ) : selectedCommunityId && selectedChannelId ? (
-        <ChannelView channelId={selectedChannelId} />
-      ) : selectedCommunityId ? (
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-          Select a channel
-        </div>
-      ) : dmView === "dm" && activeConversationId ? (
-        <ChatView
-          conversationId={activeConversationId}
-          onStartCall={() => void joinDmCall(activeConversationId)}
-        />
       ) : (
-        <FriendsPanel search={search} onMessageFriend={openConversation} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          {joinError && (
+            <div className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <span className="min-w-0 flex-1">{joinError}</span>
+              <Button variant="ghost" size="sm" onClick={dismissJoinError}>
+                Dismiss
+              </Button>
+            </div>
+          )}
+
+          {selectedCommunityId && selectedChannelId ? (
+            <ChannelView channelId={selectedChannelId} />
+          ) : selectedCommunityId ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Select a channel
+            </div>
+          ) : dmView === "dm" && activeConversationId ? (
+            <ChatView
+              conversationId={activeConversationId}
+              onStartCall={() => {
+                dismissJoinError();
+                void joinDmCall(activeConversationId);
+              }}
+            />
+          ) : (
+            <FriendsPanel search={search} onMessageFriend={openConversation} />
+          )}
+        </div>
       )}
     </div>
   );

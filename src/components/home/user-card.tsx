@@ -51,7 +51,7 @@ export function UserCard() {
 
   return (
     <div className="shrink-0 border-t bg-background/60">
-      {activeCall && screenSharing && (
+      {activeCall && !expanded && screenSharing && (
         <div className="flex items-center gap-2 border-b border-dashed bg-primary/10 px-2 py-1.5 text-sm">
           <MonitorUp className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate font-medium">
@@ -73,7 +73,7 @@ export function UserCard() {
         </div>
       )}
 
-      {activeCall && (
+      {activeCall && !expanded && (
         <div className="space-y-1.5 border-b border-dashed p-2">
           <div className="flex items-center gap-1">
             <button

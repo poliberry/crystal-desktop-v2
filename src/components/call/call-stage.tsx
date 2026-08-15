@@ -31,7 +31,7 @@ export function CallStage() {
 
       <div className="min-h-0 flex-1">
         {isConnected ? (
-          <RoomView roomName={roomName} controller={controller as RoomController} onLeave={() => void leaveCall()} />
+          <RoomView roomName={roomName} controller={controller as RoomController} onLeave={leaveCall} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             {error ? (

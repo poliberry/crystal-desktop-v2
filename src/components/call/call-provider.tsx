@@ -31,6 +31,12 @@ interface CallContextValue {
    * (not in room-view.tsx) so the mini call bar's "Share screen" button
    * works without first expanding to the full call screen. */
   openSharePicker: () => void;
+  /** Set when joinDmCall/joinChannelCall fails before a call is ever
+   * established — activeCall stays null in that case, so CallStage never
+   * mounts to show it; whatever called join is responsible for rendering
+   * this (see home-layout.tsx). */
+  joinError: string | null;
+  dismissJoinError: () => void;
 }
 
 const CallContext = createContext<CallContextValue | null>(null);
@@ -70,8 +76,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const [sharedSourceName, setSharedSourceName] = useState<string | null>(null);
   const [sharePickerOpen, setSharePickerOpen] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const activeCallRef = useRef<ActiveCall | null>(null);
   activeCallRef.current = activeCall;
+
+  // Bumped whenever the user navigates away (collapse) or a new join
+  // starts, so an in-flight joinDmCall/joinChannelCall can tell it's been
+  // superseded/abandoned by the time it resolves and avoid clobbering
+  // whatever's on screen now.
+  const joinGenerationRef = useRef(0);
 
   const leaveActiveCall = useCallback(async () => {
     const current = activeCallRef.current;
@@ -92,13 +105,35 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         setExpanded(true);
         return;
       }
+
+      const myGeneration = ++joinGenerationRef.current;
+      setJoinError(null);
       if (activeCallRef.current) await leaveActiveCall();
-      const { url, token, roomName } = await joinDmAction({ conversationId });
-      await connect({ url, token });
-      setActiveCall({ kind: "dm", conversationId, roomName });
-      setExpanded(true);
+
+      try {
+        const { url, token, roomName } = await joinDmAction({ conversationId });
+        await connect({ url, token });
+
+        if (joinGenerationRef.current !== myGeneration) {
+          // Superseded (navigated away, or a different join started) while
+          // we were connecting — leave immediately instead of surfacing a
+          // call for something the user's no longer looking at.
+          await disconnect();
+          await leaveDmAction({ conversationId }).catch(() => {});
+          return;
+        }
+
+        setActiveCall({ kind: "dm", conversationId, roomName });
+        setExpanded(true);
+      } catch (err) {
+        await disconnect();
+        await leaveDmAction({ conversationId }).catch(() => {});
+        if (joinGenerationRef.current === myGeneration) {
+          setJoinError(err instanceof Error ? err.message : String(err));
+        }
+      }
     },
-    [connect, joinDmAction, leaveActiveCall]
+    [connect, disconnect, joinDmAction, leaveActiveCall, leaveDmAction]
   );
 
   const joinChannelCall = useCallback(
@@ -107,13 +142,32 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         setExpanded(true);
         return;
       }
+
+      const myGeneration = ++joinGenerationRef.current;
+      setJoinError(null);
       if (activeCallRef.current) await leaveActiveCall();
-      const { url, token, roomName } = await joinChannelAction({ channelId });
-      await connect({ url, token });
-      setActiveCall({ kind: "channel", channelId, communityId, roomName });
-      setExpanded(true);
+
+      try {
+        const { url, token, roomName } = await joinChannelAction({ channelId });
+        await connect({ url, token });
+
+        if (joinGenerationRef.current !== myGeneration) {
+          await disconnect();
+          await leaveChannelAction({ channelId }).catch(() => {});
+          return;
+        }
+
+        setActiveCall({ kind: "channel", channelId, communityId, roomName });
+        setExpanded(true);
+      } catch (err) {
+        await disconnect();
+        await leaveChannelAction({ channelId }).catch(() => {});
+        if (joinGenerationRef.current === myGeneration) {
+          setJoinError(err instanceof Error ? err.message : String(err));
+        }
+      }
     },
-    [connect, joinChannelAction, leaveActiveCall]
+    [connect, disconnect, joinChannelAction, leaveActiveCall, leaveChannelAction]
   );
 
   const leaveCall = useCallback(async () => {
@@ -138,7 +192,29 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [status, leaveDmAction, leaveChannelAction]);
 
   const expand = useCallback(() => setExpanded(true), []);
-  const collapse = useCallback(() => setExpanded(false), []);
+  const collapse = useCallback(() => {
+    joinGenerationRef.current++;
+    setExpanded(false);
+  }, []);
+  const dismissJoinError = useCallback(() => setJoinError(null), []);
+
+  // Unmounting (e.g. signing out) would otherwise leave the LiveKit Room
+  // connected — local mic/camera still active — and the participant row
+  // stale. Reads activeCallRef at unmount time deliberately; disconnect/
+  // leaveDmAction/leaveChannelAction are stable across renders.
+  useEffect(() => {
+    return () => {
+      const current = activeCallRef.current;
+      if (!current) return;
+      void disconnect();
+      if (current.kind === "dm") {
+        void leaveDmAction({ conversationId: current.conversationId }).catch(() => {});
+      } else {
+        void leaveChannelAction({ channelId: current.channelId }).catch(() => {});
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Covers every way sharing can stop (ControlBar toggle, source picker
   // cancel, track ending on its own) — not just leaveCall().
@@ -174,6 +250,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         collapse,
         sharedSourceName,
         openSharePicker,
+        joinError,
+        dismissJoinError,
       }}
     >
       {children}

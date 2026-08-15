@@ -29,7 +29,7 @@ interface ControlBarProps {
   onToggleCamera: () => void;
   onToggleMicrophone: () => void;
   onToggleScreenShare: () => void;
-  onLeave: () => void;
+  onLeave: () => Promise<void>;
   busy: boolean;
 }
 
