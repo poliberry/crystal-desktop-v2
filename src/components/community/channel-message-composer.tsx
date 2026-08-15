@@ -3,7 +3,7 @@
 import { useMutation } from "convex/react";
 import { EmojiPicker } from "frimousse";
 import { Paperclip, Send, Smile, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -32,6 +32,16 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
 
   const generateUploadUrl = useMutation(api.channelMessages.generateUploadUrl);
   const sendMessage = useMutation(api.channelMessages.send);
+  const startTyping = useMutation(api.typing.start);
+  const stopTyping = useMutation(api.typing.stop);
+  const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (typingDebounce.current) clearTimeout(typingDebounce.current);
+      void stopTyping({ channelId });
+    };
+  }, [channelId, stopTyping]);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -61,9 +71,19 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
     }
   };
 
+  const handleTyping = () => {
+    void startTyping({ channelId });
+    if (typingDebounce.current) clearTimeout(typingDebounce.current);
+    typingDebounce.current = setTimeout(() => {
+      void stopTyping({ channelId });
+    }, 3000);
+  };
+
   const handleSend = async () => {
     const trimmed = text.trim();
     if (!trimmed && pending.length === 0) return;
+    if (typingDebounce.current) clearTimeout(typingDebounce.current);
+    void stopTyping({ channelId });
     setSending(true);
     try {
       await sendMessage({
@@ -135,7 +155,7 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
         <Textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); handleTyping(); }}
           onKeyDown={handleKeyDown}
           placeholder="Message…"
           className="max-h-40 min-h-8 flex-1 resize-none border-0 bg-transparent! px-1 py-1.5 shadow-none focus-visible:ring-0"

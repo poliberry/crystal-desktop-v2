@@ -8,9 +8,16 @@ export default defineSchema({
     username: v.string(),
     imageUrl: v.optional(v.string()),
     bio: v.optional(v.string()),
-    /** Storage id backing `imageUrl` when it's a user-uploaded avatar, so the
-     * old file can be deleted when it's replaced or removed. */
     avatarStorageId: v.optional(v.id("_storage")),
+    // Profile cosmetics
+    bannerUrl: v.optional(v.string()),
+    bannerStorageId: v.optional(v.id("_storage")),
+    borderGradientStart: v.optional(v.string()),
+    borderGradientEnd: v.optional(v.string()),
+    profileBg: v.optional(v.string()),
+    customStatus: v.optional(v.string()),
+    nameplateUrl: v.optional(v.string()),
+    nameplateStorageId: v.optional(v.id("_storage")),
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_username", ["username"]),
@@ -123,9 +130,9 @@ export default defineSchema({
     imageUrl: v.optional(v.string()),
     iconStorageId: v.optional(v.id("_storage")),
     createdAt: v.number(),
-    /** One active invite code per community — regenerating replaces it,
-     * invalidating whatever was posted/copied before. */
     inviteCode: v.optional(v.string()),
+    bannerUrl: v.optional(v.string()),
+    bannerStorageId: v.optional(v.id("_storage")),
   })
     .index("by_owner", ["ownerId"])
     .index("by_invite_code", ["inviteCode"]),
@@ -223,8 +230,6 @@ export default defineSchema({
     .index("by_message", ["messageId"])
     .index("by_message_user_emoji", ["messageId", "userId", "emoji"]),
 
-  /** Who's connected to a voice channel's LiveKit room right now — mirrors
-   * `callParticipants` but for community voice channels instead of DM calls. */
   channelCallParticipants: defineTable({
     channelId: v.id("channels"),
     userId: v.id("users"),
@@ -232,4 +237,36 @@ export default defineSchema({
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_user", ["channelId", "userId"]),
+
+  /** Per-server profile overrides. Fields left undefined fall back to the
+   * user's global profile. */
+  serverProfiles: defineTable({
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    displayName: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    customStatus: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
+    avatarStorageId: v.optional(v.id("_storage")),
+    bannerUrl: v.optional(v.string()),
+    bannerStorageId: v.optional(v.id("_storage")),
+    borderGradientStart: v.optional(v.string()),
+    borderGradientEnd: v.optional(v.string()),
+    profileBg: v.optional(v.string()),
+    nameplateUrl: v.optional(v.string()),
+    nameplateStorageId: v.optional(v.id("_storage")),
+  })
+    .index("by_user_community", ["userId", "communityId"])
+    .index("by_community", ["communityId"]),
+
+  typing: defineTable({
+    userId: v.id("users"),
+    channelId: v.optional(v.id("channels")),
+    conversationId: v.optional(v.id("conversations")),
+    scheduledJobId: v.optional(v.id("_scheduled_functions")),
+  })
+    .index("by_channel", ["channelId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_user_channel", ["userId", "channelId"])
+    .index("by_user_conversation", ["userId", "conversationId"]),
 });

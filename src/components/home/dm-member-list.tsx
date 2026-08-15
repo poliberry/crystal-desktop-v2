@@ -20,6 +20,11 @@ interface DmMember {
   username: string;
   imageUrl?: string;
   bio?: string;
+  customStatus?: string;
+  nameplateUrl?: string;
+  bannerUrl?: string;
+  borderGradientStart?: string;
+  borderGradientEnd?: string;
   status: FriendStatus;
 }
 
@@ -55,17 +60,31 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40"
+                className="group/member relative flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40"
               >
                 <Avatar size="sm">
                   <AvatarImage src={member.imageUrl} alt={member.name} />
                   <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                   <AvatarBadge className={STATUS_DOT_CLASS[member.status]} />
                 </Avatar>
-                <p className="truncate text-sm">{member.name}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{member.name}</p>
+                  {member.customStatus && (
+                    <p className="truncate text-[11px] text-muted-foreground leading-tight">
+                      {member.customStatus}
+                    </p>
+                  )}
+                </div>
+                {member.nameplateUrl && (
+                  <img
+                    src={member.nameplateUrl}
+                    alt=""
+                    className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10"
+                  />
+                )}
               </button>
             </PopoverTrigger>
-            <PopoverContent side="left" align="start" className="w-80">
+            <PopoverContent side="left" align="start" className="w-72 p-0">
               <MemberProfileCard member={member} />
             </PopoverContent>
           </Popover>

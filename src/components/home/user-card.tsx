@@ -1,13 +1,29 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { Mic, MicOff, MonitorUp, PhoneOff, Radio, ScreenShareOff, Settings, Video, VideoOff } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  MonitorUp,
+  Phone,
+  PhoneOff,
+  Radio,
+  ScreenShareOff,
+  Settings,
+  Video,
+  VideoOff,
+} from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import { useCall } from "@/components/call/call-provider";
 import { useCallTitle } from "@/components/call/use-call-title";
 import { PresenceDot } from "@/components/presence-dot";
-import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarBadge,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,41 +34,62 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
 import { getDesktopAPI } from "@/lib/desktop";
-import { STATUS_DOT_CLASS, STATUS_LABEL, type ManualStatus } from "@/lib/presence";
+import {
+  STATUS_DOT_CLASS,
+  STATUS_LABEL,
+  type FriendStatus,
+  type ManualStatus,
+} from "@/lib/presence";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { MemberProfileCard } from "../community/member-profile-card";
 
 const MANUAL_STATUSES: ManualStatus[] = ["online", "idle", "dnd", "invisible"];
 
-/**
- * Bottom-left card — a single card whose height adjusts to what's showing:
- * a "Voice Connected" section (with mic/camera/screen-share toggles and a
- * leave button) only appears on top while a call is active but collapsed
- * (the user is browsing elsewhere); the "who am I" row (avatar, display
- * name — hover reveals the username — status, Settings) is always there.
- * Clicking the name opens the presence switcher — this is the app's only
- * way to change status now that the topbar's status menu and Clerk
- * `UserButton` are gone.
- */
 export function UserCard() {
   const me = useQuery(api.users.getCurrentUser);
   const { status, manualStatus } = useMyPresence();
   const setStatus = useSetPresenceStatus();
-  const { activeCall, controller, expanded, expand, leaveCall, sharedSourceName, openSharePicker } = useCall();
+  const {
+    activeCall,
+    controller,
+    expand,
+    leaveCall,
+    sharedSourceName,
+    openSharePicker,
+  } = useCall();
   const title = useCallTitle(activeCall);
   const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
 
   if (!me) return null;
 
-  const { cameraEnabled, microphoneEnabled, screenSharing, toggleCamera, toggleMicrophone, toggleScreenShare } =
-    controller;
+  const {
+    cameraEnabled,
+    microphoneEnabled,
+    screenSharing,
+    toggleCamera,
+    toggleMicrophone,
+    toggleScreenShare,
+  } = controller;
+
+  const subtitle = me.customStatus
+    ? `· ${me.customStatus}`
+    : activeCall
+      ? "In voice"
+      : STATUS_LABEL[status];
 
   return (
-    <div className="shrink-0 border-t bg-background/60">
-      {activeCall && !expanded && screenSharing && (
-        <div className="flex items-center gap-2 border-b border-dashed bg-primary/10 px-2 py-1.5 text-sm">
+    <div className="shrink-0 p-2">
+      {/* Screen share floating panel */}
+      {activeCall && screenSharing && (
+        <div className="flex items-center gap-2 rounded-t-lg border-t border-l border-r border-border/50 bg-card/80 px-2 py-1.5 text-sm">
           <MonitorUp className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate font-medium">
             Sharing{sharedSourceName ? `: ${sharedSourceName}` : ""}
@@ -73,19 +110,25 @@ export function UserCard() {
         </div>
       )}
 
-      {activeCall && !expanded && (
-        <div className="space-y-1.5 border-b border-dashed p-2">
+      {/* Voice connected floating panel */}
+      {activeCall && (
+        <div
+          className={`${screenSharing ? "rounded-none" : "rounded-t-lg"} border-t border-l border-r border-border/50 bg-card/80 p-2 shadow-sm`}
+        >
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={expand}
-              disabled={expanded}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default"
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
             >
               <Radio className="size-4 shrink-0 text-emerald-500" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-emerald-500">Voice Connected</p>
-                <p className="truncate text-xs text-muted-foreground">{title}</p>
+                <p className="truncate text-xs font-semibold text-emerald-500">
+                  Voice Connected
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {title}
+                </p>
               </div>
             </button>
 
@@ -97,20 +140,19 @@ export function UserCard() {
                   className="size-7 shrink-0 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
                   onClick={() => void leaveCall()}
                 >
-                  <PhoneOff className="size-4" />
+                  <Phone className="size-4 rotate-135" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top">Leave call</TooltipContent>
             </Tooltip>
           </div>
 
-          <div className="flex items-center justify-center gap-1.5">
+          <div className="mt-4 flex items-center justify-between max-w-17.5 gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="secondary"
-                  size="icon"
-                  className="size-8"
+                  className="w-full h-7"
                   disabled={!hasMicrophone}
                   onClick={() => void toggleMicrophone()}
                 >
@@ -125,8 +167,8 @@ export function UserCard() {
                 {!hasMicrophone
                   ? "No microphone detected"
                   : microphoneEnabled
-                    ? "Mute microphone"
-                    : "Unmute microphone"}
+                    ? "Mute"
+                    : "Unmute"}
               </TooltipContent>
             </Tooltip>
 
@@ -134,16 +176,23 @@ export function UserCard() {
               <TooltipTrigger asChild>
                 <Button
                   variant="secondary"
-                  size="icon"
-                  className="size-8"
+                  className="w-full h-7"
                   disabled={!hasCamera}
                   onClick={() => void toggleCamera()}
                 >
-                  {cameraEnabled ? <Video className="size-4" /> : <VideoOff className="size-4 text-destructive" />}
+                  {cameraEnabled ? (
+                    <Video className="size-4" />
+                  ) : (
+                    <VideoOff className="size-4 text-destructive" />
+                  )}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top">
-                {!hasCamera ? "No camera detected" : cameraEnabled ? "Turn camera off" : "Turn camera on"}
+                {!hasCamera
+                  ? "No camera"
+                  : cameraEnabled
+                    ? "Camera off"
+                    : "Camera on"}
               </TooltipContent>
             </Tooltip>
 
@@ -152,71 +201,90 @@ export function UserCard() {
                 <Button
                   variant="secondary"
                   size="icon"
-                  className="size-8"
+                  className="w-full h-7"
                   onClick={() => {
                     if (screenSharing) void toggleScreenShare();
                     else openSharePicker();
                   }}
                 >
-                  {screenSharing ? <ScreenShareOff className="size-4" /> : <MonitorUp className="size-4" />}
+                  {screenSharing ? (
+                    <ScreenShareOff className="size-4" />
+                  ) : (
+                    <MonitorUp className="size-4" />
+                  )}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="top">{screenSharing ? "Stop sharing" : "Share screen"}</TooltipContent>
+              <TooltipContent side="top">
+                {screenSharing ? "Stop sharing" : "Share screen"}
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
       )}
 
-      <div className="flex items-center gap-2 px-2 py-2">
-        <Avatar size="sm">
-          <AvatarImage src={me.imageUrl} alt={me.name} />
-          <AvatarFallback>{me.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-          <AvatarBadge className={STATUS_DOT_CLASS[status]} />
-        </Avatar>
+      {/* Identity card — floating pill */}
+      <div
+        className={`${activeCall ? "rounded-t-none rounded-b-lg" : "rounded-lg"} overflow-hidden border border-border/40 bg-card/80 shadow-md`}
+      >
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Avatar size="sm" className="shrink-0 cursor-pointer">
+                <AvatarImage src={me.imageUrl} alt={me.name} />
+                <AvatarFallback>
+                  {me.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+                <AvatarBadge className={STATUS_DOT_CLASS[status]} />
+              </Avatar>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-72 p-0 mb-5 -ml-4">
+              <MemberProfileCard
+                member={{
+                  userId: me._id,
+                  name: me.name,
+                  username: me.username,
+                  imageUrl: me.imageUrl,
+                  bio: me.bio,
+                  customStatus: me.customStatus,
+                  bannerUrl: me.bannerUrl,
+                  borderGradientStart: me.borderGradientStart,
+                  borderGradientEnd: me.borderGradientEnd,
+                  // "invisible" appears as offline to others; show the same for self
+                  status: (status === "invisible" ? "offline" : status) as FriendStatus,
+                }}
+              />
+            </PopoverContent>
+          </Popover>
 
-        <DropdownMenu>
+          <button
+            type="button"
+            className="group/name min-w-0 cursor-pointer flex-1 rounded-md px-1 py-0.5 text-left hover:bg-black/10"
+          >
+            <p className="truncate text-sm font-semibold">{me.name}</p>
+            <div className="relative h-4 overflow-hidden">
+              <p className="absolute inset-0 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
+                {subtitle}
+              </p>
+              <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">
+                @{me.username}
+              </p>
+            </div>
+          </button>
+
           <Tooltip>
             <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 rounded-md px-1 py-0.5 text-left hover:bg-accent/60"
-                >
-                  <p className="truncate text-sm font-medium">{me.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {activeCall ? "In voice" : STATUS_LABEL[status]}
-                  </p>
-                </button>
-              </DropdownMenuTrigger>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0 hover:bg-black/10"
+                onClick={() => void getDesktopAPI()?.settings.open()}
+              >
+                <Settings className="size-4" />
+              </Button>
             </TooltipTrigger>
-            <TooltipContent side="top">@{me.username}</TooltipContent>
+            <TooltipContent side="top">Settings</TooltipContent>
           </Tooltip>
-
-          <DropdownMenuContent align="start" side="top" className="w-48">
-            <DropdownMenuLabel>Set status</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-              value={manualStatus}
-              onValueChange={(value) => setStatus(value as ManualStatus)}
-            >
-              {MANUAL_STATUSES.map((value) => (
-                <DropdownMenuRadioItem key={value} value={value} className="gap-2">
-                  <PresenceDot status={value} />
-                  {STATUS_LABEL[value]}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={() => void getDesktopAPI()?.settings.open()}>
-              <Settings className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">Settings</TooltipContent>
-        </Tooltip>
+        </div>
       </div>
     </div>
   );

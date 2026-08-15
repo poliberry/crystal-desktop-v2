@@ -11,6 +11,7 @@ import { DmMemberList } from "@/components/home/dm-member-list";
 import { GroupAvatar } from "@/components/home/group-avatar";
 import { MessageComposer } from "@/components/home/message-composer";
 import { MessageList } from "@/components/home/message-list";
+import { TypingIndicator } from "@/components/typing-indicator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -104,6 +105,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
         </div>
 
         <MessageList conversationId={conversationId} />
+        <TypingIndicator conversationId={conversationId} />
         <MessageComposer conversationId={conversationId} />
       </div>
 

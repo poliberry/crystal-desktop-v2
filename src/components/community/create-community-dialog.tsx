@@ -22,14 +22,21 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 interface CreateCommunityDialogProps {
   onCreated: (communityId: Id<"communities">) => void;
+  /** When provided, the dialog is controlled externally (no built-in trigger button). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function CreateCommunityDialog({ onCreated }: CreateCommunityDialogProps) {
+export function CreateCommunityDialog({ onCreated, open: controlledOpen, onOpenChange }: CreateCommunityDialogProps) {
   const create = useMutation(api.communities.create);
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = isControlled ? (onOpenChange ?? (() => {})) : setInternalOpen;
 
   const handleCreate = async () => {
     if (!name.trim()) return;
@@ -49,16 +56,18 @@ export function CreateCommunityDialog({ onCreated }: CreateCommunityDialogProps)
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DialogTrigger asChild>
-            <Button variant="secondary" size="icon" className="size-12 rounded-full">
-              <Plus />
-            </Button>
-          </DialogTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="right">Create a community</TooltipContent>
-      </Tooltip>
+      {!isControlled && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DialogTrigger asChild>
+              <Button variant="secondary" size="icon" className="size-12 rounded-full">
+                <Plus />
+              </Button>
+            </DialogTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right">Create a community</TooltipContent>
+        </Tooltip>
+      )}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create a community</DialogTitle>

@@ -18,17 +18,30 @@ const BIO_MAX = 300;
 export function ProfileTab() {
   const me = useQuery(api.users.getCurrentUser);
   const updateProfile = useMutation(api.users.updateProfile);
+  const updateProfileExtended = useMutation(api.users.updateProfileExtended);
   const generateAvatarUploadUrl = useMutation(api.users.generateAvatarUploadUrl);
+  const generateUploadUrl = useMutation(api.users.generateUploadUrl);
   const setAvatar = useMutation(api.users.setAvatar);
+  const setBanner = useMutation(api.users.setBanner);
+  const removeBanner = useMutation(api.users.removeBanner);
+  const setNameplate = useMutation(api.users.setNameplate);
+  const removeNameplate = useMutation(api.users.removeNameplate);
 
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
+  const [customStatus, setCustomStatus] = useState("");
+  const [gradientStart, setGradientStart] = useState("");
+  const [gradientEnd, setGradientEnd] = useState("");
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const [nameplateUploading, setNameplateUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
+  const nameplateFileInputRef = useRef<HTMLInputElement>(null);
   const hydrated = useRef(false);
 
   useEffect(() => {
@@ -37,6 +50,9 @@ export function ProfileTab() {
     setName(me.name);
     setUsername(me.username);
     setBio(me.bio ?? "");
+    setCustomStatus(me.customStatus ?? "");
+    setGradientStart(me.borderGradientStart ?? "");
+    setGradientEnd(me.borderGradientEnd ?? "");
   }, [me]);
 
   const normalizedUsername = username.trim().toLowerCase();
@@ -47,7 +63,14 @@ export function ProfileTab() {
   );
   const usernameTaken = usernameChanged && !!usernameCheck;
 
-  const dirty = !!me && (name !== me.name || username !== me.username || bio !== (me.bio ?? ""));
+  const dirty =
+    !!me &&
+    (name !== me.name ||
+      username !== me.username ||
+      bio !== (me.bio ?? "") ||
+      customStatus !== (me.customStatus ?? "") ||
+      gradientStart !== (me.borderGradientStart ?? "") ||
+      gradientEnd !== (me.borderGradientEnd ?? ""));
 
   const handleAvatarPick = async (file: File | undefined) => {
     if (!file) return;
@@ -55,11 +78,7 @@ export function ProfileTab() {
     setError(null);
     try {
       const uploadUrl = await generateAvatarUploadUrl();
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
+      const res = await fetch(uploadUrl, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
       if (!res.ok) throw new Error("Upload failed.");
       const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
       await setAvatar({ storageId });
@@ -71,19 +90,51 @@ export function ProfileTab() {
     }
   };
 
+  const uploadMedia = async (
+    file: File,
+    setLoading: (b: boolean) => void,
+    save: (id: Id<"_storage">) => Promise<unknown>,
+    ref: { current: HTMLInputElement | null },
+    errMsg: string,
+  ) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = await generateUploadUrl();
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+      if (!res.ok) throw new Error("Upload failed.");
+      const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
+      await save(storageId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : errMsg);
+    } finally {
+      setLoading(false);
+      if (ref.current) ref.current.value = "";
+    }
+  };
+
+  const handleBannerPick = (file: File | undefined) =>
+    file && void uploadMedia(file, setBannerUploading, (id) => setBanner({ storageId: id }), bannerFileInputRef, "Failed to upload banner.");
+
+  const handleNameplatePick = (file: File | undefined) =>
+    file && void uploadMedia(file, setNameplateUploading, (id) => setNameplate({ storageId: id }), nameplateFileInputRef, "Failed to upload nameplate.");
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
+      const trimmedStatus = customStatus.trim();
       const result = await updateProfile({ name, username, bio });
-      // Mirror exactly what got persisted (trimmed name/bio, trimmed +
-      // lowercased username) — otherwise e.g. saving " Alice " leaves the
-      // input showing " Alice " while the server stored "Alice", so `dirty`
-      // never clears and Save stays enabled despite nothing left to save.
+      await updateProfileExtended({
+        customStatus: trimmedStatus,
+        borderGradientStart: gradientStart || undefined,
+        borderGradientEnd: gradientEnd || undefined,
+      });
       setName(result.name);
       setUsername(result.username);
       setBio(result.bio);
+      setCustomStatus(trimmedStatus);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save profile.");
@@ -130,57 +181,84 @@ export function ProfileTab() {
               aria-label="Change avatar"
               className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-100"
             >
-              {uploading ? (
-                <Loader2 className="size-5 animate-spin text-white" />
-              ) : (
-                <Camera className="size-5 text-white" />
-              )}
+              {uploading ? <Loader2 className="size-5 animate-spin text-white" /> : <Camera className="size-5 text-white" />}
             </button>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => void handleAvatarPick(e.target.files?.[0])}
-          />
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => void handleAvatarPick(e.target.files?.[0])} />
           <p className="text-sm text-muted-foreground">Click your avatar to change it.</p>
         </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="profile-name">Display name</Label>
-          <Input
-            id="profile-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={64}
-          />
+          <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={64} />
         </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="profile-username">Username</Label>
-          <Input
-            id="profile-username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            maxLength={32}
-            aria-invalid={usernameTaken}
-          />
+          <Input id="profile-username" value={username} onChange={(e) => setUsername(e.target.value)} maxLength={32} aria-invalid={usernameTaken} />
           {usernameTaken && <p className="text-xs text-destructive">That username is taken.</p>}
         </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="profile-bio">Bio</Label>
-          <Textarea
-            id="profile-bio"
-            value={bio}
-            onChange={(e) => setBio(e.target.value.slice(0, BIO_MAX))}
-            rows={3}
-            className="resize-none"
-          />
-          <p className="text-right text-xs text-muted-foreground">
-            {bio.length}/{BIO_MAX}
-          </p>
+          <Textarea id="profile-bio" value={bio} onChange={(e) => setBio(e.target.value.slice(0, BIO_MAX))} rows={3} className="resize-none" />
+          <p className="text-right text-xs text-muted-foreground">{bio.length}/{BIO_MAX}</p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="profile-status">Custom status</Label>
+          <Input id="profile-status" value={customStatus} onChange={(e) => setCustomStatus(e.target.value.slice(0, 128))} maxLength={128} placeholder="What are you up to?" />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Profile banner</Label>
+          <div
+            className={`h-24 rounded-md ${me.bannerUrl ? "bg-cover bg-center" : "flex items-center justify-center border-2 border-dashed bg-muted/40"}`}
+            style={me.bannerUrl ? { backgroundImage: `url(${me.bannerUrl})` } : undefined}
+          >
+            {!me.bannerUrl && <Camera className="size-6 text-muted-foreground" />}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => bannerFileInputRef.current?.click()} disabled={bannerUploading}>
+              {bannerUploading ? <Loader2 className="size-4 animate-spin" /> : "Upload banner"}
+            </Button>
+            {me.bannerUrl && (
+              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void removeBanner()}>Remove</Button>
+            )}
+          </div>
+          <input ref={bannerFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleBannerPick(e.target.files?.[0])} />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Avatar frame gradient</Label>
+          <div className="flex gap-6">
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Frame start</p>
+              <input type="color" value={gradientStart || "#000000"} onChange={(e) => setGradientStart(e.target.value)} className="size-9 cursor-pointer rounded border border-input p-0.5" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Frame end</p>
+              <input type="color" value={gradientEnd || "#000000"} onChange={(e) => setGradientEnd(e.target.value)} className="size-9 cursor-pointer rounded border border-input p-0.5" />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Chat nameplate</Label>
+          <div className={`h-24 overflow-hidden rounded-md ${me.nameplateUrl ? "" : "flex items-center justify-center border-2 border-dashed bg-muted/40"}`}>
+            {me.nameplateUrl
+              ? <img src={me.nameplateUrl} alt="Nameplate" className="h-full w-full object-cover" />
+              : <Camera className="size-6 text-muted-foreground" />}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => nameplateFileInputRef.current?.click()} disabled={nameplateUploading}>
+              {nameplateUploading ? <Loader2 className="size-4 animate-spin" /> : "Upload nameplate"}
+            </Button>
+            {me.nameplateUrl && (
+              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void removeNameplate()}>Remove</Button>
+            )}
+          </div>
+          <input ref={nameplateFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleNameplatePick(e.target.files?.[0])} />
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

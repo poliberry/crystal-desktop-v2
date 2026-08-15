@@ -9,7 +9,9 @@ import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
+import { cn } from "@/lib/utils";
 
 interface MemberListProps {
   communityId: Id<"communities">;
@@ -29,6 +31,11 @@ interface Member {
   username: string;
   imageUrl?: string;
   bio?: string;
+  customStatus?: string;
+  nameplateUrl?: string;
+  bannerUrl?: string;
+  borderGradientStart?: string;
+  borderGradientEnd?: string;
   isOwner: boolean;
   status: FriendStatus;
   roles: MemberRole[];
@@ -90,59 +97,100 @@ function buildGroups(members: Member[]): Group[] {
   return groups;
 }
 
+function MemberListSkeleton() {
+  return (
+    <div className="flex flex-col gap-2 p-2">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-2 px-2 py-1">
+          <Skeleton className="size-6 shrink-0 rounded-full" />
+          <Skeleton className="h-3 flex-1" style={{ maxWidth: `${50 + (i % 3) * 20}%` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function MemberList({ communityId }: MemberListProps) {
-  const members = (useQuery(api.communities.listMembers, { communityId }) ?? []) as Member[];
+  const rawMembers = useQuery(api.communities.listMembers, { communityId });
+  const community = useQuery(api.communities.get, { communityId });
+  const members = (rawMembers ?? []) as Member[];
   const groups = buildGroups(members);
 
   return (
     <div className="flex w-56 shrink-0 flex-col border-l bg-background/40">
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 p-2">
-          {groups.map((group) => (
-            <div key={group.key}>
-              <p
-                className="px-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground"
-                style={group.color ? { color: group.color } : undefined}
-              >
-                {group.label} — {group.members.length}
-              </p>
-              <div className="mt-1 flex flex-col gap-0.5">
-                {group.members.map((member) => {
-                  const colorRole = highestRole(
-                    member.roles.filter((r) => r.color),
-                    false
-                  );
-                  return (
-                    <Popover key={member.userId}>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40"
-                        >
-                          <Avatar size="sm">
-                            <AvatarImage src={member.imageUrl} alt={member.name} />
-                            <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                            <AvatarBadge className={STATUS_DOT_CLASS[member.status]} />
-                          </Avatar>
-                          <p
-                            className="truncate text-sm"
-                            style={colorRole?.color ? { color: colorRole.color } : undefined}
+        {rawMembers === undefined ? (
+          <MemberListSkeleton />
+        ) : (
+          <div className="flex flex-col gap-3 p-2">
+            {groups.map((group) => (
+              <div key={group.key}>
+                <p
+                  className="px-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground"
+                  style={group.color ? { color: group.color } : undefined}
+                >
+                  {group.label} — {group.members.length}
+                </p>
+                <div className="mt-1 flex flex-col gap-0.5">
+                  {group.members.map((member) => {
+                    const colorRole = highestRole(
+                      member.roles.filter((r) => r.color),
+                      false
+                    );
+                    const isOffline = member.status === "offline";
+                    return (
+                      <Popover key={member.userId}>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className={cn(
+                              "group/member relative flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40",
+                              isOffline && "opacity-50 hover:opacity-80"
+                            )}
                           >
-                            {member.name}
-                          </p>
-                          {member.isOwner && <Crown className="size-3 shrink-0 text-amber-500" />}
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent side="left" align="start" className="w-80">
-                        <MemberProfileCard member={member} />
-                      </PopoverContent>
-                    </Popover>
-                  );
-                })}
+                            <Avatar size="sm">
+                              <AvatarImage src={member.imageUrl} alt={member.name} />
+                              <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                              <AvatarBadge className={STATUS_DOT_CLASS[member.status]} />
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <p
+                                className="truncate text-sm leading-tight"
+                                style={colorRole?.color ? { color: colorRole.color } : undefined}
+                              >
+                                {member.name}
+                              </p>
+                              {member.customStatus && (
+                                <p className="truncate text-[11px] text-muted-foreground leading-tight">
+                                  {member.customStatus}
+                                </p>
+                              )}
+                            </div>
+                            {member.isOwner && <Crown className="size-3 shrink-0 text-amber-500" />}
+                            {member.nameplateUrl && (
+                              <img
+                                src={member.nameplateUrl}
+                                alt=""
+                                className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10"
+                              />
+                            )}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent side="left" align="start" className="w-72 p-0">
+                          <MemberProfileCard
+                            member={member}
+                            communityId={communityId}
+                            communityName={community?.name}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </ScrollArea>
     </div>
   );

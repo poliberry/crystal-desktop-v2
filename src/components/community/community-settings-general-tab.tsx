@@ -30,13 +30,18 @@ export function CommunitySettingsGeneralTab({
   const updateSettings = useMutation(api.communities.updateSettings);
   const generateIconUploadUrl = useMutation(api.communities.generateIconUploadUrl);
   const setIcon = useMutation(api.communities.setIcon);
+  const generateBannerUploadUrl = useMutation(api.communities.generateBannerUploadUrl);
+  const setBanner = useMutation(api.communities.setBanner);
+  const removeBanner = useMutation(api.communities.removeBanner);
   const leave = useMutation(api.communities.leave);
   const remove = useMutation(api.communities.remove);
 
   const [name, setName] = useState("");
   const hydrated = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +78,28 @@ export function CommunitySettingsGeneralTab({
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleBannerPick = async (file: File | undefined) => {
+    if (!file) return;
+    setBannerUploading(true);
+    setError(null);
+    try {
+      const uploadUrl = await generateBannerUploadUrl();
+      const res = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!res.ok) throw new Error("Upload failed.");
+      const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
+      await setBanner({ communityId, storageId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload banner.");
+    } finally {
+      setBannerUploading(false);
+      if (bannerFileInputRef.current) bannerFileInputRef.current.value = "";
     }
   };
 
@@ -135,6 +162,35 @@ export function CommunitySettingsGeneralTab({
               onChange={(e) => setName(e.target.value)}
               disabled={!canManage}
               maxLength={64}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Server banner</Label>
+            <div
+              className={`h-24 rounded-md ${community.bannerUrl ? "bg-cover bg-center" : "flex items-center justify-center border-2 border-dashed bg-muted/40"}`}
+              style={community.bannerUrl ? { backgroundImage: `url(${community.bannerUrl})` } : undefined}
+            >
+              {!community.bannerUrl && <Camera className="size-6 text-muted-foreground" />}
+            </div>
+            {canManage && (
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" disabled={bannerUploading} onClick={() => bannerFileInputRef.current?.click()}>
+                  {bannerUploading ? <Loader2 className="size-4 animate-spin" /> : "Upload banner"}
+                </Button>
+                {community.bannerUrl && (
+                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void removeBanner({ communityId })}>
+                    Remove
+                  </Button>
+                )}
+              </div>
+            )}
+            <input
+              ref={bannerFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void handleBannerPick(e.target.files?.[0])}
             />
           </div>
 
