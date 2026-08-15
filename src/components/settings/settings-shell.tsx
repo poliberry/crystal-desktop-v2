@@ -5,6 +5,7 @@ import { Bell, Download, Info, KeyRound, Mic, User } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
+import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { PlaceholderTab } from "@/components/settings/tabs/placeholder-tab";
 import { ProfileTab } from "@/components/settings/tabs/profile-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
@@ -39,10 +40,7 @@ export function SettingsShell() {
               <ProfileTab />
             </TabsContent>
             <TabsContent value="account">
-              <PlaceholderTab
-                title="Account"
-                description="Email and password management are coming soon."
-              />
+              <AccountTab />
             </TabsContent>
             <TabsContent value="voice">
               <VoiceVideoTab />
