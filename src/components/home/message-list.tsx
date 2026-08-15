@@ -13,7 +13,6 @@ import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -237,12 +236,15 @@ export function MessageList({ conversationId }: MessageListProps) {
   }, [chronological]);
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a
-          regular top-down scrolling list. */}
-      <div className="flex min-h-full flex-col justify-end gap-0.5 px-4 py-2">
+          regular top-down scrolling list. Deliberately not shadcn's
+          ScrollArea here: Radix wraps its Viewport's children in a
+          `display: table` div, which ignores the `min-h-full` this pin
+          relies on, so short conversations render top-anchored instead. */}
+      <div className="flex min-h-full flex-col justify-end gap-0.5">
         {status === "CanLoadMore" && (
           <div className="flex justify-center py-2">
             <Button variant="ghost" size="sm" onClick={() => loadMore(30)}>
@@ -262,6 +264,6 @@ export function MessageList({ conversationId }: MessageListProps) {
         })}
         <div ref={bottomRef} />
       </div>
-    </ScrollArea>
+    </div>
   );
 }
