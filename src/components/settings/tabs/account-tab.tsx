@@ -111,6 +111,8 @@ export function AccountTab() {
   };
 
   const handleCancelEmailChange = () => {
+    // Best-effort: the unverified address created by handleSendCode
+    // shouldn't linger on the account just because the user gave up.
     const email = pendingEmail;
     setPendingEmail(null);
     setPendingEmailId(null);
