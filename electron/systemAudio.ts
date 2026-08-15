@@ -230,7 +230,10 @@ class LinuxSystemAudio {
     if (!this.hardwareSink) return;
     const inputs = await this.pactl(["list", "sink-inputs"]).catch(() => "");
     const blocks = inputs.split(/Sink Input #/).slice(1);
-    if (blocks.length === 0) return;
+    if (blocks.length === 0) {
+      this.streamMoveState.clear();
+      return;
+    }
 
     const sinks = await this.pactl(["list", "short", "sinks"]).catch(() => "");
     const nameByIndex = new Map<string, string>();
