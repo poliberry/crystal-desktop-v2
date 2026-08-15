@@ -445,8 +445,8 @@ class LinuxSystemAudio {
     this.moduleIndexes.push(parseInt(loopbackIndexStr, 10));
 
     for (const index of staleModuleIndexes) {
-      await this.pactl(["unload-module", String(index)]).catch(() => {});
-      this.moduleIndexes = this.moduleIndexes.filter((i) => i !== index);
+      const unloaded = await this.pactl(["unload-module", String(index)]).then(() => true).catch(() => false);
+      if (unloaded) this.moduleIndexes = this.moduleIndexes.filter((i) => i !== index);
     }
   }
 
