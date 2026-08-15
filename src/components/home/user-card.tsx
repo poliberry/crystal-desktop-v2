@@ -29,11 +29,12 @@ const MANUAL_STATUSES: ManualStatus[] = ["online", "idle", "dnd", "invisible"];
 /**
  * Bottom-left card — a single card whose height adjusts to what's showing:
  * a "Voice Connected" section (with mic/camera/screen-share toggles and a
- * leave button) only appears on top while a call is active but collapsed
- * (the user is browsing elsewhere); the "who am I" row (avatar, display
- * name — hover reveals the username — status, Settings) is always there.
- * Clicking the name opens the presence switcher — this is the app's only
- * way to change status now that the topbar's status menu and Clerk
+ * leave button) appears on top whenever a call is active — including while
+ * the full call screen is expanded, like Discord's persistent voice status —
+ * not just while the user is browsing elsewhere; the "who am I" row (avatar,
+ * display name — hover reveals the username — status, Settings) is always
+ * there. Clicking the name opens the presence switcher — this is the app's
+ * only way to change status now that the topbar's status menu and Clerk
  * `UserButton` are gone.
  */
 export function UserCard() {
@@ -51,7 +52,7 @@ export function UserCard() {
 
   return (
     <div className="shrink-0 border-t bg-background/60">
-      {activeCall && !expanded && screenSharing && (
+      {activeCall && screenSharing && (
         <div className="flex items-center gap-2 border-b border-dashed bg-primary/10 px-2 py-1.5 text-sm">
           <MonitorUp className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate font-medium">
@@ -73,7 +74,7 @@ export function UserCard() {
         </div>
       )}
 
-      {activeCall && !expanded && (
+      {activeCall && (
         <div className="space-y-1.5 border-b border-dashed p-2">
           <div className="flex items-center gap-1">
             <button
