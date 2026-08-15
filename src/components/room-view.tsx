@@ -9,17 +9,18 @@ import { ScreenShareTile } from "@/components/screen-share-tile";
 import { ScreenSharePicker } from "@/components/screen-share-picker";
 import { ControlBar } from "@/components/control-bar";
 import { Badge } from "@/components/ui/badge";
-import type { SystemAudioChoice, useRoom } from "@/hooks/use-room";
+import type { RoomController, SystemAudioChoice } from "@/hooks/use-room";
 import { getPlatform, isElectron } from "@/lib/desktop";
 
-export type RoomController = ReturnType<typeof useRoom>;
+export type { RoomController };
 
 interface RoomViewProps {
   roomName: string;
   controller: RoomController;
+  onLeave: () => void;
 }
 
-export function RoomView({ roomName, controller }: RoomViewProps) {
+export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
   const {
     room,
     error,
@@ -30,7 +31,6 @@ export function RoomView({ roomName, controller }: RoomViewProps) {
     screenSharing,
     screenShares,
     systemAudioSharing,
-    disconnect,
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
@@ -114,7 +114,7 @@ export function RoomView({ roomName, controller }: RoomViewProps) {
           onToggleCamera={toggleCamera}
           onToggleMicrophone={toggleMicrophone}
           onToggleScreenShare={handleToggleScreenShare}
-          onLeave={disconnect}
+          onLeave={onLeave}
           busy={false}
         />
       </div>

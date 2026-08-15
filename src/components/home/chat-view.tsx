@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { useCall } from "@/components/call/call-provider";
 import { MessageComposer } from "@/components/home/message-composer";
 import { MessageList } from "@/components/home/message-list";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,6 +21,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const conversation = useQuery(api.conversations.get, { conversationId });
   const callParticipants = useQuery(api.calls.listParticipants, { conversationId }) ?? [];
   const markRead = useMutation(api.conversations.markRead);
+  const { activeCall } = useCall();
+  const isActiveCall = activeCall?.conversationId === conversationId;
 
   useEffect(() => {
     void markRead({ conversationId });
@@ -64,12 +67,16 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
         </div>
         <Button
           size="sm"
-          variant={callParticipants.length > 0 ? "default" : "secondary"}
+          variant={isActiveCall || callParticipants.length > 0 ? "default" : "secondary"}
           className="gap-1.5"
           onClick={onStartCall}
         >
           <PhoneCall className="size-4" />
-          {callParticipants.length > 0 ? `Join call (${callParticipants.length})` : "Call"}
+          {isActiveCall
+            ? "Return to call"
+            : callParticipants.length > 0
+              ? `Join call (${callParticipants.length})`
+              : "Call"}
         </Button>
       </div>
 

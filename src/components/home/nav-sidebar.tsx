@@ -5,6 +5,7 @@ import { SearchIcon, ShoppingBag, Sparkles, Users } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { CallMiniBar } from "@/components/home/call-mini-bar";
 import { NewDmDialog } from "@/components/home/new-dm-dialog";
 import { UserCard } from "@/components/home/user-card";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -140,6 +141,7 @@ export function NavSidebar({
       </ScrollArea>
       </div>
 
+      <CallMiniBar />
       <UserCard />
     </div>
   );
