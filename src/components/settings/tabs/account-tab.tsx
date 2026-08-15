@@ -39,10 +39,21 @@ export function AccountTab() {
     if (!trimmed) return;
     setEmailBusy(true);
     setEmailError(null);
+    setEmailSuccess(false);
     try {
       const email = await user.createEmailAddress({ email: trimmed });
-      await email.prepareVerification({ strategy: "email_code" });
+      // Set as soon as the address exists (not after prepareVerification
+      // succeeds) so a failure below — or the user hitting Cancel — can
+      // still find and destroy it instead of leaking an unverified address
+      // on the Clerk account.
       setPendingEmailId(email.id);
+      try {
+        await email.prepareVerification({ strategy: "email_code" });
+      } catch (err) {
+        await email.destroy().catch(() => {});
+        setPendingEmailId(null);
+        throw err;
+      }
     } catch (err) {
       setEmailError(err instanceof Error ? err.message : "Failed to send verification code.");
     } finally {
@@ -61,9 +72,12 @@ export function AccountTab() {
       await user.update({ primaryEmailAddressId: email.id });
 
       // Keep the account down to a single email address, matching what the
-      // old <UserProfile /> flow presented.
+      // old <UserProfile /> flow presented. Not caught per-address: if a
+      // stale address fails to delete, the account isn't actually down to
+      // one email yet, so that should surface as an error, not a false
+      // "Email address updated."
       const stale = user.emailAddresses.filter((e) => e.id !== email.id);
-      await Promise.all(stale.map((e) => e.destroy().catch(() => {})));
+      await Promise.all(stale.map((e) => e.destroy()));
 
       setPendingEmailId(null);
       setNewEmail("");
@@ -77,9 +91,14 @@ export function AccountTab() {
   };
 
   const handleCancelEmailChange = () => {
+    const id = pendingEmailId;
     setPendingEmailId(null);
     setCode("");
     setEmailError(null);
+    // Best-effort: the unverified address created by handleSendCode
+    // shouldn't linger on the account just because the user gave up.
+    const email = id ? user.emailAddresses.find((e) => e.id === id) : undefined;
+    void email?.destroy().catch(() => {});
   };
 
   const handleChangePassword = async () => {
