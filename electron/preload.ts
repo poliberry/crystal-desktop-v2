@@ -4,6 +4,9 @@ const api = {
   isElectron: true,
   platform: process.platform,
   appInfo: () => ipcRenderer.invoke("app:info"),
+  settings: {
+    open: () => ipcRenderer.invoke("settings:open"),
+  },
   systemAudio: {
     enable: () => ipcRenderer.invoke("system-audio:enable"),
     disable: () => ipcRenderer.invoke("system-audio:disable"),

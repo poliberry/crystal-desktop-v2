@@ -15,6 +15,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDesktopAPI } from "@/lib/desktop";
+import { getDefaultAudioChoice, setDefaultAudioChoice } from "@/lib/system-audio-prefs";
 import { cn } from "@/lib/utils";
 import type { SystemAudioChoice } from "@/hooks/use-room";
 import type { AudioApp, ScreenSource } from "@/types/desktop-api";
@@ -34,7 +35,7 @@ interface ScreenSharePickerProps {
 export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePickerProps) {
   const [sources, setSources] = useState<ScreenSource[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [audioChoice, setAudioChoice] = useState<SystemAudioChoice>({ mode: "off" });
+  const [audioChoice, setAudioChoiceState] = useState<SystemAudioChoice>(() => getDefaultAudioChoice());
   const [apps, setApps] = useState<AudioApp[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +80,11 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
   const handleShare = () => {
     if (!selected) return;
     onShare(selected.id, audioChoice);
+  };
+
+  const setAudioChoice = (choice: SystemAudioChoice) => {
+    setAudioChoiceState(choice);
+    setDefaultAudioChoice(choice);
   };
 
   const pickApp = (appId: string) => setAudioChoice({ mode: "app", appId });

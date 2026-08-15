@@ -112,6 +112,51 @@ function createWindow(): void {
   });
 }
 
+let settingsWindow: BrowserWindow | null = null;
+
+/** Opens the Settings window, or focuses it if it's already open (singleton). */
+function createOrFocusSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 840,
+    height: 600,
+    minWidth: 720,
+    minHeight: 480,
+    backgroundColor: "#09090b",
+    autoHideMenuBar: true,
+    title: "Crystal Settings",
+    webPreferences: {
+      preload: PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  if (isDev) {
+    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/settings`);
+  } else {
+    void win.loadURL(`http://127.0.0.1:${localServerPort}/settings/`);
+  }
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https:") || url.startsWith("http:")) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+  win.on("closed", () => {
+    settingsWindow = null;
+  });
+
+  settingsWindow = win;
+}
+
 app.whenReady().then(async () => {
   if (!isDev) {
     try {
@@ -213,6 +258,10 @@ app.whenReady().then(async () => {
       node: process.versions.node,
     },
   }));
+
+  ipcMain.handle("settings:open", () => {
+    createOrFocusSettingsWindow();
+  });
 
   ipcMain.handle("system-audio:enable", () => systemAudio.enable());
   ipcMain.handle("system-audio:disable", () => systemAudio.disable());
