@@ -22,6 +22,11 @@ interface CallContextValue {
   leaveCall: () => Promise<void>;
   expand: () => void;
   collapse: () => void;
+  /** Set when `joinCall` fails before a call is ever established — `activeCall`
+   * stays null in that case, so `CallStage` never mounts to show it; whatever
+   * called `joinCall` (see home-layout.tsx) is responsible for rendering it. */
+  joinError: string | null;
+  dismissJoinError: () => void;
 }
 
 const CallContext = createContext<CallContextValue | null>(null);
@@ -44,8 +49,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const activeCallRef = useRef<ActiveCall | null>(null);
   activeCallRef.current = activeCall;
+
+  // Bumped whenever the user navigates away (collapse) or a new joinCall
+  // starts, so an in-flight joinCall can tell it's been superseded/abandoned
+  // by the time it resolves and avoid clobbering whatever's on screen now.
+  const joinGenerationRef = useRef(0);
 
   const joinCall = useCallback(
     async (conversationId: Id<"conversations">) => {
@@ -53,16 +64,39 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         setExpanded(true);
         return;
       }
+
+      const myGeneration = ++joinGenerationRef.current;
+      setJoinError(null);
+
       if (activeCallRef.current) {
         const previous = activeCallRef.current;
         await disconnect();
         await leaveCallMutation({ conversationId: previous.conversationId }).catch(() => {});
         setActiveCall(null);
       }
-      const { url, token, roomName } = await joinCallAction({ conversationId });
-      await connect({ url, token });
-      setActiveCall({ conversationId, roomName });
-      setExpanded(true);
+
+      try {
+        const { url, token, roomName } = await joinCallAction({ conversationId });
+        await connect({ url, token });
+
+        if (joinGenerationRef.current !== myGeneration) {
+          // The user navigated away (or started a different join) while we
+          // were connecting — leave immediately instead of surfacing a call
+          // for something they're no longer looking at.
+          await disconnect();
+          await leaveCallMutation({ conversationId }).catch(() => {});
+          return;
+        }
+
+        setActiveCall({ conversationId, roomName });
+        setExpanded(true);
+      } catch (err) {
+        await disconnect();
+        await leaveCallMutation({ conversationId }).catch(() => {});
+        if (joinGenerationRef.current === myGeneration) {
+          setJoinError(err instanceof Error ? err.message : String(err));
+        }
+      }
     },
     [connect, disconnect, joinCallAction, leaveCallMutation]
   );
@@ -89,10 +123,30 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [status, leaveCallMutation]);
 
   const expand = useCallback(() => setExpanded(true), []);
-  const collapse = useCallback(() => setExpanded(false), []);
+  const collapse = useCallback(() => {
+    joinGenerationRef.current++;
+    setExpanded(false);
+  }, []);
+  const dismissJoinError = useCallback(() => setJoinError(null), []);
+
+  // Unmounting (e.g. signing out) would otherwise leave the LiveKit Room
+  // connected — local mic/camera still active — and the callParticipants row
+  // stale. Reads activeCallRef at unmount time deliberately; disconnect/
+  // leaveCallMutation are stable across renders.
+  useEffect(() => {
+    return () => {
+      const current = activeCallRef.current;
+      if (!current) return;
+      void disconnect();
+      void leaveCallMutation({ conversationId: current.conversationId }).catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
-    <CallContext.Provider value={{ controller, activeCall, expanded, joinCall, leaveCall, expand, collapse }}>
+    <CallContext.Provider
+      value={{ controller, activeCall, expanded, joinCall, leaveCall, expand, collapse, joinError, dismissJoinError }}
+    >
       {children}
     </CallContext.Provider>
   );

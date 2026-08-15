@@ -19,7 +19,9 @@ export function CallMiniBar() {
     activeCall ? { conversationId: activeCall.conversationId } : "skip"
   );
 
-  if (!activeCall) return null;
+  // CallStage already shows the full controls when expanded — rendering
+  // this too would duplicate them and eat sidebar space for no reason.
+  if (!activeCall || expanded) return null;
 
   const title = conversation
     ? conversation.type === "group"

@@ -17,7 +17,7 @@ export type { RoomController };
 interface RoomViewProps {
   roomName: string;
   controller: RoomController;
-  onLeave: () => void;
+  onLeave: () => Promise<void>;
 }
 
 export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
