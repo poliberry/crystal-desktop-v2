@@ -272,11 +272,11 @@ class LinuxSystemAudio {
         target = null; // "app" mode, not selected → leave alone
       }
 
-      if (target === null || currentSink === target) {
-        // Settled where we want it — any earlier flap history is stale.
+      if (target === null) {
         this.streamMoveState.delete(id);
         continue;
       }
+      if (currentSink === target) continue;
 
       if (isSelf) {
         await this.pactl(["move-sink-input", id, target]).catch(() => {});
