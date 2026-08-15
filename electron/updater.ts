@@ -62,9 +62,14 @@ class Updater {
     autoUpdater.autoInstallOnAppQuit = false;
 
     autoUpdater.on("checking-for-update", () => this.setState({ phase: "checking", error: null }));
-    autoUpdater.on("update-available", (info) =>
-      this.setState({ phase: "available", availableVersion: info.version, error: null })
-    );
+    autoUpdater.on("update-available", (info) => {
+      // The periodic background check re-fires this for the same version
+      // even after it's already been downloaded — don't downgrade "ready"
+      // (which gates the install button) back to "available" and make the
+      // user re-download something that's already sitting on disk.
+      if (this.state.phase === "ready" && this.state.availableVersion === info.version) return;
+      this.setState({ phase: "available", availableVersion: info.version, error: null });
+    });
     autoUpdater.on("update-not-available", () =>
       this.setState({ phase: "not-available", availableVersion: null, error: null })
     );
