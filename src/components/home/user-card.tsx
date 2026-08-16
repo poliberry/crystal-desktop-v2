@@ -37,6 +37,7 @@ import {
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
@@ -94,19 +95,21 @@ export function UserCard() {
           <span className="min-w-0 flex-1 truncate font-medium">
             Sharing{sharedSourceName ? `: ${sharedSourceName}` : ""}
           </span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0 text-destructive hover:bg-destructive/20"
-                onClick={() => void toggleScreenShare()}
-              >
-                <ScreenShareOff className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Stop sharing</TooltipContent>
-          </Tooltip>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 text-destructive hover:bg-destructive/20"
+                  onClick={() => void toggleScreenShare()}
+                >
+                  <ScreenShareOff className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Stop sharing</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       )}
 
@@ -132,92 +135,100 @@ export function UserCard() {
               </div>
             </button>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-                  onClick={() => void leaveCall()}
-                >
-                  <Phone className="size-4 rotate-135" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">Leave call</TooltipContent>
-            </Tooltip>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                    onClick={() => void leaveCall()}
+                  >
+                    <Phone className="size-4 rotate-135" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">Leave call</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           <div className="mt-4 flex items-center justify-between max-w-17.5 gap-1.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="secondary"
-                  className="w-full h-7"
-                  disabled={!hasMicrophone}
-                  onClick={() => void toggleMicrophone()}
-                >
-                  {microphoneEnabled ? (
-                    <Mic className="size-4" />
-                  ) : (
-                    <MicOff className="size-4 text-destructive" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {!hasMicrophone
-                  ? "No microphone detected"
-                  : microphoneEnabled
-                    ? "Mute"
-                    : "Unmute"}
-              </TooltipContent>
-            </Tooltip>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="secondary"
+                    className="w-full h-7"
+                    disabled={!hasMicrophone}
+                    onClick={() => void toggleMicrophone()}
+                  >
+                    {microphoneEnabled ? (
+                      <Mic className="size-4" />
+                    ) : (
+                      <MicOff className="size-4 text-destructive" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {!hasMicrophone
+                    ? "No microphone detected"
+                    : microphoneEnabled
+                      ? "Mute"
+                      : "Unmute"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="secondary"
-                  className="w-full h-7"
-                  disabled={!hasCamera}
-                  onClick={() => void toggleCamera()}
-                >
-                  {cameraEnabled ? (
-                    <Video className="size-4" />
-                  ) : (
-                    <VideoOff className="size-4 text-destructive" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {!hasCamera
-                  ? "No camera"
-                  : cameraEnabled
-                    ? "Camera off"
-                    : "Camera on"}
-              </TooltipContent>
-            </Tooltip>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="secondary"
+                    className="w-full h-7"
+                    disabled={!hasCamera}
+                    onClick={() => void toggleCamera()}
+                  >
+                    {cameraEnabled ? (
+                      <Video className="size-4" />
+                    ) : (
+                      <VideoOff className="size-4 text-destructive" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {!hasCamera
+                    ? "No camera"
+                    : cameraEnabled
+                      ? "Camera off"
+                      : "Camera on"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="w-full h-7"
-                  onClick={() => {
-                    if (screenSharing) void toggleScreenShare();
-                    else openSharePicker();
-                  }}
-                >
-                  {screenSharing ? (
-                    <ScreenShareOff className="size-4" />
-                  ) : (
-                    <MonitorUp className="size-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {screenSharing ? "Stop sharing" : "Share screen"}
-              </TooltipContent>
-            </Tooltip>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="w-full h-7"
+                    onClick={() => {
+                      if (screenSharing) void toggleScreenShare();
+                      else openSharePicker();
+                    }}
+                  >
+                    {screenSharing ? (
+                      <ScreenShareOff className="size-4" />
+                    ) : (
+                      <MonitorUp className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {screenSharing ? "Stop sharing" : "Share screen"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
       )}
@@ -226,7 +237,20 @@ export function UserCard() {
       <div
         className={`${activeCall ? "rounded-t-none rounded-b-lg" : "rounded-lg"} overflow-hidden border border-border/40 bg-card/80 shadow-md`}
       >
-        <div className="flex items-center gap-2 px-3 py-2.5">
+        <div className="relative flex items-center gap-2 px-3 py-2.5">
+          {me.nameplateUrl && (
+            <img
+              src={me.nameplateUrl}
+              alt=""
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
+              style={{
+                WebkitMaskImage:
+                  "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
+                maskImage:
+                  "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
+              }}
+            />
+          )}
           <Popover>
             <PopoverTrigger asChild>
               <Avatar size="sm" className="shrink-0 cursor-pointer">
@@ -237,7 +261,11 @@ export function UserCard() {
                 <AvatarBadge className={STATUS_DOT_CLASS[status]} />
               </Avatar>
             </PopoverTrigger>
-            <PopoverContent side="top" align="start" className="w-72 p-0 mb-5 -ml-4">
+            <PopoverContent
+              side="top"
+              align="start"
+              className="w-72 p-0 mb-5 -ml-4"
+            >
               <MemberProfileCard
                 member={{
                   userId: me._id,
@@ -250,7 +278,9 @@ export function UserCard() {
                   borderGradientStart: me.borderGradientStart,
                   borderGradientEnd: me.borderGradientEnd,
                   // "invisible" appears as offline to others; show the same for self
-                  status: (status === "invisible" ? "offline" : status) as FriendStatus,
+                  status: (status === "invisible"
+                    ? "offline"
+                    : status) as FriendStatus,
                 }}
               />
             </PopoverContent>
@@ -271,19 +301,21 @@ export function UserCard() {
             </div>
           </button>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0 hover:bg-black/10"
-                onClick={() => void getDesktopAPI()?.settings.open()}
-              >
-                <Settings className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Settings</TooltipContent>
-          </Tooltip>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 hover:bg-black/10"
+                  onClick={() => void getDesktopAPI()?.settings.open()}
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Settings</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
     </div>

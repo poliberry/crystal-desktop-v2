@@ -255,6 +255,38 @@ export const getCurrentUser = query({
   handler: async (ctx) => getCurrentUserOrNull(ctx),
 });
 
+export const getProfile = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+    return {
+      id: user._id,
+      name: user.name,
+      username: user.username,
+      imageUrl: user.imageUrl,
+      bio: user.bio,
+      bannerUrl: user.bannerUrl,
+      customStatus: user.customStatus,
+      borderGradientStart: user.borderGradientStart,
+      borderGradientEnd: user.borderGradientEnd,
+    };
+  },
+});
+
+export const getUsersByIds = query({
+  args: { userIds: v.array(v.id("users")) },
+  handler: async (ctx, { userIds }) => {
+    if (userIds.length === 0) return [];
+    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+    return users
+      .filter((u): u is NonNullable<typeof u> => u !== null)
+      .map((u) => ({ id: u._id, name: u.name, imageUrl: u.imageUrl }));
+  },
+});
+
 export const searchByUsername = query({
   args: { username: v.string() },
   handler: async (ctx, { username }) => {

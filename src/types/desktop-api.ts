@@ -177,4 +177,7 @@ export interface DesktopAPI {
     setActiveView(view: ActiveNotificationView): Promise<void>;
     onNavigate(cb: (target: NavigateTarget) => void): () => void;
   };
+  auth?: {
+    onCallback(cb: (url: string) => void): () => void;
+  };
 }

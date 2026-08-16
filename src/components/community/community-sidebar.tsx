@@ -8,7 +8,9 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -16,7 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery } from "convex/react";
 import { ChevronDown, FolderPlus, Hash, LogOut, Settings, UserPlus, Volume2 } from "lucide-react";
 import type { Room } from "livekit-client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -123,7 +125,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
 
   if (!community) {
     return (
-      <div className="flex w-64 shrink-0 flex-col border-r bg-background/40">
+      <div className="flex w-64 shrink-0 flex-col bg-background/40">
         <div className="flex h-14 shrink-0 items-center border-b px-3">
           <Skeleton className="h-4 w-36" />
         </div>
@@ -135,7 +137,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
   const hasBanner = !!community.bannerUrl;
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-r bg-background/40">
+    <div className="flex w-64 shrink-0 flex-col m-2 bg-accent/40 backdrop-blur-xl shadow-md rounded-2xl">
       <DropdownMenu>
         {/* Banner + trigger share a relative container so the trigger can
             overlay the bottom of the banner with a gradient backdrop */}
@@ -143,16 +145,18 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
           {hasBanner && (
             <>
               <div
-                className="absolute inset-0 bg-cover bg-center"
-                style={{ backgroundImage: `url(${community.bannerUrl})` }}
+                className="absolute inset-0 bg-cover bg-center rounded-t-2xl"
+                style={{
+                  backgroundImage: `url(${community.bannerUrl})`,
+                }}
               />
               {/* Fade banner to sidebar background at the bottom */}
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-background" />
             </>
           )}
           <DropdownMenuTrigger asChild>
             <button
-              className="absolute inset-x-0 bottom-0 flex h-12 w-full items-center justify-between border-b px-3 text-left transition-colors hover:bg-accent/20"
+              className="absolute inset-x-0 top-0 flex h-12 w-full items-center justify-between px-3 text-left transition-colors hover:bg-accent/20"
             >
               <p className="truncate text-sm font-semibold">{community.name}</p>
               <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
@@ -314,6 +318,45 @@ function ChannelTree({
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [activeItem, setActiveItem] = useState<ActiveDragItem>(null);
+  /**
+   * Tracks which droppable is currently under the dragged item and whether the
+   * drop would insert before or after it. Used to render a hairline indicator
+   * so the user can see exactly where the item will land.
+   */
+  const [overInfo, setOverInfo] = useState<{ id: string; isBefore: boolean } | null>(null);
+
+  /**
+   * Custom collision detection that restricts candidates to the same drag-type.
+   *
+   * With a single DndContext covering both category headers and channel rows,
+   * the default `closestCenter` considers ALL droppables simultaneously. When
+   * dragging a channel near a category boundary the category-header sortable
+   * can "win" the collision even though it's the wrong type — the drop
+   * indicator then snaps to completely the wrong position.
+   *
+   * Fix: filter droppable containers to only those whose ID prefix matches the
+   * active item's type before handing off to `closestCenter`.
+   */
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    const activeData = args.active.data.current as { type?: string } | undefined;
+    if (activeData?.type === "category") {
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((c) =>
+          String(c.id).startsWith("cat:")
+        ),
+      });
+    }
+    if (activeData?.type === "channel") {
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter(
+          (c) => String(c.id).startsWith("chan:") || String(c.id).startsWith("dropzone:")
+        ),
+      });
+    }
+    return closestCenter(args);
+  }, []);
 
   const { uncategorized, categoryBuckets } = useMemo(() => {
     const sortedCategories = [...categories].sort((a, b) => a.position - b.position);
@@ -337,6 +380,29 @@ function ChannelTree({
     ...categoryBuckets,
   ];
 
+  const handleDragOver = (event: DragOverEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) { setOverInfo(null); return; }
+
+    // Only show the line indicator when hovering directly over a same-type item
+    // (not a dropzone, not a cross-type collision).
+    const activeData = active.data.current as { type?: string } | undefined;
+    const overData = over.data.current as { type?: string } | undefined;
+    const relevantType = activeData?.type === "category" ? "category" : "channel";
+    if (overData?.type !== relevantType) {
+      setOverInfo(null);
+      return;
+    }
+
+    // Compare the dragged item's current translated centre with the over
+    // item's centre to decide before vs. after.
+    const translated = active.rect.current.translated;
+    if (!translated) { setOverInfo(null); return; }
+    const activeCenter = translated.top + translated.height / 2;
+    const overCenter = over.rect.top + over.rect.height / 2;
+    setOverInfo({ id: String(over.id), isBefore: activeCenter < overCenter });
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
     const data = event.active.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
     if (!data) return;
@@ -352,6 +418,7 @@ function ChannelTree({
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveItem(null);
+    setOverInfo(null);
     const { active, over } = event;
     if (!over) return;
     const activeData = active.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
@@ -404,8 +471,9 @@ function ChannelTree({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
       <div className="flex flex-col gap-2 p-2">
@@ -421,6 +489,7 @@ function ChannelTree({
             onCreateChannel={onCreateChannel}
             onEditChannel={onEditChannel}
             onDeleteChannel={onDeleteChannel}
+            overInfo={overInfo}
           />
         )}
 
@@ -439,6 +508,7 @@ function ChannelTree({
               onDeleteChannel={onDeleteChannel}
               onEditCategory={onEditCategory}
               onDeleteCategory={onDeleteCategory}
+              overInfo={overInfo}
             />
           ))}
         </SortableContext>
@@ -466,6 +536,32 @@ function ChannelTree({
   );
 }
 
+/**
+ * Hairline drop-position indicator rendered as an absolutely-positioned
+ * overlay so it never shifts the layout of surrounding items.
+ *
+ * `position="top"`    → centred on the top boundary of its parent row
+ * `position="bottom"` → centred on the bottom boundary
+ *
+ * Using `translate-y-[-50%]` / `translate-y-[50%]` keeps the 2 px line
+ * centred exactly between rows regardless of the gap size.
+ */
+function DropLine({ position }: { position: "top" | "bottom" }) {
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-x-1 z-10 flex items-center gap-1",
+        position === "top"
+          ? "top-0 -translate-y-1/2"
+          : "bottom-0 translate-y-1/2"
+      )}
+    >
+      <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary ring-1 ring-background" />
+      <div className="h-px flex-1 rounded-full bg-primary" />
+    </div>
+  );
+}
+
 interface BucketData {
   id: Id<"channelCategories"> | null;
   name: string | null;
@@ -490,6 +586,7 @@ function CategorySection({
   onDeleteChannel,
   onEditCategory,
   onDeleteCategory,
+  overInfo,
 }: {
   bucket: CategoryBucketData;
   selectedChannelId: Id<"channels"> | null;
@@ -502,6 +599,7 @@ function CategorySection({
   onDeleteChannel: (channelId: Id<"channels">) => void;
   onEditCategory: (category: { id: Id<"channelCategories">; name: string }) => void;
   onDeleteCategory: (categoryId: Id<"channelCategories">) => void;
+  overInfo: { id: string; isBefore: boolean } | null;
 }) {
   const categoryId = bucket.id;
   const [collapsed, setCollapsed] = useState(false);
@@ -512,8 +610,11 @@ function CategorySection({
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 };
 
+  const isDropTarget = overInfo?.id === categoryKey(categoryId);
+
   return (
-    <div ref={setNodeRef} style={style}>
+    <div ref={setNodeRef} style={style} className="relative">
+      {isDropTarget && overInfo.isBefore && <DropLine position="top" />}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
@@ -553,6 +654,8 @@ function CategorySection({
         </ContextMenuContent>
       </ContextMenu>
 
+      {isDropTarget && !overInfo.isBefore && <DropLine position="bottom" />}
+
       {!collapsed && (
         <ChannelBucket
           bucket={bucket}
@@ -564,6 +667,7 @@ function CategorySection({
           onCreateChannel={onCreateChannel}
           onEditChannel={onEditChannel}
           onDeleteChannel={onDeleteChannel}
+          overInfo={overInfo}
         />
       )}
     </div>
@@ -581,6 +685,7 @@ function ChannelBucket({
   onCreateChannel,
   onEditChannel,
   onDeleteChannel,
+  overInfo,
 }: {
   bucket: BucketData;
   totalChannelCount?: number;
@@ -592,6 +697,7 @@ function ChannelBucket({
   onCreateChannel: (categoryId: Id<"channelCategories"> | null) => void;
   onEditChannel: (channel: ChannelRow) => void;
   onDeleteChannel: (channelId: Id<"channels">) => void;
+  overInfo: { id: string; isBefore: boolean } | null;
 }) {
   const { setNodeRef } = useDroppable({
     id: dropzoneKey(bucket.id),
@@ -614,6 +720,7 @@ function ChannelBucket({
             liveRoom={liveRoom}
             onEditChannel={onEditChannel}
             onDeleteChannel={onDeleteChannel}
+            overInfo={overInfo}
           />
         ))}
         {noChannelsAtAll && bucket.id === null && (
@@ -633,6 +740,7 @@ function ChannelItem({
   liveRoom,
   onEditChannel,
   onDeleteChannel,
+  overInfo,
 }: {
   channel: ChannelRow;
   active: boolean;
@@ -642,6 +750,7 @@ function ChannelItem({
   liveRoom: Room | null;
   onEditChannel: (channel: ChannelRow) => void;
   onDeleteChannel: (channelId: Id<"channels">) => void;
+  overInfo: { id: string; isBefore: boolean } | null;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: channelKey(channel.id),
@@ -649,8 +758,12 @@ function ChannelItem({
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 };
 
+  const isDropTarget = overInfo?.id === channelKey(channel.id);
+
   return (
-    <div ref={setNodeRef} style={style}>
+    <div ref={setNodeRef} style={style} className="relative">
+      {isDropTarget && overInfo.isBefore && <DropLine position="top" />}
+      {isDropTarget && !overInfo.isBefore && <DropLine position="bottom" />}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div {...attributes} {...listeners}>

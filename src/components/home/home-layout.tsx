@@ -98,7 +98,7 @@ export function HomeLayout() {
   }, [nav]);
 
   return (
-    <div className="flex h-full">
+    <div className={`flex h-full ${selectedCommunityId && "bg-[url('/backgrounds/chat-bkg.jpg')] bg-cover bg-center"}`}>
       {selectedCommunityId ? (
         <CommunitySidebar
           communityId={selectedCommunityId}

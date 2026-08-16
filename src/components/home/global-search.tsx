@@ -61,8 +61,8 @@ export function GlobalSearch() {
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}
-            placeholder="Search"
-            className="pl-8 h-7 rounded-none"
+            placeholder="Search anything..."
+            className="pl-8 h-7 rounded-md text-xs placeholder:text-xs"
           />
         </div>
       </PopoverAnchor>

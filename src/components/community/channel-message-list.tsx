@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, usePaginatedQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { File as FileIcon, Hash } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { MemberProfileCard } from "./member-profile-card";
 
 interface ChannelMessageListProps {
   channelId: Id<"channels">;
@@ -35,6 +37,12 @@ interface ChannelMessageListProps {
 function ChannelWelcome({ channelName }: { channelName: string }) {
   return (
     <div className="px-1 pt-4 pb-6">
+      <img src="/icons/channel.png" alt={channelName} className="size-30 opacity-40" style={{
+        WebkitMaskImage:
+          "linear-gradient(to bottom right, var(--accent) 0%, var(--accent) 5%, transparent 100%)",
+        maskImage:
+          "linear-gradient(to bottom right, var(--accent) 0%, var(--accent) 5%, transparent 100%)",
+      }} />
       <h2 className="text-2xl font-bold">Welcome to #{channelName}!</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         This is the start of the #{channelName} channel.
@@ -69,6 +77,36 @@ interface MessageDoc {
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+function UserProfileContent({
+  userId,
+  name,
+  username,
+  imageUrl,
+}: {
+  userId: Id<"users">;
+  name: string;
+  username: string;
+  imageUrl?: string;
+}) {
+  const profile = useQuery(api.users.getProfile, { userId });
+  return (
+    <MemberProfileCard
+      member={{
+        userId,
+        name,
+        username,
+        imageUrl,
+        status: "offline",
+        bio: profile?.bio,
+        bannerUrl: profile?.bannerUrl,
+        customStatus: profile?.customStatus,
+        borderGradientStart: profile?.borderGradientStart,
+        borderGradientEnd: profile?.borderGradientEnd,
+      }}
+    />
+  );
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -150,16 +188,30 @@ function MessageRow({
   const content = (
     <div
       className={cn(
-        "group relative flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
+        "group relative flex gap-1 rounded px-2 py-0.5 hover:bg-accent/30",
         startsGroup && "mt-3"
       )}
     >
-      <div className="w-9 shrink-0">
+      <div className="w-9 mt-1 shrink-0">
         {startsGroup && (
-          <Avatar size="sm">
-            <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
-            <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
-          </Avatar>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Avatar size="default" className="cursor-pointer">
+                <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
+                <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-72 p-0">
+              {message.author && (
+                <UserProfileContent
+                  userId={message.author.id}
+                  name={message.author.name}
+                  username={message.author.username}
+                  imageUrl={message.author.imageUrl}
+                />
+              )}
+            </PopoverContent>
+          </Popover>
         )}
       </div>
       <div className="min-w-0 flex-1">
@@ -248,7 +300,7 @@ function MessageRow({
 
 function MessageListSkeleton() {
   return (
-    <div className="flex flex-col gap-4 px-2 py-2">
+    <div className="flex flex-col gap-4 px-2 py-2 h-full justify-end">
       {[48, 32, 64, 40, 56].map((w, i) => (
         <div key={i} className="flex gap-3">
           <Skeleton className="size-9 shrink-0 rounded-full" />

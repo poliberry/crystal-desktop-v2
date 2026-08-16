@@ -14,7 +14,7 @@ export function WindowControls({ className }: { className?: string }) {
   return (
     <div
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      className={cn("flex items-center", className)}
+      className={cn("flex items-center border-l", className)}
     >
       <button
         type="button"

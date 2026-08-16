@@ -13,7 +13,7 @@ export default function HomePage() {
     <main className="h-full dark">
       <SignedOut>
         <div className="flex h-full items-center justify-center">
-          <SignIn />
+          <SignIn forceRedirectUrl="crystal://auth/callback" fallbackRedirectUrl="crystal://auth/callback" />
         </div>
       </SignedOut>
 

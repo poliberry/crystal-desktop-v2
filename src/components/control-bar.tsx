@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -88,6 +89,7 @@ export function ControlBar({
   };
 
   return (
+    <TooltipProvider>
     <div className="flex items-center justify-center gap-3 rounded-full border bg-background/80 px-4 py-3 shadow-lg backdrop-blur">
       <ControlButton
         label={
@@ -136,5 +138,6 @@ export function ControlBar({
         <TooltipContent>Leave room</TooltipContent>
       </Tooltip>
     </div>
+    </TooltipProvider>
   );
 }

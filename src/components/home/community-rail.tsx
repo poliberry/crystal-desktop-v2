@@ -19,7 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** Strips an optional "joincrystal:" prefix so pasting a full invite string
@@ -41,19 +41,21 @@ function RailButton({
   children: React.ReactNode;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant={active ? "default" : "secondary"}
-          size="icon"
-          className="size-12 rounded-full"
-          onClick={onClick}
-        >
-          {children}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={active ? "default" : "secondary"}
+            size="icon"
+            className="size-12 rounded-full"
+            onClick={onClick}
+          >
+            {children}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -171,26 +173,28 @@ export function CommunityRail({ selectedCommunityId, onSelectHome, onSelectCommu
             viewport clipping it off the first/last item. */}
         <div className="flex flex-col items-center gap-2 px-2 py-1">
           {communities.map((community) => (
-            <Tooltip key={community.id}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => onSelectCommunity(community.id)}
-                  className={cn(
-                    "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] hover:rounded-2xl",
-                    selectedCommunityId === community.id && "ring-2 ring-primary ring-offset-2 ring-offset-background"
-                  )}
-                >
-                  <Avatar className="size-12 rounded-none">
-                    <AvatarImage src={community.imageUrl} alt={community.name} />
-                    <AvatarFallback className="rounded-none text-sm">
-                      {community.name.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">{community.name}</TooltipContent>
-            </Tooltip>
+            <TooltipProvider key={community.id}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => onSelectCommunity(community.id)}
+                    className={cn(
+                      "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] hover:rounded-2xl",
+                      selectedCommunityId === community.id && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                    )}
+                  >
+                    <Avatar className="size-12 rounded-none">
+                      <AvatarImage src={community.imageUrl} alt={community.name} />
+                      <AvatarFallback className="rounded-none text-sm">
+                        {community.name.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{community.name}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ))}
           {communities.length === 0 && (
             <p className="mt-4 px-1 text-center text-[11px] text-muted-foreground">

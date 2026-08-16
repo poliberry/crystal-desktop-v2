@@ -8,10 +8,17 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import moment from "moment";
 
 interface CommunitySettingsGeneralTabProps {
   communityId: Id<"communities">;
@@ -27,10 +34,17 @@ export function CommunitySettingsGeneralTab({
   onDeleted,
 }: CommunitySettingsGeneralTabProps) {
   const community = useQuery(api.communities.get, { communityId });
+  const communityMembers = useQuery(api.communities.listMembers, {
+    communityId,
+  });
   const updateSettings = useMutation(api.communities.updateSettings);
-  const generateIconUploadUrl = useMutation(api.communities.generateIconUploadUrl);
+  const generateIconUploadUrl = useMutation(
+    api.communities.generateIconUploadUrl,
+  );
   const setIcon = useMutation(api.communities.setIcon);
-  const generateBannerUploadUrl = useMutation(api.communities.generateBannerUploadUrl);
+  const generateBannerUploadUrl = useMutation(
+    api.communities.generateBannerUploadUrl,
+  );
   const setBanner = useMutation(api.communities.setBanner);
   const removeBanner = useMutation(api.communities.removeBanner);
   const leave = useMutation(api.communities.leave);
@@ -116,18 +130,49 @@ export function CommunitySettingsGeneralTab({
   };
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Overview</CardTitle>
-          <CardDescription>Name and icon shown in the community rail.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="group relative">
-              <Avatar size="lg" className="size-16">
-                <AvatarImage src={community.imageUrl} alt={community.name} />
-                <AvatarFallback>{community.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+    <div className="space-y-6 p-10">
+      <Card className="rounded-xl absolute top-12 right-64 h-fit w-92 p-0">
+        <div className="group relative">
+          <div
+            className={`h-32 rounded-t-xl ${community.bannerUrl ? "bg-cover bg-center" : "flex items-center justify-center border-2 border-dashed bg-muted/40"}`}
+            style={
+              community.bannerUrl
+                ? { backgroundImage: `url(${community.bannerUrl})` }
+                : undefined
+            }
+          >
+            {!community.bannerUrl && (
+              <Camera className="size-6 text-muted-foreground" />
+            )}
+          </div>
+          {canManage && (
+            <button
+              type="button"
+              disabled={bannerUploading}
+              onClick={() => bannerFileInputRef.current?.click()}
+              aria-label="Change banner"
+              className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-100"
+            >
+              {bannerUploading ? (
+                <Loader2 className="size-5 animate-spin text-white" />
+              ) : (
+                <Camera className="size-5 text-white" />
+              )}
+            </button>
+          )}
+        </div>
+        <CardContent className="p-4">
+          <div className="flex flex-row gap-2">
+            <div className="group relative -mt-14">
+              <Avatar className="size-18">
+                <AvatarImage
+                  src={community.imageUrl}
+                  alt={community.name}
+                  className="rounded-lg border-4 border-card"
+                />
+                <AvatarFallback>
+                  {community.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
               </Avatar>
               {canManage && (
                 <button
@@ -135,7 +180,7 @@ export function CommunitySettingsGeneralTab({
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
                   aria-label="Change icon"
-                  className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-100"
+                  className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-100"
                 >
                   {uploading ? (
                     <Loader2 className="size-5 animate-spin text-white" />
@@ -145,96 +190,55 @@ export function CommunitySettingsGeneralTab({
                 </button>
               )}
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => void handleIconPick(e.target.files?.[0])}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="community-settings-name">Name</Label>
-            <Input
-              id="community-settings-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={!canManage}
-              maxLength={64}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Server banner</Label>
-            <div
-              className={`h-24 rounded-md ${community.bannerUrl ? "bg-cover bg-center" : "flex items-center justify-center border-2 border-dashed bg-muted/40"}`}
-              style={community.bannerUrl ? { backgroundImage: `url(${community.bannerUrl})` } : undefined}
-            >
-              {!community.bannerUrl && <Camera className="size-6 text-muted-foreground" />}
+            <div className="-mt-8">
+              <h1 className="font-bold">{name}</h1>
+              <p className="text-muted-foreground text-sm">
+                {communityMembers?.length} members
+              </p>
             </div>
-            {canManage && (
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" disabled={bannerUploading} onClick={() => bannerFileInputRef.current?.click()}>
-                  {bannerUploading ? <Loader2 className="size-4 animate-spin" /> : "Upload banner"}
-                </Button>
-                {community.bannerUrl && (
-                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void removeBanner({ communityId })}>
-                    Remove
-                  </Button>
-                )}
-              </div>
-            )}
-            <input
-              ref={bannerFileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => void handleBannerPick(e.target.files?.[0])}
-            />
           </div>
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-
-          {canManage && (
-            <Button disabled={!name.trim() || saving} onClick={() => void handleSave()}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : "Save changes"}
-            </Button>
-          )}
+          <div className="pt-2">
+            <p className="text-muted-foreground text-sm">
+              Joined the Crystal family on{" "}
+              {moment(community?.createdAt).format("MMM yyyy")}
+            </p>
+          </div>
         </CardContent>
       </Card>
-
-      <Card className="border-destructive/40">
-        <CardHeader>
-          <CardTitle>Danger zone</CardTitle>
+      <Card className="bg-transparent rounded-none border-none w-4xl">
+        <CardHeader className="px-1">
+          <CardTitle className="text-2xl">Community Profile</CardTitle>
+          <CardDescription>
+            Customise how your community appears across Crystal, in invite
+            links, and in Discovery - if you have it enabled.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <Separator className="mb-4" />
-          {isOwner ? (
-            <Button
-              variant="destructive"
-              onClick={() => {
-                if (confirm(`Delete "${community.name}"? This can't be undone.`)) {
-                  void remove({ communityId }).then(onDeleted);
-                }
-              }}
-            >
-              Delete community
-            </Button>
-          ) : (
-            <Button
-              variant="destructive"
-              onClick={() => {
-                if (confirm(`Leave "${community.name}"?`)) {
-                  void leave({ communityId }).then(onDeleted);
-                }
-              }}
-            >
-              Leave community
-            </Button>
-          )}
-        </CardContent>
+        <Separator />
+        <div className="space-y-1.5">
+          <Label htmlFor="community-settings-name">Name</Label>
+          <Input
+            id="community-settings-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={!canManage}
+            maxLength={64}
+            className="w-xl"
+          />
+        </div>
+        <Separator />
       </Card>
+      {canManage && (
+        <Button
+          disabled={!name.trim() || saving}
+          onClick={() => void handleSave()}
+        >
+          {saving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            "Save changes"
+          )}
+        </Button>
+      )}
     </div>
   );
 }

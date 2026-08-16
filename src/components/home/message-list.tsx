@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, usePaginatedQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { File as FileIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -11,8 +11,10 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
+import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -47,6 +49,38 @@ interface MessageDoc {
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+// Rendered inside PopoverContent so it only mounts when the popover is open,
+// fetching the full profile (bio, banner, etc.) lazily on demand.
+function UserProfileContent({
+  userId,
+  name,
+  username,
+  imageUrl,
+}: {
+  userId: Id<"users">;
+  name: string;
+  username: string;
+  imageUrl?: string;
+}) {
+  const profile = useQuery(api.users.getProfile, { userId });
+  return (
+    <MemberProfileCard
+      member={{
+        userId,
+        name,
+        username,
+        imageUrl,
+        status: "offline",
+        bio: profile?.bio,
+        bannerUrl: profile?.bannerUrl,
+        customStatus: profile?.customStatus,
+        borderGradientStart: profile?.borderGradientStart,
+        borderGradientEnd: profile?.borderGradientEnd,
+      }}
+    />
+  );
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -125,10 +159,24 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
     >
       <div className="w-9 shrink-0">
         {startsGroup && (
-          <Avatar size="sm">
-            <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
-            <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
-          </Avatar>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Avatar size="sm" className="cursor-pointer">
+                <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
+                <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-72 p-0">
+              {message.author && (
+                <UserProfileContent
+                  userId={message.author.id}
+                  name={message.author.name}
+                  username={message.author.username}
+                  imageUrl={message.author.imageUrl}
+                />
+              )}
+            </PopoverContent>
+          </Popover>
         )}
       </div>
       <div className="min-w-0 flex-1">
