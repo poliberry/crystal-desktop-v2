@@ -347,7 +347,10 @@ export function ChannelMessageList({ channelId, channelName, canManageMessages }
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a
-          regular top-down scrolling list. */}
+          regular top-down scrolling list. Deliberately not shadcn's
+          ScrollArea here: Radix wraps its Viewport's children in a
+          `display: table` div, which ignores the `min-h-full` this pin
+          relies on, so short conversations render top-anchored instead. */}
       <div className="flex min-h-full flex-col justify-end gap-0.5">
         {status === "Exhausted" && <ChannelWelcome channelName={channelName} />}
 

@@ -2,7 +2,7 @@
 
 import { useMutation } from "convex/react";
 import { Check, Copy, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -31,19 +31,20 @@ export function InviteDialog({ communityId, open, onOpenChange }: InviteDialogPr
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const ensureCode = async () => {
-    setLoading(true);
-    try {
-      setCode(await getOrCreateInviteCode({ communityId }));
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    setCode(null);
+    setCopied(false);
+  }, [communityId]);
 
-  const handleOpenChange = (next: boolean) => {
-    onOpenChange(next);
-    if (next && code === null && !loading) void ensureCode();
-  };
+  useEffect(() => {
+    if (!open || code !== null || loading) return;
+    setLoading(true);
+    void getOrCreateInviteCode({ communityId })
+      .then(setCode)
+      .finally(() => setLoading(false));
+    // Only re-run when the dialog opens or the code is cleared, not on every loading flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, communityId, code]);
 
   const handleRegenerate = async () => {
     setLoading(true);
@@ -63,7 +64,7 @@ export function InviteDialog({ communityId, open, onOpenChange }: InviteDialogPr
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Invite people</DialogTitle>

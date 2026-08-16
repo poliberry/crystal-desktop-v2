@@ -62,6 +62,14 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # electron-builder's NSIS default template is "${productName} Setup
+  # ${version}.${ext}" — the spaces get sanitized to dashes when
+  # electron-builder writes latest.yml's download url/path, but GitHub's
+  # release-asset upload sanitizes spaces to dots instead. That mismatch
+  # (Crystal-Setup-x.y.z.exe expected vs Crystal.Setup.x.y.z.exe actually
+  # uploaded) is what 404s in the auto-updater. Pin a space-free name so
+  # the built file, the uploaded asset, and latest.yml all agree.
+  artifactName: "${productName}-Setup-${version}.${ext}"
 linux:
   target:
     - AppImage
