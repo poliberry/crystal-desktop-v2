@@ -34,13 +34,17 @@ import { getDesktopAPI, getPlatform, isElectron } from "@/lib/desktop";
  *  - Windows: Chromium captures system audio through `getDisplayMedia`,
  *    answered in the main process with `audio: "loopback"` (native WASAPI
  *    loopback of the *entire default output device* — Electron has no
- *    process-tree exclusion for this mode, unlike macOS/Linux above). To keep
- *    this app's own received call audio out of that capture, this module
- *    reroutes every local `<audio>`/`<video>` element to a secondary,
- *    non-default output device for the duration of the share (the same
- *    `playbackSink` / `routeElementToPlayback` mechanism Linux uses), so only
- *    other applications' sound remains on the default device being looped
- *    back. See `acquireWindowsSystemAudioTrack` below and `electron/main.ts`.
+ *    process-tree exclusion for this mode, unlike macOS/Linux above). There is
+ *    no reliable way to detect which *other* enumerated output device is
+ *    actually connected to something audible, so this app's own playback is
+ *    left on the default device untouched (normal call audio keeps working)
+ *    unless the user has a known virtual-cable device installed (VB-Cable,
+ *    VoiceMeeter, ...), in which case local playback is steered onto it via
+ *    `playbackSink` / `routeElementToPlayback` (the same mechanism Linux uses)
+ *    so it's excluded from the loopback capture. Without one, the shared
+ *    system audio may include this app's own call audio — a known Windows
+ *    limitation. See `acquireWindowsSystemAudioTrack` below and
+ *    `electron/main.ts`.
  */
 
 let activeTrack: LocalAudioTrack | null = null;
@@ -227,22 +231,24 @@ async function resetAllElementsPlayback(): Promise<void> {
 }
 
 /**
- * Find a real output device other than the system default, so the app's own
- * playback can be steered off the device that Windows WASAPI loopback is
- * capturing. Returns null if the user only has one physical output device
- * (nothing to route to — self-exclusion isn't possible in that case).
+ * Find a real *virtual* audio-cable output device (VB-Cable, VoiceMeeter,
+ * etc.) to steer this app's own playback onto, so it's off the device that
+ * Windows WASAPI loopback is capturing.
+ *
+ * Deliberately does NOT fall back to "any other output device": there is no
+ * way to tell from the browser whether some other enumerated device is
+ * actually connected to something audible (HDMI-out with nothing plugged in,
+ * a disabled endpoint, etc.), and guessing wrong routes the user's own call
+ * audio to silence instead of their speakers. A virtual-cable device is safe
+ * to assume is intentionally installed and consumed by something (the user
+ * set it up for exactly this kind of routing) — a real device is not.
+ * Returns null (skip self-exclusion, capture is not touched) otherwise.
  */
 async function resolveWindowsAlternateSink(): Promise<string | null> {
   const devices = await navigator.mediaDevices.enumerateDevices();
   const outputs = devices.filter((d) => d.kind === "audiooutput");
-  const defaultDevice = outputs.find((d) => d.deviceId === "default");
-  const real = outputs.filter(
-    (d) => d.deviceId !== "default" && d.deviceId !== "communications"
-  );
-  if (real.length === 0) return null;
-  const alternate =
-    real.find((d) => !defaultDevice || d.groupId !== defaultDevice.groupId) ?? null;
-  return alternate?.deviceId ?? null;
+  const virtualCable = outputs.find((d) => /cable|vb-audio|voicemeeter/i.test(d.label));
+  return virtualCable?.deviceId ?? null;
 }
 
 function watchNewMediaElements() {
@@ -344,18 +350,12 @@ async function acquireWindowsSystemAudioTrack(): Promise<LocalAudioTrack | null>
 
   // WASAPI loopback captures the entire default output device, which
   // includes this app's own received call audio unless we steer our own
-  // playback elsewhere first. Without a second physical output device there
-  // is nothing to route to, so self-exclusion silently degrades to "not
-  // possible" rather than failing the share.
+  // playback onto a virtual-cable device first. Most users won't have one
+  // installed, so this is a best-effort mitigation, not a guarantee — see
+  // `resolveWindowsAlternateSink` for why we never guess at a real device.
   try {
     const alternate = await resolveWindowsAlternateSink();
-    if (alternate) {
-      playbackSink = alternate;
-    } else {
-      console.warn(
-        "[system-audio] No secondary audio output device found; Crystal's own call audio may be included in the shared system audio."
-      );
-    }
+    if (alternate) playbackSink = alternate;
   } catch (err) {
     console.warn("[system-audio] Failed to resolve an alternate playback sink", err);
   }
