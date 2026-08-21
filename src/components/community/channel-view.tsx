@@ -15,12 +15,7 @@ export function ChannelView({ channelId }: ChannelViewProps) {
 
   if (channel === undefined) {
     return (
-      <ChannelChatView
-        channelId={channelId}
-        communityId={channel?.communityId}
-        name={channel?.name}
-        topic={channel?.topic}
-      />
+      <></>
     );
   }
 
