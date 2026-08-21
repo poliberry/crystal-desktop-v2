@@ -35,7 +35,7 @@ export async function notifyUsers(
 ): Promise<void> {
   const { userIds, actorId, ...rest } = params;
   const recipients = Array.from(new Set(userIds)).filter((id) => id !== actorId);
-  const actorUser = await ctx.db.get("users", actorId);
+  const actorUser = await ctx.db.get("users", actorId as Id<"users">);
 
   for (const userId of recipients) {
     await ctx.db.insert("notifications", {
