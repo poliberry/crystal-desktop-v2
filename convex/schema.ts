@@ -86,6 +86,7 @@ export default defineSchema({
     authorId: v.id("users"),
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
+    pinnedAt: v.optional(v.number()),
   }).index("by_conversation", ["conversationId"]),
 
   messageAttachments: defineTable({
@@ -212,6 +213,7 @@ export default defineSchema({
     authorId: v.id("users"),
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
+    pinnedAt: v.optional(v.number()),
   }).index("by_channel", ["channelId"]),
 
   channelMessageAttachments: defineTable({
@@ -237,6 +239,22 @@ export default defineSchema({
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_user", ["channelId", "userId"]),
+
+  /** Custom emoji uploaded per-community. Emoji are referenced in message
+   * text and reactions as `<:name:id>` where `id` is the Convex document _id.
+   * Each community can have at most 50 custom emoji slots. */
+  communityEmojis: defineTable({
+    communityId: v.id("communities"),
+    /** Short identifier used in `<:name:id>` encoding — alphanumeric + underscores. */
+    name: v.string(),
+    /** Public served URL from Convex file storage — populated on add. */
+    imageUrl: v.string(),
+    storageId: v.id("_storage"),
+    uploadedBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_name", ["communityId", "name"]),
 
   /** Per-server profile overrides. Fields left undefined fall back to the
    * user's global profile. */
@@ -269,4 +287,45 @@ export default defineSchema({
     .index("by_conversation", ["conversationId"])
     .index("by_user_channel", ["userId", "channelId"])
     .index("by_user_conversation", ["userId", "conversationId"]),
+
+  // --- Notifications (mobile) ----------------------------------------------
+
+  /** Persisted, per-recipient notification. Created by `notifyUsers` in
+   * convex/notifications.ts, called from message-send/friend-request
+   * mutations. Powers both the mobile app's Notifications tab and, via
+   * convex/push.ts, real device push delivery. */
+  notifications: defineTable({
+    userId: v.id("users"),
+    type: v.union(
+      v.literal("dm_message"),
+      v.literal("channel_mention"),
+      v.literal("friend_request"),
+      v.literal("friend_accept")
+    ),
+    actorId: v.optional(v.id("users")),
+    conversationId: v.optional(v.id("conversations")),
+    channelId: v.optional(v.id("channels")),
+    communityId: v.optional(v.id("communities")),
+    messageId: v.optional(v.id("messages")),
+    channelMessageId: v.optional(v.id("channelMessages")),
+    requestId: v.optional(v.id("friendRequests")),
+    title: v.string(),
+    body: v.optional(v.string()),
+    read: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_read", ["userId", "read"])
+    .index("by_user_created", ["userId", "createdAt"]),
+
+  /** One row per (user, device) Expo push token, so `push.sendExpoPush` can
+   * fan a single notification out to every device a user is signed into. */
+  devicePushTokens: defineTable({
+    userId: v.id("users"),
+    expoPushToken: v.string(),
+    platform: v.union(v.literal("ios"), v.literal("android")),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_token", ["expoPushToken"]),
 });

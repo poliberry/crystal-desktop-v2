@@ -21,23 +21,8 @@ files:
   - dist-electron/**
   - out/**
   - package.json
-  # The main process runs a local static server at runtime (see
-  # electron/main.ts) via serve-handler. Listing its full dependency tree
-  # explicitly (rather than all of node_modules) keeps devDependencies like
-  # electron/typescript themselves out of the packaged app.
-  - node_modules/serve-handler/**
-  - node_modules/bytes/**
-  - node_modules/content-disposition/**
-  - node_modules/mime-types/**
-  - node_modules/mime-db/**
-  - node_modules/minimatch/**
-  - node_modules/brace-expansion/**
-  - node_modules/balanced-match/**
-  - node_modules/concat-map/**
-  - node_modules/path-is-inside/**
-  - node_modules/path-to-regexp/**
-  - node_modules/range-parser/**
-  # electron-updater's runtime dependency tree, for the same reason.
+  # electron-updater's runtime dependency tree. Listed explicitly (rather than
+  # all of node_modules) to keep devDependencies out of the packaged app.
   - node_modules/electron-updater/**
   - node_modules/builder-util-runtime/**
   - node_modules/fs-extra/**
@@ -56,6 +41,13 @@ files:
   - node_modules/ms/**
 asarUnpack:
   - resources/**
+# Register crystal:// as a custom URL scheme so the OS routes OAuth callbacks
+# (crystal://auth/callback?...) back to this app after the system browser
+# completes the auth flow.
+protocols:
+  name: Crystal
+  schemes:
+    - crystal
 mac:
   category: public.app-category.social-networking
   extraResources:

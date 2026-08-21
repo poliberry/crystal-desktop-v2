@@ -75,6 +75,13 @@ const api = {
       return () => ipcRenderer.removeListener("notifications:navigate", handler);
     },
   },
+  auth: {
+    onCallback: (cb: (url: string) => void) => {
+      const handler = (_e: IpcRendererEvent, url: string) => cb(url);
+      ipcRenderer.on("auth:callback", handler);
+      return () => ipcRenderer.removeListener("auth:callback", handler);
+    },
+  },
 };
 
 type NavigateTarget =

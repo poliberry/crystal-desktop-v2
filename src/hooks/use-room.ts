@@ -7,6 +7,7 @@ import {
   Track,
   createLocalScreenTracks,
   type RemoteParticipant,
+  type RemoteTrackPublication,
 } from "livekit-client";
 
 import {
@@ -32,6 +33,16 @@ export type SystemAudioChoice =
 export interface ConnectOptions {
   url: string;
   token: string;
+}
+
+/** Screen-share video/audio publications get their own manual subscription
+ * gating (see `useRoom`) so a screen share isn't downloaded until a viewer
+ * explicitly clicks "Watch" — unlike mic/camera, which stay auto-subscribed. */
+function isScreenShareSource(source: Track.Source | undefined) {
+  return (
+    source === Track.Source.ScreenShare ||
+    source === Track.Source.ScreenShareAudio
+  );
 }
 
 export function useRoom() {
@@ -122,6 +133,15 @@ export function useRoom() {
       syncScreenSharing();
       syncScreenShares();
     };
+    // Screen-share publications default to LiveKit's `autoSubscribe: true`
+    // behavior like everything else — immediately override that here so a
+    // newly-published remote screen share doesn't start downloading until the
+    // viewer explicitly watches it.
+    const onRemoteTrackPublished = (publication: RemoteTrackPublication) => {
+      if (isScreenShareSource(publication.source)) {
+        publication.setSubscribed(false);
+      }
+    };
     const onTrackMuted = (pub: { source?: Track.Source }) => {
       if (pub.source === Track.Source.Microphone) syncLocalTracks();
       if (pub.source === Track.Source.Camera) syncLocalTracks();
@@ -152,6 +172,7 @@ export function useRoom() {
       .on(RoomEvent.TrackMuted, onTrackMuted)
       .on(RoomEvent.TrackUnmuted, onTrackUnmuted)
       .on(RoomEvent.TrackPublished, onTrackUnpublished)
+      .on(RoomEvent.TrackPublished, onRemoteTrackPublished)
       .on(RoomEvent.TrackUnpublished, onTrackUnpublished)
       .on(RoomEvent.Disconnected, onParticipantsChanged)
       .on(RoomEvent.MediaDevicesError, onError);
@@ -167,6 +188,7 @@ export function useRoom() {
         .off(RoomEvent.TrackMuted, onTrackMuted)
         .off(RoomEvent.TrackUnmuted, onTrackUnmuted)
         .off(RoomEvent.TrackPublished, onTrackUnpublished)
+        .off(RoomEvent.TrackPublished, onRemoteTrackPublished)
         .off(RoomEvent.TrackUnpublished, onTrackUnpublished)
         .off(RoomEvent.MediaDevicesError, onError);
     };
@@ -178,6 +200,15 @@ export function useRoom() {
       setError(null);
       try {
         await room.connect(url, token, { autoSubscribe: true });
+        // A screen share already in progress when we join is already present
+        // in `remoteParticipants` at this point, but `TrackPublished` only
+        // fires for publications that happen *after* we've connected — apply
+        // the same "don't auto-download screen shares" gate to those too.
+        for (const p of room.remoteParticipants.values()) {
+          for (const pub of p.trackPublications.values()) {
+            if (isScreenShareSource(pub.source)) pub.setSubscribed(false);
+          }
+        }
         await room.startAudio();
         // Only the microphone is enabled by default. The camera stays off and
         // its permission is only requested when the user toggles it on.
@@ -306,6 +337,33 @@ export function useRoom() {
     }
   }, [stopScreenShare]);
 
+  /** Moves a remote participant's screen-share video + audio publications to
+   * the given subscription state together, as one "watch" action. */
+  const setScreenShareSubscribed = useCallback(
+    (participantIdentity: string, subscribed: boolean) => {
+      const participant = room.getParticipantByIdentity(participantIdentity);
+      if (!participant || participant === room.localParticipant) return;
+      for (const pub of participant.trackPublications.values()) {
+        if (isScreenShareSource(pub.source)) {
+          (pub as RemoteTrackPublication).setSubscribed(subscribed);
+        }
+      }
+    },
+    [room]
+  );
+
+  const subscribeToScreenShare = useCallback(
+    (participantIdentity: string) =>
+      setScreenShareSubscribed(participantIdentity, true),
+    [setScreenShareSubscribed]
+  );
+
+  const unsubscribeFromScreenShare = useCallback(
+    (participantIdentity: string) =>
+      setScreenShareSubscribed(participantIdentity, false),
+    [setScreenShareSubscribed]
+  );
+
   return {
     room,
     status,
@@ -323,6 +381,8 @@ export function useRoom() {
     toggleMicrophone,
     toggleScreenShare,
     startScreenShare,
+    subscribeToScreenShare,
+    unsubscribeFromScreenShare,
   };
 }
 

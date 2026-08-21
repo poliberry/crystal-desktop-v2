@@ -21,14 +21,7 @@ export function CallStage() {
   const isConnected = status === "connected" || status === "connecting";
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center border-b bg-background/60 px-2 py-1.5">
-        <Button variant="ghost" size="sm" className="gap-1.5" onClick={collapse}>
-          <ArrowLeft className="size-4" />
-          Back
-        </Button>
-      </div>
-
+    <div className="flex min-w-0 flex-1 flex-col m-2 rounded-2xl bg-accent/40 backdrop-blur-xl">
       <div className="min-h-0 flex-1">
         {isConnected ? (
           <RoomView roomName={roomName} controller={controller as RoomController} onLeave={leaveCall} />

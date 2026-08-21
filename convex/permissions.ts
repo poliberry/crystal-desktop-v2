@@ -17,6 +17,7 @@ export const PERMISSIONS = {
   KICK_MEMBERS: 1 << 7,
   ADMINISTRATOR: 1 << 8,
   CREATE_INVITE: 1 << 9,
+  MANAGE_EMOJIS: 1 << 10,
 } as const;
 
 export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

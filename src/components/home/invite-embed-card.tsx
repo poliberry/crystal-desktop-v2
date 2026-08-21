@@ -33,27 +33,32 @@ export function InviteEmbedCard({ code }: InviteEmbedCardProps) {
   };
 
   return (
-    <div className="mt-1 max-w-md overflow-hidden rounded-md border bg-muted/40">
+    <div className="mt-1 max-w-xs overflow-hidden rounded-md border bg-muted/40">
       {invite.bannerUrl && (
         <div
           className="h-20 w-full bg-cover bg-center"
           style={{ backgroundImage: `url(${invite.bannerUrl})` }}
         />
       )}
-      <div className="flex items-center gap-3 p-3">
-        <Avatar size="sm">
-          <AvatarImage src={invite.imageUrl} alt={invite.name} />
-          <AvatarFallback>{invite.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{invite.name}</p>
-          <p className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Users className="size-3" />
-            {invite.memberCount} {invite.memberCount === 1 ? "member" : "members"}
-          </p>
+      <div className="flex flex-col items-start gap-3 p-3">
+        <div className="flex flex-row gap-2">
+          <Avatar size="default">
+            <AvatarImage src={invite.imageUrl} alt={invite.name} />
+            <AvatarFallback>
+              {invite.name.slice(0, 2).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{invite.name}</p>
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Users className="size-3" />
+              {invite.memberCount}{" "}
+              {invite.memberCount === 1 ? "member" : "members"}
+            </p>
+          </div>
         </div>
-        <Button size="sm" disabled={joining} onClick={() => void handleJoin()}>
-          Join
+        <Button size="sm" className="w-full" disabled={joining || invite.isMember} onClick={() => void handleJoin()}>
+          {invite.isMember ? "Joined" : "Join"}
         </Button>
       </div>
     </div>

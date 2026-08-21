@@ -111,13 +111,13 @@ function MemberListSkeleton() {
 }
 
 export function MemberList({ communityId }: MemberListProps) {
-  const rawMembers = useQuery(api.communities.listMembers, { communityId });
-  const community = useQuery(api.communities.get, { communityId });
+  const rawMembers = useQuery(api.communities.listMembers, communityId ? { communityId } : "skip");
+  const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
   const members = (rawMembers ?? []) as Member[];
   const groups = buildGroups(members);
 
   return (
-    <div className="flex w-56 shrink-0 flex-col border-l bg-background/40">
+    <div className="flex w-56 shrink-0 flex-col bg-accent/40 backdrop-blur-xl m-2 py-2 rounded-2xl">
       <ScrollArea className="min-h-0 flex-1">
         {rawMembers === undefined ? (
           <MemberListSkeleton />
@@ -166,12 +166,23 @@ export function MemberList({ communityId }: MemberListProps) {
                                 </p>
                               )}
                             </div>
-                            {member.isOwner && <Crown className="size-3 shrink-0 text-amber-500" />}
+                            {member.isOwner && <img src="/icons/crown.png" style={{
+                              WebkitMaskImage:
+                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
+                              maskImage:
+                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
+                            }} alt="Server Owner" className="size-10 absolute bottom-1 right-1 opacity-80" />}
                             {member.nameplateUrl && (
                               <img
                                 src={member.nameplateUrl}
                                 alt=""
-                                className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10"
+                                style={{
+                                  WebkitMaskImage:
+                                    "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
+                                  maskImage:
+                                    "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
+                                }}
+                                className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20"
                               />
                             )}
                           </button>

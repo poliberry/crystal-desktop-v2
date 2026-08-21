@@ -1,9 +1,7 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
 import * as fs from "node:fs";
-import { createServer } from "node:http";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
-import serveHandler from "serve-handler";
 
 import * as backgroundNotifier from "./backgroundNotifier";
 import systemAudio from "./systemAudio";
@@ -14,33 +12,26 @@ const RELEASES_URL = "https://github.com/poliberry/crystal-desktop-v2/releases/l
 const isDev = !!process.env.ELECTRON_START_URL;
 const PRELOAD = path.join(__dirname, "preload.js");
 
-// Packaged builds serve the static export over a real http:// origin instead
-// of file://. file:// is treated as an opaque origin by Chromium, which
-// broke Clerk's session persistence: signing in would "succeed" but the app
-// could never rehydrate the session afterwards. A privileged custom scheme
-// (app://) isn't a fix either — Clerk's client explicitly checks
-// window.location.protocol and only accepts http/https; anything else logs
-// '"app:" is not a valid protocol. Redirecting to "/" instead.' and force-
-// navigates to a bare "/", which reloads the page and loses the in-flight
-// session context. A plain local HTTP server sidesteps both problems.
-let localServerPort: number | null = null;
-
-function startLocalServer(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer((req, res) => {
-      void serveHandler(req, res, { public: path.join(__dirname, "..", "out") });
-    });
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address && typeof address === "object") {
-        resolve(address.port);
-      } else {
-        reject(new Error("Could not determine local server port"));
-      }
-    });
-  });
-}
+// MIME types for the static file server (production only)
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript",
+  ".mjs": "application/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".webp": "image/webp",
+  ".txt": "text/plain",
+};
 
 // Linux: capture the virtual sink's monitor with parec/pw-record and stream
 // interleaved Float32 PCM (48 kHz stereo) to the renderer over IPC. The
@@ -138,6 +129,63 @@ if (process.platform === "win32") {
   app.setAppUserModelId("dev.crystal.desktop");
 }
 
+// ---------------------------------------------------------------------------
+// crystal:// deep-link / OAuth callback handling
+//
+// The app registers crystal:// as its default protocol client. When the OS
+// browser completes an OAuth flow and redirects to crystal://auth/callback,
+// the OS opens (or focuses) this app and passes the URL. We forward it to
+// the renderer via IPC so Clerk can complete the auth handshake.
+// ---------------------------------------------------------------------------
+
+let pendingProtocolUrl: string | null = null;
+
+// Windows / Linux: crystal:// may arrive as a CLI argument on a fresh launch
+// (the OS re-runs the app with the URL as an argv entry).
+const crystalArgUrl = process.argv.find((a) => a.startsWith("crystal://"));
+if (crystalArgUrl) pendingProtocolUrl = crystalArgUrl;
+
+// macOS: crystal:// URLs arrive via the open-url event, which fires both
+// when the app is already running and when it is launched fresh.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (app.isReady()) {
+    handleCrystalUrl(url);
+  } else {
+    pendingProtocolUrl = url;
+  }
+});
+
+// Enforce a single app instance so that crystal:// redirects from the system
+// browser always land in the existing window rather than a second process.
+// Skipped in dev: Electron dev builds share an app identity and the lock would
+// cause each new `bun dev` invocation to quit the process immediately.
+if (!isDev) {
+  const gotSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!gotSingleInstanceLock) {
+    app.quit();
+  } else {
+    app.on("second-instance", (_event, commandLine) => {
+      const url = commandLine.find((a) => a.startsWith("crystal://"));
+      if (url) handleCrystalUrl(url);
+      else createOrFocusMainWindow();
+    });
+  }
+}
+
+function handleCrystalUrl(url: string): void {
+  if (!url.startsWith("crystal://auth/callback")) return;
+  createOrFocusMainWindow();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("auth:callback", url);
+  } else {
+    // Window not yet ready — store and deliver on did-finish-load
+    pendingProtocolUrl = url;
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -159,7 +207,7 @@ function createWindow(): void {
     void win.loadURL(process.env.ELECTRON_START_URL as string);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void win.loadURL(`http://127.0.0.1:${localServerPort}/`);
+    void win.loadURL("http://crystal.localhost/");
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -168,6 +216,30 @@ function createWindow(): void {
     }
     return { action: "deny" };
   });
+
+  // Keep the app window on crystal.localhost. When Clerk initiates an OAuth
+  // flow it navigates to an external provider — intercept that and open the
+  // system browser instead. The callback returns via crystal:// and is
+  // delivered to the renderer via IPC (see handleCrystalUrl above).
+  win.webContents.on("will-navigate", (event, url) => {
+    const isApp = isDev
+      ? url.startsWith("http://localhost:")
+      : url.startsWith("http://crystal.localhost");
+    if (!isApp) {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
+
+  // If the app was launched via a crystal:// URL, forward it once the
+  // renderer has finished loading so the IPC listener is registered.
+  if (pendingProtocolUrl) {
+    const pendingUrl = pendingProtocolUrl;
+    pendingProtocolUrl = null;
+    win.webContents.once("did-finish-load", () => {
+      win.webContents.send("auth:callback", pendingUrl);
+    });
+  }
 
   // Closing the window (the X button, Alt+F4, etc.) hides it instead of
   // quitting — the app keeps running in the tray with background
@@ -225,7 +297,7 @@ function createOrFocusSettingsWindow(): void {
   if (isDev) {
     void win.loadURL(`${process.env.ELECTRON_START_URL as string}/settings`);
   } else {
-    void win.loadURL(`http://127.0.0.1:${localServerPort}/settings/`);
+    void win.loadURL("http://crystal.localhost/settings/");
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -244,18 +316,52 @@ function createOrFocusSettingsWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // Production: intercept http://crystal.localhost and serve the static
+  // Next.js export from the out/ directory. This gives Clerk a stable,
+  // fixed origin (unlike the old random-port serve-handler) so session
+  // cookies survive app restarts.
   if (!isDev) {
-    try {
-      localServerPort = await startLocalServer();
-    } catch (err) {
-      dialog.showErrorBox(
-        "Crystal failed to start",
-        `Could not start the local server the app is served from: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      app.exit(1);
-      return;
-    }
+    const outDir = path.join(__dirname, "..", "out");
+
+    session.defaultSession.protocol.handle("http", async (request) => {
+      const url = new URL(request.url);
+      if (url.hostname !== "crystal.localhost") {
+        // All production API traffic uses HTTPS; plain HTTP to any other
+        // host is unexpected — return a clear error rather than proxying.
+        return new Response("Bad Gateway", { status: 502 });
+      }
+
+      const pathname = url.pathname;
+      let filePath: string;
+
+      // next.config.ts has trailingSlash:true, so HTML routes are stored as
+      // <route>/index.html. Static assets keep their own extension.
+      if (path.extname(pathname)) {
+        filePath = path.join(outDir, pathname);
+      } else {
+        filePath = path.join(outDir, pathname, "index.html");
+      }
+
+      if (!fs.existsSync(filePath)) {
+        // Fallback to the root index (handles unknown deep-link paths)
+        filePath = path.join(outDir, "index.html");
+      }
+
+      try {
+        const content = fs.readFileSync(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        return new Response(content, {
+          headers: { "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream" },
+        });
+      } catch {
+        return new Response("Not Found", { status: 404 });
+      }
+    });
   }
+
+  // Register crystal:// as the default protocol client so the OS routes
+  // OAuth callback URLs (e.g. crystal://auth/callback?...) back to this app.
+  app.setAsDefaultProtocolClient("crystal");
 
   const ses = session.defaultSession;
 

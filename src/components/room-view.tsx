@@ -1,8 +1,11 @@
 "use client";
 
+import { useQuery } from "convex/react";
 import { AlertTriangle } from "lucide-react";
 import { Track } from "livekit-client";
 
+import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 import { useCall } from "@/components/call/call-provider";
 import { CallGrid, type CallTile } from "@/components/call/call-grid";
 import { ControlBar } from "@/components/control-bar";
@@ -33,6 +36,8 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
+    subscribeToScreenShare,
+    unsubscribeFromScreenShare,
   } = controller;
 
   const { openSharePicker } = useCall();
@@ -42,6 +47,10 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     room.localParticipant,
     ...participants.filter((p) => p.identity !== room.localParticipant.identity),
   ];
+
+  const userIds = allParticipants.map((p) => p.identity as Id<"users">);
+  const userData = useQuery(api.users.getUsersByIds, { userIds });
+  const imageUrlByIdentity = new Map(userData?.map((u) => [u.id as string, u.imageUrl]) ?? []);
 
   const screenSharers = allParticipants.filter((p) => {
     const pub = p.getTrackPublication(Track.Source.ScreenShare);
@@ -54,6 +63,7 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       kind: "participant" as const,
       participant,
       isLocal: participant === room.localParticipant,
+      imageUrl: imageUrlByIdentity.get(participant.identity),
     })),
     ...screenSharers.map((participant) => ({
       key: `screen-${participant.identity}`,
@@ -95,7 +105,11 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       )}
 
       <div className="min-h-0 flex-1">
-        <CallGrid tiles={tiles} />
+        <CallGrid
+          tiles={tiles}
+          onSubscribeScreenShare={subscribeToScreenShare}
+          onUnsubscribeScreenShare={unsubscribeFromScreenShare}
+        />
       </div>
 
       <div className="flex justify-center">

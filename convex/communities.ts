@@ -120,6 +120,7 @@ export const get = query({
       bannerUrl: community.bannerUrl,
       ownerId: community.ownerId,
       isOwner: community.ownerId === me._id,
+      createdAt: community.createdAt,
     };
   },
 });
@@ -445,16 +446,30 @@ export const resolveInvite = query({
       .withIndex("by_invite_code", (q) => q.eq("inviteCode", code))
       .unique();
     if (!community) return null;
-    const members = await ctx.db
-      .query("communityMembers")
-      .withIndex("by_community", (q) => q.eq("communityId", community._id))
-      .collect();
+    const [members, me] = await Promise.all([
+      ctx.db
+        .query("communityMembers")
+        .withIndex("by_community", (q) => q.eq("communityId", community._id))
+        .collect(),
+      getCurrentUserOrNull(ctx),
+    ]);
+    let isMember = false;
+    if (me) {
+      const membership = await ctx.db
+        .query("communityMembers")
+        .withIndex("by_community_user", (q) =>
+          q.eq("communityId", community._id).eq("userId", me._id)
+        )
+        .unique();
+      isMember = !!membership;
+    }
     return {
       id: community._id,
       name: community.name,
       imageUrl: community.imageUrl,
       bannerUrl: community.bannerUrl,
       memberCount: members.length,
+      isMember,
     };
   },
 });

@@ -14,6 +14,7 @@ export const PERMISSIONS = {
   KICK_MEMBERS: 1 << 7,
   ADMINISTRATOR: 1 << 8,
   CREATE_INVITE: 1 << 9,
+  MANAGE_EMOJIS: 1 << 10,
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -29,6 +30,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   KICK_MEMBERS: "Kick members",
   ADMINISTRATOR: "Administrator (bypasses all other checks)",
   CREATE_INVITE: "Create invite codes",
+  MANAGE_EMOJIS: "Manage emojis, stickers, and soundboard",
 } as const;
 
 export function hasPermission(permissions: number, flag: number): boolean {

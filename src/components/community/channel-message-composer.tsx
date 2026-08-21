@@ -1,15 +1,17 @@
 "use client";
 
-import { useMutation } from "convex/react";
-import { EmojiPicker } from "frimousse";
+import { useMutation, useQuery } from "convex/react";
 import { Paperclip, Send, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
+import { formatCustomEmoji, matchInProgressShortcode } from "@/lib/custom-emoji";
+import { searchSystemEmoji } from "@/lib/system-emoji";
 
 interface PendingAttachment {
   storageId: Id<"_storage">;
@@ -20,13 +22,32 @@ interface PendingAttachment {
 
 interface ChannelMessageComposerProps {
   channelId: Id<"channels">;
+  communityId: Id<"communities">;
 }
 
-export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProps) {
+interface AutocompleteState {
+  start: number;
+  end: number;
+  query: string;
+}
+
+interface Suggestion {
+  key: string;
+  label: string;
+  preview: React.ReactNode;
+  insert: string;
+}
+
+/** Minimum bar per spec — a working click-driven dropdown, not fully
+ * polished virtualized/fuzzy autocomplete. Server emojis are matched first,
+ * then system emoji — same ordering as the reaction picker. */
+export function ChannelMessageComposer({ channelId, communityId }: ChannelMessageComposerProps) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,12 +57,45 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
   const stopTyping = useMutation(api.typing.stop);
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const serverEmojis = useQuery(api.communityEmojis.list, { communityId });
+
   useEffect(() => {
     return () => {
       if (typingDebounce.current) clearTimeout(typingDebounce.current);
       void stopTyping({ channelId });
     };
   }, [channelId, stopTyping]);
+
+  const suggestions: Suggestion[] =
+    autocomplete && autocomplete.query.length >= 2
+      ? (() => {
+          const needle = autocomplete.query.toLowerCase();
+          const customMatches = (serverEmojis ?? [])
+            .filter((e) => e.name.toLowerCase().startsWith(needle))
+            .slice(0, 8)
+            .map((e) => ({
+              key: e.id,
+              label: `:${e.name}:`,
+              preview: <img src={e.imageUrl} alt={e.name} className="size-4 object-contain" />,
+              insert: formatCustomEmoji(e),
+            }));
+          const remaining = 8 - customMatches.length;
+          const systemMatches =
+            remaining > 0
+              ? searchSystemEmoji(autocomplete.query, remaining).map((s) => ({
+                  key: s.slug,
+                  label: `:${s.slug}:`,
+                  preview: s.emoji,
+                  insert: s.emoji,
+                }))
+              : [];
+          return [...customMatches, ...systemMatches];
+        })()
+      : [];
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [autocomplete?.query]);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -85,6 +139,7 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
     if (typingDebounce.current) clearTimeout(typingDebounce.current);
     void stopTyping({ channelId });
     setSending(true);
+    setAutocomplete(null);
     try {
       await sendMessage({
         channelId,
@@ -99,11 +154,53 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
     }
   };
 
+  const applyAutocomplete = (insert: string) => {
+    if (!autocomplete) return;
+    const newText = text.slice(0, autocomplete.start) + insert + text.slice(autocomplete.end);
+    const cursor = autocomplete.start + insert.length;
+    setText(newText);
+    setAutocomplete(null);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(cursor, cursor);
+    });
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (autocomplete && suggestions.length > 0) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setAutocomplete(null);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex((i) => (i + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applyAutocomplete(suggestions[activeIndex]!.insert);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
     }
+  };
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setText(value);
+    handleTyping();
+    const cursorPos = e.target.selectionStart;
+    setAutocomplete(matchInProgressShortcode(value, cursorPos));
   };
 
   const insertEmoji = (emoji: string) => {
@@ -112,7 +209,26 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
   };
 
   return (
-    <div className="shrink-0 p-3">
+    <div className="relative shrink-0 p-3">
+      {autocomplete && suggestions.length > 0 && (
+        <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+          {suggestions.map((s, index) => (
+            <button
+              key={s.key}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyAutocomplete(s.insert)}
+              className={`flex items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-accent ${
+                index === activeIndex ? "bg-accent" : ""
+              }`}
+            >
+              <span className="flex size-4 items-center justify-center">{s.preview}</span>
+              <span className="text-muted-foreground">{s.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {pending.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {pending.map((attachment, index) => (
@@ -155,8 +271,9 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
         <Textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => { setText(e.target.value); handleTyping(); }}
+          onChange={handleTextChange}
           onKeyDown={handleKeyDown}
+          onBlur={() => setAutocomplete(null)}
           placeholder="Message…"
           className="max-h-40 min-h-8 flex-1 resize-none border-0 bg-transparent! px-1 py-1.5 shadow-none focus-visible:ring-0"
           rows={1}
@@ -169,21 +286,7 @@ export function ChannelMessageComposer({ channelId }: ChannelMessageComposerProp
             </Button>
           </PopoverTrigger>
           <PopoverContent side="top" align="end" className="w-auto p-0">
-            <EmojiPicker.Root
-              className="isolate flex h-80 w-72 flex-col bg-popover"
-              onEmojiSelect={({ emoji }) => insertEmoji(emoji)}
-            >
-              <EmojiPicker.Search className="z-10 mx-2 mt-2 rounded-md border bg-background px-2 py-1 text-sm outline-none" />
-              <EmojiPicker.Viewport className="relative flex-1 outline-none">
-                <EmojiPicker.Loading className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-                  Loading…
-                </EmojiPicker.Loading>
-                <EmojiPicker.Empty className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-                  No emoji found.
-                </EmojiPicker.Empty>
-                <EmojiPicker.List className="pb-2" />
-              </EmojiPicker.Viewport>
-            </EmojiPicker.Root>
+            <ReactionPickerContent communityId={communityId} onSelect={insertEmoji} />
           </PopoverContent>
         </Popover>
 

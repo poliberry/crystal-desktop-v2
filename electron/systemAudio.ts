@@ -51,9 +51,25 @@ const CAPTURE_RESTART_DELAY_MS = 600;
 const CAPTURE_MAX_RESTARTS = 8;
 /** How many input-guard ticks between hardware-sink revalidation (~4.8s). */
 const HARDWARE_SINK_REVALIDATE_TICKS = 12;
-/** Consecutive fought-over rounds before we stop trying to move a stream. */
-const STREAM_FLAP_THRESHOLD = 3;
-const STREAM_FLAP_BACKOFF_MS = 15_000;
+/**
+ * Consecutive fought-over moves before we stop trying to move a stream and
+ * back off. Kept deliberately low: each `pactl move-sink-input` that gets
+ * immediately reversed by a competing processor (e.g. EasyEffects) causes an
+ * audible dropout, so we want to give up after as few fights as possible.
+ */
+const STREAM_FLAP_THRESHOLD = 1;
+/**
+ * How long to leave a stream alone after it keeps being reclaimed by another
+ * processor. Reduced from 15 s to limit how long audio goes un-captured if
+ * the competing processor later releases the stream.
+ */
+const STREAM_FLAP_BACKOFF_MS = 5_000;
+/**
+ * Debounce window for `pactl subscribe` events before triggering a hardware-
+ * sink revalidation. Multiple events often arrive in a burst when the user
+ * changes the output device in pavucontrol.
+ */
+const SINK_WATCH_DEBOUNCE_MS = 300;
 
 /** application.process.binary values that must never be moved into the capture sink. */
 const SELF_BINARIES = new Set(["electron", "Electron", "Crystal", "crystal", "pulseaudio", "pipewire"]);
@@ -72,6 +88,19 @@ const VIRTUAL_SINK_MODULES = new Set([
   "module-ladspa-sink",
   "module-echo-cancel",
 ]);
+
+/**
+ * PipeWire-native virtual sinks (e.g. EasyEffects running in native PipeWire
+ * mode rather than through the PulseAudio compat layer) do NOT show a
+ * recognised Owner Module in `pactl list sinks`, so they cannot be caught by
+ * VIRTUAL_SINK_MODULES alone. We supplement that check with name/description
+ * pattern matching so they are never mistaken for real hardware output.
+ *
+ * VIRTUAL_SINK_NAME_RX  – matches the sink's `Name:` field.
+ * VIRTUAL_SINK_DESC_RX  – matches the sink's `device.description` property.
+ */
+const VIRTUAL_SINK_NAME_RX = /^easyeffects[_-]/i;
+const VIRTUAL_SINK_DESC_RX = /easy\s*effects/i;
 
 export type SystemAudioMode = "system" | "app";
 
@@ -131,6 +160,14 @@ class LinuxSystemAudio {
   private recorder: "parec" | "pw-record" | null = null;
   private captureRestarts = 0;
   private captureRestartTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * `pactl subscribe` child that watches for sink/server events so we can
+   * react to pavucontrol device switches immediately instead of waiting for
+   * the next HARDWARE_SINK_REVALIDATE_TICKS polling cycle.
+   */
+  private sinkWatchChild: ChildProcess | null = null;
+  private sinkWatchDebounce: ReturnType<typeof setTimeout> | null = null;
 
   private pactl(args: string[]): Promise<string> {
     return execFileAsync("pactl", args, {
@@ -302,8 +339,13 @@ class LinuxSystemAudio {
         this.streamMoveState.set(id, { target, flips: 0, backoffUntil: 0 });
       }
 
+      // Re-read from the map so the increment is always applied — the `flapState`
+      // binding above is `undefined` on the very first visit (the entry didn't
+      // exist yet when the const was bound), which previously caused the first
+      // fought-over move to not count toward the flap threshold.
+      const liveState = this.streamMoveState.get(id)!;
       const moved = await this.pactl(["move-sink-input", id, target]).then(() => true).catch(() => false);
-      if (moved && flapState) flapState.flips += 1;
+      if (moved) liveState.flips += 1;
     }
 
     for (const id of this.streamMoveState.keys()) {
@@ -346,6 +388,71 @@ class LinuxSystemAudio {
 
       await this.pactl(["move-sink-input", idMatch[1], this.hardwareSink]).catch(() => {});
     }
+  }
+
+  /**
+   * Spawn `pactl subscribe` and trigger an immediate hardware-sink
+   * revalidation whenever the server's default sink changes or a sink is
+   * added/removed. This gives sub-second reaction time to output-device
+   * switches made in pavucontrol, compared with the ~4.8 s polling fallback.
+   *
+   * The child is restarted automatically if it exits unexpectedly (pactl can
+   * occasionally die when the PipeWire/PulseAudio session restarts).
+   */
+  private startSinkWatcher(): void {
+    if (this.sinkWatchChild) return;
+
+    const trySpawn = () => {
+      if (!this.enabled) return;
+      const child = spawn("pactl", ["subscribe"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      this.sinkWatchChild = child;
+
+      child.stdout?.on("data", (chunk: Buffer) => {
+        if (!this.enabled) return;
+        const text = chunk.toString();
+        // We only care about server (default-sink change) or sink topology events.
+        if (!/Event '[^']+' on (server|sink\b)/.test(text)) return;
+        if (this.sinkWatchDebounce) return;
+        this.sinkWatchDebounce = setTimeout(() => {
+          this.sinkWatchDebounce = null;
+          if (!this.enabled || this.hardwareSinkRevalidation) return;
+          this.hardwareSinkRevalidation = this.revalidateHardwareSink().finally(() => {
+            this.hardwareSinkRevalidation = null;
+          });
+        }, SINK_WATCH_DEBOUNCE_MS);
+      });
+
+      child.on("error", () => {
+        if (this.sinkWatchChild === child) this.sinkWatchChild = null;
+      });
+
+      child.on("exit", () => {
+        if (this.sinkWatchChild !== child) return;
+        this.sinkWatchChild = null;
+        // Restart after a brief delay if still enabled (e.g. PipeWire restarted).
+        if (this.enabled) setTimeout(trySpawn, 2_000);
+      });
+    };
+
+    trySpawn();
+  }
+
+  private stopSinkWatcher(): void {
+    if (this.sinkWatchDebounce) {
+      clearTimeout(this.sinkWatchDebounce);
+      this.sinkWatchDebounce = null;
+    }
+    const child = this.sinkWatchChild;
+    this.sinkWatchChild = null;
+    if (!child) return;
+    child.stdout?.removeAllListeners("data");
+    child.kill("SIGTERM");
+    const killer = setTimeout(() => {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }, 1_500);
+    child.once("exit", () => clearTimeout(killer));
   }
 
   private startInputGuard(): void {
@@ -555,6 +662,9 @@ class LinuxSystemAudio {
     // Keep the routing right from the start, then poll.
     await this.routeSinkInputs();
     this.startInputGuard();
+    // React to device changes in pavucontrol immediately instead of waiting
+    // for the next HARDWARE_SINK_REVALIDATE_TICKS polling cycle.
+    this.startSinkWatcher();
 
     return this.getInfo();
   }
@@ -682,6 +792,7 @@ class LinuxSystemAudio {
     // that would re-enable capture right after we tear everything down.
     this.enabled = false;
     await this.stopInputGuard();
+    this.stopSinkWatcher();
     this.streamMoveState.clear();
     this.hardwareSinkGuardTicks = 0;
     await this.stopCapture();
@@ -746,6 +857,13 @@ class LinuxSystemAudio {
    * module. Covers third-party audio processors (EasyEffects and similar)
    * that route through a virtual sink of their own, so they're never
    * mistaken for "the" hardware output.
+   *
+   * Two detection paths run in parallel:
+   *  1. Module-based  — Owner Module is in VIRTUAL_SINK_MODULES (covers
+   *     PulseAudio mode and PipeWire-pulse compat mode).
+   *  2. Pattern-based — name or device.description matches known virtual-sink
+   *     markers (covers PipeWire-native mode where sinks created inside the
+   *     PipeWire graph have no Owner Module visible via the compat layer).
    */
   private async listVirtualSinkNames(): Promise<Set<string>> {
     const [sinksRaw, modulesRaw] = await Promise.all([
@@ -763,11 +881,28 @@ class LinuxSystemAudio {
     const blocks = sinksRaw.split(/Sink #/).slice(1);
     for (const block of blocks) {
       const nameMatch = block.match(/Name: (\S+)/);
+      if (!nameMatch) continue;
+      const sinkName = nameMatch[1];
+
+      // Path 1: module-based detection (PulseAudio / PipeWire-pulse compat).
       const ownerMatch = block.match(/Owner Module: (\d+)/);
-      if (!nameMatch || !ownerMatch) continue;
-      const moduleName = moduleNameByIndex.get(ownerMatch[1]);
-      if (moduleName && VIRTUAL_SINK_MODULES.has(moduleName)) {
-        virtual.add(nameMatch[1]);
+      if (ownerMatch) {
+        const moduleName = moduleNameByIndex.get(ownerMatch[1]);
+        if (moduleName && VIRTUAL_SINK_MODULES.has(moduleName)) {
+          virtual.add(sinkName);
+          continue;
+        }
+      }
+
+      // Path 2: pattern-based detection for PipeWire-native virtual sinks
+      // (e.g. EasyEffects) whose Owner Module is not in VIRTUAL_SINK_MODULES.
+      if (VIRTUAL_SINK_NAME_RX.test(sinkName)) {
+        virtual.add(sinkName);
+        continue;
+      }
+      const descMatch = block.match(/device\.description = "([^"]*)"/);
+      if (descMatch && VIRTUAL_SINK_DESC_RX.test(descMatch[1])) {
+        virtual.add(sinkName);
       }
     }
     return virtual;

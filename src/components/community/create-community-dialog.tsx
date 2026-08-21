@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface CreateCommunityDialogProps {
   onCreated: (communityId: Id<"communities">) => void;
@@ -57,16 +57,18 @@ export function CreateCommunityDialog({ onCreated, open: controlledOpen, onOpenC
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {!isControlled && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DialogTrigger asChild>
-              <Button variant="secondary" size="icon" className="size-12 rounded-full">
-                <Plus />
-              </Button>
-            </DialogTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="right">Create a community</TooltipContent>
-        </Tooltip>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DialogTrigger asChild>
+                <Button variant="secondary" size="icon" className="size-12 rounded-full">
+                  <Plus />
+                </Button>
+              </DialogTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="right">Create a community</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
       <DialogContent>
         <DialogHeader>
