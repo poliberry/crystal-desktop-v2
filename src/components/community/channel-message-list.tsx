@@ -2,7 +2,7 @@
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { File as FileIcon, Hash } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -15,6 +15,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import type { ServerEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { MemberProfileCard } from "./member-profile-card";
@@ -22,6 +23,7 @@ import { MemberProfileCard } from "./member-profile-card";
 interface ChannelMessageListProps {
   channelId: Id<"channels">;
   channelName: string;
+  communityId: Id<"communities">;
   /** Whether the viewer can delete other people's messages in this channel
    * (MANAGE_MESSAGES) — editing is always author-only. */
   canManageMessages: boolean;
@@ -149,10 +151,14 @@ function MessageRow({
   message,
   startsGroup,
   canManageMessages,
+  communityId,
+  serverEmojiById,
 }: {
   message: MessageDoc;
   startsGroup: boolean;
   canManageMessages: boolean;
+  communityId: Id<"communities">;
+  serverEmojiById: Map<string, ServerEmoji>;
 }) {
   const updateMessage = useMutation(api.channelMessages.update);
   const removeMessage = useMutation(api.channelMessages.remove);
@@ -248,6 +254,7 @@ function MessageRow({
             {message.text && (
               <MessageContent
                 text={message.text}
+                serverEmojiById={serverEmojiById}
                 suffix={
                   message.editedAt && (
                     <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
@@ -260,6 +267,7 @@ function MessageRow({
             ))}
             <MessageReactions
               reactions={message.reactions}
+              serverEmojiById={serverEmojiById}
               onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
             />
           </>
@@ -270,6 +278,7 @@ function MessageRow({
         <MessageHoverActions
           canEdit={message.isMine}
           canDelete={canDelete}
+          communityId={communityId}
           onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
           onEdit={startEdit}
           onDelete={requestDelete}
@@ -283,6 +292,7 @@ function MessageRow({
       <MessageContextMenu
         canEdit={message.isMine}
         canDelete={canDelete}
+        communityId={communityId}
         onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
         onEdit={startEdit}
         onDelete={requestDelete}
@@ -315,13 +325,24 @@ function MessageListSkeleton() {
   );
 }
 
-export function ChannelMessageList({ channelId, channelName, canManageMessages }: ChannelMessageListProps) {
+export function ChannelMessageList({
+  channelId,
+  channelName,
+  communityId,
+  canManageMessages,
+}: ChannelMessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.channelMessages.list,
     { channelId },
     { initialNumItems: 30 }
   );
   const chronological = [...results].reverse();
+
+  const serverEmojis = useQuery(api.communityEmojis.list, { communityId });
+  const serverEmojiById = useMemo(
+    () => new Map((serverEmojis ?? []).map((e) => [e.id, e])),
+    [serverEmojis]
+  );
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef<string | undefined>(undefined);
@@ -375,6 +396,8 @@ export function ChannelMessageList({ channelId, channelName, canManageMessages }
               message={message}
               startsGroup={startsGroup}
               canManageMessages={canManageMessages}
+              communityId={communityId}
+              serverEmojiById={serverEmojiById}
             />
           );
         })}

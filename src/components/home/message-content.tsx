@@ -7,7 +7,14 @@ import remarkGfm from "remark-gfm";
 
 import { InviteEmbedCard } from "@/components/home/invite-embed-card";
 import { LinkEmbedCard } from "@/components/home/link-embed-card";
+import {
+  CUSTOM_EMOJI_IMAGE_SCHEME,
+  EMPTY_EMOJI_MAP,
+  substituteEmojiShortcodes,
+  type ServerEmoji,
+} from "@/lib/custom-emoji";
 import { classifyUrl, extractInviteCodes, extractUrls } from "@/lib/message-links";
+import { findSystemEmojiBySlug } from "@/lib/system-emoji";
 
 interface MessageContentProps {
   text: string;
@@ -15,6 +22,9 @@ interface MessageContentProps {
    * "(edited)" tag — so it flows on the same line instead of dropping below
    * the (block-level) paragraph. */
   suffix?: React.ReactNode;
+  /** Channel messages only — resolves `<:name:id>` tags to real images.
+   * Defaults to an empty map (DMs never have custom emoji). */
+  serverEmojiById?: Map<string, ServerEmoji>;
 }
 
 function MediaEmbed({ url }: { url: string }) {
@@ -28,7 +38,7 @@ function MediaEmbed({ url }: { url: string }) {
   return null;
 }
 
-export function MessageContent({ text, suffix }: MessageContentProps) {
+export function MessageContent({ text, suffix, serverEmojiById = EMPTY_EMOJI_MAP }: MessageContentProps) {
   const urls = extractUrls(text);
   const mediaUrls = urls.filter((url) => classifyUrl(url) !== "link");
   const linkUrls = urls.filter((url) => classifyUrl(url) === "link");
@@ -37,6 +47,13 @@ export function MessageContent({ text, suffix }: MessageContentProps) {
   // lands in the last one, instead of after every paragraph.
   const paragraphCount = text.split(/\n{2,}/).filter((s) => s.trim()).length || 1;
   let paragraphIndex = 0;
+
+  // Converts `<:name:id>` and `:slug:` into markdown image syntax / literal
+  // characters before handing off to ReactMarkdown — see substituteEmojiShortcodes'
+  // doc comment for why this (rather than a raw-HTML/rehype-raw plugin) is
+  // the renderer-side seam, and why it also covers messages sent by hand
+  // without ever touching the composer's `:name:` autocomplete.
+  const processedText = substituteEmojiShortcodes(text, findSystemEmojiBySlug);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -54,9 +71,26 @@ export function MessageContent({ text, suffix }: MessageContentProps) {
                 {children}
               </a>
             ),
-            img: ({ src, alt }) => (
-              <img src={typeof src === "string" ? src : undefined} alt={alt ?? ""} className="max-h-80 max-w-full rounded-md" />
-            ),
+            img: ({ src, alt }) => {
+              if (typeof src === "string" && src.startsWith(CUSTOM_EMOJI_IMAGE_SCHEME)) {
+                const id = src.slice(CUSTOM_EMOJI_IMAGE_SCHEME.length);
+                const serverEmoji = serverEmojiById.get(id);
+                if (serverEmoji) {
+                  return (
+                    <img
+                      src={serverEmoji.imageUrl}
+                      alt={alt ?? serverEmoji.name}
+                      className="inline-block h-5 w-5 align-text-bottom object-contain"
+                    />
+                  );
+                }
+                // Stale/deleted emoji, or a DM with an empty map.
+                return <span title={alt}>🏷️</span>;
+              }
+              return (
+                <img src={typeof src === "string" ? src : undefined} alt={alt ?? ""} className="max-h-80 max-w-full rounded-md" />
+              );
+            },
             p: ({ children }) => {
               paragraphIndex += 1;
               const isLast = paragraphIndex === paragraphCount;
@@ -118,7 +152,7 @@ export function MessageContent({ text, suffix }: MessageContentProps) {
             },
           }}
         >
-          {text}
+          {processedText}
         </ReactMarkdown>
       </div>
 

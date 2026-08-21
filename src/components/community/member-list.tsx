@@ -111,8 +111,8 @@ function MemberListSkeleton() {
 }
 
 export function MemberList({ communityId }: MemberListProps) {
-  const rawMembers = useQuery(api.communities.listMembers, { communityId });
-  const community = useQuery(api.communities.get, { communityId });
+  const rawMembers = useQuery(api.communities.listMembers, communityId ? { communityId } : "skip");
+  const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
   const members = (rawMembers ?? []) as Member[];
   const groups = buildGroups(members);
 
@@ -168,10 +168,10 @@ export function MemberList({ communityId }: MemberListProps) {
                             </div>
                             {member.isOwner && <img src="/icons/crown.png" style={{
                               WebkitMaskImage:
-                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 5%, transparent 100%)",
+                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
                               maskImage:
-                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 5%, transparent 100%)",
-                            }} alt="Server Owner" className="size-10 absolute bottom-1 right-0 opacity-50" />}
+                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
+                            }} alt="Server Owner" className="size-10 absolute bottom-1 right-1 opacity-80" />}
                             {member.nameplateUrl && (
                               <img
                                 src={member.nameplateUrl}

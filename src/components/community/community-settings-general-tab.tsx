@@ -131,6 +131,22 @@ export function CommunitySettingsGeneralTab({
 
   return (
     <div className="space-y-6 p-10">
+      {/* Hidden file inputs — triggered by their respective overlay buttons */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => void handleIconPick(e.target.files?.[0])}
+      />
+      <input
+        ref={bannerFileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => void handleBannerPick(e.target.files?.[0])}
+      />
+
       <Card className="rounded-xl absolute top-12 right-64 h-fit w-92 p-0">
         <div className="group relative">
           <div

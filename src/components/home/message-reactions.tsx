@@ -1,5 +1,6 @@
 "use client";
 
+import { parseCustomEmoji, type ServerEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 
 interface Reaction {
@@ -8,12 +9,26 @@ interface Reaction {
   reactedByMe: boolean;
 }
 
+function ReactionEmoji({ emoji, serverEmojiById }: { emoji: string; serverEmojiById: Map<string, ServerEmoji> }) {
+  const custom = parseCustomEmoji(emoji);
+  if (!custom) return <span>{emoji}</span>;
+  const serverEmoji = serverEmojiById.get(custom.id);
+  if (serverEmoji) {
+    return <img src={serverEmoji.imageUrl} alt={serverEmoji.name} className="size-4 object-contain" />;
+  }
+  // Tag parsed but the id isn't in the map — deleted emoji, or a DM with no
+  // map at all. Fall back to a placeholder instead of the raw `<:name:id>`.
+  return <span>🏷️</span>;
+}
+
 export function MessageReactions({
   reactions,
   onToggle,
+  serverEmojiById,
 }: {
   reactions: Reaction[];
   onToggle: (emoji: string) => void;
+  serverEmojiById: Map<string, ServerEmoji>;
 }) {
   if (reactions.length === 0) return null;
   return (
@@ -28,7 +43,7 @@ export function MessageReactions({
             r.reactedByMe && "border-primary bg-primary/10"
           )}
         >
-          <span>{r.emoji}</span>
+          <ReactionEmoji emoji={r.emoji} serverEmojiById={serverEmojiById} />
           <span className="text-muted-foreground">{r.count}</span>
         </button>
       ))}

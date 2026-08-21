@@ -26,6 +26,12 @@ export interface CallTile {
 
 interface CallGridProps {
   tiles: CallTile[];
+  /** Move a remote participant's screen-share video + audio subscriptions to
+   * "subscribed" so their stream actually starts flowing. */
+  onSubscribeScreenShare?: (participantIdentity: string) => void;
+  /** Move a remote participant's screen-share video + audio subscriptions
+   * back to "unsubscribed" so bandwidth/decode stop being spent on it. */
+  onUnsubscribeScreenShare?: (participantIdentity: string) => void;
 }
 
 interface WatchState {
@@ -206,37 +212,67 @@ function GalleryGrid({
   );
 }
 
-export function CallGrid({ tiles }: CallGridProps) {
+export function CallGrid({
+  tiles,
+  onSubscribeScreenShare,
+  onUnsubscribeScreenShare,
+}: CallGridProps) {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
   const [participantSettings, setParticipantSettings] = useState<Map<string, TileSettings>>(new Map());
+
+  // Screen-share tile keys are `screen-${identity}` (see `RoomView`), so this
+  // lets cleanup paths look up which participant to unsubscribe from even
+  // after their tile has already disappeared from `tiles`.
+  const screenTiles = tiles.filter((t) => t.kind === "screen");
+  const identityForKey = (key: string) =>
+    screenTiles.find((t) => t.key === key)?.participant.identity ?? key.slice("screen-".length);
 
   useEffect(() => {
     if (focusedKey && !tiles.some((t) => t.key === focusedKey)) setFocusedKey(null);
     const screenKeys = new Set(tiles.filter((t) => t.kind === "screen").map((t) => t.key));
     setWatchedKeys((prev) => {
-      const filtered = new Set([...prev].filter((k) => screenKeys.has(k)));
-      return filtered.size === prev.size ? prev : filtered;
+      const removed = [...prev].filter((k) => !screenKeys.has(k));
+      if (removed.length === 0) return prev;
+      // The tile disappeared (participant stopped sharing / left) — drop the
+      // subscription too so a re-share later starts from the unwatched state.
+      for (const key of removed) onUnsubscribeScreenShare?.(identityForKey(key));
+      return new Set([...prev].filter((k) => screenKeys.has(k)));
     });
-  }, [tiles, focusedKey]);
-
-  const multipleScreens = tiles.filter((t) => t.kind === "screen").length > 1;
+  }, [tiles, focusedKey, onUnsubscribeScreenShare]);
 
   const getWatchState = (tile: CallTile): WatchState | undefined => {
-    if (tile.kind !== "screen" || tile.isLocal || !multipleScreens) return undefined;
+    if (tile.kind !== "screen" || tile.isLocal) return undefined;
+    const identity = tile.participant.identity;
     const watching = watchedKeys.has(tile.key);
     const audioEnabled = watchedKeys.size === 0 || watching;
+    const stopWatching = () => {
+      setWatchedKeys((prev) => {
+        const n = new Set(prev);
+        n.delete(tile.key);
+        return n;
+      });
+      onUnsubscribeScreenShare?.(identity);
+    };
+    const startWatching = (replace: boolean) => {
+      setWatchedKeys((prev) => {
+        if (!replace) return new Set([...prev, tile.key]);
+        // "Watch" (not "Add") replaces the whole watch set — unsubscribe
+        // whichever streams are being dropped so they stop downloading.
+        for (const key of prev) {
+          if (key !== tile.key) onUnsubscribeScreenShare?.(identityForKey(key));
+        }
+        return new Set([tile.key]);
+      });
+      onSubscribeScreenShare?.(identity);
+    };
     return {
       watching,
       canWatch: true,
       audioEnabled,
-      onWatch: watching
-        ? () => setWatchedKeys((prev) => { const n = new Set(prev); n.delete(tile.key); return n; })
-        : () => setWatchedKeys(new Set([tile.key])),
+      onWatch: watching ? stopWatching : () => startWatching(true),
       onWatchAdd:
-        !watching && watchedKeys.size > 0
-          ? () => setWatchedKeys((prev) => new Set([...prev, tile.key]))
-          : undefined,
+        !watching && watchedKeys.size > 0 ? () => startWatching(false) : undefined,
     };
   };
 

@@ -36,6 +36,8 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
+    subscribeToScreenShare,
+    unsubscribeFromScreenShare,
   } = controller;
 
   const { openSharePicker } = useCall();
@@ -103,7 +105,11 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       )}
 
       <div className="min-h-0 flex-1">
-        <CallGrid tiles={tiles} />
+        <CallGrid
+          tiles={tiles}
+          onSubscribeScreenShare={subscribeToScreenShare}
+          onUnsubscribeScreenShare={unsubscribeFromScreenShare}
+        />
       </div>
 
       <div className="flex justify-center">

@@ -75,10 +75,11 @@ export function ChannelChatView({
         <ChannelMessageList
           channelId={channelId}
           channelName={name}
+          communityId={communityId}
           canManageMessages={canManageMessages}
         />
         <TypingIndicator channelId={channelId} />
-        <ChannelMessageComposer channelId={channelId} />
+        <ChannelMessageComposer channelId={channelId} communityId={communityId} />
       </div>
 
       {showMembers && <MemberList communityId={communityId} />}

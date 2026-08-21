@@ -13,11 +13,14 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import type { Id } from "../../../convex/_generated/dataModel";
 
 interface MessageContextMenuProps {
   children: React.ReactNode;
   canEdit: boolean;
   canDelete: boolean;
+  /** Channel messages only — omitted for DMs, which have no custom emoji. */
+  communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
@@ -29,6 +32,7 @@ export function MessageContextMenu({
   children,
   canEdit,
   canDelete,
+  communityId,
   onReact,
   onEdit,
   onDelete,
@@ -43,7 +47,7 @@ export function MessageContextMenu({
             React
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="p-0">
-            <ReactionPickerContent onSelect={onReact} />
+            <ReactionPickerContent communityId={communityId} onSelect={onReact} />
           </ContextMenuSubContent>
         </ContextMenuSub>
 

@@ -1,7 +1,77 @@
+import { paginationOptsValidator } from "convex/server";
+import { v } from "convex/values";
+
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { query } from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
-import { getCurrentUserOrNull } from "./users";
+import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+
+type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
+
+/**
+ * Inserts one `notifications` row per recipient (skipping the actor, so
+ * nobody gets notified about their own message/request) and schedules an
+ * Expo push for each via `push.sendExpoPush`. A plain helper — not a Convex
+ * mutation itself — so it runs inside the same transaction as whatever
+ * triggered it (mirrors how `permissions.ts`'s `requireChannelPermission`
+ * etc. are consumed directly by other mutations).
+ */
+export async function notifyUsers(
+  ctx: MutationCtx,
+  params: {
+    userIds: Id<"users">[];
+    type: NotificationType;
+    actorId?: Id<"users">;
+    conversationId?: Id<"conversations">;
+    channelId?: Id<"channels">;
+    communityId?: Id<"communities">;
+    messageId?: Id<"messages">;
+    channelMessageId?: Id<"channelMessages">;
+    requestId?: Id<"friendRequests">;
+    title: string;
+    body?: string;
+  }
+): Promise<void> {
+  const { userIds, actorId, ...rest } = params;
+  const recipients = Array.from(new Set(userIds)).filter((id) => id !== actorId);
+  const actorUser = await ctx.db.get("users", actorId);
+
+  for (const userId of recipients) {
+    await ctx.db.insert("notifications", {
+      userId,
+      actorId,
+      read: false,
+      createdAt: Date.now(),
+      ...rest,
+    });
+    await ctx.scheduler.runAfter(0, internal.push.sendExpoPush, {
+      userId,
+      authorImgUrl: actorUser?.imageUrl,
+      title: rest.title,
+      body: rest.body,
+      // Include the ids the mobile app's notification-tap deep link needs
+      // (dm_message -> conversationId, channel_mention -> channelId, etc.)
+      // so it can navigate without a follow-up query. Additive only —
+      // existing `{ type }` consumers are unaffected.
+      //
+      // senderId/senderName are additive for the same reason, but for the
+      // mobile app's notification-service extension: it builds an
+      // INSendMessageIntent from them to render the push as an iOS
+      // Communication Notification (sender avatar) instead of a plain
+      // alert — see crystal-mobile/targets/notification-service.
+      data: {
+        type: rest.type,
+        conversationId: rest.conversationId,
+        channelId: rest.channelId,
+        communityId: rest.communityId,
+        requestId: rest.requestId,
+        senderId: actorId,
+        senderName: actorUser?.name,
+      },
+    });
+  }
+}
 
 /**
  * One query the Electron main process's background notifier (see
@@ -117,5 +187,86 @@ export const feed = query({
     );
 
     return { conversations, channels, friendRequests };
+  },
+});
+
+// --- Mobile: persisted notifications feed -----------------------------------
+
+/** Paginated, newest-first, enriched with the actor's name/avatar and (for
+ * channel mentions) the channel/community names — enough for the mobile
+ * Notifications tab to render a row without a follow-up query per item. */
+export const list = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return { page: [], isDone: true, continueCursor: "" };
+
+    const page = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_created", (q) => q.eq("userId", me._id))
+      .order("desc")
+      .paginate(paginationOpts);
+
+    const items = await Promise.all(
+      page.page.map(async (n) => {
+        const [actor, channel, community] = await Promise.all([
+          n.actorId ? ctx.db.get(n.actorId) : null,
+          n.channelId ? ctx.db.get(n.channelId) : null,
+          n.communityId ? ctx.db.get(n.communityId) : null,
+        ]);
+        return {
+          id: n._id,
+          type: n.type,
+          title: n.title,
+          body: n.body ?? null,
+          read: n.read,
+          createdAt: n.createdAt,
+          actor: actor ? { id: actor._id, name: actor.name, imageUrl: actor.imageUrl } : null,
+          conversationId: n.conversationId ?? null,
+          channelId: n.channelId ?? null,
+          channelName: channel?.name ?? null,
+          communityId: n.communityId ?? null,
+          communityName: community?.name ?? null,
+          requestId: n.requestId ?? null,
+        };
+      })
+    );
+
+    return { ...page, page: items };
+  },
+});
+
+export const unreadCount = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return 0;
+    const unread = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    return unread.length;
+  },
+});
+
+export const markRead = mutation({
+  args: { notificationId: v.id("notifications") },
+  handler: async (ctx, { notificationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const notification = await ctx.db.get(notificationId);
+    if (!notification || notification.userId !== me._id) return;
+    if (!notification.read) await ctx.db.patch(notificationId, { read: true });
+  },
+});
+
+export const markAllRead = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const unread = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    for (const n of unread) await ctx.db.patch(n._id, { read: true });
   },
 });

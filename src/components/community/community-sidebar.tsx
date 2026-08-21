@@ -114,6 +114,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
 
   const canManageChannels = hasPermission(myPermissions, PERMISSIONS.MANAGE_CHANNELS);
   const canCreateInvite = hasPermission(myPermissions, PERMISSIONS.CREATE_INVITE);
+  const canManageEmojis = hasPermission(myPermissions, PERMISSIONS.MANAGE_EMOJIS);
 
   useEffect(() => {
     if (!selectedChannelId && channels.length > 0) {
@@ -263,6 +264,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
         canManageCommunity={hasPermission(myPermissions, PERMISSIONS.MANAGE_COMMUNITY)}
         canManageRoles={hasPermission(myPermissions, PERMISSIONS.MANAGE_ROLES)}
         canManageChannels={canManageChannels}
+        canManageEmojis={canManageEmojis}
         canKick={hasPermission(myPermissions, PERMISSIONS.KICK_MEMBERS)}
         isOwner={community.isOwner}
       />

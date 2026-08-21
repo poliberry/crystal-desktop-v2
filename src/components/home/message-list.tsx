@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { EMPTY_EMOJI_MAP } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 
 interface MessageListProps {
@@ -215,6 +216,7 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
             {message.text && (
               <MessageContent
                 text={message.text}
+                serverEmojiById={EMPTY_EMOJI_MAP}
                 suffix={
                   message.editedAt && (
                     <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
@@ -227,6 +229,7 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
             ))}
             <MessageReactions
               reactions={message.reactions}
+              serverEmojiById={EMPTY_EMOJI_MAP}
               onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
             />
           </>

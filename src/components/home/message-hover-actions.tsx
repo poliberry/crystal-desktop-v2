@@ -15,10 +15,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { Id } from "../../../convex/_generated/dataModel";
 
 interface MessageHoverActionsProps {
   canEdit: boolean;
   canDelete: boolean;
+  /** Channel messages only — omitted for DMs, which have no custom emoji. */
+  communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
@@ -30,6 +33,7 @@ interface MessageHoverActionsProps {
 export function MessageHoverActions({
   canEdit,
   canDelete,
+  communityId,
   onReact,
   onEdit,
   onDelete,
@@ -43,7 +47,7 @@ export function MessageHoverActions({
           </Button>
         </PopoverTrigger>
         <PopoverContent side="top" align="end" className="w-auto p-0">
-          <ReactionPickerContent onSelect={onReact} />
+          <ReactionPickerContent communityId={communityId} onSelect={onReact} />
         </PopoverContent>
       </Popover>
 

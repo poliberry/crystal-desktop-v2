@@ -52,14 +52,22 @@ export function ScreenShareTile({
   localVolumeRef.current = localVolume ?? 1;
   localMutedRef.current = !!localMuted;
 
-  // --- Video effect (stable — only re-runs when participant changes) ---
+  // --- Video effect (re-runs when the watch gate changes, in addition to
+  // participant changes, so a tile only downloads/decodes video once
+  // watched) ---
   useEffect(() => {
     const el = videoRef.current;
+    // `canWatch` false means gating doesn't apply to this tile at all (e.g.
+    // the local user's own share, handled separately via `isLocal` below) —
+    // in that case behave as before and always attach. Otherwise only attach
+    // once the viewer has explicitly clicked "Watch".
+    const gated = !isLocal && canWatch;
+    const allowed = !gated || watching;
 
     const attachVideo = (pub: TrackPublication | undefined) => {
       const track = pub?.track;
       if (!el) return;
-      if (track && track.kind === Track.Kind.Video) {
+      if (allowed && track && track.kind === Track.Kind.Video) {
         track.attach(el);
         setHasScreen(true);
       } else {
@@ -101,8 +109,9 @@ export function ScreenShareTile({
         .off(RoomEvent.TrackUnmuted, onTrackUnmuted);
       const track = participant.getTrackPublication(Track.Source.ScreenShare)?.track;
       if (el && track) track.detach(el);
+      if (el) el.srcObject = null;
     };
-  }, [participant]);
+  }, [participant, isLocal, canWatch, watching]);
 
   // --- Audio effect (re-runs when audioEnabled changes to attach/detach) ---
   useEffect(() => {

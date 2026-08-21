@@ -2,6 +2,7 @@
 
 import type { Id } from "../../../convex/_generated/dataModel";
 import { CommunitySettingsChannelsTab } from "@/components/community/community-settings-channels-tab";
+import { CommunitySettingsEmojisTab } from "@/components/community/community-settings-emojis-tab";
 import { CommunitySettingsGeneralTab } from "@/components/community/community-settings-general-tab";
 import { CommunitySettingsMembersTab } from "@/components/community/community-settings-members-tab";
 import { CommunitySettingsRolesTab } from "@/components/community/community-settings-roles-tab";
@@ -34,33 +35,22 @@ interface CommunitySettingsDialogProps {
   canManageCommunity: boolean;
   canManageRoles: boolean;
   canManageChannels: boolean;
+  canManageEmojis: boolean;
   canKick: boolean;
   isOwner: boolean;
 }
 
 const data = {
-  versions: ["1.0.1", "1.1.0-alpha", "2.0.0-beta1"],
   navMain: [
     {
       title: "Server Settings",
       url: "#",
       items: [
-        {
-          title: "General",
-          url: "#",
-        },
-        {
-          title: "Roles",
-          url: "#",
-        },
-        {
-          title: "Channels",
-          url: "#",
-        },
-        {
-          title: "Members",
-          url: "#",
-        },
+        { title: "General", url: "#" },
+        { title: "Roles", url: "#" },
+        { title: "Channels", url: "#" },
+        { title: "Members", url: "#" },
+        { title: "Emojis", url: "#" },
       ],
     },
   ],
@@ -73,6 +63,7 @@ export function CommunitySettingsDialog({
   canManageCommunity,
   canManageRoles,
   canManageChannels,
+  canManageEmojis,
   canKick,
   isOwner,
 }: CommunitySettingsDialogProps) {
@@ -147,6 +138,12 @@ export function CommunitySettingsDialog({
                 communityId={communityId}
                 canManageRoles={canManageRoles}
                 canKick={canKick}
+              />
+            )}
+            {selectedTab === "Emojis" && (
+              <CommunitySettingsEmojisTab
+                communityId={communityId}
+                canManage={canManageEmojis}
               />
             )}
           </SidebarInset>
