@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Participant } from "livekit-client";
-import { Volume2, VolumeX } from "lucide-react";
+import { Maximize, PictureInPicture2, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react";
 
 import { ParticipantTile } from "@/components/participant-tile";
 import { ScreenShareTile } from "@/components/screen-share-tile";
@@ -15,6 +16,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Slider } from "@/components/ui/slider";
+import { usePipWindow } from "@/hooks/use-pip-window";
 
 export interface CallTile {
   key: string;
@@ -136,6 +138,189 @@ function TileWithContextMenu({
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
+
+function clampZoom(z: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+}
+
+/** The focused/"expanded" tile: adds scroll-to-zoom + drag-to-pan on the
+ * video content, plus a toolbar to reset zoom and pop the tile out into a
+ * separate always-on-top window (Document Picture-in-Picture). */
+function FocusedTileViewport({
+  tile,
+  displayName,
+  onUnfocus,
+  watchState,
+  settings,
+  onVolumeChange,
+  onMuteToggle,
+}: {
+  tile: CallTile;
+  displayName: string;
+  onUnfocus: () => void;
+  watchState?: WatchState;
+  settings: TileSettings;
+  onVolumeChange: (v: number) => void;
+  onMuteToggle: () => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const { pipWindow, isSupported: pipSupported, open: openPip, close: closePip } = usePipWindow();
+
+  // Reset zoom/pan whenever the focused tile changes (new participant/share)
+  // and drop any open pop-out — it was showing the *previous* tile's stream.
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    closePip();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tile.key]);
+
+  const resetZoom = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!e.deltaY) return;
+    e.preventDefault();
+    setZoom((z) => clampZoom(z - e.deltaY * 0.0015));
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (zoom <= 1) return;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    dragRef.current = { x: e.clientX, y: e.clientY, moved: false };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    setPan((p) => ({ x: p.x + dx / zoom, y: p.y + dy / zoom }));
+  };
+
+  const handlePointerUp = () => {
+    dragRef.current = null;
+  };
+
+  const handleTileClick = () => {
+    if (dragRef.current?.moved) return;
+    onUnfocus();
+  };
+
+  const handlePopOut = async () => {
+    await openPip({ title: displayName, width: 480, height: 270 });
+  };
+
+  const content = (
+    <div
+      className="relative h-full w-full overflow-hidden rounded-lg bg-black/20"
+      onWheel={pipWindow ? undefined : handleWheel}
+    >
+      <div
+        className="h-full w-full"
+        style={{
+          transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
+          transformOrigin: "center center",
+          cursor: zoom > 1 ? "grab" : undefined,
+        }}
+        onPointerDown={pipWindow ? undefined : handlePointerDown}
+        onPointerMove={pipWindow ? undefined : handlePointerMove}
+        onPointerUp={pipWindow ? undefined : handlePointerUp}
+        onPointerLeave={pipWindow ? undefined : handlePointerUp}
+      >
+        <TileWithContextMenu
+          tile={tile}
+          onClick={handleTileClick}
+          watchState={watchState}
+          settings={settings}
+          onVolumeChange={onVolumeChange}
+          onMuteToggle={onMuteToggle}
+        />
+      </div>
+
+      {!pipWindow && (
+        <div
+          className="absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-md bg-black/60 p-1 text-white backdrop-blur"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            title="Zoom out"
+            onClick={() => setZoom((z) => clampZoom(z - 0.25))}
+            className="rounded p-1 hover:bg-white/10 disabled:opacity-40"
+            disabled={zoom <= MIN_ZOOM}
+          >
+            <ZoomOut className="size-3.5" />
+          </button>
+          <span className="min-w-9 text-center text-[11px] tabular-nums text-white/80">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            title="Zoom in"
+            onClick={() => setZoom((z) => clampZoom(z + 0.25))}
+            className="rounded p-1 hover:bg-white/10 disabled:opacity-40"
+            disabled={zoom >= MAX_ZOOM}
+          >
+            <ZoomIn className="size-3.5" />
+          </button>
+          {zoom !== 1 && (
+            <button
+              type="button"
+              title="Reset zoom"
+              onClick={resetZoom}
+              className="rounded p-1 hover:bg-white/10"
+            >
+              <Maximize className="size-3.5" />
+            </button>
+          )}
+          {pipSupported && (
+            <button
+              type="button"
+              title="Pop out into a separate window"
+              onClick={() => void handlePopOut()}
+              className="rounded p-1 hover:bg-white/10"
+            >
+              <PictureInPicture2 className="size-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  if (pipWindow) {
+    return (
+      <>
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-lg bg-black/20 text-sm text-muted-foreground">
+          <PictureInPicture2 className="size-6" />
+          <span>{displayName} is popped out</span>
+          <button
+            type="button"
+            onClick={closePip}
+            className="rounded-md border px-2 py-1 text-xs hover:bg-accent"
+          >
+            Bring back
+          </button>
+        </div>
+        {createPortal(content, pipWindow.document.body)}
+      </>
+    );
+  }
+
+  return content;
 }
 
 function GalleryGrid({
@@ -302,12 +487,14 @@ export function CallGrid({
 
   if (focused) {
     const rest = tiles.filter((t) => t.key !== focused.key);
+    const focusedName = focused.participant.name || focused.participant.identity;
     return (
       <div className="flex h-full min-h-0 flex-col gap-2">
         <div className="min-h-0 flex-1">
-          <TileWithContextMenu
+          <FocusedTileViewport
             tile={focused}
-            onClick={() => setFocusedKey(null)}
+            displayName={focused.kind === "screen" ? `${focusedName}'s screen` : focusedName}
+            onUnfocus={() => setFocusedKey(null)}
             watchState={getWatchState(focused)}
             settings={getSettings(focused.participant.identity)}
             onVolumeChange={(v) => updateVolume(focused.participant.identity, v)}
