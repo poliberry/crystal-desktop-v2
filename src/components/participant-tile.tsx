@@ -156,7 +156,7 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
     <div
       onClick={onClick}
       className={cn(
-        "relative flex w-full items-center justify-center overflow-hidden rounded-lg border ring-2 ring-transparent transition-[background-color,box-shadow]",
+        "relative flex w-full items-center justify-center overflow-hidden rounded-lg border ring-2 ring-inset ring-transparent transition-[background-color,box-shadow]",
         !avatarBg || showVideo ? "bg-muted/40" : "",
         fill ? "h-full" : "aspect-video",
         isLocal && "border-dashed",

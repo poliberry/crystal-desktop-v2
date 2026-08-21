@@ -200,6 +200,13 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // This window is hidden (not closed) while a call is active so calls
+      // keep running from the tray (see the `close` handler below). Chromium
+      // throttles timers on hidden pages, which can delay LiveKit's
+      // signaling keep-alive enough for the server to think the client went
+      // away and force a full reconnect — audibly dropping call audio for
+      // everyone for a moment. Keep this window's timers unthrottled.
+      backgroundThrottling: false,
     },
   });
 

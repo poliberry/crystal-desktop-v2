@@ -116,9 +116,17 @@ export function HomeLayout() {
         />
       )}
 
-      {showCallStage ? (
-        <CallStage />
-      ) : (
+      {/* Kept mounted (just hidden) for as long as a call is active, rather
+          than unmounted on collapse — CallStage/RoomView/CallGrid own the
+          audio elements and screen-share subscription state, and unmounting
+          them on every collapse/expand cycle tore down remote audio and
+          reset "watching" screen-share subscriptions back to none. */}
+      {activeCall && (
+        <div className={showCallStage ? "flex min-h-0 min-w-0 flex-1 flex-col" : "hidden"}>
+          <CallStage />
+        </div>
+      )}
+      {!showCallStage && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {joinError && (
             <div className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">

@@ -33,8 +33,14 @@ import { getDesktopAPI, getPlatform, isElectron } from "@/lib/desktop";
  *    `native/SystemAudioCapture`.
  *  - Windows: Chromium captures system audio through `getDisplayMedia`,
  *    answered in the main process with `audio: "loopback"` (native WASAPI
- *    loopback, scoped to exclude this app's own process tree). See
- *    `acquireDisplayMediaAudioTrack` below and `electron/main.ts`.
+ *    loopback of the *entire default output device* — Electron has no
+ *    process-tree exclusion for this mode, unlike macOS/Linux above). To keep
+ *    this app's own received call audio out of that capture, this module
+ *    reroutes every local `<audio>`/`<video>` element to a secondary,
+ *    non-default output device for the duration of the share (the same
+ *    `playbackSink` / `routeElementToPlayback` mechanism Linux uses), so only
+ *    other applications' sound remains on the default device being looped
+ *    back. See `acquireWindowsSystemAudioTrack` below and `electron/main.ts`.
  */
 
 let activeTrack: LocalAudioTrack | null = null;
@@ -204,6 +210,41 @@ export async function routeAllElementsToPlayback(): Promise<void> {
   await Promise.all(elements.map(routeElementToPlayback));
 }
 
+/** Send a media element's audio output back to the system default device. */
+async function resetElementPlayback(el: HTMLMediaElement): Promise<void> {
+  if (!hasAudioSinkSupport(el) || el.sinkId === "") return;
+  try {
+    await el.setSinkId("");
+  } catch (err) {
+    console.warn("[system-audio] setSinkId reset failed", err);
+  }
+}
+
+/** Routes every audio/video element currently in the DOM back to the default device. */
+async function resetAllElementsPlayback(): Promise<void> {
+  const elements = Array.from(document.querySelectorAll<HTMLMediaElement>("audio, video"));
+  await Promise.all(elements.map(resetElementPlayback));
+}
+
+/**
+ * Find a real output device other than the system default, so the app's own
+ * playback can be steered off the device that Windows WASAPI loopback is
+ * capturing. Returns null if the user only has one physical output device
+ * (nothing to route to — self-exclusion isn't possible in that case).
+ */
+async function resolveWindowsAlternateSink(): Promise<string | null> {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const outputs = devices.filter((d) => d.kind === "audiooutput");
+  const defaultDevice = outputs.find((d) => d.deviceId === "default");
+  const real = outputs.filter(
+    (d) => d.deviceId !== "default" && d.deviceId !== "communications"
+  );
+  if (real.length === 0) return null;
+  const alternate =
+    real.find((d) => !defaultDevice || d.groupId !== defaultDevice.groupId) ?? null;
+  return alternate?.deviceId ?? null;
+}
+
 function watchNewMediaElements() {
   if (!playbackSink || routingObserver) return;
   routingObserver = new MutationObserver((mutations) => {
@@ -232,9 +273,10 @@ function stopWatchingNewMediaElements() {
  * grabs (and immediately discards) a throwaway video track purely to unlock
  * the audio track we actually want. Used on Windows — the main process's
  * `setDisplayMediaRequestHandler` (electron/main.ts) answers with
- * `audio: "loopback"`, which Electron backs with a native WASAPI loopback
- * capture excluding this app's own process tree automatically. (Linux no
- * longer uses this path: it captures the virtual sink's monitor directly with
+ * `audio: "loopback"`, a native WASAPI loopback of the whole default output
+ * device (no self-exclusion — see `acquireWindowsSystemAudioTrack`, which
+ * reroutes this app's own playback away from that device). (Linux no longer
+ * uses this path: it captures the virtual sink's monitor directly with
  * `parec`/`pw-record`, see `acquireLinuxSystemAudioTrack`.)
  */
 async function acquireDisplayMediaAudioTrack(): Promise<LocalAudioTrack> {
@@ -298,7 +340,27 @@ async function acquireMacLoopbackTrack(): Promise<LocalAudioTrack | null> {
 }
 
 async function acquireWindowsSystemAudioTrack(): Promise<LocalAudioTrack | null> {
-  return acquireDisplayMediaAudioTrack();
+  const track = await acquireDisplayMediaAudioTrack();
+
+  // WASAPI loopback captures the entire default output device, which
+  // includes this app's own received call audio unless we steer our own
+  // playback elsewhere first. Without a second physical output device there
+  // is nothing to route to, so self-exclusion silently degrades to "not
+  // possible" rather than failing the share.
+  try {
+    const alternate = await resolveWindowsAlternateSink();
+    if (alternate) {
+      playbackSink = alternate;
+    } else {
+      console.warn(
+        "[system-audio] No secondary audio output device found; Crystal's own call audio may be included in the shared system audio."
+      );
+    }
+  } catch (err) {
+    console.warn("[system-audio] Failed to resolve an alternate playback sink", err);
+  }
+
+  return track;
 }
 
 async function acquireMacScreenCaptureKitTrack(): Promise<LocalAudioTrack | null> {
@@ -454,6 +516,7 @@ export async function stopSystemAudio(room: Room): Promise<void> {
   captureDeviceId = null;
   stopWatchingNewMediaElements();
   playbackSink = null;
+  await resetAllElementsPlayback();
 }
 
 /** Toggle helper used by the control bar. */

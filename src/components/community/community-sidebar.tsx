@@ -100,7 +100,12 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
   const isLoadingChannels = rawChannels === undefined || rawCategories === undefined;
 
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
-  const { activeCall, controller } = useCall();
+  const { activeCall, controller, expanded } = useCall();
+  // While the call stage covers the content pane, no text channel is
+  // actually on screen — so its sidebar row shouldn't still look "active"
+  // (previously it stayed highlighted from before the call was expanded).
+  const showCallStage = expanded && !!activeCall;
+  const effectiveSelectedChannelId = showCallStage ? null : selectedChannelId;
   const leaveCommunity = useMutation(api.communities.leave);
   const deleteChannel = useMutation(api.channels.remove);
   const deleteCategory = useMutation(api.channelCategories.remove);
@@ -214,7 +219,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
                 communityId={communityId}
                 channels={channels}
                 categories={categories}
-                selectedChannelId={selectedChannelId}
+                selectedChannelId={effectiveSelectedChannelId}
                 onSelectChannel={onSelectChannel}
                 canManageChannels={canManageChannels}
                 activeVoiceChannelId={activeCall?.kind === "channel" ? activeCall.channelId : null}
@@ -774,10 +779,10 @@ function ChannelItem({
               onClick={() => onSelectChannel(channel.id, channel.type)}
               className={cn(
                 "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
-                isVoiceActive
-                  ? "bg-emerald-500/10 text-foreground hover:bg-emerald-500/20"
-                  : active
+                active
                   ? "bg-accent text-foreground hover:bg-accent"
+                  : isVoiceActive
+                  ? "text-foreground hover:bg-accent/60"
                   : "text-muted-foreground hover:bg-accent/60"
               )}
             >
