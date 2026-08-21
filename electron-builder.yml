@@ -1,30 +1,53 @@
 appId: dev.crystal.desktop
 productName: Crystal
 copyright: Copyright © 2026 Crystal
+# A single 512x512 build/icon.png is enough — electron-builder generates the
+# platform-specific formats (.icns/.ico/Linux icon set) from it automatically.
+icon: build/icon.png
 directories:
   output: release
+publish:
+  provider: github
+  owner: poliberry
+  repo: crystal-desktop-v2
+# Also ship the raw PNG as a resource so the app itself can set it as the
+# BrowserWindow icon at runtime (electron/main.ts) — mainly for Linux, where
+# window managers don't derive the taskbar/window icon from the packaged app
+# the way Windows/macOS do.
+extraResources:
+  - from: build/icon.png
+    to: icon.png
 files:
   - dist-electron/**
   - out/**
   - package.json
-  # The main process runs a local static server at runtime (see
-  # electron/main.ts) via serve-handler. Listing its full dependency tree
-  # explicitly (rather than all of node_modules) keeps devDependencies like
-  # electron/typescript themselves out of the packaged app.
-  - node_modules/serve-handler/**
-  - node_modules/bytes/**
-  - node_modules/content-disposition/**
-  - node_modules/mime-types/**
-  - node_modules/mime-db/**
-  - node_modules/minimatch/**
-  - node_modules/brace-expansion/**
-  - node_modules/balanced-match/**
-  - node_modules/concat-map/**
-  - node_modules/path-is-inside/**
-  - node_modules/path-to-regexp/**
-  - node_modules/range-parser/**
+  # electron-updater's runtime dependency tree. Listed explicitly (rather than
+  # all of node_modules) to keep devDependencies out of the packaged app.
+  - node_modules/electron-updater/**
+  - node_modules/builder-util-runtime/**
+  - node_modules/fs-extra/**
+  - node_modules/graceful-fs/**
+  - node_modules/jsonfile/**
+  - node_modules/universalify/**
+  - node_modules/js-yaml/**
+  - node_modules/argparse/**
+  - node_modules/lazy-val/**
+  - node_modules/lodash.escaperegexp/**
+  - node_modules/lodash.isequal/**
+  - node_modules/semver/**
+  - node_modules/tiny-typed-emitter/**
+  - node_modules/debug/**
+  - node_modules/sax/**
+  - node_modules/ms/**
 asarUnpack:
   - resources/**
+# Register crystal:// as a custom URL scheme so the OS routes OAuth callbacks
+# (crystal://auth/callback?...) back to this app after the system browser
+# completes the auth flow.
+protocols:
+  name: Crystal
+  schemes:
+    - crystal
 mac:
   category: public.app-category.social-networking
   extraResources:
@@ -39,6 +62,14 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # electron-builder's NSIS default template is "${productName} Setup
+  # ${version}.${ext}" — the spaces get sanitized to dashes when
+  # electron-builder writes latest.yml's download url/path, but GitHub's
+  # release-asset upload sanitizes spaces to dots instead. That mismatch
+  # (Crystal-Setup-x.y.z.exe expected vs Crystal.Setup.x.y.z.exe actually
+  # uploaded) is what 404s in the auto-updater. Pin a space-free name so
+  # the built file, the uploaded asset, and latest.yml all agree.
+  artifactName: "${productName}-Setup-${version}.${ext}"
 linux:
   target:
     - AppImage

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -24,10 +25,12 @@ interface ControlBarProps {
   cameraEnabled: boolean;
   microphoneEnabled: boolean;
   screenSharing: boolean;
+  cameraAvailable?: boolean;
+  microphoneAvailable?: boolean;
   onToggleCamera: () => void;
   onToggleMicrophone: () => void;
   onToggleScreenShare: () => void;
-  onLeave: () => void;
+  onLeave: () => Promise<void>;
   busy: boolean;
 }
 
@@ -66,6 +69,8 @@ export function ControlBar({
   cameraEnabled,
   microphoneEnabled,
   screenSharing,
+  cameraAvailable = true,
+  microphoneAvailable = true,
   onToggleCamera,
   onToggleMicrophone,
   onToggleScreenShare,
@@ -84,19 +89,28 @@ export function ControlBar({
   };
 
   return (
+    <TooltipProvider>
     <div className="flex items-center justify-center gap-3 rounded-full border bg-background/80 px-4 py-3 shadow-lg backdrop-blur">
       <ControlButton
-        label={microphoneEnabled ? "Mute microphone" : "Unmute microphone"}
+        label={
+          !microphoneAvailable
+            ? "No microphone detected"
+            : microphoneEnabled
+              ? "Mute microphone"
+              : "Unmute microphone"
+        }
         onClick={onToggleMicrophone}
-        disabled={busy}
+        disabled={busy || !microphoneAvailable}
       >
         {microphoneEnabled ? <Mic /> : <MicOff className="text-destructive" />}
       </ControlButton>
 
       <ControlButton
-        label={cameraEnabled ? "Turn camera off" : "Turn camera on"}
+        label={
+          !cameraAvailable ? "No camera detected" : cameraEnabled ? "Turn camera off" : "Turn camera on"
+        }
         onClick={onToggleCamera}
-        disabled={busy}
+        disabled={busy || !cameraAvailable}
       >
         {cameraEnabled ? <Camera /> : <CameraOff className="text-destructive" />}
       </ControlButton>
@@ -124,5 +138,6 @@ export function ControlBar({
         <TooltipContent>Leave room</TooltipContent>
       </Tooltip>
     </div>
+    </TooltipProvider>
   );
 }

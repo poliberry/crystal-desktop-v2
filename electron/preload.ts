@@ -1,9 +1,37 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
+import type { UpdaterState } from "./updater";
+
 const api = {
   isElectron: true,
   platform: process.platform,
   appInfo: () => ipcRenderer.invoke("app:info"),
+  settings: {
+    open: () => ipcRenderer.invoke("settings:open"),
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
+    close: () => ipcRenderer.invoke("window:close"),
+    isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+    onMaximizedChange: (cb: (maximized: boolean) => void) => {
+      const handler = (_e: IpcRendererEvent, maximized: boolean) => cb(maximized);
+      ipcRenderer.on("window:maximized-changed", handler);
+      return () => ipcRenderer.removeListener("window:maximized-changed", handler);
+    },
+  },
+  updater: {
+    getState: () => ipcRenderer.invoke("updater:state"),
+    check: () => ipcRenderer.invoke("updater:check"),
+    download: () => ipcRenderer.invoke("updater:download"),
+    install: () => ipcRenderer.invoke("updater:install"),
+    openReleases: () => ipcRenderer.invoke("updater:open-releases"),
+    onStateChange: (cb: (state: UpdaterState) => void) => {
+      const handler = (_e: IpcRendererEvent, state: UpdaterState) => cb(state);
+      ipcRenderer.on("updater:state-changed", handler);
+      return () => ipcRenderer.removeListener("updater:state-changed", handler);
+    },
+  },
   systemAudio: {
     enable: () => ipcRenderer.invoke("system-audio:enable"),
     disable: () => ipcRenderer.invoke("system-audio:disable"),
@@ -36,6 +64,28 @@ const api = {
     getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
     setSource: (id: string) => ipcRenderer.invoke("screen-share:set-source", id),
   },
+  notifications: {
+    configure: (url: string, token: string | null, userId: string | null) =>
+      ipcRenderer.invoke("notifications:configure", url, token, userId),
+    setActiveView: (view: { kind: "conversation" | "channel"; id: string } | null) =>
+      ipcRenderer.invoke("notifications:set-active-view", view),
+    onNavigate: (cb: (target: NavigateTarget) => void) => {
+      const handler = (_e: IpcRendererEvent, target: NavigateTarget) => cb(target);
+      ipcRenderer.on("notifications:navigate", handler);
+      return () => ipcRenderer.removeListener("notifications:navigate", handler);
+    },
+  },
+  auth: {
+    onCallback: (cb: (url: string) => void) => {
+      const handler = (_e: IpcRendererEvent, url: string) => cb(url);
+      ipcRenderer.on("auth:callback", handler);
+      return () => ipcRenderer.removeListener("auth:callback", handler);
+    },
+  },
 };
+
+type NavigateTarget =
+  | { kind: "conversation"; conversationId: string }
+  | { kind: "channel"; communityId: string; channelId: string };
 
 contextBridge.exposeInMainWorld("desktopAPI", api);

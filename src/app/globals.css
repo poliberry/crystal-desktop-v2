@@ -1,4 +1,6 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap");
 @import "tailwindcss";
+@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -121,4 +123,12 @@
 html,
 body {
   height: 100%;
+}
+
+/* Applied to the emoji picker viewport so all emoji glyphs use the consistent
+ * cross-platform Noto Color Emoji font when available. Cascade falls back to
+ * OS emoji fonts (Apple Color Emoji, Segoe UI Emoji) if not loaded. */
+.emoji-font {
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", sans-serif;
 }

@@ -1,25 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useQuery } from "convex/react";
 import { AlertTriangle } from "lucide-react";
 import { Track } from "livekit-client";
 
-import { ParticipantTile } from "@/components/participant-tile";
-import { ScreenShareTile } from "@/components/screen-share-tile";
-import { ScreenSharePicker } from "@/components/screen-share-picker";
+import { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
+import { useCall } from "@/components/call/call-provider";
+import { CallGrid, type CallTile } from "@/components/call/call-grid";
 import { ControlBar } from "@/components/control-bar";
 import { Badge } from "@/components/ui/badge";
-import type { SystemAudioChoice, useRoom } from "@/hooks/use-room";
+import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
+import type { RoomController } from "@/hooks/use-room";
 import { getPlatform, isElectron } from "@/lib/desktop";
 
-export type RoomController = ReturnType<typeof useRoom>;
+export type { RoomController };
 
 interface RoomViewProps {
   roomName: string;
   controller: RoomController;
+  onLeave: () => Promise<void>;
 }
 
-export function RoomView({ roomName, controller }: RoomViewProps) {
+export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
   const {
     room,
     error,
@@ -30,39 +33,51 @@ export function RoomView({ roomName, controller }: RoomViewProps) {
     screenSharing,
     screenShares,
     systemAudioSharing,
-    disconnect,
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
-    startScreenShare,
+    subscribeToScreenShare,
+    unsubscribeFromScreenShare,
   } = controller;
 
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const { openSharePicker } = useCall();
+  const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
 
   const allParticipants = [
     room.localParticipant,
     ...participants.filter((p) => p.identity !== room.localParticipant.identity),
   ];
 
+  const userIds = allParticipants.map((p) => p.identity as Id<"users">);
+  const userData = useQuery(api.users.getUsersByIds, { userIds });
+  const imageUrlByIdentity = new Map(userData?.map((u) => [u.id as string, u.imageUrl]) ?? []);
+
   const screenSharers = allParticipants.filter((p) => {
     const pub = p.getTrackPublication(Track.Source.ScreenShare);
     return screenShares.includes(p.identity) && !!pub && !pub.isMuted;
   });
 
+  const tiles: CallTile[] = [
+    ...allParticipants.map((participant) => ({
+      key: `cam-${participant.identity}`,
+      kind: "participant" as const,
+      participant,
+      isLocal: participant === room.localParticipant,
+      imageUrl: imageUrlByIdentity.get(participant.identity),
+    })),
+    ...screenSharers.map((participant) => ({
+      key: `screen-${participant.identity}`,
+      kind: "screen" as const,
+      participant,
+      isLocal: participant === room.localParticipant,
+    })),
+  ];
+
   const handleToggleScreenShare = () => {
     if (screenSharing) {
       void toggleScreenShare();
     } else {
-      setPickerOpen(true);
-    }
-  };
-
-  const handleShare = async (sourceId: string, audio: SystemAudioChoice) => {
-    setPickerOpen(false);
-    try {
-      await startScreenShare(sourceId, audio);
-    } catch {
-      // error surfaced via controller.error
+      openSharePicker();
     }
   };
 
@@ -89,21 +104,12 @@ export function RoomView({ roomName, controller }: RoomViewProps) {
         </div>
       )}
 
-      <div className="grid flex-1 grid-cols-1 content-start gap-3 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
-        {allParticipants.map((participant) => (
-          <ParticipantTile
-            key={participant.identity}
-            participant={participant}
-            isLocal={participant === room.localParticipant}
-          />
-        ))}
-        {screenSharers.map((participant) => (
-          <ScreenShareTile
-            key={`screen-${participant.identity}`}
-            participant={participant}
-            isLocal={participant === room.localParticipant}
-          />
-        ))}
+      <div className="min-h-0 flex-1">
+        <CallGrid
+          tiles={tiles}
+          onSubscribeScreenShare={subscribeToScreenShare}
+          onUnsubscribeScreenShare={unsubscribeFromScreenShare}
+        />
       </div>
 
       <div className="flex justify-center">
@@ -111,19 +117,15 @@ export function RoomView({ roomName, controller }: RoomViewProps) {
           cameraEnabled={cameraEnabled}
           microphoneEnabled={microphoneEnabled}
           screenSharing={screenSharing}
+          cameraAvailable={hasCamera}
+          microphoneAvailable={hasMicrophone}
           onToggleCamera={toggleCamera}
           onToggleMicrophone={toggleMicrophone}
           onToggleScreenShare={handleToggleScreenShare}
-          onLeave={disconnect}
+          onLeave={onLeave}
           busy={false}
         />
       </div>
-
-      <ScreenSharePicker
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        onShare={(sourceId, audio) => void handleShare(sourceId, audio)}
-      />
     </div>
   );
 }

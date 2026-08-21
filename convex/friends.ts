@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
+import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
@@ -111,6 +112,12 @@ export const sendFriendRequest = mutation({
       const now = Date.now();
       await ctx.db.insert("friendships", { ownerId: me._id, friendId: target._id, createdAt: now });
       await ctx.db.insert("friendships", { ownerId: target._id, friendId: me._id, createdAt: now });
+      await notifyUsers(ctx, {
+        userIds: [target._id],
+        actorId: me._id,
+        type: "friend_accept",
+        title: `You and ${me.name} are now friends`,
+      });
       return { status: "accepted" as const };
     }
 
@@ -120,10 +127,17 @@ export const sendFriendRequest = mutation({
       .unique();
     if (existingRequest) throw new Error("Friend request already sent.");
 
-    await ctx.db.insert("friendRequests", {
+    const requestId = await ctx.db.insert("friendRequests", {
       requesterId: me._id,
       recipientId: target._id,
       createdAt: Date.now(),
+    });
+    await notifyUsers(ctx, {
+      userIds: [target._id],
+      actorId: me._id,
+      type: "friend_request",
+      requestId,
+      title: `${me.name} sent you a friend request`,
     });
     return { status: "pending" as const };
   },
@@ -140,6 +154,12 @@ export const acceptFriendRequest = mutation({
     const now = Date.now();
     await ctx.db.insert("friendships", { ownerId: me._id, friendId: request.requesterId, createdAt: now });
     await ctx.db.insert("friendships", { ownerId: request.requesterId, friendId: me._id, createdAt: now });
+    await notifyUsers(ctx, {
+      userIds: [request.requesterId],
+      actorId: me._id,
+      type: "friend_accept",
+      title: `${me.name} accepted your friend request`,
+    });
   },
 });
 

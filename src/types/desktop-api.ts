@@ -43,6 +43,24 @@ export interface AppInfo {
   };
 }
 
+export type UpdaterPhase =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "not-available"
+  | "unsupported"
+  | "error";
+
+export interface UpdaterState {
+  phase: UpdaterPhase;
+  currentVersion: string;
+  availableVersion: string | null;
+  progressPercent: number | null;
+  error: string | null;
+}
+
 /**
  * Result of starting the macOS ScreenCaptureKit helper. `started === true`
  * means raw interleaved Float32 PCM at `sampleRate` Hz is being streamed.
@@ -99,10 +117,38 @@ export interface ScreenSource {
   thumbnail: string | null;
 }
 
+/** What's currently focused in the renderer — reported to the main process
+ * so a background notification isn't fired for the thing you're already
+ * looking at (see electron/backgroundNotifier.ts). */
+export type ActiveNotificationView = { kind: "conversation" | "channel"; id: string } | null;
+
+/** Where to jump to after clicking a background notification. */
+export type NavigateTarget =
+  | { kind: "conversation"; conversationId: string }
+  | { kind: "channel"; communityId: string; channelId: string };
+
 export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
   appInfo(): Promise<AppInfo>;
+  settings: {
+    open(): Promise<void>;
+  };
+  window: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    close(): Promise<void>;
+    isMaximized(): Promise<boolean>;
+    onMaximizedChange(cb: (maximized: boolean) => void): () => void;
+  };
+  updater: {
+    getState(): Promise<UpdaterState>;
+    check(): Promise<UpdaterState>;
+    download(): Promise<UpdaterState>;
+    install(): Promise<void>;
+    openReleases(): Promise<void>;
+    onStateChange(cb: (state: UpdaterState) => void): () => void;
+  };
   systemAudio: {
     enable(): Promise<SystemAudioState>;
     disable(): Promise<void>;
@@ -125,5 +171,13 @@ export interface DesktopAPI {
   screenShare?: {
     getSources(): Promise<ScreenSource[]>;
     setSource(id: string): Promise<boolean>;
+  };
+  notifications: {
+    configure(url: string, token: string | null, userId: string | null): Promise<void>;
+    setActiveView(view: ActiveNotificationView): Promise<void>;
+    onNavigate(cb: (target: NavigateTarget) => void): () => void;
+  };
+  auth?: {
+    onCallback(cb: (url: string) => void): () => void;
   };
 }

@@ -5,6 +5,7 @@ import { AccessToken } from "livekit-server-sdk";
 
 import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
+import { closeRoomIfEmpty, ensureRoom } from "./lib/liveKitAdmin";
 
 /**
  * Mints a LiveKit join token for a conversation's call room. Runs in the Node
@@ -26,6 +27,8 @@ export const join = action({
     }
 
     const roomName = `dm-${conversationId}`;
+    await ensureRoom(roomName);
+
     const at = new AccessToken(apiKey, apiSecret, { identity: userId, name, ttl: "4h" });
     at.addGrant({
       room: roomName,
@@ -36,5 +39,20 @@ export const join = action({
     });
 
     return { token: await at.toJwt(), url, roomName };
+  },
+});
+
+/**
+ * Leaves a conversation's call: drops the caller's `callParticipants` row
+ * and, if that was the last person in it, closes the LiveKit room instead of
+ * leaving it to sit empty until its timeout.
+ */
+export const leave = action({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }): Promise<void> => {
+    const userId = await ctx.runQuery(internal.users.getCurrentUserIdInternal, {});
+    if (!userId) return;
+    const remaining = await ctx.runMutation(internal.calls.recordLeave, { conversationId, userId });
+    await closeRoomIfEmpty(`dm-${conversationId}`, remaining);
   },
 });
