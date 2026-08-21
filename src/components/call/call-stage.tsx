@@ -21,7 +21,7 @@ export function CallStage() {
   const isConnected = status === "connected" || status === "connecting";
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col m-2 rounded-2xl bg-accent/40 backdrop-blur-xl">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col m-2 rounded-2xl bg-accent/40 backdrop-blur-xl">
       <div className="min-h-0 flex-1">
         {isConnected ? (
           <RoomView roomName={roomName} controller={controller as RoomController} onLeave={leaveCall} />
