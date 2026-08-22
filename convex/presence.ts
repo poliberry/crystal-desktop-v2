@@ -31,6 +31,19 @@ export const getMine = query({
   },
 });
 
+export const getUserPresence = query({
+  args: {
+    userId: v.id("users")
+  },
+  handler: async (ctx, args) => {
+    return ctx.db
+      .query("presence")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+  },
+});
+
+
 export const heartbeat = mutation({
   args: { isIdle: v.boolean() },
   handler: async (ctx, { isIdle }) => {
