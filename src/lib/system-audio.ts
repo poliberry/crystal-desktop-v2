@@ -15,16 +15,18 @@ import { getDesktopAPI, getPlatform, isElectron } from "@/lib/desktop";
  * The app captures the *other* applications' audio and publishes it into the
  * LiveKit room, without capturing its own audio output:
  *
- *  - Linux (Electron): a PulseAudio `null` sink is created and set as the
- *    default sink, so every other application plays into it, while the app
- *    itself routes its own playback to the real hardware sink (via
- *    `HTMLMediaElement.setSinkId` and a main-process routing guardian) so it
- *    never enters the monitor. The main process captures that virtual sink's
- *    monitor directly with `parec`/`pw-record` and streams raw PCM over IPC;
- *    this renderer injects it through an AudioWorklet →
+ *  - Linux (Electron): a `null` sink is created and the main process captures
+ *    its monitor with `parec`/`pw-record`, streaming raw PCM over IPC; this
+ *    renderer injects it through an AudioWorklet →
  *    MediaStreamAudioDestinationNode (the same `acquirePcmLoopbackTrack`
  *    pipeline macOS uses) and publishes it as a LiveKit `ScreenShareAudio`
- *    track. See `electron/systemAudio.ts` for the pactl work.
+ *    track. On PipeWire, each shared application is *duplicate-linked* into
+ *    that sink, so it keeps its existing routing and effects processors like
+ *    EasyEffects are left undisturbed; the system default sink is never
+ *    touched and `playbackSink` stays null, so nothing below reroutes this
+ *    app's own playback. Only the legacy PulseAudio fallback re-targets
+ *    streams and needs `setSinkId` self-exclusion. See
+ *    `electron/systemAudio.ts`.
  *  - macOS (Electron): a bundled Swift helper (`CrystalSystemAudio`) uses
  *    ScreenCaptureKit to capture the system output with the Crystal app's own
  *    audio excluded via the content filter. Raw PCM is streamed over IPC and
@@ -192,6 +194,10 @@ async function resolveOutputDeviceId(targetSink: string): Promise<string | null>
  * Route a media element's audio output to the real hardware sink, keeping the
  * app's own playback out of the PulseAudio monitor that is being shared.
  * Safe to call for every attached track while system audio sharing is active.
+ *
+ * No-ops unless a backend asked for it by reporting a `playbackSink` — the
+ * Linux PipeWire tap path and plain Windows never do, because neither can
+ * capture this app's own output in the first place.
  */
 export async function routeElementToPlayback(el: HTMLMediaElement): Promise<void> {
   if (!playbackSink || !hasAudioSinkSupport(el)) return;
