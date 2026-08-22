@@ -188,6 +188,24 @@ export const setGroupIcon = mutation({
   },
 });
 
+export const getDirect = mutation({
+  args: { friendId: v.id("users") },
+  handler: async (ctx, { friendId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (friendId === me._id) throw new Error("You can't DM yourself.");
+    if (!(await areFriends(ctx, me._id, friendId))) {
+      throw new Error("You can only message friends.");
+    }
+
+    const key = dmKeyFor(me._id, friendId);
+    const existing = await ctx.db
+      .query("conversations")
+      .withIndex("by_dm_key", (q) => q.eq("dmKey", key))
+      .unique();
+    if (existing) return existing._id;
+  },
+});
+
 export const getOrCreateDirect = mutation({
   args: { friendId: v.id("users") },
   handler: async (ctx, { friendId }) => {
