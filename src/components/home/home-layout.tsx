@@ -7,6 +7,7 @@ import { useCall } from "@/components/call/call-provider";
 import { ChannelView } from "@/components/community/channel-view";
 import { CommunitySidebar } from "@/components/community/community-sidebar";
 import { ChatView } from "@/components/home/chat-view";
+import { CommunityRail } from "@/components/home/community-rail";
 import { FriendsPanel } from "@/components/home/friends-panel";
 import { NavSidebar } from "@/components/home/nav-sidebar";
 import { useNavigation, useRegisterNavigation } from "@/components/home/navigation-context";
@@ -99,6 +100,12 @@ export function HomeLayout() {
 
   return (
     <div className={`flex h-full`}>
+      <CommunityRail
+        selectedCommunityId={selectedCommunityId}
+        onSelectHome={selectFriends}
+        onSelectCommunity={selectCommunity}
+      />
+
       {selectedCommunityId ? (
         <CommunitySidebar
           communityId={selectedCommunityId}

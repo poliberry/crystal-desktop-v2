@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ClerkProvider, useAuth } from "@clerk/clerk-react";
+import { ClerkProvider, useAuth } from "@clerk/react";
 import { dark } from "@clerk/themes";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
@@ -43,7 +43,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ThemeProvider>
       <ClerkProvider
         publishableKey={CLERK_PUBLISHABLE_KEY}
-        appearance={{ baseTheme: dark }}
       >
         <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
           <AuthCallbackHandler />

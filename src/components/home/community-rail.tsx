@@ -19,14 +19,21 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** Strips an optional "joincrystal:" prefix so pasting a full invite string
  * (copied straight from the Invite dialog) works the same as a bare code. */
 function normalizeInviteInput(raw: string): string {
   const trimmed = raw.trim();
-  return trimmed.startsWith("joincrystal:") ? trimmed.slice("joincrystal:".length) : trimmed;
+  return trimmed.startsWith("joincrystal:")
+    ? trimmed.slice("joincrystal:".length)
+    : trimmed;
 }
 
 function RailButton({
@@ -59,12 +66,17 @@ function RailButton({
   );
 }
 
-function DiscoverDialog({ onJoined }: { onJoined: (id: Id<"communities">) => void }) {
+function DiscoverDialog({
+  onJoined,
+}: {
+  onJoined: (id: Id<"communities">) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [inviteInput, setInviteInput] = useState("");
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [joiningByCode, setJoiningByCode] = useState(false);
-  const discoverable = useQuery(api.communities.listDiscoverable, open ? {} : "skip") ?? [];
+  const discoverable =
+    useQuery(api.communities.listDiscoverable, open ? {} : "skip") ?? [];
   const join = useMutation(api.communities.join);
   const joinByInviteCode = useMutation(api.communities.joinByInviteCode);
 
@@ -79,7 +91,9 @@ function DiscoverDialog({ onJoined }: { onJoined: (id: Id<"communities">) => voi
       setInviteInput("");
       onJoined(communityId);
     } catch (err) {
-      setInviteError(err instanceof Error ? err.message : "Couldn't join with that code.");
+      setInviteError(
+        err instanceof Error ? err.message : "Couldn't join with that code.",
+      );
     } finally {
       setJoiningByCode(false);
     }
@@ -93,7 +107,9 @@ function DiscoverDialog({ onJoined }: { onJoined: (id: Id<"communities">) => voi
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Discover communities</DialogTitle>
-          <DialogDescription>Every community is open to join for now.</DialogDescription>
+          <DialogDescription>
+            Every community is open to join for now.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-2">
@@ -108,11 +124,16 @@ function DiscoverDialog({ onJoined }: { onJoined: (id: Id<"communities">) => voi
               if (e.key === "Enter") void handleJoinByCode();
             }}
           />
-          <Button disabled={!inviteInput.trim() || joiningByCode} onClick={() => void handleJoinByCode()}>
+          <Button
+            disabled={!inviteInput.trim() || joiningByCode}
+            onClick={() => void handleJoinByCode()}
+          >
             Join
           </Button>
         </div>
-        {inviteError && <p className="text-xs text-destructive">{inviteError}</p>}
+        {inviteError && (
+          <p className="text-xs text-destructive">{inviteError}</p>
+        )}
 
         <Separator />
 
@@ -130,9 +151,13 @@ function DiscoverDialog({ onJoined }: { onJoined: (id: Id<"communities">) => voi
               >
                 <Avatar size="sm">
                   <AvatarImage src={community.imageUrl} alt={community.name} />
-                  <AvatarFallback>{community.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                  <AvatarFallback>
+                    {community.name.slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
                 </Avatar>
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{community.name}</p>
+                <p className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {community.name}
+                </p>
                 <Button
                   size="sm"
                   onClick={() => {
@@ -158,14 +183,24 @@ interface CommunityRailProps {
   onSelectCommunity: (id: Id<"communities">) => void;
 }
 
-export function CommunityRail({ selectedCommunityId, onSelectHome, onSelectCommunity }: CommunityRailProps) {
+export function CommunityRail({
+  selectedCommunityId,
+  onSelectHome,
+  onSelectCommunity,
+}: CommunityRailProps) {
   const communities = useQuery(api.communities.listMine) ?? [];
 
   return (
     <div className="flex w-18 shrink-0 flex-col items-center gap-2 border-r bg-background/60 py-3">
-      <RailButton label="Direct messages" active={!selectedCommunityId} onClick={onSelectHome}>
+      <RailButton
+        label="Direct messages"
+        active={!selectedCommunityId}
+        onClick={onSelectHome}
+      >
         <Home />
       </RailButton>
+
+      <Separator className="max-w-8 mx-2" />
 
       <ScrollArea className="min-h-0 flex-1 w-full">
         {/* py-1 gives the selection ring (ring-2 + ring-offset-2 = ~4px)
@@ -180,12 +215,17 @@ export function CommunityRail({ selectedCommunityId, onSelectHome, onSelectCommu
                     type="button"
                     onClick={() => onSelectCommunity(community.id)}
                     className={cn(
-                      "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] hover:rounded-2xl",
-                      selectedCommunityId === community.id && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                      "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
+                      selectedCommunityId === community.id &&
+                        "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-2xl",
                     )}
                   >
                     <Avatar className="size-12 rounded-none">
-                      <AvatarImage src={community.imageUrl} alt={community.name} />
+                      <AvatarImage
+                        src={community.imageUrl}
+                        alt={community.name}
+                        className="rounded-none"
+                      />
                       <AvatarFallback className="rounded-none text-sm">
                         {community.name.slice(0, 2).toUpperCase()}
                       </AvatarFallback>
@@ -205,7 +245,6 @@ export function CommunityRail({ selectedCommunityId, onSelectHome, onSelectCommu
       </ScrollArea>
 
       <div className="flex flex-col items-center gap-2 px-2">
-        <DiscoverDialog onJoined={onSelectCommunity} />
         <CreateCommunityDialog onCreated={onSelectCommunity} />
       </div>
     </div>
