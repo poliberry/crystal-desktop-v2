@@ -18,6 +18,16 @@ export const PERMISSIONS = {
   ADMINISTRATOR: 1 << 8,
   CREATE_INVITE: 1 << 9,
   MANAGE_EMOJIS: 1 << 10,
+  /** Server-mute a member in voice. */
+  MUTE_MEMBERS: 1 << 11,
+  /** Server-deafen a member in voice. */
+  DEAFEN_MEMBERS: 1 << 12,
+  /** Disconnect a member from voice. */
+  MOVE_MEMBERS: 1 << 13,
+  BAN_MEMBERS: 1 << 14,
+  /** Time a member out — they stay in the server but can't talk. */
+  MODERATE_MEMBERS: 1 << 15,
+  MANAGE_NICKNAMES: 1 << 16,
 } as const;
 
 export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -146,6 +156,34 @@ export async function requireChannelPermission(
 ): Promise<void> {
   const perms = await getChannelPermissions(ctx, community, channelId, userId);
   if (!can(perms, flag)) throw new Error("You don't have permission to do that.");
+}
+
+/**
+ * Refuse a moderation action against someone who outranks you.
+ *
+ * The owner is untouchable and can act on anyone; otherwise the actor's
+ * highest role must sit strictly above the target's. Without this, two
+ * moderators holding the same role could mute or ban each other, and anyone
+ * with a permission could use it on the owner.
+ */
+export async function requireAbove(
+  ctx: QueryCtx,
+  community: Doc<"communities">,
+  actorId: Id<"users">,
+  targetId: Id<"users">
+): Promise<void> {
+  if (actorId === targetId) throw new Error("You can't do that to yourself.");
+  if (community.ownerId === actorId) return;
+  if (community.ownerId === targetId) {
+    throw new Error("You can't do that to the server owner.");
+  }
+  const [actorRank, targetRank] = await Promise.all([
+    getHighestRolePosition(ctx, community._id, actorId),
+    getHighestRolePosition(ctx, community._id, targetId),
+  ]);
+  if (actorRank <= targetRank) {
+    throw new Error("You can't do that to someone with an equal or higher role.");
+  }
 }
 
 /** The highest `position` among a member's assigned roles — used to enforce

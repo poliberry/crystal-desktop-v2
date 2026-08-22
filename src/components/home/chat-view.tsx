@@ -18,7 +18,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 
 interface ChatViewProps {
   conversationId: Id<"conversations">;
-  onStartCall: () => void;
+  /** `silent` skips ringing the other members and just connects — the
+   * Shift-click path. */
+  onStartCall: (options: { silent: boolean }) => void;
 }
 
 export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
@@ -75,7 +77,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               size="sm"
               variant={isActiveCall || callParticipants.length > 0 ? "default" : "secondary"}
               className="gap-1.5"
-              onClick={onStartCall}
+              title="Shift-click to join without ringing anyone"
+              onClick={(e) => onStartCall({ silent: e.shiftKey })}
             >
               <PhoneCall className="size-4" />
               {isActiveCall

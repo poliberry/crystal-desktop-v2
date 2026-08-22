@@ -64,6 +64,16 @@ const api = {
     getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
     setSource: (id: string) => ipcRenderer.invoke("screen-share:set-source", id),
   },
+  richPresence: {
+    get: () => ipcRenderer.invoke("rich-presence:get"),
+    status: () => ipcRenderer.invoke("rich-presence:status"),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke("rich-presence:set-enabled", enabled),
+    onChange: (cb: (activities: unknown[]) => void) => {
+      const handler = (_e: IpcRendererEvent, activities: unknown[]) => cb(activities);
+      ipcRenderer.on("rich-presence:changed", handler);
+      return () => ipcRenderer.removeListener("rich-presence:changed", handler);
+    },
+  },
   notifications: {
     configure: (url: string, token: string | null, userId: string | null) =>
       ipcRenderer.invoke("notifications:configure", url, token, userId),
@@ -80,6 +90,27 @@ const api = {
       const handler = (_e: IpcRendererEvent, url: string) => cb(url);
       ipcRenderer.on("auth:callback", handler);
       return () => ipcRenderer.removeListener("auth:callback", handler);
+    },
+  },
+  pip: {
+    open: (options?: { width?: number; height?: number; title?: string }) =>
+      ipcRenderer.invoke("pip:open", options),
+    close: () => ipcRenderer.invoke("pip:close"),
+    sendFrame: (dataUrl: string) => ipcRenderer.send("pip:send-frame", dataUrl),
+    onFrame: (cb: (dataUrl: string) => void) => {
+      const handler = (_e: IpcRendererEvent, dataUrl: string) => cb(dataUrl);
+      ipcRenderer.on("pip:frame", handler);
+      return () => ipcRenderer.removeListener("pip:frame", handler);
+    },
+    onClosed: (cb: () => void) => {
+      const handler = () => cb();
+      ipcRenderer.on("pip:closed", handler);
+      return () => ipcRenderer.removeListener("pip:closed", handler);
+    },
+    onSize: (cb: (size: { width: number; height: number }) => void) => {
+      const handler = (_e: IpcRendererEvent, size: { width: number; height: number }) => cb(size);
+      ipcRenderer.on("pip:size", handler);
+      return () => ipcRenderer.removeListener("pip:size", handler);
     },
   },
 };

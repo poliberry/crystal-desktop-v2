@@ -1,45 +1,8 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-
-/**
- * Linux "share system audio" layer backed by PulseAudio (or the PipeWire
- * pulse-compat layer, which ships `pactl` too).
- *
- * How it works
- * ------------
- * 1. Load a `module-null-sink` virtual sink named `crystal_system_audio`.
- * 2. Capture the sink's monitor directly with `parec` (or `pw-record`) and
- *    stream the raw PCM to the renderer, which feeds it into an AudioWorklet →
- *    MediaStreamAudioDestinationNode and publishes it as a LiveKit
- *    `ScreenShareAudio` track (see `acquirePcmLoopbackTrack` in
- *    src/lib/system-audio.ts).
- * 3. Load `module-loopback` from `crystal_system_audio.monitor` back to the
- *    real hardware output so the user still hears what is being shared.
- *
- * Two sharing modes:
- *  - "system": the virtual sink becomes the *default* sink so every other
- *    application plays into it; everything non-self is routed into the sink.
- *  - "app": the user picks specific applications; only their streams are
- *    routed into the sink and the system default is left untouched, so only
- *    the selected apps' audio is shared.
- *
- * Capturing the *virtual sink's* monitor explicitly (rather than asking
- * Chromium to capture the "default sink" via the experimental
- * `PulseaudioLoopbackForScreenShare` feature) is what makes this reliable:
- *   - Capture never depends on the system default sink and never grabs the
- *     hardware monitor (which would include the app's own output → echo).
- *   - It drops the buggy Chromium loopback path entirely, which produced
- *     choppy/crackly audio and started silent.
- *
- * The app's OWN audio is kept out of the capture by routing every playback
- * element to the real hardware sink with `HTMLMediaElement.setSinkId()` (see
- * src/lib/system-audio.ts) AND by a periodic "routing guardian" below that
- * re-moves any of the app's Pulse streams to the hardware sink. Because the
- * app never writes into the virtual sink, it can never re-capture itself and
- * no microphone/feedback loop can enter the shared stream.
- */
 
 const SINK_NAME = "crystal_system_audio";
 const LOOPBACK_LATENCY_MS = "20";
@@ -102,6 +65,11 @@ const VIRTUAL_SINK_MODULES = new Set([
 const VIRTUAL_SINK_NAME_RX = /^easyeffects[_-]/i;
 const VIRTUAL_SINK_DESC_RX = /easy\s*effects/i;
 
+export type CaptureStrategy = "tap" | "move";
+
+const TAP_SYNC_INTERVAL_MS = 1_000;
+const SELF_PID_WALK_DEPTH = 8;
+
 export type SystemAudioMode = "system" | "app";
 
 export interface SystemAudioState {
@@ -114,6 +82,7 @@ export interface SystemAudioState {
   captureRunning: boolean;
   mode: SystemAudioMode;
   selectedApps: string[];
+  strategy: CaptureStrategy | null;
 }
 
 /** A running application whose audio can be shared. */
@@ -129,6 +98,42 @@ export interface AudioApp {
 
 /** Receives interleaved Float32 PCM (48000 Hz stereo) captured from the virtual sink. */
 export type SystemAudioPcmListener = (data: ArrayBuffer) => void;
+
+interface PwObject {
+  id: number;
+  type: string;
+  info?: { props?: Record<string, unknown> };
+}
+
+interface PwStreamNode {
+  id: number;
+  binary: string | null;
+  appName: string;
+  pid: number | null;
+}
+
+interface PwPort {
+  id: number;
+  nodeId: number;
+  direction: "in" | "out";
+  channel: string;
+}
+
+interface PwLink {
+  id: number;
+  outNode: number;
+  outPort: number;
+  inNode: number;
+  inPort: number;
+}
+
+interface PwGraph {
+  streams: PwStreamNode[];
+  ports: PwPort[];
+  links: PwLink[];
+  nodeIds: Set<number>;
+  captureSinkNodeId: number | null;
+}
 
 class LinuxSystemAudio {
   private enabled = false;
@@ -147,12 +152,13 @@ class LinuxSystemAudio {
    * audible crackle, so once a stream flaps a few times we back off instead.
    */
   private streamMoveState = new Map<string, { target: string; flips: number; backoffUntil: number }>();
-
+  private strategy: CaptureStrategy | null = null;
+  private captureSinkNodeId: number | null = null;
+  private tapLinks = new Map<number, number[]>();
+  private tapSyncRunning = false;
   private mode: SystemAudioMode = "system";
   private selectedApps = new Set<string>();
-
   private inputGuard: ReturnType<typeof setInterval> | null = null;
-
   private captureChild: ChildProcess | null = null;
   private captureListeners = new Set<SystemAudioPcmListener>();
   private pcmAcc = Buffer.alloc(0);
@@ -225,6 +231,7 @@ class LinuxSystemAudio {
       captureRunning: !!this.captureChild,
       mode: this.mode,
       selectedApps: [...this.selectedApps],
+      strategy: this.strategy,
     };
   }
 
@@ -252,17 +259,280 @@ class LinuxSystemAudio {
     this.moduleIndexes = [];
   }
 
-  /**
-   * Periodic routing guardian (runs while capture is enabled):
-   *  - the app's OWN streams (Electron/Crystal) are kept on the real hardware
-   *    sink so its audio can never enter the captured monitor,
-   *  - "system" mode: every OTHER application's stream is kept on the virtual
-   *    capture sink so its audio is always shared,
-   *  - "app" mode: only the selected applications' streams are kept on the
-   *    capture sink; everything else is left on whatever sink it chose.
-   * Streams created by daemon modules (loopbacks) have no client and are left
-   * untouched so monitoring never loops back into the capture.
-   */
+  private async resolveStrategy(): Promise<CaptureStrategy> {
+    if (this.strategy) return this.strategy;
+
+    const onPipeWire = await this.pactl(["info"])
+      .then((out) => /Server Name:.*PipeWire/i.test(out))
+      .catch(() => false);
+
+    if (onPipeWire) {
+      const haveTools = await Promise.all(
+        ["pw-link", "pw-dump"].map((bin) =>
+          execFileAsync(bin, ["--help"], { timeout: 5_000 })
+            .then(() => true)
+            .catch(() => false)
+        )
+      );
+      if (haveTools.every(Boolean)) {
+        this.strategy = "tap";
+        return this.strategy;
+      }
+      console.warn(
+        "[system-audio] PipeWire detected but pw-link/pw-dump are missing (install pipewire-utils)! " +
+          "falling back to stream re-targeting, which can disrupt effects processors like EasyEffects."
+      );
+    }
+
+    this.strategy = "move";
+    return this.strategy;
+  }
+
+  private isOwnProcess(pid: number | null): boolean {
+    if (pid === null) return false;
+    let current = pid;
+    for (let depth = 0; depth < SELF_PID_WALK_DEPTH && current > 1; depth++) {
+      if (current === process.pid) return true;
+      let parent: number | null = null;
+      try {
+        const status = readFileSync(`/proc/${current}/status`, "utf8");
+        const match = status.match(/^PPid:\s*(\d+)$/m);
+        parent = match ? parseInt(match[1], 10) : null;
+      } catch {
+        return false; // process vanished, or /proc is unavailable
+      }
+      if (parent === null || parent === current) return false;
+      current = parent;
+    }
+    return false;
+  }
+
+  private async pwDump(): Promise<PwGraph | null> {
+    let raw: string;
+    try {
+      raw = (
+        await execFileAsync("pw-dump", [], { timeout: 10_000, maxBuffer: 64 * 1024 * 1024 })
+      ).stdout;
+    } catch (err) {
+      console.error("[system-audio] pw-dump failed:", err);
+      return null;
+    }
+
+    let objects: PwObject[];
+    try {
+      objects = JSON.parse(raw) as PwObject[];
+    } catch (err) {
+      console.error("[system-audio] pw-dump returned unparseable JSON:", err);
+      return null;
+    }
+
+    const graph: PwGraph = {
+      streams: [],
+      ports: [],
+      links: [],
+      nodeIds: new Set<number>(),
+      captureSinkNodeId: null,
+    };
+
+    for (const object of objects) {
+      const props = object.info?.props;
+      if (!props) continue;
+
+      if (object.type === "PipeWire:Interface:Node") {
+        const mediaClass = props["media.class"];
+        if (props["node.name"] === SINK_NAME && mediaClass === "Audio/Sink") {
+          graph.captureSinkNodeId = object.id;
+          continue;
+        }
+        if (mediaClass !== "Stream/Output/Audio") continue;
+        const pidRaw = props["application.process.id"];
+        const binary = typeof props["application.process.binary"] === "string"
+          ? props["application.process.binary"]
+          : null;
+        graph.nodeIds.add(object.id);
+        graph.streams.push({
+          id: object.id,
+          binary,
+          appName:
+            (typeof props["application.name"] === "string" ? props["application.name"] : null) ??
+            binary ??
+            String(props["node.name"] ?? "Unknown"),
+          pid: typeof pidRaw === "number" ? pidRaw : parseInt(String(pidRaw ?? ""), 10) || null,
+        });
+        continue;
+      }
+
+      if (object.type === "PipeWire:Interface:Port") {
+        const direction = props["port.direction"];
+        if (direction !== "in" && direction !== "out") continue;
+        const nodeId = props["node.id"];
+        if (typeof nodeId !== "number") continue;
+        graph.ports.push({
+          id: object.id,
+          nodeId,
+          direction,
+          channel: String(props["audio.channel"] ?? props["port.name"] ?? ""),
+        });
+        continue;
+      }
+
+      if (object.type === "PipeWire:Interface:Link") {
+        const outNode = props["link.output.node"];
+        const inNode = props["link.input.node"];
+        const outPort = props["link.output.port"];
+        const inPort = props["link.input.port"];
+        if (
+          typeof outNode !== "number" || typeof inNode !== "number" ||
+          typeof outPort !== "number" || typeof inPort !== "number"
+        ) continue;
+        graph.links.push({ id: object.id, outNode, inNode, outPort, inPort });
+      }
+    }
+
+    return graph;
+  }
+
+  private shouldTap(node: PwStreamNode): boolean {
+    // never capture ourselves: that would publish our own call audio back
+    // into the room
+    if (node.pid === null) {
+      if (node.binary && SELF_BINARIES.has(node.binary)) return false;
+    } else if (this.isOwnProcess(node.pid)) {
+      return false;
+    }
+
+    if (this.mode === "system") return true;
+    return (
+      (node.binary !== null && this.selectedApps.has(node.binary)) ||
+      this.selectedApps.has(node.appName)
+    );
+  }
+
+  private async syncTaps(): Promise<void> {
+    if (!this.enabled || this.tapSyncRunning) return;
+    this.tapSyncRunning = true;
+    try {
+      const graph = await this.pwDump();
+      if (!graph || graph.captureSinkNodeId === null) return;
+      this.captureSinkNodeId = graph.captureSinkNodeId;
+
+      const sinkPorts = graph.ports.filter(
+        (port) => port.nodeId === graph.captureSinkNodeId && port.direction === "in"
+      );
+      if (sinkPorts.length === 0) return;
+
+      // forget links that no longer exist (the stream ended, or something
+      // else tore them down) so the map never pins dead ids
+      const liveLinkIds = new Set(graph.links.map((link) => link.id));
+      for (const [nodeId, linkIds] of [...this.tapLinks]) {
+        const alive = linkIds.filter((id) => liveLinkIds.has(id));
+        if (alive.length === 0) this.tapLinks.delete(nodeId);
+        else this.tapLinks.set(nodeId, alive);
+      }
+
+      const realOutputs = new Map<number, number>();
+      for (const link of graph.links) {
+        if (link.inNode === graph.captureSinkNodeId) continue;
+        realOutputs.set(link.outNode, (realOutputs.get(link.outNode) ?? 0) + 1);
+      }
+
+      const wanted = new Set(
+        graph.streams
+          .filter((node) => this.shouldTap(node) && (realOutputs.get(node.id) ?? 0) > 0)
+          .map((node) => node.id)
+      );
+
+      for (const [nodeId, linkIds] of [...this.tapLinks]) {
+        if (wanted.has(nodeId) && graph.nodeIds.has(nodeId)) continue;
+        for (const linkId of linkIds) {
+          await execFileAsync("pw-link", ["-d", String(linkId)], { timeout: 5_000 }).catch(
+            () => {}
+          );
+        }
+        this.tapLinks.delete(nodeId);
+      }
+
+      const existingPairs = new Set(
+        graph.links
+          .filter((link) => link.inNode === graph.captureSinkNodeId)
+          .map((link) => `${link.outPort}:${link.inPort}`)
+      );
+
+      let created = false;
+      for (const nodeId of wanted) {
+        if (this.tapLinks.has(nodeId)) continue;
+        if (await this.tapNode(nodeId, graph, sinkPorts, existingPairs)) created = true;
+      }
+
+      if (created) await this.recordTapLinks(wanted);
+    } finally {
+      this.tapSyncRunning = false;
+    }
+  }
+
+  private async tapNode(
+    nodeId: number,
+    graph: PwGraph,
+    sinkPorts: PwPort[],
+    existingPairs: Set<string>
+  ): Promise<boolean> {
+    const outputs = graph.ports.filter(
+      (port) => port.nodeId === nodeId && port.direction === "out"
+    );
+    if (outputs.length === 0) return false;
+
+    const pairs: Array<[number, number]> = [];
+    if (outputs.length === 1) {
+      for (const sinkPort of sinkPorts) pairs.push([outputs[0].id, sinkPort.id]);
+    } else {
+      for (const output of outputs) {
+        const target = sinkPorts.find((port) => port.channel === output.channel);
+        if (target) pairs.push([output.id, target.id]);
+      }
+    }
+    if (pairs.length === 0) return false;
+
+    let linked = false;
+    for (const [outPort, inPort] of pairs) {
+      if (existingPairs.has(`${outPort}:${inPort}`)) continue;
+      const ok = await execFileAsync("pw-link", [String(outPort), String(inPort)], {
+        timeout: 5_000,
+      })
+        .then(() => true)
+        .catch(() => false);
+      if (ok) {
+        existingPairs.add(`${outPort}:${inPort}`);
+        linked = true;
+      }
+    }
+    return linked;
+  }
+
+  private async recordTapLinks(wanted: Set<number>): Promise<void> {
+    const graph = await this.pwDump();
+    if (!graph || graph.captureSinkNodeId === null) return;
+    const byNode = new Map<number, number[]>();
+    for (const link of graph.links) {
+      if (link.inNode !== graph.captureSinkNodeId) continue;
+      const ids = byNode.get(link.outNode) ?? [];
+      ids.push(link.id);
+      byNode.set(link.outNode, ids);
+    }
+    for (const [nodeId, ids] of byNode) {
+      if (wanted.has(nodeId)) this.tapLinks.set(nodeId, ids);
+    }
+  }
+
+  private async removeAllTaps(): Promise<void> {
+    for (const linkIds of this.tapLinks.values()) {
+      for (const linkId of linkIds) {
+        await execFileAsync("pw-link", ["-d", String(linkId)], { timeout: 5_000 }).catch(() => {});
+      }
+    }
+    this.tapLinks.clear();
+    this.captureSinkNodeId = null;
+  }
+
   private async routeSinkInputs(): Promise<void> {
     if (!this.hardwareSink) return;
     const inputs = await this.pactl(["list", "sink-inputs"]).catch(() => "");
@@ -412,6 +682,16 @@ class LinuxSystemAudio {
       child.stdout?.on("data", (chunk: Buffer) => {
         if (!this.enabled) return;
         const text = chunk.toString();
+        if (this.strategy === "tap") {
+          // streams coming and going are all that matters when tapping
+          if (!/Event '[^']+' on sink-input/.test(text)) return;
+          if (this.sinkWatchDebounce) return;
+          this.sinkWatchDebounce = setTimeout(() => {
+            this.sinkWatchDebounce = null;
+            void this.syncTaps();
+          }, SINK_WATCH_DEBOUNCE_MS);
+          return;
+        }
         // We only care about server (default-sink change) or sink topology events.
         if (!/Event '[^']+' on (server|sink\b)/.test(text)) return;
         if (this.sinkWatchDebounce) return;
@@ -457,6 +737,14 @@ class LinuxSystemAudio {
 
   private startInputGuard(): void {
     if (this.inputGuard) return;
+
+    if (this.strategy === "tap") {
+      this.inputGuard = setInterval(() => {
+        void this.syncTaps();
+      }, TAP_SYNC_INTERVAL_MS);
+      return;
+    }
+
     this.hardwareSinkGuardTicks = 0;
     this.inputGuard = setInterval(() => {
       void this.routeSinkInputs();
@@ -571,6 +859,14 @@ class LinuxSystemAudio {
     this.selectedApps = new Set(appIds.filter((id): id is string => typeof id === "string"));
     if (!this.enabled) return;
 
+    // the selection only decides which streams get a duplicate link, so
+    // reconciling the tap set is the whole job. the system default is never
+    // involved in either mode
+    if (this.strategy === "tap") {
+      await this.syncTaps();
+      return;
+    }
+
     try {
       if (mode === "system") {
         const cur = await this.pactl(["get-default-sink"]).catch(() => "");
@@ -588,12 +884,54 @@ class LinuxSystemAudio {
     }
   }
 
+  private async enableWithTaps(): Promise<SystemAudioState> {
+    await this.cleanupStale();
+
+    const nullIndex = parseInt(
+      await this.pactl([
+        "load-module",
+        "module-null-sink",
+        `sink_name=${SINK_NAME}`,
+        "sink_properties=device.description=Crystal System Audio",
+      ]),
+      10
+    );
+    this.moduleIndexes.push(nullIndex);
+
+    this.enabled = true;
+    this.playbackSink = null;
+    this.hardwareSink = null;
+    this.originalDefaultSink = null;
+
+    try {
+      await this.ensureCaptureStreaming();
+    } catch (err) {
+      this.enabled = false;
+      for (const index of [...this.moduleIndexes].reverse()) {
+        await this.pactl(["unload-module", String(index)]).catch(() => {});
+      }
+      this.moduleIndexes = [];
+      throw err;
+    }
+
+    await this.syncTaps();
+    this.startInputGuard();
+    // new streams appear as sink-input events; react immediately rather than
+    // waiting up to TAP_SYNC_INTERVAL_MS to start sharing them
+    this.startSinkWatcher();
+
+    return this.getInfo();
+  }
+
   async enable(): Promise<SystemAudioState> {
     const available = await this.checkAvailability();
     if (!available) {
       throw new Error("PulseAudio is not available (install pulseaudio/pactl).");
     }
     if (this.enabled) return this.getInfo();
+
+    const strategy = await this.resolveStrategy();
+    if (strategy === "tap") return this.enableWithTaps();
 
     // Independent lookups in parallel: leftover modules + the current default.
     const [, defaultSink, virtualSinkNames] = await Promise.all([
@@ -793,6 +1131,7 @@ class LinuxSystemAudio {
     this.enabled = false;
     await this.stopInputGuard();
     this.stopSinkWatcher();
+    await this.removeAllTaps();
     this.streamMoveState.clear();
     this.hardwareSinkGuardTicks = 0;
     await this.stopCapture();
@@ -812,6 +1151,21 @@ class LinuxSystemAudio {
 
   /** Enumerate currently-audio-playing applications that can be shared. */
   async listAudioApps(): Promise<AudioApp[]> {
+    if ((await this.resolveStrategy()) === "tap") {
+      const graph = await this.pwDump();
+      if (graph) {
+        const byId = new Map<string, AudioApp>();
+        for (const node of graph.streams) {
+          if (this.isOwnProcess(node.pid)) continue;
+          const id = node.binary ?? node.appName;
+          const existing = byId.get(id);
+          if (existing) existing.streams += 1;
+          else byId.set(id, { id, name: node.appName, binary: node.binary, streams: 1 });
+        }
+        return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+      }
+    }
+
     const inputs = await this.pactl(["list", "sink-inputs"]).catch(() => "");
     const blocks = inputs.split(/Sink Input #/).slice(1);
     const byId = new Map<string, AudioApp>();

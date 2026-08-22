@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
+import { activitiesOf } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
@@ -150,6 +151,7 @@ export const listMembersWithPresence = query({
           borderGradientStart: user?.borderGradientStart,
           borderGradientEnd: user?.borderGradientEnd,
           status: presence?.effective ?? "offline",
+          activities: activitiesOf(presence),
         };
       })
     );
@@ -185,6 +187,24 @@ export const setGroupIcon = mutation({
     const previous = conversation.iconStorageId;
     await ctx.db.patch(conversationId, { imageUrl: url, iconStorageId: storageId });
     if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+  },
+});
+
+export const getDirect = mutation({
+  args: { friendId: v.id("users") },
+  handler: async (ctx, { friendId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (friendId === me._id) throw new Error("You can't DM yourself.");
+    if (!(await areFriends(ctx, me._id, friendId))) {
+      throw new Error("You can only message friends.");
+    }
+
+    const key = dmKeyFor(me._id, friendId);
+    const existing = await ctx.db
+      .query("conversations")
+      .withIndex("by_dm_key", (q) => q.eq("dmKey", key))
+      .unique();
+    if (existing) return existing._id;
   },
 });
 

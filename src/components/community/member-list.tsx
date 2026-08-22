@@ -5,7 +5,14 @@ import { Crown } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { MemberContextMenu } from "@/components/community/member-context-menu";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import {
+  ActivityStatusIcon,
+  activitySummary,
+  topActivity,
+} from "@/components/rich-presence-card";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -38,6 +45,9 @@ interface Member {
   borderGradientEnd?: string;
   isOwner: boolean;
   status: FriendStatus;
+  activities?: RichPresenceActivity[];
+  /** Epoch ms an active timeout expires, if there is one. */
+  timeoutUntil?: number;
   roles: MemberRole[];
 }
 
@@ -113,6 +123,7 @@ function MemberListSkeleton() {
 export function MemberList({ communityId }: MemberListProps) {
   const rawMembers = useQuery(api.communities.listMembers, communityId ? { communityId } : "skip");
   const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
+  const me = useQuery(api.users.getCurrentUser);
   const members = (rawMembers ?? []) as Member[];
   const groups = buildGroups(members);
 
@@ -140,6 +151,13 @@ export function MemberList({ communityId }: MemberListProps) {
                     const isOffline = member.status === "offline";
                     return (
                       <Popover key={member.userId}>
+                        <MemberContextMenu
+                          communityId={communityId}
+                          userId={member.userId}
+                          name={member.name}
+                          isSelf={member.userId === me?._id}
+                          timeoutUntil={member.timeoutUntil}
+                        >
                         <PopoverTrigger asChild>
                           <button
                             type="button"
@@ -160,9 +178,16 @@ export function MemberList({ communityId }: MemberListProps) {
                               >
                                 {member.name}
                               </p>
-                              {member.customStatus && (
-                                <p className="truncate text-[11px] text-muted-foreground leading-tight">
-                                  {member.customStatus}
+                              {/* Custom status wins the line when set;
+                                  otherwise the activity fills it, and either
+                                  way the activity glyph sits to its left. */}
+                              {!isOffline && (!!member.customStatus || !!member.activities?.length) && (
+                                <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
+                                  <ActivityStatusIcon activities={member.activities} />
+                                  <span className="truncate">
+                                    {member.customStatus ??
+                                      activitySummary(topActivity(member.activities))}
+                                  </span>
                                 </p>
                               )}
                             </div>
@@ -187,6 +212,7 @@ export function MemberList({ communityId }: MemberListProps) {
                             )}
                           </button>
                         </PopoverTrigger>
+                        </MemberContextMenu>
                         <PopoverContent side="left" align="start" className="w-72 p-0">
                           <MemberProfileCard
                             member={member}

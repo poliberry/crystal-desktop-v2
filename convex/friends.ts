@@ -83,6 +83,40 @@ export const listOutgoingRequests = query({
   },
 });
 
+/**
+ * How the caller stands with another user, so a profile card can show one
+ * button that means the right thing: add them, cancel a request you sent,
+ * accept one they sent, or just message them.
+ */
+export const relationshipWith = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return { kind: "none" as const };
+    if (me._id === userId) return { kind: "self" as const };
+
+    const friendship = await ctx.db
+      .query("friendships")
+      .withIndex("by_owner_friend", (q) => q.eq("ownerId", me._id).eq("friendId", userId))
+      .unique();
+    if (friendship) return { kind: "friends" as const };
+
+    const outgoing = await ctx.db
+      .query("friendRequests")
+      .withIndex("by_pair", (q) => q.eq("requesterId", me._id).eq("recipientId", userId))
+      .unique();
+    if (outgoing) return { kind: "outgoing" as const, requestId: outgoing._id };
+
+    const incoming = await ctx.db
+      .query("friendRequests")
+      .withIndex("by_pair", (q) => q.eq("requesterId", userId).eq("recipientId", me._id))
+      .unique();
+    if (incoming) return { kind: "incoming" as const, requestId: incoming._id };
+
+    return { kind: "none" as const };
+  },
+});
+
 export const sendFriendRequest = mutation({
   args: { username: v.string() },
   handler: async (ctx, { username }) => {

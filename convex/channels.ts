@@ -3,7 +3,14 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
-import { PERMISSIONS, can, getChannelPermissions, requireCommunityPermission } from "./permissions";
+import {
+  PERMISSIONS,
+  can,
+  getChannelPermissions,
+  requireAbove,
+  requireCommunityPermission,
+} from "./permissions";
+import { activitiesOf } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function requireChannel(ctx: { db: { get: (id: Id<"channels">) => Promise<Doc<"channels"> | null> } }, channelId: Id<"channels">) {
@@ -268,10 +275,116 @@ export const listVoiceParticipants = query({
       rows.map(async (row) => {
         const user = await ctx.db.get(row.userId);
         if (!user) return null;
-        return { id: user._id, name: user.name, username: user.username, imageUrl: user.imageUrl };
+        const presence = await ctx.db
+          .query("presence")
+          .withIndex("by_user", (q) => q.eq("userId", row.userId))
+          .unique();
+        return {
+          id: user._id,
+          name: user.name,
+          username: user.username,
+          imageUrl: user.imageUrl,
+          muted: row.muted ?? false,
+          deafened: row.deafened ?? false,
+          streaming: row.streaming ?? false,
+          serverMuted: row.serverMuted ?? false,
+          serverDeafened: row.serverDeafened ?? false,
+          activities: activitiesOf(presence),
+        };
       })
     );
     return participants.filter((p): p is NonNullable<typeof p> => p !== null);
+  },
+});
+
+/**
+ * Server-mute or server-deafen someone in a voice channel.
+ *
+ * Enforcement is client-side (the target's own client applies it to its
+ * LiveKit tracks), so this is bookkeeping the target watches rather than a
+ * hard cut — the same shape as the self-set flags beside it. Passing
+ * `undefined` for a field leaves it alone, so muting doesn't clobber deafen.
+ */
+export const setMemberVoiceState = mutation({
+  args: {
+    channelId: v.id("channels"),
+    userId: v.id("users"),
+    serverMuted: v.optional(v.boolean()),
+    serverDeafened: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { channelId, userId, serverMuted, serverDeafened }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await ctx.db.get(channelId);
+    if (!channel) throw new Error("Channel not found.");
+    const community = await requireCommunity(ctx, channel.communityId);
+
+    if (serverMuted !== undefined) {
+      await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MUTE_MEMBERS);
+    }
+    if (serverDeafened !== undefined) {
+      await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.DEAFEN_MEMBERS);
+    }
+    await requireAbove(ctx, community, me._id, userId);
+
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
+      .unique();
+    if (!row) throw new Error("That member isn't in this channel.");
+
+    await ctx.db.patch(row._id, {
+      ...(serverMuted !== undefined ? { serverMuted } : {}),
+      ...(serverDeafened !== undefined ? { serverDeafened } : {}),
+    });
+  },
+});
+
+/**
+ * Disconnect someone from a voice channel by removing their participant row.
+ * Their client is subscribed to that row and leaves the call when it vanishes
+ * (see CallProvider), which also covers them being kicked or banned.
+ */
+export const disconnectMember = mutation({
+  args: { channelId: v.id("channels"), userId: v.id("users") },
+  handler: async (ctx, { channelId, userId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await ctx.db.get(channelId);
+    if (!channel) throw new Error("Channel not found.");
+    const community = await requireCommunity(ctx, channel.communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MOVE_MEMBERS);
+    await requireAbove(ctx, community, me._id, userId);
+
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
+      .unique();
+    if (row) await ctx.db.delete(row._id);
+  },
+});
+
+/**
+ * Mirror the caller's live mute / deafen / screen-share state onto their
+ * voice-participant row. Called by the connected client whenever any of them
+ * changes; a no-op for anyone not actually in the channel's call, so it can't
+ * be used to fake state in a channel you aren't in.
+ */
+export const setVoiceState = mutation({
+  args: {
+    channelId: v.id("channels"),
+    muted: v.boolean(),
+    deafened: v.boolean(),
+    streaming: v.boolean(),
+  },
+  handler: async (ctx, { channelId, muted, deafened, streaming }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return;
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
+      .unique();
+    if (!row) return;
+    if (row.muted === muted && row.deafened === deafened && row.streaming === streaming) return;
+    await ctx.db.patch(row._id, { muted, deafened, streaming });
   },
 });
 

@@ -3,6 +3,7 @@
 import { Pencil, Smile, Trash2 } from "lucide-react";
 
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
+import { formatCustomEmoji } from "@/lib/custom-emoji";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -47,7 +48,9 @@ export function MessageContextMenu({
             React
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="p-0">
-            <ReactionPickerContent communityId={communityId} onSelect={onReact} />
+            <ReactionPickerContent
+              onSelect={(text, custom) => onReact(custom ? formatCustomEmoji(custom) : text)}
+            />
           </ContextMenuSubContent>
         </ContextMenuSub>
 

@@ -5,6 +5,12 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import {
+  ActivityStatusIcon,
+  activitySummary,
+  topActivity,
+} from "@/components/rich-presence-card";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -26,6 +32,7 @@ interface DmMember {
   borderGradientStart?: string;
   borderGradientEnd?: string;
   status: FriendStatus;
+  activities?: RichPresenceActivity[];
 }
 
 /** Group DM equivalent of the community MemberList — simpler, since DMs have
@@ -69,11 +76,15 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{member.name}</p>
-                  {member.customStatus && (
-                    <p className="truncate text-[11px] text-muted-foreground leading-tight">
-                      {member.customStatus}
-                    </p>
-                  )}
+                  {member.status !== "offline" &&
+                    (!!member.customStatus || !!member.activities?.length) && (
+                      <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
+                        <ActivityStatusIcon activities={member.activities} />
+                        <span className="truncate">
+                          {member.customStatus ?? activitySummary(topActivity(member.activities))}
+                        </span>
+                      </p>
+                    )}
                 </div>
                 {member.nameplateUrl && (
                   <img

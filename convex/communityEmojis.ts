@@ -28,6 +28,47 @@ export const list = query({
   },
 });
 
+/**
+ * Every custom emoji from every community the caller belongs to, grouped by
+ * community.
+ *
+ * A message can carry an emoji from any server the author shares with you, so
+ * the picker and the renderer both need the whole accessible set rather than
+ * just the community you happen to be looking at.
+ */
+export const listAccessible = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const memberships = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    const groups = await Promise.all(
+      memberships.map(async (membership) => {
+        const community = await ctx.db.get(membership.communityId);
+        if (!community) return null;
+        const emojis = await ctx.db
+          .query("communityEmojis")
+          .withIndex("by_community", (q) => q.eq("communityId", membership.communityId))
+          .collect();
+        if (emojis.length === 0) return null;
+        return {
+          communityId: community._id,
+          communityName: community.name,
+          communityImageUrl: community.imageUrl,
+          emojis: emojis.map((e) => ({ id: e._id, name: e.name, imageUrl: e.imageUrl })),
+        };
+      })
+    );
+
+    return groups
+      .filter((g): g is NonNullable<typeof g> => g !== null)
+      .sort((a, b) => a.communityName.localeCompare(b.communityName));
+  },
+});
+
 /** Generate a storage upload URL. Any member can call this; the add mutation
  * enforces the MANAGE_EMOJIS permission. */
 export const generateUploadUrl = mutation({

@@ -59,3 +59,54 @@ export function searchSystemEmoji(
   }
   return results;
 }
+
+/** Reverse lookup: emoji character -> shortcode slug, for showing users what
+ * to type (`:sob:`) in the picker's tooltips. */
+export function findSlugByEmoji(emoji: string): string | undefined {
+  return EMOJI_BY_CHAR[emoji]?.slug;
+}
+
+export interface SystemEmoji {
+  emoji: string;
+  slug: string;
+  name: string;
+}
+
+export interface SystemEmojiGroup {
+  group: string;
+  emojis: SystemEmoji[];
+}
+
+/**
+ * Every emoji bucketed by its Unicode group, in the dataset's own order —
+ * which is the conventional picker ordering (Smileys first, Flags last), so
+ * no manual sort is needed.
+ *
+ * Built once at module scope: the picker renders all ~1900 of these, and
+ * re-grouping on every open would be wasted work.
+ */
+export const SYSTEM_EMOJI_GROUPS: SystemEmojiGroup[] = (() => {
+  const byGroup = new Map<string, SystemEmoji[]>();
+  for (const [emoji, data] of Object.entries(EMOJI_BY_CHAR)) {
+    const bucket = byGroup.get(data.group) ?? [];
+    bucket.push({ emoji, slug: data.slug, name: data.name });
+    byGroup.set(data.group, bucket);
+  }
+  return [...byGroup.entries()].map(([group, emojis]) => ({ group, emojis }));
+})();
+
+/** Substring search across slug and name, for the picker's search box. */
+export function filterSystemEmoji(query: string, limit = 120): SystemEmoji[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const results: SystemEmoji[] = [];
+  for (const { emojis } of SYSTEM_EMOJI_GROUPS) {
+    for (const emoji of emojis) {
+      if (emoji.slug.includes(needle) || emoji.name.toLowerCase().includes(needle)) {
+        results.push(emoji);
+        if (results.length >= limit) return results;
+      }
+    }
+  }
+  return results;
+}

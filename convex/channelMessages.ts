@@ -1,7 +1,7 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
 import { notifyUsers } from "./notifications";
@@ -67,11 +67,65 @@ async function reactionsFor(ctx: QueryCtx, messageId: Id<"channelMessages">, me:
   return Array.from(grouped.values());
 }
 
+/**
+ * Per-community presentation for a message author: the nickname and avatar
+ * from their server profile (falling back to their global profile), plus the
+ * colour of their highest-positioned coloured role.
+ *
+ * Resolved once per distinct author rather than per message — a page of
+ * messages is usually a handful of people talking, so this collapses dozens
+ * of lookups into a few.
+ */
+async function communityAuthorDecorations(
+  ctx: QueryCtx,
+  communityId: Id<"communities">,
+  userIds: Id<"users">[]
+) {
+  const roles = await ctx.db
+    .query("roles")
+    .withIndex("by_community", (q) => q.eq("communityId", communityId))
+    .collect();
+  const roleById = new Map(roles.map((r) => [r._id, r]));
+
+  const entries = await Promise.all(
+    userIds.map(async (userId) => {
+      const [serverProfile, assigned] = await Promise.all([
+        ctx.db
+          .query("serverProfiles")
+          .withIndex("by_user_community", (q) =>
+            q.eq("userId", userId).eq("communityId", communityId)
+          )
+          .unique(),
+        ctx.db
+          .query("memberRoles")
+          .withIndex("by_member", (q) =>
+            q.eq("communityId", communityId).eq("userId", userId)
+          )
+          .collect(),
+      ]);
+
+      // Discord's rule: the name takes the colour of the highest-positioned
+      // role that actually defines one, so an uncoloured role above a
+      // coloured one doesn't blank the name out.
+      const roleColor = assigned
+        .map((m) => roleById.get(m.roleId))
+        .filter((r): r is Doc<"roles"> => !!r && !!r.color)
+        .sort((a, b) => b.position - a.position)[0]?.color;
+
+      return [userId, { serverProfile, roleColor }] as const;
+    })
+  );
+  return new Map(entries);
+}
+
 export const list = query({
   args: { channelId: v.id("channels"), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { channelId, paginationOpts }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
+
+    const channel = await ctx.db.get(channelId);
+    if (!channel) throw new Error("Channel not found.");
 
     const page = await ctx.db
       .query("channelMessages")
@@ -79,9 +133,17 @@ export const list = query({
       .order("desc")
       .paginate(paginationOpts);
 
+    const decorations = await communityAuthorDecorations(
+      ctx,
+      channel.communityId,
+      [...new Set(page.page.map((m) => m.authorId))]
+    );
+
     const messages = await Promise.all(
       page.page.map(async (message) => {
         const author = await ctx.db.get(message.authorId);
+        const decoration = decorations.get(message.authorId);
+        const serverProfile = decoration?.serverProfile;
         const attachmentRows = await ctx.db
           .query("channelMessageAttachments")
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
@@ -102,7 +164,18 @@ export const list = query({
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
           author: author
-            ? { id: author._id, name: author.name, username: author.username, imageUrl: author.imageUrl, bio: author.bio, bannerUrl: author.bannerUrl, customStatus: author.customStatus }
+            ? {
+                id: author._id,
+                // Server profile overrides win here so a nickname/avatar set
+                // for this community is what the channel actually shows.
+                name: serverProfile?.displayName ?? author.name,
+                username: author.username,
+                imageUrl: serverProfile?.imageUrl ?? author.imageUrl,
+                bio: serverProfile?.bio ?? author.bio,
+                bannerUrl: serverProfile?.bannerUrl ?? author.bannerUrl,
+                customStatus: serverProfile?.customStatus ?? author.customStatus,
+                roleColor: decoration?.roleColor,
+              }
             : null,
           attachments,
           reactions: await reactionsFor(ctx, message._id, me._id),
@@ -113,6 +186,26 @@ export const list = query({
     return { ...page, page: messages };
   },
 });
+
+/** Refuse the action if the member is currently timed out in this channel's
+ * community. Checked server-side so hiding the composer is only a courtesy. */
+async function requireNotTimedOut(
+  ctx: QueryCtx,
+  channelId: Id<"channels">,
+  userId: Id<"users">
+): Promise<void> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) return;
+  const membership = await ctx.db
+    .query("communityMembers")
+    .withIndex("by_community_user", (q) =>
+      q.eq("communityId", channel.communityId).eq("userId", userId)
+    )
+    .unique();
+  if (membership?.timeoutUntil && membership.timeoutUntil > Date.now()) {
+    throw new Error("You're timed out in this server.");
+  }
+}
 
 export const send = mutation({
   args: {
@@ -132,6 +225,7 @@ export const send = mutation({
   handler: async (ctx, { channelId, text, attachments }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
+    await requireNotTimedOut(ctx, channelId, me._id);
 
     const trimmed = text?.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {

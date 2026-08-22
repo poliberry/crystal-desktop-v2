@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AppWindow, Loader2, Monitor, Volume2 } from "lucide-react";
+import { AppWindow, Gauge, Loader2, Monitor, RefreshCw, Volume2 } from "lucide-react";
 
+import { useAudioPreferences } from "@/components/audio-provider";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,33 +15,89 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getDesktopAPI } from "@/lib/desktop";
-import { getDefaultAudioChoice, setDefaultAudioChoice } from "@/lib/system-audio-prefs";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { getDesktopAPI, getPlatform } from "@/lib/desktop";
+import {
+  STREAM_FRAME_RATES,
+  STREAM_RESOLUTIONS,
+  type StreamFrameRate,
+  type StreamResolutionKey,
+  type SystemAudioChoice,
+} from "@/lib/audio-prefs";
 import { cn } from "@/lib/utils";
-import type { SystemAudioChoice } from "@/hooks/use-room";
 import type { AudioApp, ScreenSource } from "@/types/desktop-api";
 
 interface ScreenSharePickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onShare: (sourceId: string, sourceName: string, audio: SystemAudioChoice) => void;
+  /**
+   * "change" re-opens the picker against an already-running share: the
+   * selection is seeded from what's actually live and the confirm button
+   * applies to it in place instead of restarting the share.
+   */
+  mode?: "start" | "change";
+  currentSourceId?: string | null;
+  currentAudio?: SystemAudioChoice;
+}
+
+/** Encodes an audio choice as a single `<Select>` value. */
+function audioChoiceToValue(choice: SystemAudioChoice): string {
+  return choice.mode === "app" ? `app:${choice.appId}` : choice.mode;
+}
+
+function valueToAudioChoice(value: string): SystemAudioChoice {
+  if (value === "system") return { mode: "system" };
+  if (value.startsWith("app:")) return { mode: "app", appId: value.slice("app:".length) };
+  return { mode: "off" };
 }
 
 /**
- * Unified "share" picker: choose which screen or app window to share and what
- * audio to include — all in one step. Sources are enumerated by Electron's
- * `desktopCapturer` in the main process. On Linux, the audio can be limited to
- * a specific running application (per-app sharing).
+ * Unified "share" picker: choose which screen or app window to share, what
+ * audio to include, and at what quality — all in one step, and re-openable
+ * mid-share to change any of them without dropping the stream.
+ *
+ * Per-app audio is Linux-only. It relies on PipeWire/PulseAudio being able to
+ * duplicate-link an individual application's streams into a virtual sink;
+ * macOS (ScreenCaptureKit captures the whole system output) and Windows
+ * (WASAPI loopback captures the whole default device) have no equivalent, so
+ * the option is hidden rather than offered and silently ignored.
  */
-export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePickerProps) {
+export function ScreenSharePicker({
+  open,
+  onOpenChange,
+  onShare,
+  mode = "start",
+  currentSourceId,
+  currentAudio,
+}: ScreenSharePickerProps) {
+  const { quality, setQuality, shareAudio, setShareAudio } = useAudioPreferences();
+
   const [sources, setSources] = useState<ScreenSource[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [audioChoice, setAudioChoiceState] = useState<SystemAudioChoice>(() => getDefaultAudioChoice());
+  const [audioChoice, setAudioChoiceState] = useState<SystemAudioChoice>({ mode: "off" });
   const [apps, setApps] = useState<AudioApp[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const perAppEnabled = !!getDesktopAPI()?.systemAudioLinux;
+  const perAppEnabled = getPlatform() === "linux" && !!getDesktopAPI()?.systemAudioLinux;
+
+  const loadApps = useCallback(async () => {
+    if (!perAppEnabled) return [] as AudioApp[];
+    const list = await getDesktopAPI()
+      ?.systemAudioLinux?.listAudioApps()
+      .catch(() => [] as AudioApp[]);
+    setApps(list ?? []);
+    return list ?? [];
+  }, [perAppEnabled]);
 
   const load = useCallback(async () => {
     const api = getDesktopAPI();
@@ -51,42 +108,45 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
     }
     setLoading(true);
     setError(null);
-    // Re-read the persisted default fresh on every open — RoomView keeps
-    // this component mounted while the dialog is closed, so without this
-    // the picker would keep showing whatever choice was active the first
-    // time it ever opened, even after the default changed in Settings.
-    setAudioChoiceState(getDefaultAudioChoice());
+
+    // Re-read the persisted default fresh on every open — this component
+    // stays mounted while the dialog is closed, so without this the picker
+    // would keep showing whatever was active the first time it opened. While
+    // changing a live share, what's *actually* going out wins over the saved
+    // default.
+    const seedAudio = mode === "change" && currentAudio ? currentAudio : shareAudio;
+    setAudioChoiceState(seedAudio);
+
     try {
-      const [list, appList] = await Promise.all([
-        api.screenShare.getSources(),
-        api.systemAudioLinux?.listAudioApps().catch(() => [] as AudioApp[]) ?? Promise.resolve([]),
-      ]);
+      const [list, appList] = await Promise.all([api.screenShare.getSources(), loadApps()]);
       const screens = list.filter((s) => s.type === "screen");
       const windows = list.filter((s) => s.type === "window");
       const ordered = [...screens, ...windows];
       setSources(ordered);
-      setSelectedId((prev) =>
-        ordered.some((s) => s.id === prev) ? prev : (ordered[0]?.id ?? null)
-      );
-      setApps(appList);
-      // A restored "share this app" choice might point at an app that's
-      // since exited or changed identifier — reconcile against the just-
-      // loaded list rather than silently sharing no app audio.
-      setAudioChoiceState((prev) => {
-        if (prev.mode !== "app") return prev;
-        if (appList.some((a) => a.id === prev.appId)) return prev;
+      setSelectedId((prev) => {
+        const preferred = mode === "change" ? (currentSourceId ?? prev) : prev;
+        return ordered.some((s) => s.id === preferred) ? preferred! : (ordered[0]?.id ?? null);
+      });
+
+      // A restored "share this app" choice might point at an app that's since
+      // exited or changed identifier — reconcile against the just-loaded list
+      // rather than silently sharing no app audio.
+      if (seedAudio.mode === "app" && !appList.some((a) => a.id === seedAudio.appId)) {
         const fallback: SystemAudioChoice = appList[0]
           ? { mode: "app", appId: appList[0].id }
-          : { mode: "off" };
-        setDefaultAudioChoice(fallback);
-        return fallback;
-      });
+          : { mode: "system" };
+        setAudioChoiceState(fallback);
+        setShareAudio(fallback);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+    // `shareAudio` is read as a seed, not tracked — re-running on every
+    // preference change would fight the user's in-dialog selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadApps, mode, currentAudio, currentSourceId, setShareAudio]);
 
   useEffect(() => {
     if (open) void load();
@@ -94,26 +154,27 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
 
   const selected = sources.find((s) => s.id === selectedId) ?? null;
 
-  const handleShare = () => {
+  const setAudioChoice = (choice: SystemAudioChoice) => {
+    setAudioChoiceState(choice);
+    setShareAudio(choice);
+  };
+
+  const handleConfirm = () => {
     if (!selected) return;
     onShare(selected.id, selected.name, audioChoice);
   };
 
-  const setAudioChoice = (choice: SystemAudioChoice) => {
-    setAudioChoiceState(choice);
-    setDefaultAudioChoice(choice);
-  };
-
-  const pickApp = (appId: string) => setAudioChoice({ mode: "app", appId });
-  const appId = audioChoice.mode === "app" ? audioChoice.appId : null;
+  const isChanging = mode === "change";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Share your screen</DialogTitle>
+          <DialogTitle>{isChanging ? "Change what you're sharing" : "Share your screen"}</DialogTitle>
           <DialogDescription>
-            Choose what to share. You can also include audio in the same step.
+            {isChanging
+              ? "Switch screens, change the audio source, or adjust the quality without ending your stream."
+              : "Choose what to share. You can also set the audio and quality in the same step."}
           </DialogDescription>
         </DialogHeader>
 
@@ -132,7 +193,7 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
             No shareable screens or windows found.
           </div>
         ) : (
-          <ScrollArea className="max-h-[45vh]">
+          <ScrollArea className="max-h-[38vh]">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {sources.map((s) => (
                 <button
@@ -153,89 +214,120 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
                       <img src={s.thumbnail} alt="" className="h-full w-full object-cover" />
                     ) : (
                       <span className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
-                        {s.type === "screen" ? <Monitor className="size-6" /> : <AppWindow className="size-6" />}
+                        {s.type === "screen" ? (
+                          <Monitor className="size-6" />
+                        ) : (
+                          <AppWindow className="size-6" />
+                        )}
                         No preview
                       </span>
                     )}
                   </div>
-                  <span className="truncate text-xs font-medium">{s.name}</span>
+                  <span className="truncate text-xs font-medium">
+                    {s.name}
+                    {isChanging && s.id === currentSourceId ? " (current)" : ""}
+                  </span>
                 </button>
               ))}
             </div>
           </ScrollArea>
         )}
 
-        <div className="space-y-2 rounded-md border bg-muted/30 px-3 py-3">
-          <div className="flex items-center gap-2">
-            <Volume2 className="size-4 text-muted-foreground" />
-            <Label className="text-sm font-normal">Audio</Label>
-          </div>
+        <div className="grid gap-3 rounded-md border bg-muted/30 px-3 py-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="audio-choice"
-                checked={audioChoice.mode === "off"}
-                onChange={() => setAudioChoice({ mode: "off" })}
-              />
-              Don&apos;t share audio
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="audio-choice"
-                checked={audioChoice.mode === "system"}
-                onChange={() => setAudioChoice({ mode: "system" })}
-              />
-              Share system audio (all apps)
-              <span className="block text-xs text-muted-foreground">
-                Apps playing sound (not this app) will be heard in the room.
-              </span>
-            </label>
-            {perAppEnabled && (
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="audio-choice"
-                  checked={audioChoice.mode === "app"}
-                  onChange={() => {
-                    const first = apps[0];
-                    setAudioChoice(first ? { mode: "app", appId: first.id } : { mode: "app", appId: "" });
-                  }}
-                />
-                Share a specific app&apos;s audio
-              </label>
-            )}
+            <div className="flex items-center gap-2">
+              <Volume2 className="size-4 text-muted-foreground" />
+              <Label className="text-sm font-normal">Audio</Label>
+              {perAppEnabled && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-auto size-6"
+                  title="Refresh the list of apps playing audio"
+                  onClick={() => void loadApps()}
+                >
+                  <RefreshCw className="size-3.5" />
+                </Button>
+              )}
+            </div>
+            <Select
+              value={audioChoiceToValue(audioChoice)}
+              onValueChange={(value) => setAudioChoice(valueToAudioChoice(value))}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select audio" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">Don&apos;t share audio</SelectItem>
+                <SelectItem value="system">System audio (all apps)</SelectItem>
+                {perAppEnabled && (
+                  <SelectGroup>
+                    <SelectLabel>A specific app</SelectLabel>
+                    {apps.length === 0 ? (
+                      <SelectItem value="app:" disabled>
+                        No apps playing audio
+                      </SelectItem>
+                    ) : (
+                      apps.map((app) => (
+                        <SelectItem key={app.id} value={`app:${app.id}`}>
+                          {app.name}
+                          {app.streams > 1 ? ` (${app.streams} streams)` : ""}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectGroup>
+                )}
+              </SelectContent>
+            </Select>
           </div>
 
-          {audioChoice.mode === "app" && (
-            <ScrollArea className="max-h-44 rounded-md border bg-background/40 p-1">
-              {apps.length === 0 ? (
-                <p className="px-2 py-3 text-xs text-muted-foreground">
-                  No audio-playing apps detected. Start some audio and try again.
-                </p>
-              ) : (
-                apps.map((app) => (
-                  <label
-                    key={app.id}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
-                  >
-                    <input
-                      type="radio"
-                      name="audio-app"
-                      checked={appId === app.id}
-                      onChange={() => pickApp(app.id)}
-                    />
-                    <span className="truncate">{app.name}</span>
-                    {app.streams > 1 && (
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        {app.streams} streams
-                      </span>
-                    )}
-                  </label>
-                ))
-              )}
-            </ScrollArea>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <Gauge className="size-4 text-muted-foreground" />
+              <Label className="text-sm font-normal">Quality</Label>
+            </div>
+            <div className="flex gap-2">
+              <Select
+                value={quality.resolution}
+                onValueChange={(value) =>
+                  setQuality({ ...quality, resolution: value as StreamResolutionKey })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STREAM_RESOLUTIONS.map((r) => (
+                    <SelectItem key={r.key} value={r.key}>
+                      {r.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={String(quality.frameRate)}
+                onValueChange={(value) =>
+                  setQuality({ ...quality, frameRate: Number(value) as StreamFrameRate })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STREAM_FRAME_RATES.map((fps) => (
+                    <SelectItem key={fps} value={String(fps)}>
+                      {fps} fps
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {audioChoice.mode === "system" && (
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              Apps playing sound (other than Crystal) will be heard in the call.
+            </p>
           )}
         </div>
 
@@ -243,8 +335,8 @@ export function ScreenSharePicker({ open, onOpenChange, onShare }: ScreenSharePi
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleShare} disabled={!selected || loading}>
-            Start sharing
+          <Button onClick={handleConfirm} disabled={!selected || loading}>
+            {isChanging ? "Apply" : "Start sharing"}
           </Button>
         </DialogFooter>
       </DialogContent>

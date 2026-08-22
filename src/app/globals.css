@@ -129,6 +129,77 @@ body {
  * cross-platform Noto Color Emoji font when available. Cascade falls back to
  * OS emoji fonts (Apple Color Emoji, Segoe UI Emoji) if not loaded. */
 .emoji-font {
-  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji",
+  font-family:
+    "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji",
     "Segoe UI Symbol", sans-serif;
+}
+
+.animated-gradient {
+  background: radial-gradient(circle, #0080c0 22%, #387c51 85%);
+  background-size: 220% 220%;
+  animation: animated-gradient-breathing 10s cubic-bezier(0.4, 0, 0.2, 1)
+    infinite;
+}
+
+@keyframes animated-gradient-breathing {
+  0%,
+  100% {
+    background-size: 220% 220%;
+    opacity: 0.9;
+  }
+  50% {
+    background-size: 240% 240%;
+    opacity: 1;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Scrollbars
+ *
+ * Chromium is the only engine here (Electron), so the `::-webkit-scrollbar`
+ * pseudo-elements are the whole story — but `scrollbar-color`/`-width` are
+ * set too so a browser preview degrades sensibly.
+ *
+ * The thumb is a translucent foreground tint rather than a fixed grey, so it
+ * follows the theme, and it only reaches full contrast on hover: at rest a
+ * scrollbar is orientation, not a control.
+ * ------------------------------------------------------------------------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 18%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--foreground) 18%, transparent);
+  border-radius: 9999px;
+  /* Transparent border with `background-clip: content-box` insets the thumb
+   * without shrinking the hit area — the bar stays easy to grab while looking
+   * much thinner than 10px. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklch, var(--foreground) 34%, transparent);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in oklch, var(--foreground) 45%, transparent);
+}
+
+/* Where both axes meet, and the resizer nub, would otherwise render as opaque
+ * default-grey squares. */
+::-webkit-scrollbar-corner,
+::-webkit-resizer {
+  background: transparent;
 }

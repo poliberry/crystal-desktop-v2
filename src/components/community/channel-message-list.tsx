@@ -19,6 +19,9 @@ import type { ServerEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { MemberProfileCard } from "./member-profile-card";
+import { AudioAttachment } from "@/components/home/audio-attachment";
+import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
+import type { FriendStatus } from "@/lib/presence";
 
 interface ChannelMessageListProps {
   channelId: Id<"channels">;
@@ -73,7 +76,14 @@ interface MessageDoc {
   createdAt: number;
   editedAt: number | null;
   isMine: boolean;
-  author: { id: Id<"users">; name: string; username: string; imageUrl?: string } | null;
+  author: {
+    id: Id<"users">;
+    name: string;
+    username: string;
+    imageUrl?: string;
+    /** Colour of the author's highest coloured role in this community. */
+    roleColor?: string;
+  } | null;
   attachments: AttachmentSummary[];
   reactions: ReactionSummary[];
 }
@@ -82,24 +92,33 @@ const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 function UserProfileContent({
   userId,
+  communityId,
   name,
   username,
   imageUrl,
 }: {
   userId: Id<"users">;
+  communityId: Id<"communities">;
   name: string;
   username: string;
   imageUrl?: string;
 }) {
-  const profile = useQuery(api.users.getProfile, { userId });
+  const profile = useQuery(api.users.getProfile, { userId, communityId });
   return (
     <MemberProfileCard
+      communityId={communityId}
       member={{
         userId,
-        name,
+        // Server profile overrides arrive with the query; until it resolves,
+        // the message list's own (already server-aware) values stand in.
+        name: profile?.name ?? name,
         username,
-        imageUrl,
-        status: "offline",
+        imageUrl: profile?.imageUrl ?? imageUrl,
+        roles: profile?.roles,
+        isOwner: profile?.isOwner,
+        // Falls back to offline only until the profile query resolves — the
+        // status is real once it does.
+        status: (profile?.status ?? "offline") as FriendStatus,
         bio: profile?.bio,
         bannerUrl: profile?.bannerUrl,
         customStatus: profile?.customStatus,
@@ -116,16 +135,56 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function AttachmentView({ attachment }: { attachment: AttachmentSummary }) {
+/** An image attachment that expands into the full-screen viewer on click. */
+function ImageAttachment({
+  attachment,
+  author,
+  createdAt,
+}: {
+  attachment: AttachmentSummary;
+  author?: LightboxAuthor;
+  createdAt?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!attachment.url) return null;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={attachment.url} alt={attachment.fileName} className="max-h-80 max-w-full" />
+      </button>
+      <ImageLightbox
+        open={open}
+        onOpenChange={setOpen}
+        url={attachment.url}
+        fileName={attachment.fileName}
+        author={author}
+        createdAt={createdAt}
+      />
+    </>
+  );
+}
+
+function AttachmentView({
+  attachment,
+  author,
+  createdAt,
+}: {
+  attachment: AttachmentSummary;
+  author?: LightboxAuthor;
+  createdAt?: number;
+}) {
   if (!attachment.url) return null;
   if (attachment.fileType.startsWith("image/")) {
-    return (
-      <img
-        src={attachment.url}
-        alt={attachment.fileName}
-        className="mt-1 max-h-80 max-w-full rounded-md border"
-      />
-    );
+    return <ImageAttachment attachment={attachment} author={author} createdAt={createdAt} />;
+  }
+  if (attachment.fileType.startsWith("audio/")) {
+    return <AudioAttachment url={attachment.url} fileName={attachment.fileName} />;
   }
   if (attachment.fileType.startsWith("video/")) {
     return (
@@ -152,13 +211,11 @@ function MessageRow({
   startsGroup,
   canManageMessages,
   communityId,
-  serverEmojiById,
 }: {
   message: MessageDoc;
   startsGroup: boolean;
   canManageMessages: boolean;
   communityId: Id<"communities">;
-  serverEmojiById: Map<string, ServerEmoji>;
 }) {
   const updateMessage = useMutation(api.channelMessages.update);
   const removeMessage = useMutation(api.channelMessages.remove);
@@ -211,6 +268,7 @@ function MessageRow({
               {message.author && (
                 <UserProfileContent
                   userId={message.author.id}
+                  communityId={communityId}
                   name={message.author.name}
                   username={message.author.username}
                   imageUrl={message.author.imageUrl}
@@ -223,7 +281,12 @@ function MessageRow({
       <div className="min-w-0 flex-1">
         {startsGroup && (
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold">{message.author?.name ?? "Unknown"}</span>
+            <span
+              className="text-sm font-semibold"
+              style={message.author?.roleColor ? { color: message.author.roleColor } : undefined}
+            >
+              {message.author?.name ?? "Unknown"}
+            </span>
             <span className="text-[11px] text-muted-foreground">
               {new Date(message.createdAt).toLocaleString()}
             </span>
@@ -254,7 +317,6 @@ function MessageRow({
             {message.text && (
               <MessageContent
                 text={message.text}
-                serverEmojiById={serverEmojiById}
                 suffix={
                   message.editedAt && (
                     <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
@@ -263,11 +325,15 @@ function MessageRow({
               />
             )}
             {message.attachments.map((attachment) => (
-              <AttachmentView key={attachment.id} attachment={attachment} />
+              <AttachmentView
+                key={attachment.id}
+                attachment={attachment}
+                author={message.author ?? undefined}
+                createdAt={message.createdAt}
+              />
             ))}
             <MessageReactions
               reactions={message.reactions}
-              serverEmojiById={serverEmojiById}
               onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
             />
           </>
@@ -338,12 +404,6 @@ export function ChannelMessageList({
   );
   const chronological = [...results].reverse();
 
-  const serverEmojis = useQuery(api.communityEmojis.list, { communityId });
-  const serverEmojiById = useMemo(
-    () => new Map((serverEmojis ?? []).map((e) => [e.id, e])),
-    [serverEmojis]
-  );
-
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef<string | undefined>(undefined);
 
@@ -397,7 +457,6 @@ export function ChannelMessageList({
               startsGroup={startsGroup}
               canManageMessages={canManageMessages}
               communityId={communityId}
-              serverEmojiById={serverEmojiById}
             />
           );
         })}

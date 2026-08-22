@@ -18,6 +18,7 @@ export const join = action({
   handler: async (ctx, { conversationId }): Promise<{ token: string; url: string; roomName: string }> => {
     const { userId, name } = await ctx.runQuery(internal.calls.getJoinContext, { conversationId });
     await ctx.runMutation(internal.calls.recordJoin, { conversationId, userId });
+    await ctx.runMutation(internal.calls.clearRingForJoin, { conversationId, userId });
 
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;

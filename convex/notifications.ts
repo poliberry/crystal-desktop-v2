@@ -4,10 +4,37 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  allowsChannelMessage,
+  allowsDirectMessage,
+  allowsFriendRequest,
+  loadNotificationPolicy,
+  type NotificationPolicy,
+} from "./lib/notificationPolicy";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
+
+/** Map a notification type onto the policy question it actually asks. */
+function wants(
+  policy: NotificationPolicy,
+  type: NotificationType,
+  communityId?: Id<"communities">
+): boolean {
+  switch (type) {
+    case "dm_message":
+      return allowsDirectMessage(policy);
+    case "friend_request":
+    case "friend_accept":
+      return allowsFriendRequest(policy);
+    case "channel_mention":
+      // Everything reaching `notifyUsers` with this type really is a mention;
+      // plain channel traffic never creates a notification row, it only
+      // surfaces through the desktop feed below.
+      return communityId ? allowsChannelMessage(policy, communityId, true) : !policy.dnd;
+  }
+}
 
 /**
  * Inserts one `notifications` row per recipient (skipping the actor, so
@@ -38,6 +65,11 @@ export async function notifyUsers(
   const actorUser = await ctx.db.get("users", actorId as Id<"users">);
 
   for (const userId of recipients) {
+    // Checked per recipient rather than once: everyone in a channel has their
+    // own DND state and their own settings for that server.
+    const policy = await loadNotificationPolicy(ctx, userId);
+    if (!wants(policy, rest.type, rest.communityId)) continue;
+
     await ctx.db.insert("notifications", {
       userId,
       actorId,
@@ -91,6 +123,12 @@ export const feed = query({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return { conversations: [], channels: [], friendRequests: [] };
+
+    // Filtering here rather than in the Electron notifier keeps that process
+    // dumb, and means Do Not Disturb and the per-server settings hold for
+    // push and mobile too. DND empties the feed outright.
+    const policy = await loadNotificationPolicy(ctx, me._id);
+    if (policy.dnd) return { conversations: [], channels: [], friendRequests: [] };
 
     const memberships = await ctx.db
       .query("conversationMembers")
@@ -159,6 +197,10 @@ export const feed = query({
           .order("desc")
           .take(1);
         if (!lastMessage) continue;
+
+        const mentionsMe = (lastMessage.text ?? "").includes(`<@${me._id}>`);
+        if (!allowsChannelMessage(policy, community._id, mentionsMe)) continue;
+
         const author = await ctx.db.get(lastMessage.authorId);
 
         channels.push({
@@ -175,10 +217,12 @@ export const feed = query({
       }
     }
 
-    const incomingRequests = await ctx.db
-      .query("friendRequests")
-      .withIndex("by_recipient", (q) => q.eq("recipientId", me._id))
-      .collect();
+    const incomingRequests = allowsFriendRequest(policy)
+      ? await ctx.db
+          .query("friendRequests")
+          .withIndex("by_recipient", (q) => q.eq("recipientId", me._id))
+          .collect()
+      : [];
     const friendRequests = await Promise.all(
       incomingRequests.map(async (r) => {
         const requester = await ctx.db.get(r.requesterId);
@@ -186,7 +230,11 @@ export const feed = query({
       })
     );
 
-    return { conversations, channels, friendRequests };
+    return {
+      conversations: allowsDirectMessage(policy) ? conversations : [],
+      channels,
+      friendRequests,
+    };
   },
 });
 
@@ -268,5 +316,26 @@ export const markAllRead = mutation({
       .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
       .collect();
     for (const n of unread) await ctx.db.patch(n._id, { read: true });
+  },
+});
+
+/**
+ * The newest notification's identity, for the in-app "new message" chime.
+ *
+ * Deliberately tiny: the client only needs to know *that* something arrived,
+ * and subscribing to the full `list` query just to detect a new head would
+ * re-fetch every notification body on each change.
+ */
+export const latest = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const [newest] = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_created", (q) => q.eq("userId", me._id))
+      .order("desc")
+      .take(1);
+    return newest ? { id: newest._id, createdAt: newest.createdAt, type: newest.type } : null;
   },
 });

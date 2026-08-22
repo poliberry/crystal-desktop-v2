@@ -12,6 +12,9 @@ import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { AudioAttachment } from "@/components/home/audio-attachment";
+import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
+import type { FriendStatus } from "@/lib/presence";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -72,7 +75,9 @@ function UserProfileContent({
         name,
         username,
         imageUrl,
-        status: "offline",
+        // Falls back to offline only until the profile query resolves — the
+        // status is real once it does.
+        status: (profile?.status ?? "offline") as FriendStatus,
         bio: profile?.bio,
         bannerUrl: profile?.bannerUrl,
         customStatus: profile?.customStatus,
@@ -89,16 +94,56 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function AttachmentView({ attachment }: { attachment: AttachmentSummary }) {
+/** An image attachment that expands into the full-screen viewer on click. */
+function ImageAttachment({
+  attachment,
+  author,
+  createdAt,
+}: {
+  attachment: AttachmentSummary;
+  author?: LightboxAuthor;
+  createdAt?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!attachment.url) return null;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={attachment.url} alt={attachment.fileName} className="max-h-80 max-w-full" />
+      </button>
+      <ImageLightbox
+        open={open}
+        onOpenChange={setOpen}
+        url={attachment.url}
+        fileName={attachment.fileName}
+        author={author}
+        createdAt={createdAt}
+      />
+    </>
+  );
+}
+
+function AttachmentView({
+  attachment,
+  author,
+  createdAt,
+}: {
+  attachment: AttachmentSummary;
+  author?: LightboxAuthor;
+  createdAt?: number;
+}) {
   if (!attachment.url) return null;
   if (attachment.fileType.startsWith("image/")) {
-    return (
-      <img
-        src={attachment.url}
-        alt={attachment.fileName}
-        className="mt-1 max-h-80 max-w-full rounded-md border"
-      />
-    );
+    return <ImageAttachment attachment={attachment} author={author} createdAt={createdAt} />;
+  }
+  if (attachment.fileType.startsWith("audio/")) {
+    return <AudioAttachment url={attachment.url} fileName={attachment.fileName} />;
   }
   if (attachment.fileType.startsWith("video/")) {
     return (
@@ -216,7 +261,6 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
             {message.text && (
               <MessageContent
                 text={message.text}
-                serverEmojiById={EMPTY_EMOJI_MAP}
                 suffix={
                   message.editedAt && (
                     <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
@@ -225,11 +269,15 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
               />
             )}
             {message.attachments.map((attachment) => (
-              <AttachmentView key={attachment.id} attachment={attachment} />
+              <AttachmentView
+                key={attachment.id}
+                attachment={attachment}
+                author={message.author ?? undefined}
+                createdAt={message.createdAt}
+              />
             ))}
             <MessageReactions
               reactions={message.reactions}
-              serverEmojiById={EMPTY_EMOJI_MAP}
               onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
             />
           </>

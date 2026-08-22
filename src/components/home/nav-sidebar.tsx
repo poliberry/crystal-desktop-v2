@@ -65,7 +65,7 @@ export function NavSidebar({
   );
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-r bg-background/40">
+    <div className="flex w-64 shrink-0 flex-col m-2 bg-accent/40 backdrop-blur-xl shadow-md rounded-2xl">
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
       <div className="relative">
         <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -129,7 +129,7 @@ export function NavSidebar({
               const lastMsgAt = conversation.lastMessageAt;
               const stale = lastMsgAt !== undefined && NOW_MS() - lastMsgAt > DAY_MS;
               const subtitle =
-                !isGroup && stale && otherMember?.customStatus
+                !isGroup && stale && !isOffline && otherMember?.customStatus
                   ? otherMember.customStatus
                   : (conversation.lastMessageText ?? "No messages yet");
 
@@ -161,7 +161,7 @@ export function NavSidebar({
                     >
                       {title}
                     </p>
-                    <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
+                    <p className="truncate w-46 text-xs text-muted-foreground">{subtitle}</p>
                   </div>
                 </button>
               );
@@ -170,8 +170,6 @@ export function NavSidebar({
         </div>
       </ScrollArea>
       </div>
-
-      <UserCard />
     </div>
   );
 }

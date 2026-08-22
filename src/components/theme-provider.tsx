@@ -56,6 +56,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     injectTheme(resolved);
   }, []);
 
+  // The Settings window is a separate Electron BrowserWindow (separate
+  // renderer/JS realm) — `storage` fires here when *another* same-origin
+  // window writes localStorage, letting theme changes made in Settings
+  // apply to the main window live instead of only on next reload.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY || !e.newValue) return;
+      try {
+        const next = JSON.parse(e.newValue) as Theme;
+        setTheme(next);
+        injectTheme(next);
+      } catch {}
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   const applyTheme = useCallback((t: Theme) => {
     setTheme(t);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(t));

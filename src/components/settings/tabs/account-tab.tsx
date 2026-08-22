@@ -1,6 +1,6 @@
 "use client";
 
-import { useReverification, useUser } from "@clerk/clerk-react";
+import { useReverification, useUser } from "@clerk/react";
 import type { EmailAddressResource } from "@clerk/shared/types";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
