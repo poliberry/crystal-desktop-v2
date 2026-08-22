@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import * as backgroundNotifier from "./backgroundNotifier";
+import richPresence from "./richPresence";
 import systemAudio from "./systemAudio";
 import updater from "./updater";
 
@@ -31,6 +32,15 @@ const MIME_TYPES: Record<string, string> = {
   ".otf": "font/otf",
   ".webp": "image/webp",
   ".txt": "text/plain",
+  // Soundboard clips: the built-in ones ship in out/sounds and are fetched by
+  // <audio>, which needs a real audio content type rather than the
+  // octet-stream fallback below.
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".weba": "audio/webm",
+  ".flac": "audio/flac",
 };
 
 // Linux: capture the virtual sink's monitor with parec/pw-record and stream
@@ -275,6 +285,72 @@ function createOrFocusMainWindow(): void {
   createWindow();
 }
 
+let pipWindow: BrowserWindow | null = null;
+
+/**
+ * Opens the pop-out video window, or focuses it if already open (singleton
+ * — only one tile can be popped out at a time). Not Document
+ * Picture-in-Picture (Electron's bare `BrowserWindow` doesn't implement the
+ * window-controller hooks that requires) and not a second LiveKit
+ * connection (which would show up as a duplicate, silent participant to
+ * everyone else in the call) — just a small always-on-top window that
+ * displays whatever JPEG frames the main window streams to it over IPC. See
+ * `pip:send-frame`/`pip:frame` below and `src/app/pip/page.tsx`.
+ */
+/** Tells the main window the pip window's actual current content size, so
+ * it can capture frames at a resolution that matches instead of a fixed
+ * guess — capturing smaller than the window means the browser upscales a
+ * low-res JPEG to fill it, which is what caused the pixelation. */
+function reportPipSize(win: BrowserWindow): void {
+  const { width, height } = win.getContentBounds();
+  mainWindow?.webContents.send("pip:size", { width, height });
+}
+
+function createOrFocusPipWindow(options?: { width?: number; height?: number; title?: string }): void {
+  if (pipWindow && !pipWindow.isDestroyed()) {
+    if (options?.title) pipWindow.setTitle(options.title);
+    pipWindow.focus();
+    reportPipSize(pipWindow);
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: options?.width ?? 360,
+    height: options?.height ?? 202,
+    minWidth: 200,
+    minHeight: 120,
+    alwaysOnTop: true,
+    frame: false,
+    backgroundColor: "#000000",
+    title: options?.title ?? "Crystal",
+    icon: appIconPath(),
+    webPreferences: {
+      preload: PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  if (isDev) {
+    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/pip`);
+  } else {
+    void win.loadURL("http://crystal.localhost/pip/");
+  }
+
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  win.on("resize", () => reportPipSize(win));
+  win.once("ready-to-show", () => reportPipSize(win));
+
+  win.on("closed", () => {
+    pipWindow = null;
+    mainWindow?.webContents.send("pip:closed");
+  });
+
+  pipWindow = win;
+}
+
 let settingsWindow: BrowserWindow | null = null;
 
 /** Opens the Settings window, or focuses it if it's already open (singleton). */
@@ -470,6 +546,23 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("settings:open", () => {
     createOrFocusSettingsWindow();
+  });
+
+  ipcMain.handle("pip:open", (_event, options?: { width?: number; height?: number; title?: string }) => {
+    createOrFocusPipWindow(options);
+    return true;
+  });
+  ipcMain.handle("pip:close", () => {
+    if (pipWindow && !pipWindow.isDestroyed()) pipWindow.close();
+    pipWindow = null;
+  });
+  // Fire-and-forget frame relay: the main window captures the focused tile's
+  // video to a canvas and streams JPEG data URLs here at a modest rate; this
+  // just forwards each one to the pip window's renderer to draw.
+  ipcMain.on("pip:send-frame", (_event, dataUrl: string) => {
+    if (pipWindow && !pipWindow.isDestroyed()) {
+      pipWindow.webContents.send("pip:frame", dataUrl);
+    }
   });
 
   // Custom titlebar controls — frameless windows have no native ones. Each
@@ -684,6 +777,27 @@ app.whenReady().then(async () => {
     helper: macAudioHelperPath(),
   }));
 
+  // Rich Presence: detected game / now-playing music, plus the
+  // Discord-compatible IPC socket games push activities to. Broadcast to
+  // every window (not just the main one) so the Settings window's diagnostics
+  // stay live too. Started in the background — downloading Discord's
+  // detectables catalog on a cold cache shouldn't hold up the first paint.
+  richPresence.onChange((activities) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("rich-presence:changed", activities);
+    }
+  });
+  void richPresence.start().catch((err) => {
+    console.warn("[rich-presence] failed to start:", err);
+  });
+
+  ipcMain.handle("rich-presence:get", () => richPresence.getActivities());
+  ipcMain.handle("rich-presence:status", () => richPresence.getStatus());
+  ipcMain.handle("rich-presence:set-enabled", (_event, enabled: boolean) => {
+    richPresence.setEnabled(!!enabled);
+    return richPresence.getStatus();
+  });
+
   createWindow();
 
   app.on("activate", () => createOrFocusMainWindow());
@@ -700,4 +814,6 @@ app.on("before-quit", () => {
   unsubLinuxAudio();
   void systemAudio.disable();
   stopMacAudioChild();
+  richPresence.stop();
+  if (pipWindow && !pipWindow.isDestroyed()) pipWindow.close();
 });

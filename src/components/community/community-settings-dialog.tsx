@@ -1,11 +1,14 @@
 "use client";
 
 import type { Id } from "../../../convex/_generated/dataModel";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { CommunitySettingsChannelsTab } from "@/components/community/community-settings-channels-tab";
 import { CommunitySettingsEmojisTab } from "@/components/community/community-settings-emojis-tab";
 import { CommunitySettingsGeneralTab } from "@/components/community/community-settings-general-tab";
 import { CommunitySettingsMembersTab } from "@/components/community/community-settings-members-tab";
 import { CommunitySettingsRolesTab } from "@/components/community/community-settings-roles-tab";
+import { CommunitySettingsSoundboardTab } from "@/components/community/community-settings-soundboard-tab";
 import {
   Dialog,
   DialogContent,
@@ -43,14 +46,14 @@ interface CommunitySettingsDialogProps {
 const data = {
   navMain: [
     {
-      title: "Server Settings",
-      url: "#",
+      title: "Community Settings",
       items: [
-        { title: "General", url: "#" },
-        { title: "Roles", url: "#" },
-        { title: "Channels", url: "#" },
-        { title: "Members", url: "#" },
-        { title: "Emojis", url: "#" },
+        { title: "General" },
+        { title: "Roles" },
+        { title: "Channels" },
+        { title: "Members" },
+        { title: "Emojis" },
+        { title: "Soundboard" },
       ],
     },
   ],
@@ -84,14 +87,14 @@ export function CommunitySettingsDialog({
                   <SidebarGroupLabel>{item.title}</SidebarGroupLabel>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      {item.items.map((item) => (
-                        <SidebarMenuItem key={item.title}>
+                      {item.items.map((child) => (
+                        <SidebarMenuItem key={child.title}>
                           <SidebarMenuButton
-                            asChild
-                            onClick={() => setSelectedTab(item.title)}
-                            isActive={selectedTab === item.title}
+                            type="button"
+                            onClick={() => setSelectedTab(child.title)}
+                            isActive={selectedTab === child.title}
                           >
-                            <a href={item.url}>{item.title}</a>
+                            {child.title}
                           </SidebarMenuButton>
                         </SidebarMenuItem>
                       ))}
@@ -112,40 +115,57 @@ export function CommunitySettingsDialog({
               </SidebarGroup>
             </SidebarContent>
           </Sidebar>
-          <SidebarInset>
-            {selectedTab === "General" && (
-              <CommunitySettingsGeneralTab
-                communityId={communityId}
-                canManage={canManageCommunity}
-                isOwner={isOwner}
-                onDeleted={() => onOpenChange(false)}
-              />
-            )}
-            {selectedTab === "Roles" && (
-              <CommunitySettingsRolesTab
-                communityId={communityId}
-                canManage={canManageRoles}
-              />
-            )}
-            {selectedTab === "Channels" && (
-              <CommunitySettingsChannelsTab
-                communityId={communityId}
-                canManage={canManageChannels}
-              />
-            )}
-            {selectedTab === "Members" && (
-              <CommunitySettingsMembersTab
-                communityId={communityId}
-                canManageRoles={canManageRoles}
-                canKick={canKick}
-              />
-            )}
-            {selectedTab === "Emojis" && (
-              <CommunitySettingsEmojisTab
-                communityId={communityId}
-                canManage={canManageEmojis}
-              />
-            )}
+          <SidebarInset className="min-h-0 overflow-hidden">
+            {/* The Soundboard panel is the tallest here (upload form, uploaded
+                clips, built-in clips) and SidebarInset doesn't scroll on its
+                own, so its lower half was unreachable. The boundary is keyed on
+                the tab so a panel that throws doesn't take the dialog down with
+                it — which reads as the dialog ignoring clicks. */}
+            <ScrollArea className="h-full min-h-0">
+              <ErrorBoundary key={selectedTab} label={selectedTab}>
+                {selectedTab === "General" && (
+                  <CommunitySettingsGeneralTab
+                    communityId={communityId}
+                    canManage={canManageCommunity}
+                    isOwner={isOwner}
+                    onDeleted={() => onOpenChange(false)}
+                  />
+                )}
+                {selectedTab === "Roles" && (
+                  <CommunitySettingsRolesTab
+                    communityId={communityId}
+                    canManage={canManageRoles}
+                  />
+                )}
+                {selectedTab === "Channels" && (
+                  <CommunitySettingsChannelsTab
+                    communityId={communityId}
+                    canManage={canManageChannels}
+                  />
+                )}
+                {selectedTab === "Members" && (
+                  <CommunitySettingsMembersTab
+                    communityId={communityId}
+                    canManageRoles={canManageRoles}
+                    canKick={canKick}
+                  />
+                )}
+                {selectedTab === "Emojis" && (
+                  <CommunitySettingsEmojisTab
+                    communityId={communityId}
+                    canManage={canManageEmojis}
+                  />
+                )}
+                {/* Uploading soundboard clips is gated on the same MANAGE_EMOJIS
+                permission as emojis and stickers. */}
+                {selectedTab === "Soundboard" && (
+                  <CommunitySettingsSoundboardTab
+                    communityId={communityId}
+                    canManage={canManageEmojis}
+                  />
+                )}
+              </ErrorBoundary>
+            </ScrollArea>
           </SidebarInset>
         </SidebarProvider>
       </DialogContent>

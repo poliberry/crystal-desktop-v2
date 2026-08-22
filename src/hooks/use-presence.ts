@@ -5,6 +5,7 @@ import { useEffect } from "react";
 
 import { api } from "../../convex/_generated/api";
 import { displayStatus, type ManualStatus } from "@/lib/presence";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 
 const IDLE_MS = 5 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 20_000;
@@ -51,7 +52,12 @@ export function usePresenceHeartbeat() {
 export function useMyPresence() {
   const presence = useQuery(api.presence.getMine);
   if (!presence) {
-    return { status: "online" as const, manualStatus: "online" as const, loaded: presence !== undefined };
+    return {
+      status: "online" as const,
+      manualStatus: "online" as const,
+      activities: [] as RichPresenceActivity[],
+      loaded: presence !== undefined,
+    };
   }
   return {
     status: displayStatus(presence.manualStatus, presence.isIdle),
@@ -59,6 +65,12 @@ export function useMyPresence() {
     // "idle" from real inactivity too, which the status switcher shouldn't
     // show as selected unless the user actually picked "Idle" themselves.
     manualStatus: presence.manualStatus,
+    /** Everything this client is currently broadcasting, richest first. */
+    activities: ((presence.activities as RichPresenceActivity[] | undefined)?.length
+      ? (presence.activities as RichPresenceActivity[])
+      : presence.activity
+        ? [presence.activity as RichPresenceActivity]
+        : []) as RichPresenceActivity[],
     loaded: true,
   };
 }

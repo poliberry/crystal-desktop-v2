@@ -10,6 +10,12 @@ import { CreateCommunityDialog } from "@/components/community/create-community-d
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -26,6 +32,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { USER_CARD_HEIGHT } from "./user-card";
+import { useCall } from "../call/call-provider";
 
 /** Strips an optional "joincrystal:" prefix so pasting a full invite string
  * (copied straight from the Invite dialog) works the same as a bare code. */
@@ -180,18 +188,52 @@ function DiscoverDialog({
 interface CommunityRailProps {
   selectedCommunityId: Id<"communities"> | null;
   onSelectHome: () => void;
-  onSelectCommunity: (id: Id<"communities">) => void;
+  /** Default click replaces the active tab (mode omitted/"replace"); shift-
+   * click or the right-click menu can request "new" to open alongside it
+   * instead. */
+  onSelectCommunity: (id: Id<"communities">, mode?: "replace" | "new") => void;
+  /** Whether replacing the active tab is actually possible. False when the
+   * active tab is pinned (pinned tabs are never silently swapped out, so
+   * "replace" would quietly open a new tab instead) — the right-click menu
+   * hides that option rather than offering a misleading one. */
+  canOpenInCurrentTab: boolean;
+  /** Communities that already have a channel tab open. Opening one of these
+   * just focuses that existing tab (tab ids derive from their target, so the
+   * same channel can't be open twice) — so the menu collapses to a single
+   * "Open tab" item rather than two entries that would do the same thing. */
+  openCommunityIds: Set<Id<"communities">>;
 }
 
 export function CommunityRail({
   selectedCommunityId,
   onSelectHome,
   onSelectCommunity,
+  canOpenInCurrentTab,
+  openCommunityIds,
 }: CommunityRailProps) {
+  const {
+    activeCall,
+    controller,
+    expand,
+    leaveCall,
+    sharedSourceName,
+    openSharePicker,
+  } = useCall();
+  const {
+    cameraEnabled,
+    microphoneEnabled,
+    screenSharing,
+    toggleCamera,
+    toggleMicrophone,
+    toggleScreenShare,
+  } = controller;
   const communities = useQuery(api.communities.listMine) ?? [];
 
   return (
-    <div className="flex w-18 shrink-0 flex-col items-center gap-2 border-r bg-background/60 py-3">
+    <div className={cn(
+      `flex w-18 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
+      activeCall && screenSharing ? `mb-52` : activeCall ? `mb-42` : `mb-18`
+    )}>
       <RailButton
         label="Direct messages"
         active={!selectedCommunityId}
@@ -210,28 +252,42 @@ export function CommunityRail({
           {communities.map((community) => (
             <TooltipProvider key={community.id}>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => onSelectCommunity(community.id)}
-                    className={cn(
-                      "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
-                      selectedCommunityId === community.id &&
-                        "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-2xl",
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={(e) => onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")}
+                        className={cn(
+                          "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
+                          selectedCommunityId === community.id &&
+                            "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-2xl",
+                        )}
+                      >
+                        <Avatar className="size-12 rounded-none">
+                          <AvatarImage
+                            src={community.imageUrl}
+                            alt={community.name}
+                            className="rounded-none"
+                          />
+                          <AvatarFallback className="rounded-none text-sm">
+                            {community.name.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                      </button>
+                    </TooltipTrigger>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    {canOpenInCurrentTab && !openCommunityIds.has(community.id) && (
+                      <ContextMenuItem onClick={() => onSelectCommunity(community.id, "replace")}>
+                        Open in current tab
+                      </ContextMenuItem>
                     )}
-                  >
-                    <Avatar className="size-12 rounded-none">
-                      <AvatarImage
-                        src={community.imageUrl}
-                        alt={community.name}
-                        className="rounded-none"
-                      />
-                      <AvatarFallback className="rounded-none text-sm">
-                        {community.name.slice(0, 2).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                  </button>
-                </TooltipTrigger>
+                    <ContextMenuItem onClick={() => onSelectCommunity(community.id, "new")}>
+                      {openCommunityIds.has(community.id) ? "Open tab" : "Open in new tab"}
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
                 <TooltipContent side="right">{community.name}</TooltipContent>
               </Tooltip>
             </TooltipProvider>

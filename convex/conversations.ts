@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
+import { activitiesOf } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
@@ -150,6 +151,7 @@ export const listMembersWithPresence = query({
           borderGradientStart: user?.borderGradientStart,
           borderGradientEnd: user?.borderGradientEnd,
           status: presence?.effective ?? "offline",
+          activities: activitiesOf(presence),
         };
       })
     );

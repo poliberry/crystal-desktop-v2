@@ -29,7 +29,10 @@ import { CreateChannelDialog } from "@/components/community/create-channel-dialo
 import { EditCategoryDialog } from "@/components/community/edit-category-dialog";
 import { EditChannelDialog } from "@/components/community/edit-channel-dialog";
 import { InviteDialog } from "@/components/community/invite-dialog";
-import { VoiceChannelParticipants } from "@/components/community/voice-channel-participants";
+import {
+  VoiceChannelHoverCard,
+  VoiceChannelParticipants,
+} from "@/components/community/voice-channel-participants";
 import { UserCard } from "@/components/home/user-card";
 import {
   ContextMenu,
@@ -126,12 +129,20 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
       const firstText = [...channels].sort((a, b) => a.position - b.position).find((c) => c.type === "text");
       if (firstText) onSelectChannel(firstText.id, "text");
     }
+    // Deliberately keyed on communityId/selectedChannelId (not `channels`
+    // itself, and not just `channels.length > 0`) — this component doesn't
+    // remount when `communityId` changes (no `key` prop upstream), so a
+    // dependency on the loading-boolean alone only re-fires on a true/false
+    // *transition*. Switching to a community whose channel list is already
+    // cached from earlier in the session never produces that transition
+    // (`channels.length > 0` is `true` before and after), so the effect
+    // would silently never re-run and no channel would ever get selected.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channels.length > 0]);
+  }, [communityId, selectedChannelId, channels.length > 0]);
 
   if (!community) {
     return (
-      <div className="flex w-64 shrink-0 flex-col bg-background/40">
+      <div className="flex w-64 shrink-0 flex-col m-2 bg-accent/40 backdrop-blur-xl shadow-md rounded-2xl">
         <div className="flex h-14 shrink-0 items-center border-b px-3">
           <Skeleton className="h-4 w-36" />
         </div>
@@ -192,7 +203,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
             <Settings className="size-4" />
-            Server Settings
+            Community Settings
           </DropdownMenuItem>
           {!community.isOwner && (
             <>
@@ -247,8 +258,6 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
           </ContextMenuContent>
         )}
       </ContextMenu>
-
-      <UserCard />
 
       <InviteDialog communityId={communityId} open={inviteOpen} onOpenChange={setInviteOpen} />
       {createChannelFor !== undefined && (
@@ -738,6 +747,23 @@ function ChannelBucket({
   );
 }
 
+/** Only voice channels get the "who's in here" hover card; text channels pass
+ * their row straight through. */
+function ChannelRowHover({
+  channel,
+  children,
+}: {
+  channel: ChannelRow;
+  children: React.ReactNode;
+}) {
+  if (channel.type !== "voice") return <>{children}</>;
+  return (
+    <VoiceChannelHoverCard channelId={channel.id} channelName={channel.name}>
+      {children}
+    </VoiceChannelHoverCard>
+  );
+}
+
 function ChannelItem({
   channel,
   active,
@@ -774,6 +800,7 @@ function ChannelItem({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div {...attributes} {...listeners}>
+            <ChannelRowHover channel={channel}>
             <button
               type="button"
               onClick={() => onSelectChannel(channel.id, channel.type)}
@@ -794,6 +821,7 @@ function ChannelItem({
               <span className="truncate">{channel.name}</span>
               {isVoiceActive && <span className="ml-auto text-[10px] text-emerald-500">Connected</span>}
             </button>
+            </ChannelRowHover>
           </div>
         </ContextMenuTrigger>
         {canManageChannels && (

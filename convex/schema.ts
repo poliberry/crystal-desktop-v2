@@ -1,6 +1,44 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/** A Rich Presence activity — the subset of Discord's activity shape the
+ * client actually renders (see src/components/rich-presence-card.tsx).
+ * `type` mirrors Discord's activity types, and decides both the card's verb
+ * ("Playing" / "Listening to" / …) and the small icon shown next to the
+ * user's status. */
+const activityValidator = v.object({
+  type: v.union(
+    v.literal("playing"),
+    v.literal("listening"),
+    v.literal("watching"),
+    v.literal("streaming")
+  ),
+  /** Game/app name, or the music app ("Spotify", "Apple Music"). */
+  name: v.string(),
+  /** First detail line — the track title, for music. */
+  details: v.optional(v.string()),
+  /** Second detail line — the artist/album, for music. */
+  state: v.optional(v.string()),
+  /** Large image (box art / album art) when one is known. */
+  imageUrl: v.optional(v.string()),
+  /** Epoch ms the activity started, for the elapsed-time counter. */
+  startedAt: v.optional(v.number()),
+  /** Album name, for music. */
+  album: v.optional(v.string()),
+  /** Track length in ms, when the player reports one. */
+  durationMs: v.optional(v.number()),
+  /** Playback position in ms, accurate as of `positionUpdatedAt`. */
+  positionMs: v.optional(v.number()),
+  /** Server clock reading when `positionMs` was recorded. Stamped by
+   * `presence.setActivity` rather than sent by the client, so viewers
+   * interpolate the seek bar against one authoritative clock instead of the
+   * broadcaster's — which may be minutes off. */
+  positionUpdatedAt: v.optional(v.number()),
+  /** Where this came from: "detectable" (process scan), "ipc" (a game
+   * connected to our Discord-compatible RPC socket), or "music". */
+  source: v.optional(v.string()),
+});
+
 export default defineSchema({
   users: defineTable({
     clerkId: v.string(),
@@ -18,6 +56,11 @@ export default defineSchema({
     customStatus: v.optional(v.string()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    /** Clip played to everyone else when this user joins a call. Either a
+     * `builtin:<name>` id or a `communitySounds` document id — see
+     * src/lib/soundboard.ts. A per-server override lives on
+     * `serverProfiles.joinSoundId`. */
+    joinSoundId: v.optional(v.string()),
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_username", ["username"]),
@@ -55,9 +98,45 @@ export default defineSchema({
       v.literal("idle"),
       v.literal("offline")
     ),
+    /** Rich Presence, richest first — a user can be playing something and
+     * listening to something at once (see electron/richPresence.ts). Empty or
+     * undefined when nothing is detected. */
+    activities: v.optional(v.array(activityValidator)),
+    /** @deprecated Superseded by `activities`. Kept so presence rows written
+     * before the list existed still validate; read via `activitiesOf`. */
+    activity: v.optional(activityValidator),
   })
     .index("by_user", ["userId"])
     .index("by_last_heartbeat", ["lastHeartbeat"]),
+
+  /**
+   * Play history, one row per (user, game) rather than per session — the
+   * profile's "Recent activity" list only needs "what, when last, how long in
+   * total", and collapsing it this way keeps the table bounded no matter how
+   * often someone alt-tabs.
+   *
+   * Games only. Music and other activity types are deliberately not recorded:
+   * a track-by-track history is a different feature with very different
+   * privacy weight, and the live `presence.activities` already covers
+   * "what are they listening to right now".
+   */
+  gameHistory: defineTable({
+    userId: v.id("users"),
+    /** Lowercased game name — stable across the detectable and IPC sources,
+     * which can report the same title with different casing. */
+    gameKey: v.string(),
+    name: v.string(),
+    imageUrl: v.optional(v.string()),
+    /** Start of the session currently being timed, if one is running. */
+    startedAt: v.optional(v.number()),
+    /** Epoch ms the game was last seen running. */
+    lastPlayedAt: v.number(),
+    /** Total play time across every recorded session, in ms. */
+    totalMs: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_game", ["userId", "gameKey"])
+    .index("by_user_last_played", ["userId", "lastPlayedAt"]),
 
   conversations: defineTable({
     type: v.union(v.literal("dm"), v.literal("group")),
@@ -113,6 +192,26 @@ export default defineSchema({
     .index("by_conversation", ["conversationId"])
     .index("by_conversation_user", ["conversationId", "userId"]),
 
+  /**
+   * An in-flight "someone is calling you" for a DM or group conversation.
+   *
+   * One row per recipient rather than one per call, so each person's ring can
+   * be answered, declined or expired independently. Rows are deleted the
+   * moment they're resolved — a row existing *is* the ringing state, which
+   * keeps the recipient's query trivial.
+   */
+  callRings: defineTable({
+    conversationId: v.id("conversations"),
+    callerId: v.id("users"),
+    recipientId: v.id("users"),
+    createdAt: v.number(),
+    /** Scheduled sweep that turns an unanswered ring into a missed call. */
+    expiryJobId: v.optional(v.id("_scheduled_functions")),
+  })
+    .index("by_recipient", ["recipientId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_conversation_recipient", ["conversationId", "recipientId"]),
+
   linkPreviews: defineTable({
     url: v.string(),
     status: v.union(v.literal("ok"), v.literal("error")),
@@ -142,9 +241,24 @@ export default defineSchema({
     communityId: v.id("communities"),
     userId: v.id("users"),
     joinedAt: v.number(),
+    /** Epoch ms a timeout expires. While in the future the member stays in
+     * the server but can't send messages or join voice. */
+    timeoutUntil: v.optional(v.number()),
   })
     .index("by_community", ["communityId"])
     .index("by_user", ["userId"])
+    .index("by_community_user", ["communityId", "userId"]),
+
+  /** Bans are kept after the membership row is deleted, so a banned user
+   * can't simply rejoin with a fresh invite. */
+  communityBans: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    bannedBy: v.id("users"),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
     .index("by_community_user", ["communityId", "userId"]),
 
   /** A role's `permissions` is a bitfield — see convex/permissions.ts. Every
@@ -236,6 +350,17 @@ export default defineSchema({
     channelId: v.id("channels"),
     userId: v.id("users"),
     joinedAt: v.number(),
+    /** Live call state, mirrored here by the connected client so the channel
+     * list can show it to people who aren't in that call themselves — LiveKit
+     * only tells you about rooms you're connected to. */
+    muted: v.optional(v.boolean()),
+    deafened: v.optional(v.boolean()),
+    streaming: v.optional(v.boolean()),
+    /** Moderator-imposed, unlike `muted`/`deafened` above which the member
+     * sets themselves. The connected client enforces these on itself — see
+     * CallProvider — so they survive a reconnect. */
+    serverMuted: v.optional(v.boolean()),
+    serverDeafened: v.optional(v.boolean()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_user", ["channelId", "userId"]),
@@ -250,6 +375,25 @@ export default defineSchema({
     /** Public served URL from Convex file storage — populated on add. */
     imageUrl: v.string(),
     storageId: v.id("_storage"),
+    uploadedBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_name", ["communityId", "name"]),
+
+  /** Soundboard clips uploaded per-community, playable into a voice call by
+   * any member. Built-in sounds (src/lib/soundboard.ts) ship with the app and
+   * are available everywhere, so they are deliberately not stored here. */
+  communitySounds: defineTable({
+    communityId: v.id("communities"),
+    name: v.string(),
+    /** Emoji shown on the soundboard button. */
+    emoji: v.optional(v.string()),
+    /** Public served URL from Convex file storage — populated on add. */
+    soundUrl: v.string(),
+    storageId: v.id("_storage"),
+    /** Clip length in ms, measured client-side at upload time. */
+    durationMs: v.optional(v.number()),
     uploadedBy: v.id("users"),
     createdAt: v.number(),
   })
@@ -273,6 +417,8 @@ export default defineSchema({
     profileBg: v.optional(v.string()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    /** Overrides `users.joinSoundId` in this community. */
+    joinSoundId: v.optional(v.string()),
   })
     .index("by_user_community", ["userId", "communityId"])
     .index("by_community", ["communityId"]),
@@ -317,6 +463,30 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_read", ["userId", "read"])
     .index("by_user_created", ["userId", "createdAt"]),
+
+  /**
+   * Account-wide notification switches. Absent means the defaults in
+   * `convex/lib/notificationPolicy.ts` apply, so a user who has never opened
+   * the settings behaves exactly as before.
+   */
+  notificationSettings: defineTable({
+    userId: v.id("users"),
+    /** Direct and group messages. */
+    dmMessages: v.boolean(),
+    /** Channel messages that don't mention you. Mentions are governed by the
+     * per-community level below. */
+    channelMessages: v.boolean(),
+    friendRequests: v.boolean(),
+  }).index("by_user", ["userId"]),
+
+  /** Per-server override of how much a user wants to hear from it. */
+  communityNotificationSettings: defineTable({
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    level: v.union(v.literal("all"), v.literal("mentions"), v.literal("none")),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_community", ["userId", "communityId"]),
 
   /** One row per (user, device) Expo push token, so `push.sendExpoPush` can
    * fan a single notification out to every device a user is signed into. */

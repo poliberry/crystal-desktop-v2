@@ -1,24 +1,27 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { Paperclip, Send, Smile, X } from "lucide-react";
+import { Paperclip, Send, Smile } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import {
+  ComposerAttachments,
+  ComposerDropOverlay,
+} from "@/components/home/composer-attachments";
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  EmojiTextInput,
+  type EmojiTextInputHandle,
+} from "@/components/home/emoji-text-input";
+import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
+import { useComposerAttachments } from "@/hooks/use-composer-attachments";
+import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { matchInProgressShortcode } from "@/lib/custom-emoji";
 import { searchSystemEmoji } from "@/lib/system-emoji";
-
-interface PendingAttachment {
-  storageId: Id<"_storage">;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
-}
 
 interface MessageComposerProps {
   conversationId: Id<"conversations">;
@@ -35,16 +38,32 @@ interface AutocompleteState {
  * only ever surfaces system-emoji `:slug:` matches (no `communityId` here). */
 export function MessageComposer({ conversationId }: MessageComposerProps) {
   const [text, setText] = useState("");
-  const [pending, setPending] = useState<PendingAttachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  // The composer holds readable `:name:` shortcodes; the message has to carry
+  // `<:name:id>` so any reader can resolve the emoji without guessing which
+  // server it came from.
+  const { byName: customEmojiByName, byId: customEmojiById } = useAccessibleEmojis();
   const [sending, setSending] = useState(false);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<EmojiTextInputHandle>(null);
 
   const generateUploadUrl = useMutation(api.messages.generateUploadUrl);
   const sendMessage = useMutation(api.messages.send);
+  const {
+    pending,
+    uploading,
+    error: attachmentError,
+    dismissError,
+    isDraggingOver,
+    fileInputRef,
+    openFilePicker,
+    addFiles,
+    removeAt,
+    clear: clearAttachments,
+    handlePaste,
+    dropZoneRef,
+    attachmentsPayload,
+  } = useComposerAttachments(generateUploadUrl);
   const startTyping = useMutation(api.typing.start);
   const stopTyping = useMutation(api.typing.stop);
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -70,34 +89,6 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
     setActiveIndex(0);
   }, [autocomplete?.query]);
 
-  const handleFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    try {
-      for (const file of Array.from(files)) {
-        const uploadUrl = await generateUploadUrl();
-        const res = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type || "application/octet-stream" },
-          body: file,
-        });
-        const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
-        setPending((prev) => [
-          ...prev,
-          {
-            storageId,
-            fileName: file.name,
-            fileType: file.type || "application/octet-stream",
-            fileSize: file.size,
-          },
-        ]);
-      }
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
   const handleTyping = () => {
     void startTyping({ conversationId });
     if (typingDebounce.current) clearTimeout(typingDebounce.current);
@@ -116,11 +107,11 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
     try {
       await sendMessage({
         conversationId,
-        text: trimmed || undefined,
-        attachments: pending.length ? pending : undefined,
+        text: trimmed ? encodeCustomEmojiShortcodes(trimmed, (name) => customEmojiByName.get(name)) : undefined,
+        attachments: pending.length ? attachmentsPayload() : undefined,
       });
       setText("");
-      setPending([]);
+      clearAttachments();
     } finally {
       setSending(false);
       textareaRef.current?.focus();
@@ -133,13 +124,12 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
     const cursor = autocomplete.start + insert.length;
     setText(newText);
     setAutocomplete(null);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(cursor, cursor);
-    });
+    // After the value change has been rendered, so the offset lands in the
+    // rebuilt DOM rather than the old one.
+    requestAnimationFrame(() => textareaRef.current?.setCaret(cursor));
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (autocomplete && suggestions.length > 0) {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -168,12 +158,10 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
     }
   };
 
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
+  const handleTextChange = (value: string, caret: number) => {
     setText(value);
     handleTyping();
-    const cursorPos = e.target.selectionStart;
-    setAutocomplete(matchInProgressShortcode(value, cursorPos));
+    setAutocomplete(matchInProgressShortcode(value, caret));
   };
 
   const insertEmoji = (emoji: string) => {
@@ -182,7 +170,8 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
   };
 
   return (
-    <div className="relative shrink-0 p-3">
+    <div ref={dropZoneRef} className="relative shrink-0 p-3">
+      <ComposerDropOverlay active={isDraggingOver} />
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
           {suggestions.map((s, index) => (
@@ -202,24 +191,16 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
         </div>
       )}
 
-      {pending.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {pending.map((attachment, index) => (
-            <div
-              key={index}
-              className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs"
-            >
-              <span className="max-w-32 truncate">{attachment.fileName}</span>
-              <button
-                type="button"
-                onClick={() => setPending((prev) => prev.filter((_, i) => i !== index))}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          ))}
-        </div>
+      <ComposerAttachments pending={pending} uploading={uploading} onRemove={removeAt} />
+
+      {attachmentError && (
+        <button
+          type="button"
+          onClick={dismissError}
+          className="mb-2 block w-full truncate rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-left text-xs text-destructive"
+        >
+          {attachmentError}
+        </button>
       )}
 
       <div className="flex items-end gap-1 rounded-md border border-input bg-transparent px-1.5 py-1 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
@@ -228,7 +209,7 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
           type="file"
           multiple
           className="hidden"
-          onChange={(e) => void handleFiles(e.target.files)}
+          onChange={(e) => void addFiles(e.target.files)}
         />
         <Button
           type="button"
@@ -236,20 +217,21 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
           size="icon"
           className="size-8 shrink-0"
           disabled={uploading}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={openFilePicker}
         >
           <Paperclip className="size-4" />
         </Button>
 
-        <Textarea
+        <EmojiTextInput
           ref={textareaRef}
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           onBlur={() => setAutocomplete(null)}
+          emojiByName={customEmojiByName}
+          emojiById={customEmojiById}
           placeholder="Message…"
-          className="max-h-40 min-h-8 flex-1 resize-none border-0 bg-transparent! px-1 py-1.5 shadow-none focus-visible:ring-0"
-          rows={1}
         />
 
         <Popover>
@@ -259,7 +241,7 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
             </Button>
           </PopoverTrigger>
           <PopoverContent side="top" align="end" className="w-auto p-0">
-            <ReactionPickerContent onSelect={insertEmoji} />
+            <ReactionPickerContent onSelect={(text) => insertEmoji(text)} />
           </PopoverContent>
         </Popover>
 

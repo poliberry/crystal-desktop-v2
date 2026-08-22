@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
+import { activitiesOf } from "./lib/activities";
 import { internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
@@ -256,22 +257,62 @@ export const getCurrentUser = query({
 });
 
 export const getProfile = query({
-  args: { userId: v.id("users") },
-  handler: async (ctx, { userId }) => {
+  args: { userId: v.id("users"), communityId: v.optional(v.id("communities")) },
+  handler: async (ctx, { userId, communityId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
     const user = await ctx.db.get(userId);
     if (!user) return null;
+    const presence = await ctx.db
+      .query("presence")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+
+    // Community context: a per-server nickname/avatar and the member's roles,
+    // so the card shows the same identity the channel does.
+    let serverProfile = null;
+    let roles: { id: Id<"roles">; name: string; color?: string }[] = [];
+    let isOwner = false;
+    if (communityId) {
+      const community = await ctx.db.get(communityId);
+      isOwner = community?.ownerId === userId;
+      const [profile, assigned] = await Promise.all([
+        ctx.db
+          .query("serverProfiles")
+          .withIndex("by_user_community", (q) =>
+            q.eq("userId", userId).eq("communityId", communityId)
+          )
+          .unique(),
+        ctx.db
+          .query("memberRoles")
+          .withIndex("by_member", (q) =>
+            q.eq("communityId", communityId).eq("userId", userId)
+          )
+          .collect(),
+      ]);
+      serverProfile = profile;
+      const resolved = await Promise.all(assigned.map((m) => ctx.db.get(m.roleId)));
+      roles = resolved
+        .filter((r): r is Doc<"roles"> => !!r && !r.isEveryone)
+        .sort((a, b) => b.position - a.position)
+        .map((r) => ({ id: r._id, name: r.name, color: r.color }));
+    }
+
     return {
       id: user._id,
-      name: user.name,
+      createdAt: user._creationTime,
+      name: serverProfile?.displayName ?? user.name,
       username: user.username,
-      imageUrl: user.imageUrl,
-      bio: user.bio,
-      bannerUrl: user.bannerUrl,
-      customStatus: user.customStatus,
-      borderGradientStart: user.borderGradientStart,
-      borderGradientEnd: user.borderGradientEnd,
+      imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
+      bio: serverProfile?.bio ?? user.bio,
+      bannerUrl: serverProfile?.bannerUrl ?? user.bannerUrl,
+      customStatus: serverProfile?.customStatus ?? user.customStatus,
+      borderGradientStart: serverProfile?.borderGradientStart ?? user.borderGradientStart,
+      borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
+      status: presence?.effective ?? "offline",
+      activities: activitiesOf(presence),
+      roles,
+      isOwner,
     };
   },
 });

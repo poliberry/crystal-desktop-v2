@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { JoinSoundPicker } from "@/components/settings/join-sound-picker";
 
 const BIO_MAX = 300;
 
@@ -234,6 +235,13 @@ export function ServerProfileDialog({
                 <p className="text-right text-xs text-muted-foreground">
                   {bio.length}/{BIO_MAX}
                 </p>
+              </div>
+
+              {/* Saved immediately rather than with the rest of the form —
+                  it's a single choice with no draft state to reconcile. */}
+              <div className="space-y-1.5">
+                <Label>Join sound in this server</Label>
+                <JoinSoundPicker communityId={communityId} />
               </div>
 
               <div className="space-y-2">

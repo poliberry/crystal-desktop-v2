@@ -13,12 +13,13 @@ import {
   User,
 } from "lucide-react";
 
+import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
-import { PlaceholderTab } from "@/components/settings/tabs/placeholder-tab";
+import { NotificationsTab } from "@/components/settings/tabs/notifications-tab";
 import { ProfileTab } from "@/components/settings/tabs/profile-tab";
 import { ServerProfilesTab } from "@/components/settings/tabs/server-profiles-tab";
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
@@ -83,11 +84,18 @@ const NAVIGATION = [
       { value: "servers", label: "Server Profiles", icon: Server },
     ],
   },
+  {
+    label: "App settings",
+    children: [
+      { value: "voice", label: "Voice & Video", icon: Mic },
+      { value: "notifications", label: "Notifications", icon: Bell },
+    ],
+  },
 ];
 
 export function SettingsShell() {
   const me = useQuery(api.users.getCurrentUser);
-  const { status, manualStatus } = useMyPresence();
+  const { status, manualStatus, activities } = useMyPresence();
   const [section, setSection] = useState("profile");
 
   const subtitle = me?.customStatus
@@ -145,8 +153,9 @@ export function SettingsShell() {
                             {me?.name}
                           </p>
                           <div className="relative h-4 overflow-hidden">
-                            <p className="absolute inset-0 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
-                              {subtitle}
+                            <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
+                              <ActivityStatusIcon activities={activities} />
+                              <span className="truncate">{subtitle}</span>
                             </p>
                             <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">
                               @{me?.username}
@@ -158,7 +167,7 @@ export function SettingsShell() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent>
                     <SignOutButton>
-                      <DropdownMenuItem className="text-destructive">
+                      <DropdownMenuItem className="text-destructive" onClick={() => window.close()}>
                         <LogOut />
                         <span>Log out</span>
                       </DropdownMenuItem>
@@ -204,12 +213,7 @@ export function SettingsShell() {
               {section === "appearance" && <AppearanceTab />}
               {section === "account" && <AccountTab />}
               {section === "voice" && <VoiceVideoTab />}
-              {section === "notifications" && (
-                <PlaceholderTab
-                  title="Notifications"
-                  description="Notification preferences are coming soon."
-                />
-              )}
+              {section === "notifications" && <NotificationsTab />}
               {section === "updates" && <UpdatesTab />}
               {section === "about" && <AboutTab />}
             </div>

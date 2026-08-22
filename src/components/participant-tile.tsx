@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { HeadphoneOff, MicOff } from "lucide-react";
 import {
   ParticipantEvent,
   RoomEvent,
@@ -23,6 +24,9 @@ interface ParticipantTileProps {
   onClick?: () => void;
   localVolume?: number;
   localMuted?: boolean;
+  /** Highlights the tile while this participant is playing a soundboard clip
+   * — the speaking ring's sibling, in a different colour. */
+  soundboardActive?: boolean;
 }
 
 /**
@@ -31,11 +35,14 @@ interface ParticipantTileProps {
  * additionally routed to the hardware sink (Linux) so the app never
  * accidentally re-captures itself.
  */
-export function ParticipantTile({ participant, isLocal = false, imageUrl, fill = false, onClick, localVolume, localMuted }: ParticipantTileProps) {
+export function ParticipantTile({ participant, isLocal = false, imageUrl, fill = false, onClick, localVolume, localMuted, soundboardActive = false }: ParticipantTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
   const [hasVideo, setHasVideo] = useState(false);
   const [micMuted, setMicMuted] = useState(true);
+  // Mirrored from the participant's own attributes — see `useRoom`, which
+  // publishes it whenever the local deafen state changes.
+  const [deafened, setDeafened] = useState(participant.attributes?.deafened === "1");
   const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
   const [avatarBg, setAvatarBg] = useState<string | null>(null);
 
@@ -56,6 +63,15 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
     participant.on(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
     return () => {
       participant.off(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+    };
+  }, [participant]);
+
+  useEffect(() => {
+    const sync = () => setDeafened(participant.attributes?.deafened === "1");
+    sync();
+    participant.on(ParticipantEvent.AttributesChanged, sync);
+    return () => {
+      participant.off(ParticipantEvent.AttributesChanged, sync);
     };
   }, [participant]);
 
@@ -161,7 +177,9 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
         fill ? "h-full" : "aspect-video",
         isLocal && "border-dashed",
         onClick && "cursor-pointer",
-        isSpeaking && "ring-emerald-500"
+        // Soundboard wins the ring while it's active: it's the more
+        // momentary of the two, so it reads as an event rather than a state.
+        soundboardActive ? "ring-sky-500" : isSpeaking && "ring-emerald-500"
       )}
       style={!showVideo && avatarBg ? { backgroundColor: avatarBg } : undefined}
     >
@@ -192,8 +210,11 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
           {participant.name || participant.identity}
           {isLocal ? " (You)" : ""}
         </span>
-        <span className="text-xs text-white/90">
-          {micMuted ? "Muted" : ""}
+        {/* Status is shown as glyphs rather than words so it reads the same
+            at thumbnail size and needs no translation. */}
+        <span className="flex shrink-0 items-center gap-1 text-white/90">
+          {deafened && <HeadphoneOff className="size-3.5 text-destructive" aria-label="Deafened" />}
+          {micMuted && <MicOff className="size-3.5 text-destructive" aria-label="Muted" />}
         </span>
       </div>
 

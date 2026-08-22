@@ -1,9 +1,16 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
-import { DEFAULT_EVERYONE_PERMISSIONS, requireCommunityPermission } from "./permissions";
-import { PERMISSIONS } from "./permissions";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  DEFAULT_EVERYONE_PERMISSIONS,
+  PERMISSIONS,
+  can,
+  getBasePermissions,
+  requireAbove,
+  requireCommunityPermission,
+} from "./permissions";
+import { activitiesOf } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -130,6 +137,15 @@ export const join = mutation({
   handler: async (ctx, { communityId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireCommunity(ctx, communityId);
+
+    const ban = await ctx.db
+      .query("communityBans")
+      .withIndex("by_community_user", (q) =>
+        q.eq("communityId", communityId).eq("userId", me._id)
+      )
+      .unique();
+    if (ban) throw new Error("You're banned from this server.");
+
     const existing = await ctx.db
       .query("communityMembers")
       .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
@@ -350,7 +366,9 @@ export const listMembers = query({
           borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
           borderGradientEnd: serverProfile?.borderGradientEnd ?? user?.borderGradientEnd,
           isOwner: community.ownerId === member.userId,
+          timeoutUntil: member.timeoutUntil,
           status: presence?.effective ?? "offline",
+          activities: activitiesOf(presence),
           roles: roleIds
             .map((id) => roleById.get(id))
             .filter((r): r is Doc<"roles"> => !!r)
@@ -361,25 +379,58 @@ export const listMembers = query({
   },
 });
 
+/** Drop someone out of every voice channel in a community. Their client
+ * watches its own participant row and leaves when it disappears. */
+async function disconnectFromAllVoice(
+  ctx: MutationCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">
+): Promise<void> {
+  const channels = await ctx.db
+    .query("channels")
+    .withIndex("by_community", (q) => q.eq("communityId", communityId))
+    .collect();
+  for (const channel of channels) {
+    if (channel.type !== "voice") continue;
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channel._id).eq("userId", userId)
+      )
+      .unique();
+    if (row) await ctx.db.delete(row._id);
+  }
+}
+
+/** Remove a membership and everything hanging off it. Shared by kick and ban. */
+async function removeMembership(
+  ctx: MutationCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">
+): Promise<void> {
+  const membership = await ctx.db
+    .query("communityMembers")
+    .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId))
+    .unique();
+  if (membership) await ctx.db.delete(membership._id);
+
+  const roles = await ctx.db
+    .query("memberRoles")
+    .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId))
+    .collect();
+  for (const role of roles) await ctx.db.delete(role._id);
+
+  await disconnectFromAllVoice(ctx, communityId, userId);
+}
+
 export const kickMember = mutation({
   args: { communityId: v.id("communities"), userId: v.id("users") },
   handler: async (ctx, { communityId, userId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
-    if (userId === community.ownerId) throw new Error("Can't kick the owner.");
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.KICK_MEMBERS);
-
-    const membership = await ctx.db
-      .query("communityMembers")
-      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId))
-      .unique();
-    if (membership) await ctx.db.delete(membership._id);
-
-    const roles = await ctx.db
-      .query("memberRoles")
-      .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId))
-      .collect();
-    for (const role of roles) await ctx.db.delete(role._id);
+    await requireAbove(ctx, community, me._id, userId);
+    await removeMembership(ctx, communityId, userId);
   },
 });
 
@@ -408,6 +459,166 @@ async function freshInviteCode(ctx: QueryCtx): Promise<string> {
   }
   return code;
 }
+
+/**
+ * Ban a member: record the ban, then remove them from the community. The ban
+ * row outlives the membership so a fresh invite doesn't let them straight
+ * back in (see `join`).
+ */
+export const listBans = query({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, { communityId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const community = await ctx.db.get(communityId);
+    if (!community) return [];
+    const perms = await getBasePermissions(ctx, community, me._id);
+    if (!can(perms, PERMISSIONS.BAN_MEMBERS)) return [];
+
+    const bans = await ctx.db
+      .query("communityBans")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .collect();
+    return Promise.all(
+      bans.map(async (ban) => {
+        const user = await ctx.db.get(ban.userId);
+        return {
+          id: ban._id,
+          userId: ban.userId,
+          name: user?.name ?? "Unknown",
+          username: user?.username ?? "unknown",
+          imageUrl: user?.imageUrl,
+          reason: ban.reason,
+          createdAt: ban.createdAt,
+        };
+      })
+    );
+  },
+});
+
+export const banMember = mutation({
+  args: {
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, { communityId, userId, reason }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.BAN_MEMBERS);
+    await requireAbove(ctx, community, me._id, userId);
+
+    const existing = await ctx.db
+      .query("communityBans")
+      .withIndex("by_community_user", (q) =>
+        q.eq("communityId", communityId).eq("userId", userId)
+      )
+      .unique();
+    if (!existing) {
+      await ctx.db.insert("communityBans", {
+        communityId,
+        userId,
+        bannedBy: me._id,
+        reason: reason?.trim() || undefined,
+        createdAt: Date.now(),
+      });
+    }
+
+    await removeMembership(ctx, communityId, userId);
+  },
+});
+
+export const unbanMember = mutation({
+  args: { communityId: v.id("communities"), userId: v.id("users") },
+  handler: async (ctx, { communityId, userId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.BAN_MEMBERS);
+
+    const ban = await ctx.db
+      .query("communityBans")
+      .withIndex("by_community_user", (q) =>
+        q.eq("communityId", communityId).eq("userId", userId)
+      )
+      .unique();
+    if (ban) await ctx.db.delete(ban._id);
+  },
+});
+
+/**
+ * Time a member out. They stay in the server, but `timeoutUntil` gates
+ * sending messages and joining voice until it passes. A duration of 0 lifts
+ * an active timeout.
+ */
+export const timeoutMember = mutation({
+  args: {
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    durationMs: v.number(),
+  },
+  handler: async (ctx, { communityId, userId, durationMs }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MODERATE_MEMBERS);
+    await requireAbove(ctx, community, me._id, userId);
+
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) =>
+        q.eq("communityId", communityId).eq("userId", userId)
+      )
+      .unique();
+    if (!membership) throw new Error("That user isn't a member.");
+
+    await ctx.db.patch(membership._id, {
+      timeoutUntil: durationMs > 0 ? Date.now() + durationMs : undefined,
+    });
+
+    // A timed-out member shouldn't stay sitting in voice.
+    if (durationMs > 0) await disconnectFromAllVoice(ctx, communityId, userId);
+  },
+});
+
+/** Set (or clear, with an empty string) another member's server nickname. */
+export const setMemberNickname = mutation({
+  args: {
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    nickname: v.string(),
+  },
+  handler: async (ctx, { communityId, userId, nickname }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    // Changing your own nickname only needs to be a member; changing someone
+    // else's is a moderation action.
+    if (me._id !== userId) {
+      await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_NICKNAMES);
+      await requireAbove(ctx, community, me._id, userId);
+    } else {
+      await requireMember(ctx, communityId, me._id);
+    }
+
+    const trimmed = nickname.trim();
+    if (trimmed.length > 32) throw new Error("Nicknames are limited to 32 characters.");
+
+    const profile = await ctx.db
+      .query("serverProfiles")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", communityId)
+      )
+      .unique();
+
+    if (profile) {
+      await ctx.db.patch(profile._id, { displayName: trimmed || undefined });
+    } else if (trimmed) {
+      await ctx.db.insert("serverProfiles", {
+        userId,
+        communityId,
+        displayName: trimmed,
+      });
+    }
+  },
+});
 
 export const getOrCreateInviteCode = mutation({
   args: { communityId: v.id("communities") },

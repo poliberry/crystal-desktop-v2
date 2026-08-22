@@ -2,15 +2,18 @@
 
 import { useState } from "react";
 
+import { useUiPreferences } from "@/components/ui-preferences-provider";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { type Theme, PRESET_THEMES } from "@/lib/themes";
 
 export function AppearanceTab() {
   const { theme, applyTheme } = useTheme();
+  const { communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled } = useUiPreferences();
   const [editingPreset, setEditingPreset] = useState<string | null>(null);
   const [jsonValue, setJsonValue] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -156,6 +159,61 @@ export function AppearanceTab() {
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Community navigation</CardTitle>
+          <CardDescription>Choose how you switch between communities.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setCommunityNavStyle("rail")}
+              className={`space-y-1.5 rounded-lg border-2 p-3 text-left transition-all ${
+                communityNavStyle === "rail" ? "border-primary" : "border-border hover:border-border/80"
+              }`}
+            >
+              <p className="text-sm font-medium">Rail</p>
+              <p className="text-xs text-muted-foreground">
+                A persistent icon column on the left edge of the app, always visible.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCommunityNavStyle("popover")}
+              className={`space-y-1.5 rounded-lg border-2 p-3 text-left transition-all ${
+                communityNavStyle === "popover" ? "border-primary" : "border-border hover:border-border/80"
+              }`}
+            >
+              <p className="text-sm font-medium">Popover</p>
+              <p className="text-xs text-muted-foreground">
+                A button in the top bar that opens a switcher when clicked.
+              </p>
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Tabbed interface</CardTitle>
+          <CardDescription>
+            Open DMs and channels as tabs in the top bar, instead of each one replacing the current view.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Enable tabs</p>
+              <p className="text-xs text-muted-foreground">
+                When off, clicking a DM or channel replaces the current view like before.
+              </p>
+            </div>
+            <Switch checked={tabsEnabled} onCheckedChange={setTabsEnabled} />
+          </div>
         </CardContent>
       </Card>
     </div>

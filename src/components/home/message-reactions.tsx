@@ -1,6 +1,7 @@
 "use client";
 
-import { parseCustomEmoji, type ServerEmoji } from "@/lib/custom-emoji";
+import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
+import { parseCustomEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 
 interface Reaction {
@@ -9,26 +10,32 @@ interface Reaction {
   reactedByMe: boolean;
 }
 
-function ReactionEmoji({ emoji, serverEmojiById }: { emoji: string; serverEmojiById: Map<string, ServerEmoji> }) {
+function ReactionEmoji({ emoji }: { emoji: string }) {
+  const { byId } = useAccessibleEmojis();
   const custom = parseCustomEmoji(emoji);
-  if (!custom) return <span>{emoji}</span>;
-  const serverEmoji = serverEmojiById.get(custom.id);
+  if (!custom) return <span className="text-sm leading-none">{emoji}</span>;
+  const serverEmoji = byId.get(custom.id);
   if (serverEmoji) {
-    return <img src={serverEmoji.imageUrl} alt={serverEmoji.name} className="size-4 object-contain" />;
+    return (
+      <img
+        src={serverEmoji.imageUrl}
+        alt={`:${serverEmoji.name}:`}
+        title={`:${serverEmoji.name}:`}
+        className="size-4 object-contain"
+      />
+    );
   }
-  // Tag parsed but the id isn't in the map — deleted emoji, or a DM with no
-  // map at all. Fall back to a placeholder instead of the raw `<:name:id>`.
-  return <span>🏷️</span>;
+  // Tag parsed but the id isn't resolvable — deleted, or from a server this
+  // reader isn't in. A placeholder beats the raw `<:name:id>`.
+  return <span title={`:${custom.name}:`}>🏷️</span>;
 }
 
 export function MessageReactions({
   reactions,
   onToggle,
-  serverEmojiById,
 }: {
   reactions: Reaction[];
   onToggle: (emoji: string) => void;
-  serverEmojiById: Map<string, ServerEmoji>;
 }) {
   if (reactions.length === 0) return null;
   return (
@@ -43,7 +50,7 @@ export function MessageReactions({
             r.reactedByMe && "border-primary bg-primary/10"
           )}
         >
-          <ReactionEmoji emoji={r.emoji} serverEmojiById={serverEmojiById} />
+          <ReactionEmoji emoji={r.emoji} />
           <span className="text-muted-foreground">{r.count}</span>
         </button>
       ))}

@@ -117,6 +117,48 @@ export interface ScreenSource {
   thumbnail: string | null;
 }
 
+/**
+ * A Rich Presence activity resolved by the main process — a detected game, an
+ * activity pushed over the Discord-compatible IPC socket, or now-playing
+ * music. See electron/richPresence.ts.
+ */
+export type RichPresenceActivityType = "playing" | "listening" | "watching" | "streaming";
+
+export interface RichPresenceActivity {
+  type: RichPresenceActivityType;
+  /** Game name, or the app playing the music ("Spotify", "Microsoft Edge"). */
+  name: string;
+  /** Track title, for music. */
+  details?: string;
+  /** Artist, for music. */
+  state?: string;
+  album?: string;
+  imageUrl?: string;
+  startedAt?: number;
+  durationMs?: number;
+  positionMs?: number;
+  /** Set by the main process: local clock reading when `positionMs` was
+   * sampled, so the reporter can advance it to send time. */
+  positionSampledAt?: number;
+  /** Set by Convex when the activity is stored: server clock reading that
+   * `positionMs` is accurate as of. This is what viewers interpolate
+   * against — see `useInterpolatedPosition`. */
+  positionUpdatedAt?: number;
+  source?: "detectable" | "ipc" | "music";
+}
+
+/** Diagnostics for the Settings → Voice & Video panel. */
+export interface RichPresenceStatus {
+  enabled: boolean;
+  /** How many entries of Discord's detectables catalog are loaded. */
+  detectableCount: number;
+  /** The `discord-ipc-N` socket we bound, or null if every slot was taken. */
+  ipcPath: string | null;
+  /** Number of games/apps currently connected to that socket. */
+  ipcClients: number;
+  activities: RichPresenceActivity[];
+}
+
 /** What's currently focused in the renderer — reported to the main process
  * so a background notification isn't fired for the thing you're already
  * looking at (see electron/backgroundNotifier.ts). */
@@ -172,6 +214,13 @@ export interface DesktopAPI {
     getSources(): Promise<ScreenSource[]>;
     setSource(id: string): Promise<boolean>;
   };
+  richPresence?: {
+    /** Everything currently detected, richest first. */
+    get(): Promise<RichPresenceActivity[]>;
+    status(): Promise<RichPresenceStatus>;
+    setEnabled(enabled: boolean): Promise<RichPresenceStatus>;
+    onChange(cb: (activities: RichPresenceActivity[]) => void): () => void;
+  };
   notifications: {
     configure(url: string, token: string | null, userId: string | null): Promise<void>;
     setActiveView(view: ActiveNotificationView): Promise<void>;
@@ -179,5 +228,29 @@ export interface DesktopAPI {
   };
   auth?: {
     onCallback(cb: (url: string) => void): () => void;
+  };
+  /**
+   * "Pop out" a video tile into a real, separate always-on-top
+   * `BrowserWindow` — not Document Picture-in-Picture, which Electron's
+   * bare `BrowserWindow` (no full browser UI) doesn't implement. Rather
+   * than a second LiveKit connection (which would show up as a duplicate,
+   * silent participant to everyone else in the call), the main window
+   * captures the focused tile's `<video>` element to a canvas and streams
+   * JPEG frames over IPC; the pip window (`src/app/pip/page.tsx`) just
+   * draws whatever frames it receives. Video-only — the call's audio stays
+   * with the main window's existing LiveKit connection.
+   */
+  pip: {
+    open(options?: { width?: number; height?: number; title?: string }): Promise<boolean>;
+    close(): Promise<void>;
+    /** Main window → main process: forward a captured frame (JPEG data URL). */
+    sendFrame(dataUrl: string): void;
+    /** Pip window: receive frames forwarded from the main window. */
+    onFrame(cb: (dataUrl: string) => void): () => void;
+    /** Main window: fires when the pip window closes (its own close button, or programmatically). */
+    onClosed(cb: () => void): () => void;
+    /** Main window: the pip window's actual current content size, so frames
+     * can be captured at a matching resolution instead of a fixed guess. */
+    onSize(cb: (size: { width: number; height: number }) => void): () => void;
   };
 }

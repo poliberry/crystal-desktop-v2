@@ -3,6 +3,7 @@
 import { CallProvider } from "@/components/call/call-provider";
 import { HomeLayout } from "@/components/home/home-layout";
 import { NavigationProvider } from "@/components/home/navigation-context";
+import { TabsProvider } from "@/components/home/tabs-context";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TopNav } from "@/components/top-nav";
 import { WindowControls } from "@/components/window-controls";
@@ -132,14 +133,16 @@ export default function HomePage() {
       <Show when="signed-in">
         <SessionBootstrap />
         <CallProvider>
-          <NavigationProvider>
-            <div className="flex h-full flex-col">
-              <TopNav />
-              <div className="min-h-0 flex-1">
-                <HomeLayout />
+          <TabsProvider>
+            <NavigationProvider>
+              <div className="flex h-full flex-col">
+                <TopNav />
+                <div className="min-h-0 flex-1">
+                  <HomeLayout />
+                </div>
               </div>
-            </div>
-          </NavigationProvider>
+            </NavigationProvider>
+          </TabsProvider>
         </CallProvider>
       </Show>
     </main>

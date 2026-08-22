@@ -2,97 +2,57 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-interface DocumentPictureInPictureOptions {
-  width?: number;
-  height?: number;
-}
-
-interface DocumentPictureInPictureAPI {
-  requestWindow(options?: DocumentPictureInPictureOptions): Promise<Window>;
-  window: Window | null;
-}
-
-declare global {
-  interface Window {
-    documentPictureInPicture?: DocumentPictureInPictureAPI;
-  }
-}
-
-/** Clones every stylesheet from this document into another so Tailwind
- * classes render correctly there — needed because a fresh Document
- * Picture-in-Picture window starts with an empty `<head>`. */
-function copyStyles(target: Document) {
-  for (const sheet of Array.from(document.styleSheets)) {
-    try {
-      if (sheet.cssRules) {
-        const style = target.createElement("style");
-        style.textContent = Array.from(sheet.cssRules)
-          .map((rule) => rule.cssText)
-          .join("\n");
-        target.head.appendChild(style);
-        continue;
-      }
-    } catch {
-      // Cross-origin stylesheet — `cssRules` throws; fall back to a <link>.
-    }
-    if (sheet.href) {
-      const link = target.createElement("link");
-      link.rel = "stylesheet";
-      link.href = sheet.href;
-      target.head.appendChild(link);
-    }
-  }
-}
+import { getDesktopAPI, isElectron } from "@/lib/desktop";
 
 /**
- * Wraps the Document Picture-in-Picture API: a real, separate always-on-top
- * OS window that (unlike `window.open`) shares this page's JavaScript realm,
- * so React content can be moved into it with `createPortal` — component
- * state, refs, and LiveKit track attachments keep working exactly as if the
- * content never left the main window.
+ * Controls the pop-out video window (a real, separate always-on-top
+ * Electron `BrowserWindow` — see `electron/main.ts`'s `pip:*` handlers and
+ * `src/app/pip/page.tsx`). Not Document Picture-in-Picture: Electron's bare
+ * `BrowserWindow` doesn't implement the window-controller hooks that API
+ * needs, so `documentPictureInPicture.requestWindow()` doesn't actually
+ * work in Electron. The pip window has no LiveKit connection of its own
+ * (that would show up as a duplicate, silent participant to everyone else
+ * in the call) — the caller streams video frames to it with `sendFrame`.
  */
 export function usePipWindow() {
-  const [pipWindow, setPipWindow] = useState<Window | null>(null);
-  const isSupported = typeof window !== "undefined" && !!window.documentPictureInPicture;
+  const [isOpen, setIsOpen] = useState(false);
+  // The pip window's actual current content size, reported live as the user
+  // resizes it — lets the caller capture frames at a matching resolution
+  // instead of a fixed guess that gets blurrily upscaled once the window is
+  // resized bigger than it.
+  const [size, setSize] = useState<{ width: number; height: number }>({ width: 480, height: 270 });
+  const isSupported = isElectron();
 
-  const close = useCallback(() => {
-    setPipWindow((win) => {
-      if (win && !win.closed) win.close();
-      return null;
-    });
+  useEffect(() => {
+    return getDesktopAPI()?.pip.onClosed(() => setIsOpen(false));
   }, []);
 
-  const open = useCallback(
-    async (options?: DocumentPictureInPictureOptions & { title?: string }) => {
-      if (!window.documentPictureInPicture) return null;
-      const win = await window.documentPictureInPicture.requestWindow({
-        width: options?.width ?? 480,
-        height: options?.height ?? 270,
-      });
-      if (options?.title) win.document.title = options.title;
-      copyStyles(win.document);
-      win.document.documentElement.classList.add("dark");
-      win.document.body.style.margin = "0";
-      win.document.body.style.height = "100vh";
-      win.document.body.style.overflow = "hidden";
-      win.document.body.style.background = "#09090b";
-      win.addEventListener("pagehide", () => setPipWindow(null));
-      setPipWindow(win);
-      return win;
-    },
-    []
-  );
+  useEffect(() => {
+    return getDesktopAPI()?.pip.onSize(setSize);
+  }, []);
 
-  // Close the popped-out window if this component unmounts (e.g. leaving
-  // the call) instead of leaving an orphaned window behind.
+  const open = useCallback(async (options?: { width?: number; height?: number; title?: string }) => {
+    const ok = (await getDesktopAPI()?.pip.open(options)) ?? false;
+    setIsOpen(ok);
+    return ok;
+  }, []);
+
+  const close = useCallback(() => {
+    void getDesktopAPI()?.pip.close();
+    setIsOpen(false);
+  }, []);
+
+  const sendFrame = useCallback((dataUrl: string) => {
+    getDesktopAPI()?.pip.sendFrame(dataUrl);
+  }, []);
+
+  // Close the pip window if this component unmounts (e.g. leaving the call)
+  // instead of leaving an orphaned window behind.
   useEffect(() => {
     return () => {
-      setPipWindow((win) => {
-        if (win && !win.closed) win.close();
-        return null;
-      });
+      void getDesktopAPI()?.pip.close();
     };
   }, []);
 
-  return { pipWindow, isSupported, open, close };
+  return { isOpen, isSupported, size, open, close, sendFrame };
 }

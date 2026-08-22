@@ -3,6 +3,7 @@
 import { Pencil, Smile, Trash2 } from "lucide-react";
 
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
+import { formatCustomEmoji } from "@/lib/custom-emoji";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -47,7 +48,9 @@ export function MessageHoverActions({
           </Button>
         </PopoverTrigger>
         <PopoverContent side="top" align="end" className="w-auto p-0">
-          <ReactionPickerContent communityId={communityId} onSelect={onReact} />
+          <ReactionPickerContent
+              onSelect={(text, custom) => onReact(custom ? formatCustomEmoji(custom) : text)}
+            />
         </PopoverContent>
       </Popover>
 

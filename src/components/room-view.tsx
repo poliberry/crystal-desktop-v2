@@ -1,18 +1,25 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Track } from "livekit-client";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { useAudioPreferences } from "@/components/audio-provider";
 import { useCall } from "@/components/call/call-provider";
-import { CallGrid, type CallTile } from "@/components/call/call-grid";
+import {
+  CallGrid,
+  type CallTile,
+  type PendingParticipant,
+} from "@/components/call/call-grid";
 import { ControlBar } from "@/components/control-bar";
 import { Badge } from "@/components/ui/badge";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import type { RoomController } from "@/hooks/use-room";
 import { getPlatform, isElectron } from "@/lib/desktop";
+import { startUiSoundLoop } from "@/lib/ui-sounds";
 
 export type { RoomController };
 
@@ -23,6 +30,7 @@ interface RoomViewProps {
 }
 
 export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
+  const { activeCall } = useCall();
   const {
     room,
     error,
@@ -40,8 +48,27 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     unsubscribeFromScreenShare,
   } = controller;
 
-  const { openSharePicker } = useCall();
+  const { openSharePicker, openShareSettings } = useCall();
+
+  // A DM or group call shows everyone in the conversation from the start, so
+  // it looks like the room it's about to become rather than an empty box.
+  // Community voice channels are drop-in, so nobody is "expected" there.
+  const conversationId = activeCall?.kind === "dm" ? activeCall.conversationId : null;
+  const conversationMembers =
+    useQuery(
+      api.conversations.listMembersWithPresence,
+      conversationId ? { conversationId } : "skip"
+    ) ?? [];
+  const activeRings =
+    useQuery(api.calls.listRingsForConversation, conversationId ? { conversationId } : "skip") ?? [];
+  const ringingUserIds = new Set(activeRings);
+  // Only a community voice channel has roles to moderate under.
+  const moderation =
+    activeCall?.kind === "channel"
+      ? { communityId: activeCall.communityId, channelId: activeCall.channelId }
+      : undefined;
   const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
+  const { deafened, toggleDeafened, uiSoundVolume, outputDeviceId } = useAudioPreferences();
 
   const allParticipants = [
     room.localParticipant,
@@ -73,6 +100,27 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     })),
   ];
 
+  const connectedIds = new Set(allParticipants.map((p) => p.identity));
+  const pending: PendingParticipant[] = conversationMembers
+    .filter((member) => !connectedIds.has(member.userId))
+    .map((member) => ({
+      userId: member.userId,
+      name: member.name,
+      imageUrl: member.imageUrl,
+      ringing: ringingUserIds.has(member.userId),
+    }));
+
+  // Ringback: only while we're alone and someone is still being rung, so it
+  // stops the moment anyone picks up.
+  const waitingAlone = allParticipants.length === 1 && activeRings.length > 0;
+  useEffect(() => {
+    if (!waitingAlone) return;
+    return startUiSoundLoop("ringOutgoing", {
+      volume: uiSoundVolume,
+      outputDeviceId: outputDeviceId || undefined,
+    });
+  }, [waitingAlone, uiSoundVolume, outputDeviceId]);
+
   const handleToggleScreenShare = () => {
     if (screenSharing) {
       void toggleScreenShare();
@@ -88,6 +136,7 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
           <h1 className="text-lg font-semibold">{roomName}</h1>
           <Badge variant="secondary">{allParticipants.length} in room</Badge>
           {systemAudioSharing && <Badge>System audio</Badge>}
+          {deafened && <Badge variant="destructive">Deafened</Badge>}
         </div>
         <span className="text-xs text-muted-foreground">
           {isElectron() ? `Electron · ${getPlatform()}` : "Browser preview"}
@@ -107,6 +156,8 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       <div className="min-h-0 flex-1">
         <CallGrid
           tiles={tiles}
+          pending={pending}
+          moderation={moderation}
           onSubscribeScreenShare={subscribeToScreenShare}
           onUnsubscribeScreenShare={unsubscribeFromScreenShare}
         />
@@ -116,12 +167,15 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
         <ControlBar
           cameraEnabled={cameraEnabled}
           microphoneEnabled={microphoneEnabled}
+          deafened={deafened}
           screenSharing={screenSharing}
           cameraAvailable={hasCamera}
           microphoneAvailable={hasMicrophone}
           onToggleCamera={toggleCamera}
           onToggleMicrophone={toggleMicrophone}
+          onToggleDeafen={toggleDeafened}
           onToggleScreenShare={handleToggleScreenShare}
+          onOpenShareSettings={openShareSettings}
           onLeave={onLeave}
           busy={false}
         />
