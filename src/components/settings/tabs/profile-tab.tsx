@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Camera, Loader2 } from "lucide-react";
+import { Camera, Crop, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../../convex/_generated/api";
@@ -13,6 +13,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { GradientPicker } from "@/components/profile/gradient-picker";
+import {
+  AVATAR_CROP,
+  BANNER_CROP,
+  ImageCropDialog,
+} from "@/components/profile/image-crop-dialog";
+import { getAvatarColor } from "@/lib/avatar-color";
+import { uploadToStorage } from "@/lib/storage-upload";
 
 const BIO_MAX = 300;
 
@@ -25,6 +32,7 @@ export function ProfileTab() {
   const setAvatar = useMutation(api.users.setAvatar);
   const setBanner = useMutation(api.users.setBanner);
   const removeBanner = useMutation(api.users.removeBanner);
+  const setAvatarAccent = useMutation(api.users.setAvatarAccent);
   const setNameplate = useMutation(api.users.setNameplate);
   const removeNameplate = useMutation(api.users.removeNameplate);
 
@@ -40,6 +48,12 @@ export function ProfileTab() {
   const [nameplateUploading, setNameplateUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /** What the crop editor is open on: a just-picked file, or the stored
+   * original of an image already on the profile being repositioned. */
+  const [cropping, setCropping] = useState<{
+    kind: "avatar" | "banner";
+    source: File | string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
   const nameplateFileInputRef = useRef<HTMLInputElement>(null);
@@ -73,21 +87,42 @@ export function ProfileTab() {
       gradientStart !== (me.borderGradientStart ?? "") ||
       gradientEnd !== (me.borderGradientEnd ?? ""));
 
-  const handleAvatarPick = async (file: File | undefined) => {
-    if (!file) return;
-    setUploading(true);
+  /**
+   * Save a crop, and — when it came from a newly-picked file — the untouched
+   * original alongside it, so the crop can be adjusted later without asking
+   * for the file again. Repositioning an existing image re-crops the stored
+   * original and leaves it in place.
+   */
+  const saveCrop = async (crop: Blob) => {
+    const target = cropping;
+    if (!target) return;
+    const isNewFile = target.source instanceof File;
+    const setLoading = target.kind === "avatar" ? setUploading : setBannerUploading;
+
+    setLoading(true);
     setError(null);
     try {
-      const uploadUrl = await generateAvatarUploadUrl();
-      const res = await fetch(uploadUrl, { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
-      if (!res.ok) throw new Error("Upload failed.");
-      const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
-      await setAvatar({ storageId });
+      const generate =
+        target.kind === "avatar" ? generateAvatarUploadUrl : generateUploadUrl;
+      const storageId = (await uploadToStorage(await generate(), crop)) as Id<"_storage">;
+      const originalStorageId = isNewFile
+        ? ((await uploadToStorage(await generate(), target.source as File)) as Id<"_storage">)
+        : undefined;
+
+      if (target.kind === "avatar") {
+        const url = await setAvatar({ storageId, originalStorageId });
+        // Sample the tint here, once, rather than in every client that later
+        // renders this avatar in a call tile — see useAvatarAccent.
+        const accent = await getAvatarColor(url);
+        if (accent) await setAvatarAccent({ accent, sourceUrl: url });
+      } else {
+        await setBanner({ storageId, originalStorageId });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload avatar.");
+      setError(err instanceof Error ? err.message : "Failed to save the image.");
+      throw err;
     } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      setLoading(false);
     }
   };
 
@@ -113,9 +148,6 @@ export function ProfileTab() {
       if (ref.current) ref.current.value = "";
     }
   };
-
-  const handleBannerPick = (file: File | undefined) =>
-    file && void uploadMedia(file, setBannerUploading, (id) => setBanner({ storageId: id }), bannerFileInputRef, "Failed to upload banner.");
 
   const handleNameplatePick = (file: File | undefined) =>
     file && void uploadMedia(file, setNameplateUploading, (id) => setNameplate({ storageId: id }), nameplateFileInputRef, "Failed to upload nameplate.");
@@ -185,8 +217,32 @@ export function ProfileTab() {
               {uploading ? <Loader2 className="size-5 animate-spin text-white" /> : <Camera className="size-5 text-white" />}
             </button>
           </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => void handleAvatarPick(e.target.files?.[0])} />
-          <p className="text-sm text-muted-foreground">Click your avatar to change it.</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) setCropping({ kind: "avatar", source: file });
+              e.target.value = "";
+            }}
+          />
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Click your avatar to change it.</p>
+            {me.avatarOriginalUrl && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setCropping({ kind: "avatar", source: me.avatarOriginalUrl as string })
+                }
+              >
+                <Crop className="size-3.5" />
+                Adjust crop
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="space-y-1.5">
@@ -223,11 +279,33 @@ export function ProfileTab() {
             <Button size="sm" variant="outline" onClick={() => bannerFileInputRef.current?.click()} disabled={bannerUploading}>
               {bannerUploading ? <Loader2 className="size-4 animate-spin" /> : "Upload banner"}
             </Button>
+            {me.bannerOriginalUrl && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setCropping({ kind: "banner", source: me.bannerOriginalUrl as string })
+                }
+              >
+                <Crop className="size-3.5" />
+                Adjust crop
+              </Button>
+            )}
             {me.bannerUrl && (
               <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void removeBanner()}>Remove</Button>
             )}
           </div>
-          <input ref={bannerFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleBannerPick(e.target.files?.[0])} />
+          <input
+            ref={bannerFileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) setCropping({ kind: "banner", source: file });
+              e.target.value = "";
+            }}
+          />
         </div>
 
         <GradientPicker
@@ -264,6 +342,15 @@ export function ProfileTab() {
           </Button>
           {saved && !dirty && <span className="text-xs text-muted-foreground">Saved.</span>}
         </div>
+
+        <ImageCropDialog
+          open={!!cropping}
+          onOpenChange={(open) => !open && setCropping(null)}
+          source={cropping?.source ?? null}
+          shape={cropping?.kind === "banner" ? BANNER_CROP : AVATAR_CROP}
+          title={cropping?.kind === "banner" ? "Position your banner" : "Position your avatar"}
+          onCropped={saveCrop}
+        />
       </CardContent>
     </Card>
   );

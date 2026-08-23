@@ -54,9 +54,17 @@ export default defineSchema({
      * rather than tinting the tile with the old one. */
     avatarAccent: v.optional(v.string()),
     avatarAccentUrl: v.optional(v.string()),
+    /** The picture as uploaded, before cropping. `imageUrl` is the cropped
+     * render that everything actually displays; this is kept only so the crop
+     * can be adjusted later without asking for the file again, and without
+     * re-cropping an already-cropped image. */
+    avatarOriginalUrl: v.optional(v.string()),
+    avatarOriginalStorageId: v.optional(v.id("_storage")),
     // Profile cosmetics
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
+    bannerOriginalUrl: v.optional(v.string()),
+    bannerOriginalStorageId: v.optional(v.id("_storage")),
     borderGradientStart: v.optional(v.string()),
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
@@ -440,8 +448,13 @@ export default defineSchema({
     /** Same pairing as `users.avatarAccent`, for the per-server avatar. */
     avatarAccent: v.optional(v.string()),
     avatarAccentUrl: v.optional(v.string()),
+    /** Pre-crop originals, as on `users` — kept so the crop stays adjustable. */
+    avatarOriginalUrl: v.optional(v.string()),
+    avatarOriginalStorageId: v.optional(v.id("_storage")),
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
+    bannerOriginalUrl: v.optional(v.string()),
+    bannerOriginalStorageId: v.optional(v.id("_storage")),
     borderGradientStart: v.optional(v.string()),
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),

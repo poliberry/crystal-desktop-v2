@@ -93,13 +93,24 @@ export const generateServerAvatarUploadUrl = mutation({
   },
 });
 
+/** As `users.setAvatar`, scoped to one community. */
 export const setServerAvatar = mutation({
-  args: { communityId: v.id("communities"), storageId: v.id("_storage") },
-  handler: async (ctx, { communityId, storageId }) => {
+  args: {
+    communityId: v.id("communities"),
+    storageId: v.id("_storage"),
+    /** The uncropped upload, when this is a new picture rather than a
+     * re-crop of the one already stored. */
+    originalStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, { communityId, storageId, originalStorageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireMember(ctx, communityId, me._id);
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Upload failed.");
+    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+    const original = originalStorageId
+      ? { avatarOriginalStorageId: originalStorageId, avatarOriginalUrl: originalUrl ?? undefined }
+      : {};
 
     const existing = await ctx.db
       .query("serverProfiles")
@@ -109,8 +120,21 @@ export const setServerAvatar = mutation({
       .unique();
 
     if (existing) {
-      if (existing.avatarStorageId && existing.avatarStorageId !== storageId) {
+      if (
+        existing.avatarStorageId &&
+        existing.avatarStorageId !== storageId &&
+        // Might be the original itself, for an avatar set before cropping.
+        existing.avatarStorageId !== existing.avatarOriginalStorageId
+      ) {
         await ctx.storage.delete(existing.avatarStorageId);
+      }
+      if (
+        originalStorageId &&
+        existing.avatarOriginalStorageId &&
+        existing.avatarOriginalStorageId !== originalStorageId &&
+        existing.avatarOriginalStorageId !== storageId
+      ) {
+        await ctx.storage.delete(existing.avatarOriginalStorageId);
       }
       // Cached accent colour describes the old picture — see
       // `users.setAvatar`.
@@ -119,6 +143,7 @@ export const setServerAvatar = mutation({
         avatarStorageId: storageId,
         avatarAccent: undefined,
         avatarAccentUrl: undefined,
+        ...original,
       });
     } else {
       await ctx.db.insert("serverProfiles", {
@@ -126,6 +151,7 @@ export const setServerAvatar = mutation({
         communityId,
         imageUrl: url,
         avatarStorageId: storageId,
+        ...original,
       });
     }
     return url;
@@ -154,20 +180,51 @@ export const generateServerBannerUploadUrl = mutation({
 });
 
 export const setServerBanner = mutation({
-  args: { communityId: v.id("communities"), storageId: v.id("_storage") },
-  handler: async (ctx, { communityId, storageId }) => {
+  args: {
+    communityId: v.id("communities"),
+    storageId: v.id("_storage"),
+    originalStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, { communityId, storageId, originalStorageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireMember(ctx, communityId, me._id);
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Upload failed.");
+    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+    const original = originalStorageId
+      ? { bannerOriginalStorageId: originalStorageId, bannerOriginalUrl: originalUrl ?? undefined }
+      : {};
 
     const existing = await lookupServerProfile(ctx, me._id, communityId);
     if (existing) {
-      if (existing.bannerStorageId && existing.bannerStorageId !== storageId)
+      if (
+        existing.bannerStorageId &&
+        existing.bannerStorageId !== storageId &&
+        existing.bannerStorageId !== existing.bannerOriginalStorageId
+      ) {
         await ctx.storage.delete(existing.bannerStorageId);
-      await ctx.db.patch(existing._id, { bannerUrl: url, bannerStorageId: storageId });
+      }
+      if (
+        originalStorageId &&
+        existing.bannerOriginalStorageId &&
+        existing.bannerOriginalStorageId !== originalStorageId &&
+        existing.bannerOriginalStorageId !== storageId
+      ) {
+        await ctx.storage.delete(existing.bannerOriginalStorageId);
+      }
+      await ctx.db.patch(existing._id, {
+        bannerUrl: url,
+        bannerStorageId: storageId,
+        ...original,
+      });
     } else {
-      await ctx.db.insert("serverProfiles", { userId: me._id, communityId, bannerUrl: url, bannerStorageId: storageId });
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        bannerUrl: url,
+        bannerStorageId: storageId,
+        ...original,
+      });
     }
     return url;
   },
@@ -180,8 +237,18 @@ export const removeServerBanner = mutation({
     await requireMember(ctx, communityId, me._id);
     const existing = await lookupServerProfile(ctx, me._id, communityId);
     if (!existing) return;
-    if (existing.bannerStorageId) await ctx.storage.delete(existing.bannerStorageId);
-    await ctx.db.patch(existing._id, { bannerUrl: undefined, bannerStorageId: undefined });
+    if (existing.bannerStorageId && existing.bannerStorageId !== existing.bannerOriginalStorageId) {
+      await ctx.storage.delete(existing.bannerStorageId);
+    }
+    if (existing.bannerOriginalStorageId) {
+      await ctx.storage.delete(existing.bannerOriginalStorageId);
+    }
+    await ctx.db.patch(existing._id, {
+      bannerUrl: undefined,
+      bannerStorageId: undefined,
+      bannerOriginalUrl: undefined,
+      bannerOriginalStorageId: undefined,
+    });
   },
 });
 

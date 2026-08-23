@@ -77,7 +77,7 @@ export function topActivity(
 export function activitySummary(activity: RichPresenceActivity | null | undefined): string | null {
   if (!activity) return null;
   if (activity.type === "listening" && activity.details) {
-    return activity.state ? `${activity.details} — ${activity.state}` : activity.details;
+    return activity.state ? `${activity.state}` : activity.details;
   }
   return `${ACTIVITY_VERB[activity.type]} ${activity.name}`;
 }

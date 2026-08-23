@@ -149,8 +149,8 @@ export function SettingsShell() {
                           type="button"
                           className="group/name min-w-0 cursor-pointer flex-1 rounded-md px-1 py-0.5 text-left hover:bg-black/10"
                         >
-                          <p className="truncate text-sm font-semibold">
-                            {me?.name}
+                          <p className="truncate text-sm font-semibold flex flex-row items-center gap-1">
+                            {me?.name} <ChevronDown size={12} />
                           </p>
                           <div className="relative h-4 overflow-hidden">
                             <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">

@@ -155,15 +155,38 @@ export const updateProfileExtended = mutation({
   },
 });
 
+/** As `setAvatar`, for the profile banner. */
 export const setBanner = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: {
+    storageId: v.id("_storage"),
+    originalStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, { storageId, originalStorageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Banner upload failed.");
+    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+
     const previous = me.bannerStorageId;
-    await ctx.db.patch(me._id, { bannerUrl: url, bannerStorageId: storageId });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    const previousOriginal = me.bannerOriginalStorageId;
+    await ctx.db.patch(me._id, {
+      bannerUrl: url,
+      bannerStorageId: storageId,
+      ...(originalStorageId
+        ? { bannerOriginalStorageId: originalStorageId, bannerOriginalUrl: originalUrl ?? undefined }
+        : {}),
+    });
+    if (
+      originalStorageId &&
+      previousOriginal &&
+      previousOriginal !== originalStorageId &&
+      previousOriginal !== storageId
+    ) {
+      await ctx.storage.delete(previousOriginal);
+    }
+    if (previous && previous !== storageId && previous !== me.bannerOriginalStorageId) {
+      await ctx.storage.delete(previous);
+    }
     return url;
   },
 });
@@ -173,8 +196,15 @@ export const removeBanner = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.bannerStorageId;
-    await ctx.db.patch(me._id, { bannerUrl: undefined, bannerStorageId: undefined });
-    if (previous) await ctx.storage.delete(previous);
+    const previousOriginal = me.bannerOriginalStorageId;
+    await ctx.db.patch(me._id, {
+      bannerUrl: undefined,
+      bannerStorageId: undefined,
+      bannerOriginalUrl: undefined,
+      bannerOriginalStorageId: undefined,
+    });
+    if (previous && previous !== previousOriginal) await ctx.storage.delete(previous);
+    if (previousOriginal) await ctx.storage.delete(previousOriginal);
   },
 });
 
@@ -220,14 +250,29 @@ async function isReferencedByAttachment(ctx: MutationCtx, storageId: Id<"_storag
   return !!dmAttachment || !!channelAttachment;
 }
 
+/**
+ * Set the avatar to a freshly-cropped render.
+ *
+ * `originalStorageId` accompanies a *new* picture and is the uncropped upload
+ * it came from, kept so the crop stays adjustable later without asking for
+ * the file again. Re-cropping an image already on the profile omits it, which
+ * means "keep the original I already have" rather than "there isn't one".
+ */
 export const setAvatar = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: {
+    storageId: v.id("_storage"),
+    /** The uncropped upload this crop came from. Omitted when re-cropping an
+     * image already on the profile. */
+    originalStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, { storageId, originalStorageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Avatar upload failed.");
+    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
 
     const previous = me.avatarStorageId;
+    const previousOriginal = me.avatarOriginalStorageId;
     // Drop the cached accent colour: it describes the old picture. The
     // client re-samples and calls `setAvatarAccent` with the new one.
     await ctx.db.patch(me._id, {
@@ -235,8 +280,27 @@ export const setAvatar = mutation({
       avatarStorageId: storageId,
       avatarAccent: undefined,
       avatarAccentUrl: undefined,
+      ...(originalStorageId
+        ? { avatarOriginalStorageId: originalStorageId, avatarOriginalUrl: originalUrl ?? undefined }
+        : {}),
     });
-    if (previous && previous !== storageId && !(await isReferencedByAttachment(ctx, previous))) {
+    if (
+      originalStorageId &&
+      previousOriginal &&
+      previousOriginal !== originalStorageId &&
+      previousOriginal !== storageId &&
+      !(await isReferencedByAttachment(ctx, previousOriginal))
+    ) {
+      await ctx.storage.delete(previousOriginal);
+    }
+    if (
+      previous &&
+      previous !== storageId &&
+      // The old crop can be the original itself, for an avatar uploaded
+      // before cropping existed — deleting it would take the source with it.
+      previous !== me.avatarOriginalStorageId &&
+      !(await isReferencedByAttachment(ctx, previous))
+    ) {
       // Not caught: a failed delete should abort the whole mutation (Convex
       // mutations are all-or-nothing) rather than silently commit the avatar
       // change while leaving the old object undeleted-but-unreferenced.
