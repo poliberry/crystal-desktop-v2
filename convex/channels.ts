@@ -1,7 +1,13 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+} from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
 import {
   PERMISSIONS,
@@ -457,5 +463,80 @@ export const recordVoiceLeave = internalMutation({
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
       .collect();
     return remaining.length;
+  },
+});
+
+/**
+ * Record that a member has read a channel up to now.
+ *
+ * Shared with `channelMessages.send`, which marks the author read as a matter
+ * of course — you've read what you just wrote, and without this your own
+ * message would light up your own unread indicator.
+ */
+export async function markChannelRead(
+  ctx: MutationCtx,
+  channelId: Id<"channels">,
+  communityId: Id<"communities">,
+  userId: Id<"users">
+): Promise<void> {
+  const existing = await ctx.db
+    .query("channelReads")
+    .withIndex("by_user_channel", (q) => q.eq("userId", userId).eq("channelId", channelId))
+    .unique();
+  if (existing) {
+    await ctx.db.patch(existing._id, { lastReadAt: Date.now() });
+  } else {
+    await ctx.db.insert("channelReads", {
+      userId,
+      channelId,
+      communityId,
+      lastReadAt: Date.now(),
+    });
+  }
+}
+
+/**
+ * Mark a channel read — called when its view is open, and from the sidebar's
+ * "mark as read".
+ *
+ * Also clears any unread mention notifications for it: having looked at the
+ * channel, being told about it in the inbox as well is noise.
+ */
+export const markRead = mutation({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return;
+    await requireMember(ctx, channel.communityId, me._id);
+    await markChannelRead(ctx, channelId, channel.communityId, me._id);
+
+    const mentions = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    for (const notification of mentions) {
+      if (notification.channelId === channelId) {
+        await ctx.db.patch(notification._id, { read: true });
+      }
+    }
+  },
+});
+
+/**
+ * When the newest message in a channel landed.
+ *
+ * Deliberately tiny: the open channel view uses it to know when to re-mark
+ * itself read, and subscribing to the message list for that would mean
+ * reacting to every edit and reaction too.
+ */
+export const newestMessageAt = query({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return null;
+    return channel.lastMessageAt ?? null;
   },
 });

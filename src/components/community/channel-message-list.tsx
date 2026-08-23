@@ -401,7 +401,7 @@ export function ChannelMessageList({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2 bg-gradient-to-t from-background to-transparent">
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a

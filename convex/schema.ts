@@ -346,9 +346,33 @@ export default defineSchema({
     categoryId: v.optional(v.id("channelCategories")),
     position: v.number(),
     createdAt: v.number(),
+    /** When the newest message landed, denormalised from `channelMessages`.
+     * Unread state is a comparison against `channelReads.lastReadAt`, and
+     * doing it from here means one read per channel list rather than one
+     * "newest message" query per channel every time anyone says anything
+     * anywhere. */
+    lastMessageAt: v.optional(v.number()),
   })
     .index("by_community", ["communityId"])
     .index("by_community_position", ["communityId", "position"]),
+
+  /**
+   * How far a member has read in a channel.
+   *
+   * Absent means "never opened it", which reads as unread if the channel has
+   * any message at all — the same thing Discord does with a channel you've
+   * just been invited to. Carries `communityId` so a server's worth of
+   * markers is one indexed read rather than a scan of every channel the user
+   * has ever opened.
+   */
+  channelReads: defineTable({
+    userId: v.id("users"),
+    channelId: v.id("channels"),
+    communityId: v.id("communities"),
+    lastReadAt: v.number(),
+  })
+    .index("by_user_channel", ["userId", "channelId"])
+    .index("by_user_community", ["userId", "communityId"]),
 
   /** Per-channel allow/deny overwrite for a role OR a specific member
    * (exactly one of `roleId`/`userId` is set) — see

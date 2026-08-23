@@ -110,6 +110,21 @@ function useSidebarCommunityId(): Id<"communities"> {
   return communityId;
 }
 
+/**
+ * Which of a community's channels have unread messages.
+ *
+ * Shares the rail's summary query — it already computes this for every
+ * community to decide which servers get a badge, and Convex dedupes identical
+ * subscriptions, so reading it per channel row costs nothing extra.
+ */
+function useUnreadChannelIds(communityId: Id<"communities">): Set<string> {
+  const activity = useQuery(api.communities.listMineActivity);
+  return useMemo(() => {
+    const entry = activity?.find((a) => a.communityId === communityId);
+    return new Set((entry?.unreadChannelIds ?? []).map((id) => id as string));
+  }, [activity, communityId]);
+}
+
 function ChannelListSkeleton() {
   return (
     <div className="flex flex-col gap-3 p-2">
@@ -973,6 +988,7 @@ function ChannelItem({
   overInfo: { id: string; isBefore: boolean } | null;
 }) {
   const communityId = useSidebarCommunityId();
+  const unread = useUnreadChannelIds(communityId).has(channel.id);
   const {
     attributes,
     listeners,
@@ -1022,11 +1038,19 @@ function ChannelItem({
                     )}
                   />
                 )}
-                <span className="truncate">{channel.name}</span>
+                <span className={cn("truncate", unread && "font-semibold text-foreground")}>
+                  {channel.name}
+                </span>
                 {isVoiceActive && (
                   <span className="ml-auto text-[10px] text-emerald-500">
                     Connected
                   </span>
+                )}
+                {unread && !isVoiceActive && (
+                  <span
+                    aria-label="Unread messages"
+                    className="ml-auto size-2 shrink-0 rounded-full bg-foreground"
+                  />
                 )}
               </button>
             </ChannelRowHover>

@@ -1,8 +1,8 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Hash, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -33,6 +33,16 @@ export function ChannelChatView({
   topic,
 }: ChannelChatViewProps) {
   const [showMembers, setShowMembers] = useState(true);
+  const markRead = useMutation(api.channels.markRead);
+
+  // Looking at a channel is what marks it read. Keyed on the newest message
+  // rather than just the channel, so a message arriving while it's already on
+  // screen doesn't leave the indicator lit behind you.
+  const newest = useQuery(api.channels.newestMessageAt, { channelId });
+  useEffect(() => {
+    void markRead({ channelId });
+  }, [channelId, newest, markRead]);
+
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
   const canManageMessages = hasPermission(
     myPermissions,

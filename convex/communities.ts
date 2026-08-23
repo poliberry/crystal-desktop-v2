@@ -116,6 +116,20 @@ export const listMineActivity = query({
       .withIndex("by_user", (q) => q.eq("userId", me._id))
       .collect();
 
+    // Unread mentions come from the notification rows rather than being
+    // recounted from messages: they're already indexed by read state, and
+    // "was I mentioned" was decided once at send time.
+    const unreadNotifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    const mentionsByCommunity = new Map<string, number>();
+    for (const notification of unreadNotifications) {
+      if (notification.type !== "channel_mention" || !notification.communityId) continue;
+      const key = notification.communityId as string;
+      mentionsByCommunity.set(key, (mentionsByCommunity.get(key) ?? 0) + 1);
+    }
+
     return Promise.all(
       memberships.map(async (membership) => {
         const communityId = membership.communityId;
@@ -166,12 +180,35 @@ export const listMineActivity = query({
           })
         );
 
+        // One indexed read for the whole server's read markers, compared
+        // against the channel's denormalised `lastMessageAt`. No marker at
+        // all means never opened, which is unread if anything was ever said.
+        const reads = await ctx.db
+          .query("channelReads")
+          .withIndex("by_user_community", (q) =>
+            q.eq("userId", me._id).eq("communityId", communityId)
+          )
+          .collect();
+        const readAtByChannel = new Map(reads.map((r) => [r.channelId as string, r.lastReadAt]));
+        const unreadChannelIds = channels
+          .filter(
+            (channel) =>
+              channel.type === "text" &&
+              !!channel.lastMessageAt &&
+              channel.lastMessageAt > (readAtByChannel.get(channel._id as string) ?? 0)
+          )
+          .map((channel) => channel._id);
+
         return {
           communityId,
           memberCount: members.length,
           voice,
           /** Everyone in voice, including those past the avatar limit. */
           voiceCount: rows.length,
+          unreadChannelIds,
+          /** Unread mentions across the server — the number worth putting on
+           * a badge, as opposed to "something was said somewhere". */
+          mentionCount: mentionsByCommunity.get(communityId as string) ?? 0,
         };
       })
     );

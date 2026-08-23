@@ -8,6 +8,7 @@ import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
 import { resolveChannelMentions } from "./lib/mentions";
+import { markChannelRead } from "./channels";
 
 async function requireChannelPerm(
   ctx: QueryCtx,
@@ -213,6 +214,12 @@ export const send = mutation({
     }
 
     const channel = await ctx.db.get(channelId);
+    // Denormalised so unread state is a field comparison rather than a
+    // "newest message" query per channel — see the schema.
+    if (channel) await ctx.db.patch(channelId, { lastMessageAt: Date.now() });
+    // Having just written it, I've read it.
+    if (channel) await markChannelRead(ctx, channelId, channel.communityId, me._id);
+
     if (channel && trimmed) {
       const mentioned = await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id);
       if (mentioned.length > 0) {

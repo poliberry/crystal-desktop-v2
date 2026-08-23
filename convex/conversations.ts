@@ -45,6 +45,9 @@ async function otherMembers(ctx: QueryCtx, conversationId: Id<"conversations">, 
   return others.filter((o): o is NonNullable<typeof o> => o !== null);
 }
 
+/** Past this a count stops being informative and becomes "a lot". */
+const UNREAD_COUNT_CAP = 99;
+
 export const listMine = query({
   args: {},
   handler: async (ctx) => {
@@ -66,6 +69,21 @@ export const listMine = query({
           .order("desc")
           .take(1);
 
+        const unread = (lastMessage?._creationTime ?? 0) > membership.lastReadAt;
+
+        // Only counted for conversations already known to be unread, and
+        // capped: an exact count of a hundred unread messages isn't more
+        // useful than "99+", and this is the only unbounded read here.
+        let unreadCount = 0;
+        if (unread) {
+          const recent = await ctx.db
+            .query("messages")
+            .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
+            .order("desc")
+            .take(UNREAD_COUNT_CAP + 1);
+          unreadCount = recent.filter((m) => m._creationTime > membership.lastReadAt).length;
+        }
+
         return {
           id: conversation._id,
           type: conversation.type,
@@ -74,7 +92,8 @@ export const listMine = query({
           members: await otherMembers(ctx, conversation._id, me._id),
           lastMessageText: lastMessage?.text ?? null,
           lastMessageAt: lastMessage?._creationTime ?? conversation.createdAt,
-          unread: (lastMessage?._creationTime ?? 0) > membership.lastReadAt,
+          unread,
+          unreadCount,
         };
       })
     );

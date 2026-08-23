@@ -43,6 +43,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useNavigation } from "@/components/home/navigation-context";
 import { USER_CARD_HEIGHT } from "./user-card";
 import { useCall } from "../call/call-provider";
 
@@ -200,6 +201,90 @@ interface CommunityActivity {
   memberCount: number;
   voice: { userId: Id<"users">; name: string; imageUrl?: string }[];
   voiceCount: number;
+  unreadChannelIds: Id<"channels">[];
+  mentionCount: number;
+}
+
+/** Past this the badge outgrows the tile and the exact number stops mattering. */
+const BADGE_CAP = 99;
+
+function badgeText(count: number): string {
+  return count > BADGE_CAP ? `${BADGE_CAP}+` : String(count);
+}
+
+/**
+ * Unread DMs, as buttons under Home.
+ *
+ * Only conversations with something waiting appear here — the full list lives
+ * in the DM sidebar. The rail's job is "there's something for you and here's
+ * whose face it belongs to", which is why the avatar is the button rather
+ * than a generic envelope with a number on it.
+ */
+function UnreadDirectMessages() {
+  const nav = useNavigation();
+  const conversations = useQuery(api.conversations.listMine) ?? [];
+  const markRead = useMutation(api.conversations.markRead);
+  const unread = conversations.filter((c) => c.unread);
+  if (unread.length === 0) return null;
+
+  return (
+    <>
+      {unread.map((conversation) => {
+        // A group's first member stands in for it, the same shorthand the DM
+        // list uses; a one-to-one DM has exactly one other person.
+        const other = conversation.members[0];
+        const name = conversation.name ?? other?.name ?? "Direct message";
+        return (
+          <HoverCard key={conversation.id} openDelay={200} closeDelay={100}>
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="relative">
+                  <HoverCardTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => nav.openConversation(conversation.id)}
+                      aria-label={`${name}, ${conversation.unreadCount} unread`}
+                      className="flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl"
+                    >
+                      <Avatar className="size-12">
+                        <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} />
+                        <AvatarFallback className="text-sm">
+                          {name.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                    </button>
+                  </HoverCardTrigger>
+                  {conversation.unreadCount > 0 && (
+                    <span className="pointer-events-none absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                      {badgeText(conversation.unreadCount)}
+                    </span>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onClick={() => void markRead({ conversationId: conversation.id })}>
+                  Mark as read
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+            <HoverCardContent side="right" align="start" className="w-60">
+              <p className="truncate text-sm font-semibold">{name}</p>
+              <p className="text-xs text-muted-foreground">
+                {conversation.unreadCount} unread{" "}
+                {conversation.unreadCount === 1 ? "message" : "messages"}
+              </p>
+              {conversation.lastMessageText && (
+                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                  {conversation.lastMessageText}
+                </p>
+              )}
+            </HoverCardContent>
+          </HoverCard>
+        );
+      })}
+      <Separator className="max-w-8 mx-2" />
+    </>
+  );
 }
 
 /**
@@ -308,7 +393,7 @@ export function CommunityRail({
 
   return (
     <div className={cn(
-      `flex w-18 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
+      `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
       activeCall && screenSharing ? `mb-52` : activeCall ? `mb-42` : `mb-18`
     )}>
       <RailButton
@@ -321,6 +406,8 @@ export function CommunityRail({
 
       <Separator className="max-w-8 mx-2" />
 
+      <UnreadDirectMessages />
+
       <ScrollArea className="min-h-0 flex-1 w-full">
         {/* py-1 gives the selection ring (ring-2 + ring-offset-2 = ~4px)
             room to render without the ScrollArea's own overflow-hidden
@@ -329,6 +416,8 @@ export function CommunityRail({
           {communities.map((community) => {
             const activity = activityByCommunity.get(community.id);
             const inVoice = !!activity?.voiceCount;
+            const mentions = activity?.mentionCount ?? 0;
+            const hasUnread = (activity?.unreadChannelIds.length ?? 0) > 0;
             return (
             <HoverCard key={community.id} openDelay={200} closeDelay={100}>
                 <ContextMenu>
@@ -340,9 +429,13 @@ export function CommunityRail({
                     <HoverCardTrigger asChild>
                       <button
                         type="button"
-                        aria-label={
-                          inVoice ? `${community.name}, call in progress` : community.name
-                        }
+                        aria-label={[
+                          community.name,
+                          inVoice ? "call in progress" : null,
+                          mentions > 0 ? ` mentions` : hasUnread ? "unread messages" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
                         onClick={(e) => onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")}
                         className={cn(
                           "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
@@ -369,6 +462,22 @@ export function CommunityRail({
                       >
                         <Volume2 className="size-3" />
                       </span>
+                    )}
+                    {/* A count for mentions, a dot for "something was said".
+                        Only mentions get a number — a busy server would
+                        otherwise wear a permanent badge meaning nothing in
+                        particular. */}
+                    {mentions > 0 ? (
+                      <span className="pointer-events-none absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                        {badgeText(mentions)}
+                      </span>
+                    ) : (
+                      hasUnread && (
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute top-1/2 -left-1.5 size-2 -translate-y-1/2 rounded-full bg-foreground"
+                        />
+                      )
                     )}
                     </div>
                   </ContextMenuTrigger>
