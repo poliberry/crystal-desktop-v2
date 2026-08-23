@@ -39,6 +39,7 @@ import type * as roles from "../roles.js";
 import type * as serverProfiles from "../serverProfiles.js";
 import type * as soundboard from "../soundboard.js";
 import type * as typing from "../typing.js";
+import type * as uploadLimits from "../uploadLimits.js";
 import type * as users from "../users.js";
 
 import type {
@@ -79,6 +80,7 @@ declare const fullApi: ApiFromModules<{
   serverProfiles: typeof serverProfiles;
   soundboard: typeof soundboard;
   typing: typeof typing;
+  uploadLimits: typeof uploadLimits;
   users: typeof users;
 }>;
 

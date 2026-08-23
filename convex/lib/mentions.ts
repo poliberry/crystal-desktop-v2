@@ -1,4 +1,4 @@
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { PERMISSIONS, can, getBasePermissions } from "../permissions";
 
@@ -152,4 +152,75 @@ export async function resolveChannelMentions(
 
   mentioned.delete(authorId);
   return [...mentioned] as Id<"users">[];
+}
+
+/**
+ * Message text as it should read in a notification.
+ *
+ * A notification body is plain text — an OS toast, a push payload, a line in
+ * the inbox — with no renderer to turn the wire format into anything. Stored
+ * raw, `<@mx73p610…>` is exactly what the toast showed: a mention rendered as
+ * its own internal id.
+ *
+ * So the tokens are resolved to what they read as: `<@id>` becomes
+ * `@DisplayName`, `<@&roleId>` becomes `@RoleName`, and `<:name:id>` custom
+ * emoji become `:name:`. `@everyone` / `@here` already read correctly and are
+ * left alone.
+ *
+ * Resolved at write time rather than at display time because the body is
+ * denormalised onto the notification row and read back by three different
+ * consumers (the inbox, the Electron notifier, push) — doing it here means one
+ * implementation instead of three, and the name is the one that was current
+ * when the message was sent.
+ *
+ * A name is preferred over a nickname deliberately: `serverProfiles` overrides
+ * would make the same message read differently per community, and the point of
+ * this string is to be recognisable, not per-server-correct.
+ */
+/** `db.get` rejects an id that isn't well-formed for the table — and these
+ * ids come out of message text, so "well-formed" is not a given. Anything
+ * unreadable is simply nobody. */
+async function getOrNull<T extends "users" | "roles">(
+  ctx: QueryCtx,
+  id: string
+): Promise<Doc<T> | null> {
+  try {
+    return (await ctx.db.get(id as Id<T>)) as Doc<T> | null;
+  } catch {
+    return null;
+  }
+}
+
+export async function renderMentionsAsText(ctx: QueryCtx, text: string): Promise<string> {
+  // The exact tags `src/lib/custom-emoji.ts` and the composer produce.
+  const TOKEN_RE = /<@&([a-z0-9]+)>|<@([a-z0-9]+)>|<:([a-zA-Z0-9_]+):([a-zA-Z0-9]+)>/gi;
+
+  const matches = [...text.matchAll(TOKEN_RE)];
+  if (matches.length === 0) return text;
+
+  // Resolved up front, deduplicated, so a message that mentions the same
+  // person five times is one lookup rather than five.
+  const replacements = new Map<string, string>();
+  for (const match of matches) {
+    const [raw, roleId, userId, emojiName] = match;
+    if (replacements.has(raw)) continue;
+
+    if (emojiName) {
+      replacements.set(raw, `:${emojiName}:`);
+      continue;
+    }
+    if (userId) {
+      const user = await getOrNull<"users">(ctx, userId);
+      // An unresolvable id is dropped rather than left as a raw tag — a
+      // deleted account should read as a gap, not as machine output.
+      replacements.set(raw, user ? `@${user.name}` : "@someone");
+      continue;
+    }
+    if (roleId) {
+      const role = await getOrNull<"roles">(ctx, roleId);
+      replacements.set(raw, role ? `@${role.name}` : "@role");
+    }
+  }
+
+  return text.replace(TOKEN_RE, (raw) => replacements.get(raw) ?? raw);
 }

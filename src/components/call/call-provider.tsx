@@ -138,7 +138,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const activeCallRef = useRef<ActiveCall | null>(null);
   activeCallRef.current = activeCall;
 
-  const { screenShares, subscribeToScreenShare, unsubscribeFromScreenShare } = controller;
+  const { screenShares, subscribeToScreenShare, unsubscribeFromScreenShare, notifyStreamView } =
+    controller;
 
   const watchShare = useCallback(
     (identity: string, options?: { replace?: boolean }) => {
@@ -146,24 +147,62 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         // "Watch" replaces the whole watch set — unsubscribe whichever streams
         // are being dropped so they stop being downloaded and decoded.
         for (const other of watchedShares) {
-          if (other !== identity) unsubscribeFromScreenShare(other);
+          if (other !== identity) {
+            unsubscribeFromScreenShare(other);
+            void notifyStreamView(other, false);
+          }
         }
         setWatchedShares([identity]);
       } else {
         setWatchedShares((prev) => (prev.includes(identity) ? prev : [...prev, identity]));
       }
       subscribeToScreenShare(identity);
+      // Only on a genuine change: re-clicking a stream you're already watching
+      // shouldn't chime at the person streaming it again.
+      if (!watchedShares.includes(identity)) void notifyStreamView(identity, true);
     },
-    [watchedShares, subscribeToScreenShare, unsubscribeFromScreenShare]
+    [watchedShares, subscribeToScreenShare, unsubscribeFromScreenShare, notifyStreamView]
   );
 
   const unwatchShare = useCallback(
     (identity: string) => {
       setWatchedShares((prev) => prev.filter((i) => i !== identity));
       unsubscribeFromScreenShare(identity);
+      void notifyStreamView(identity, false);
     },
-    [unsubscribeFromScreenShare]
+    [unsubscribeFromScreenShare, notifyStreamView]
   );
+
+  /**
+   * The screen-share chime, for other people's shares.
+   *
+   * `use-room.ts` already plays this pair for your own share, at the moment you
+   * start or stop it. Everyone else's arrives as a change to `screenShares`,
+   * which is the only signal a viewer gets — so it's diffed here rather than
+   * hooked to a LiveKit event, which would also fire for track republishes
+   * (a quality change re-publishes the track) and chime for nothing.
+   *
+   * Seeded on the first run instead of chiming: walking into a call where two
+   * people are already sharing is not two people starting to share.
+   */
+  const knownSharesRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const remote = new Set(
+      screenShares.filter((identity) => identity !== controller.room.localParticipant.identity)
+    );
+    const known = knownSharesRef.current;
+    knownSharesRef.current = remote;
+    if (!known) return;
+
+    for (const identity of remote) if (!known.has(identity)) playCue("screenShareStart");
+    for (const identity of known) if (!remote.has(identity)) playCue("screenShareStop");
+  }, [screenShares, controller.room, playCue]);
+
+  // Leaving a call has to forget who was sharing in it, or rejoining would
+  // diff against the last call's roster.
+  useEffect(() => {
+    if (!activeCall) knownSharesRef.current = null;
+  }, [activeCall]);
 
   // A share that ends (they stopped sharing, or left) drops out of the watch
   // set, so a later re-share starts unwatched rather than silently resuming.

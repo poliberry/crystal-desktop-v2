@@ -3,7 +3,9 @@ import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
+import { renderMentionsAsText } from "./lib/mentions";
 import { notifyUsers } from "./notifications";
+import { requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
 
 async function requireMembership(
@@ -135,6 +137,12 @@ export const send = mutation({
       throw new Error("Message needs text or an attachment.");
     }
 
+    for (const attachment of attachments ?? []) {
+      // Only reachable once the bytes are in storage, so it can't stop an
+      // oversized upload — but it does stop it from becoming a message.
+      await requireWithinUploadLimit(ctx, attachment.storageId, "Attachments");
+    }
+
     const messageId = await ctx.db.insert("messages", {
       conversationId,
       authorId: me._id,
@@ -161,7 +169,7 @@ export const send = mutation({
       conversationId,
       messageId,
       title: me.name,
-      body: trimmed || "Sent an attachment",
+      body: trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
     });
 
     return messageId;

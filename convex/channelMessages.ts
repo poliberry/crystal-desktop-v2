@@ -6,8 +6,9 @@ import { mutation, query, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
 import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
+import { requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
-import { resolveChannelMentions } from "./lib/mentions";
+import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
 
 async function requireChannelPerm(
@@ -203,6 +204,12 @@ export const send = mutation({
       throw new Error("Message needs text or an attachment.");
     }
 
+    for (const attachment of attachments ?? []) {
+      // Only reachable once the bytes are in storage, so it can't stop an
+      // oversized upload — but it does stop it from becoming a message.
+      await requireWithinUploadLimit(ctx, attachment.storageId, "Attachments");
+    }
+
     const messageId = await ctx.db.insert("channelMessages", {
       channelId,
       authorId: me._id,
@@ -231,7 +238,9 @@ export const send = mutation({
           communityId: channel.communityId,
           channelMessageId: messageId,
           title: `${me.name} mentioned you in #${channel.name}`,
-          body: trimmed,
+          // Plain text, so the `<@id>` tags have to become readable names
+          // here — nothing downstream of this renders them.
+          body: await renderMentionsAsText(ctx, trimmed),
         });
       }
     }

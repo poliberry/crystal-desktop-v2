@@ -20,7 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decay, envelope, render, sine, toWav } from "./lib/wav.mjs";
+import { SAMPLE_RATE, decay, envelope, render, sine, toWav } from "./lib/wav.mjs";
 
 const OUT_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -49,6 +49,24 @@ function blip(freqHz, { durationMs = 120, gain = 0.3, decayRate = 9 } = {}) {
   return render(durationMs, (t, p) => gain * sine(t, freqHz) * decay(p, decayRate));
 }
 
+/**
+ * Two short plucks with a gap between them.
+ *
+ * Distinct from `twoTone`, whose notes butt up against each other into one
+ * gesture: here the silence is the point. A double-tap reads as a discrete
+ * event ("someone arrived") where a slur reads as a state change ("you are now
+ * sharing").
+ */
+function twoBlip(firstHz, secondHz, { gapMs = 70, durationMs = 100, gain = 0.2, decayRate = 14 } = {}) {
+  const first = blip(firstHz, { durationMs, gain, decayRate });
+  const second = blip(secondHz, { durationMs, gain, decayRate });
+  const gap = Math.floor((gapMs / 1000) * SAMPLE_RATE);
+  const out = new Float32Array(first.length + gap + second.length);
+  out.set(first, 0);
+  out.set(second, first.length + gap);
+  return out;
+}
+
 const RECIPES = {
   // --- calls ---------------------------------------------------------------
   // The most "important" pair, so a perfect fifth: unmistakable and warm.
@@ -59,6 +77,22 @@ const RECIPES = {
   // Brighter and airier than the call pair, so the two don't blur together.
   "screenshare-start": () => twoTone(587.33, 880, { durationMs: 260, gain: 0.26 }),
   "screenshare-stop": () => twoTone(880, 587.33, { durationMs: 260, gain: 0.26 }),
+
+  // --- stream viewers ------------------------------------------------------
+  // Someone tuned into *your* stream. Two quick blips a fourth apart rather
+  // than the sustained two-tone of the screen-share pair: this fires while
+  // you're mid-presentation, so it has to register without pulling focus, and
+  // being a different shape stops it being mistaken for your own share
+  // starting or stopping. Rising for arriving, falling for leaving, like
+  // everything else here.
+  // Levelled by ear against `message` (0.18) rather than against the
+  // screen-share pair: a fast-decaying pluck carries far less energy than a
+  // sustained two-tone at the same peak, so matching peaks would have made
+  // these effectively inaudible over a call.
+  "viewer-join": () =>
+    twoBlip(880, 1174.66, { gapMs: 70, durationMs: 140, gain: 0.24, decayRate: 9 }),
+  "viewer-leave": () =>
+    twoBlip(1174.66, 880, { gapMs: 70, durationMs: 140, gain: 0.24, decayRate: 9 }),
 
   // --- microphone ----------------------------------------------------------
   // Short and dry: these fire constantly, so anything with a tail would grate.
