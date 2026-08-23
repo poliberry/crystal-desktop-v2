@@ -18,6 +18,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useWindowFocus } from "@/hooks/use-window-focus";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 
 interface ChannelChatViewProps {
@@ -35,27 +36,51 @@ export function ChannelChatView({
 }: ChannelChatViewProps) {
   const [showMembers, setShowMembers] = useState(true);
   const markRead = useMutation(api.channels.markRead);
+  const unread = useQuery(api.channels.unreadInfo, { channelId });
+  const focused = useWindowFocus();
+  const [atBottom, setAtBottom] = useState(true);
 
-  /** What was waiting when this channel was opened, for the catch-up bar. */
+  /**
+   * What was waiting when this channel was opened.
+   *
+   * Frozen for the visit rather than read live: being marked read the moment
+   * you arrive is the point, and a live count would make the bar vanish
+   * before you'd finished reading it.
+   */
   const [missed, setMissed] = useState<{ count: number; since: number | null } | null>(null);
-  // Which channel `missed` describes, so a message arriving while you're
-  // already here doesn't replace the bar with "1 new message".
   const measuredFor = useRef<Id<"channels"> | null>(null);
 
-  // Looking at a channel is what marks it read. Keyed on the newest message
-  // rather than just the channel, so a message arriving while it's already on
-  // screen doesn't leave the indicator lit behind you.
-  const newest = useQuery(api.channels.newestMessageAt, { channelId });
   useEffect(() => {
-    const firstVisit = measuredFor.current !== channelId;
-    if (firstVisit) setMissed(null);
-    void markRead({ channelId }).then((result) => {
-      measuredFor.current = channelId;
-      if (firstVisit && result && result.unreadCount > 0) {
-        setMissed({ count: result.unreadCount, since: result.since });
-      }
-    });
-  }, [channelId, newest, markRead]);
+    if (measuredFor.current === channelId) return;
+    setMissed(null);
+    // Wait for a real value: `undefined` is "still loading", and treating it
+    // as zero would skip the bar on every navigation.
+    if (unread === undefined) return;
+    measuredFor.current = channelId;
+    if (unread.count > 0) setMissed({ count: unread.count, since: unread.since });
+  }, [channelId, unread]);
+
+  /**
+   * Read means read *by someone who was there*: the window focused on this
+   * channel, or the reader having scrolled to the end of it. A channel sitting
+   * in a background window, or one opened and left scrolled up in history,
+   * stays unread — which is what makes the bar's button worth having.
+   *
+   * Waits for the measurement above so arriving doesn't erase the count
+   * before the bar can show it.
+   */
+  useEffect(() => {
+    if (measuredFor.current !== channelId) return;
+    if (!focused && !atBottom) return;
+    void markRead({ channelId });
+    // `unread.count` so a message landing while you're sitting here is marked
+    // read too, rather than leaving the sidebar lit behind you.
+  }, [channelId, focused, atBottom, unread?.count, markRead]);
+
+  const dismissBar = () => {
+    setMissed(null);
+    void markRead({ channelId });
+  };
 
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
   const canManageMessages = hasPermission(
@@ -107,7 +132,7 @@ export function ChannelChatView({
             </span>
             <button
               type="button"
-              onClick={() => setMissed(null)}
+              onClick={dismissBar}
               className="shrink-0 font-medium hover:underline"
             >
               Mark as read
@@ -120,6 +145,7 @@ export function ChannelChatView({
           channelName={name}
           communityId={communityId}
           canManageMessages={canManageMessages}
+          onAtBottomChange={setAtBottom}
         />
         <TypingIndicator channelId={channelId} />
         <ChannelMessageComposer channelId={channelId} communityId={communityId} />

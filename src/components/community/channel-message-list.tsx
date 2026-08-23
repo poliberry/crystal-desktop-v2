@@ -33,6 +33,9 @@ interface ChannelMessageListProps {
   /** Whether the viewer can delete other people's messages in this channel
    * (MANAGE_MESSAGES) — editing is always author-only. */
   canManageMessages: boolean;
+  /** Reports whether the list is scrolled to the end, which is one of the
+   * signals for "this has been read" (see ChannelChatView). */
+  onAtBottomChange?: (atBottom: boolean) => void;
 }
 
 /** Discord-style channel-start marker — the first thing in the scrollable
@@ -361,6 +364,7 @@ export function ChannelMessageList({
   channelName,
   communityId,
   canManageMessages,
+  onAtBottomChange,
 }: ChannelMessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.channelMessages.list,
@@ -401,7 +405,16 @@ export function ChannelMessageList({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2 bg-gradient-to-t from-background to-transparent">
+    <div
+      onScroll={(event) => {
+        if (!onAtBottomChange) return;
+        const el = event.currentTarget;
+        // A few pixels of slack: sub-pixel layout and the auto-scroll on new
+        // messages both leave the scroll position a hair short of the end.
+        onAtBottomChange(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+      }}
+      className="min-h-0 flex-1 overflow-y-auto px-4 py-2 bg-gradient-to-t from-background to-transparent"
+    >
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a

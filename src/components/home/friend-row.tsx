@@ -48,7 +48,7 @@ export function FriendRow({
     (status ? STATUS_LABEL[status] : `@${username}`);
 
   return (
-    <div className="group relative flex items-center gap-3 overflow-hidden rounded-md px-2 py-2 hover:bg-accent/60">
+    <div className="group relative flex items-center gap-3 overflow-hidden rounded-md px-2 py-2 mb-2 hover:bg-accent/60">
       {/* Nameplate behind the row, faded towards the name so it decorates
           rather than competes with it. */}
       {nameplateUrl && (

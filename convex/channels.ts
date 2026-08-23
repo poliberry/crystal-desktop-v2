@@ -499,13 +499,50 @@ export async function markChannelRead(
 const UNREAD_COUNT_CAP = 99;
 
 /**
- * Mark a channel read, and report what that just cleared.
+ * How much of a channel the caller hasn't seen.
  *
- * The count is of what was unread *before* this call, which is why it's
- * returned from the mutation rather than exposed as a query: the view marks
- * itself read on open, so a separate query would race with it and the caller
- * would see zero. Messages by the reader don't count — the bar is about what
- * was missed.
+ * Their own messages don't count: this feeds the catch-up bar, which is about
+ * what was missed. Capped, because past a hundred the exact figure isn't the
+ * useful part and an uncapped scan of a busy channel is.
+ */
+export const unreadInfo = query({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return { count: 0, since: null as number | null };
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return { count: 0, since: null as number | null };
+
+    const read = await ctx.db
+      .query("channelReads")
+      .withIndex("by_user_channel", (q) => q.eq("userId", me._id).eq("channelId", channelId))
+      .unique();
+    const readAt = read?.lastReadAt ?? 0;
+
+    const recent = await ctx.db
+      .query("channelMessages")
+      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+      .order("desc")
+      .take(UNREAD_COUNT_CAP + 1);
+
+    return {
+      count: recent.filter(
+        (message) => message._creationTime > readAt && message.authorId !== me._id
+      ).length,
+      /** Where they had got to, for "since you were last here". Null when
+       * they've never opened the channel. */
+      since: read?.lastReadAt ?? null,
+    };
+  },
+});
+
+/**
+ * Mark a channel read.
+ *
+ * Called when the reader is demonstrably present — the window is focused on
+ * the channel, or they've scrolled to the end of it — and from the catch-up
+ * bar's button. Deliberately not on mount: a channel sitting in a background
+ * window is not one you've read.
  *
  * Also clears any unread mention notifications for it: having looked at the
  * channel, being told about it in the inbox as well is noise.
@@ -515,24 +552,8 @@ export const markRead = mutation({
   handler: async (ctx, { channelId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const channel = await ctx.db.get(channelId);
-    if (!channel) return { unreadCount: 0, since: null as number | null };
+    if (!channel) return;
     await requireMember(ctx, channel.communityId, me._id);
-
-    const previous = await ctx.db
-      .query("channelReads")
-      .withIndex("by_user_channel", (q) => q.eq("userId", me._id).eq("channelId", channelId))
-      .unique();
-    const readAt = previous?.lastReadAt ?? 0;
-
-    const recent = await ctx.db
-      .query("channelMessages")
-      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-      .order("desc")
-      .take(UNREAD_COUNT_CAP + 1);
-    const missed = recent.filter(
-      (message) => message._creationTime > readAt && message.authorId !== me._id
-    );
-
     await markChannelRead(ctx, channelId, channel.communityId, me._id);
 
     const mentions = await ctx.db
@@ -544,30 +565,6 @@ export const markRead = mutation({
         await ctx.db.patch(notification._id, { read: true });
       }
     }
-
-    return {
-      unreadCount: missed.length,
-      /** Where the reader had got to, for "since you were last here". Null
-       * when they had never opened the channel at all. */
-      since: previous?.lastReadAt ?? null,
-    };
   },
 });
 
-/**
- * When the newest message in a channel landed.
- *
- * Deliberately tiny: the open channel view uses it to know when to re-mark
- * itself read, and subscribing to the message list for that would mean
- * reacting to every edit and reaction too.
- */
-export const newestMessageAt = query({
-  args: { channelId: v.id("channels") },
-  handler: async (ctx, { channelId }) => {
-    const me = await getCurrentUserOrNull(ctx);
-    if (!me) return null;
-    const channel = await ctx.db.get(channelId);
-    if (!channel) return null;
-    return channel.lastMessageAt ?? null;
-  },
-});
