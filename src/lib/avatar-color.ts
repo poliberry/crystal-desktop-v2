@@ -13,12 +13,33 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
 }
 
 /**
+ * Sampling results, keyed by image URL.
+ *
+ * The same avatar is drawn by many components at once (a call grid, a member
+ * list, a message history), each of which would otherwise decode the image
+ * and read back a canvas independently. Promises are cached rather than
+ * results, so concurrent callers share one decode instead of racing. Avatar
+ * URLs are content-addressed by Convex storage, so an entry can never go
+ * stale — a new picture is a new URL.
+ */
+const sampleCache = new Map<string, Promise<string | null>>();
+const paletteCache = new Map<string, Promise<string[]>>();
+
+/**
  * Extracts the most prominent color from an image URL by sampling it at
  * 32×32 and building a hue histogram weighted by saturation × opacity.
  * Returns a dark, tinted hsl() string for use as a card background,
  * or null when the image is too neutral or can't be read.
  */
 export function getAvatarColor(imageUrl: string): Promise<string | null> {
+  const cached = sampleCache.get(imageUrl);
+  if (cached) return cached;
+  const pending = sampleAvatarColor(imageUrl);
+  sampleCache.set(imageUrl, pending);
+  return pending;
+}
+
+function sampleAvatarColor(imageUrl: string): Promise<string | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -108,7 +129,16 @@ const MIN_SWATCH_DISTANCE = 90;
  * gives back the orange that's actually in it rather than the nearest bin
  * corner. Near-duplicates are dropped in favour of covering the image.
  */
-export async function extractPalette(imageUrl: string, max = 6): Promise<string[]> {
+export function extractPalette(imageUrl: string, max = 6): Promise<string[]> {
+  const key = `${max}:${imageUrl}`;
+  const cached = paletteCache.get(key);
+  if (cached) return cached;
+  const pending = samplePalette(imageUrl, max);
+  paletteCache.set(key, pending);
+  return pending;
+}
+
+async function samplePalette(imageUrl: string, max: number): Promise<string[]> {
   const data = await readPixels(imageUrl, 64);
   if (!data) return [];
 
