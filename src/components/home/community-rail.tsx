@@ -244,10 +244,10 @@ function UnreadDirectMessages() {
                       type="button"
                       onClick={() => nav.openConversation(conversation.id)}
                       aria-label={`${name}, ${conversation.unreadCount} unread`}
-                      className="flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl"
+                      className="flex size-12 items-center justify-center overflow-hidden rounded-none transition-all duration-200 ease-in-out group"
                     >
                       <Avatar className="size-12">
-                        <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} />
+                        <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} className="rounded-none group-hover:rounded-2xl" />
                         <AvatarFallback className="text-sm">
                           {name.slice(0, 2).toUpperCase()}
                         </AvatarFallback>
@@ -255,7 +255,7 @@ function UnreadDirectMessages() {
                     </button>
                   </HoverCardTrigger>
                   {conversation.unreadCount > 0 && (
-                    <span className="pointer-events-none absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                    <span className="pointer-events-none absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-none bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
                       {badgeText(conversation.unreadCount)}
                     </span>
                   )}
@@ -267,17 +267,8 @@ function UnreadDirectMessages() {
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
-            <HoverCardContent side="right" align="start" className="w-60">
+            <HoverCardContent side="right" align="start" className="w-fit max-w-md">
               <p className="truncate text-sm font-semibold">{name}</p>
-              <p className="text-xs text-muted-foreground">
-                {conversation.unreadCount} unread{" "}
-                {conversation.unreadCount === 1 ? "message" : "messages"}
-              </p>
-              {conversation.lastMessageText && (
-                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                  {conversation.lastMessageText}
-                </p>
-              )}
             </HoverCardContent>
           </HoverCard>
         );

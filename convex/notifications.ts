@@ -13,6 +13,7 @@ import {
 } from "./lib/notificationPolicy";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { markAllConversationsRead } from "./conversations";
 
 type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
 
@@ -307,6 +308,15 @@ export const markRead = mutation({
   },
 });
 
+/**
+ * Clear the inbox, and the unread DMs it was telling you about.
+ *
+ * The notification rows and a conversation's `lastReadAt` are separate records
+ * of the same fact, so clearing only the former emptied the inbox badge while
+ * leaving the DMs lit in the rail — which reads as the button not having
+ * worked. Channels are deliberately left alone: their indicator means "someone
+ * said something", which reading the inbox doesn't make untrue.
+ */
 export const markAllRead = mutation({
   args: {},
   handler: async (ctx) => {
@@ -316,6 +326,7 @@ export const markAllRead = mutation({
       .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
       .collect();
     for (const n of unread) await ctx.db.patch(n._id, { read: true });
+    await markAllConversationsRead(ctx, me._id);
   },
 });
 

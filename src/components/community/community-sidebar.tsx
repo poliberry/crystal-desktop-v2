@@ -232,7 +232,7 @@ export function CommunitySidebar({
 
   return (
     <SidebarCommunityContext.Provider value={communityId}>
-    <div className="flex w-64 shrink-0 flex-col border-l backdrop-blur-xl shadow-md">
+    <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl shadow-md">
       <DropdownMenu>
         {/* Banner + trigger share a relative container so the trigger can
             overlay the bottom of the banner with a gradient backdrop */}

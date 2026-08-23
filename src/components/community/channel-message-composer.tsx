@@ -237,7 +237,7 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
   };
 
   return (
-    <div ref={dropZoneRef} className="relative shrink-0 pt-2 bg-background">
+    <div ref={dropZoneRef} className="relative shrink-0 p-2 bg-background">
       <ComposerDropOverlay active={isDraggingOver} />
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">

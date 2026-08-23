@@ -210,7 +210,7 @@ export function UserCard() {
 
   return (
     <div
-      className={cn("absolute bottom-0 left-0 shrink-0 p-2", compact ? "w-64" : "w-82")}
+      className={cn("absolute bottom-0 left-0 shrink-0 p-2", compact ? "w-64" : "w-80")}
     >
       {/* Screen share floating panel */}
       {activeCall && screenSharing && (

@@ -51,8 +51,8 @@ export function ChannelChatView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col m-2 bg-accent/40 backdrop-blur-xl">
-        <div className="flex h-12 shrink-0 items-center gap-2 bg-gradient-to-b from-background to-transparent px-2">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-accent/40 backdrop-blur-xl">
+        <div className="flex h-12 shrink-0 items-center gap-2 px-2">
           <Hash className="size-4 shrink-0 text-muted-foreground" />
           <p className="shrink-0 text-sm font-semibold">{name}</p>
           {topic && (
