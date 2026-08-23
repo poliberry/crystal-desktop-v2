@@ -14,8 +14,8 @@ export interface BadgeDefinition {
   /** Shown on hover — the reason someone has it. */
   description: string;
   icon: LucideIcon;
-  /** Tailwind classes for the pill. Each badge gets its own colour so a row
-   * of them reads as distinct things rather than a row of the same thing. */
+  /** Colour for the glyph. Each badge gets its own so a row of them reads as
+   * distinct things rather than a row of the same thing. */
   className: string;
 }
 
@@ -24,7 +24,7 @@ export const BADGES: Record<string, BadgeDefinition> = {
     label: "Early Supporter",
     description: "Here before it was finished.",
     icon: Sparkles,
-    className: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    className: "text-amber-400",
   },
 };
 

@@ -41,7 +41,8 @@ export interface MemberProfileMember {
 }
 
 /**
- * The badges a user has earned, as a row of pills.
+ * The badges a user has earned, as a row of glyphs — the name and reason live
+ * on hover rather than taking up a line of the card.
  *
  * Fetches its own data rather than taking it as a prop: this card is built
  * from half a dozen different member shapes across the app, and threading a
@@ -53,25 +54,21 @@ function ProfileBadges({ userId }: { userId: Id<"users"> }) {
   if (badges.length === 0) return null;
 
   return (
-    <div className="mt-1.5 flex flex-wrap gap-1">
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
       {badges.map((badge) => {
         const definition = badgeDefinition(badge.badgeId);
         // An id this build doesn't know about is skipped rather than drawn as
-        // a mystery pill — see src/lib/badges.ts.
+        // a mystery glyph — see src/lib/badges.ts.
         if (!definition) return null;
         const Icon = definition.icon;
+        const label = `${definition.label} — ${definition.description}`;
         return (
-          <span
+          <Icon
             key={badge.badgeId}
-            title={`${definition.label} — ${definition.description}`}
-            className={cn(
-              "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
-              definition.className
-            )}
-          >
-            <Icon className="size-3 shrink-0" />
-            {definition.label}
-          </span>
+            aria-label={label}
+            title={label}
+            className={cn("size-4 shrink-0", definition.className)}
+          />
         );
       })}
     </div>
