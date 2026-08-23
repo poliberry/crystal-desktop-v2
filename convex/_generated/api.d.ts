@@ -26,6 +26,7 @@ import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_liveKitAdmin from "../lib/liveKitAdmin.js";
 import type * as lib_liveKitWebhook from "../lib/liveKitWebhook.js";
 import type * as lib_notificationPolicy from "../lib/notificationPolicy.js";
+import type * as lib_richEmbeds from "../lib/richEmbeds.js";
 import type * as linkPreviews from "../linkPreviews.js";
 import type * as messages from "../messages.js";
 import type * as notificationSettings from "../notificationSettings.js";
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   "lib/liveKitAdmin": typeof lib_liveKitAdmin;
   "lib/liveKitWebhook": typeof lib_liveKitWebhook;
   "lib/notificationPolicy": typeof lib_notificationPolicy;
+  "lib/richEmbeds": typeof lib_richEmbeds;
   linkPreviews: typeof linkPreviews;
   messages: typeof messages;
   notificationSettings: typeof notificationSettings;

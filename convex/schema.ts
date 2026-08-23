@@ -226,6 +226,26 @@ export default defineSchema({
     description: v.optional(v.string()),
     image: v.optional(v.string()),
     siteName: v.optional(v.string()),
+    /** Recognised provider key ("youtube", "spotify", …) — see
+     * convex/lib/richEmbeds.ts. Absent for the ordinary scraped link that
+     * just gets a generic card. */
+    provider: v.optional(v.string()),
+    /** What the card should offer: a plain link, or something playable. */
+    kind: v.optional(v.union(v.literal("link"), v.literal("video"), v.literal("audio"))),
+    /** Who made it — the uploader, artist or author, where a provider says. */
+    authorName: v.optional(v.string()),
+    authorUrl: v.optional(v.string()),
+    /** In-place player. Always built from a parsed resource id rather than
+     * copied out of a provider's oEmbed HTML, and framed by the client only
+     * if its host is on the client's allow-list. */
+    embedUrl: v.optional(v.string()),
+    /** Player aspect ratio (width ÷ height), for video. */
+    embedAspect: v.optional(v.number()),
+    /** Fixed player height in pixels, for audio. */
+    embedHeight: v.optional(v.number()),
+    /** The site's own accent colour, used for the card's edge. */
+    themeColor: v.optional(v.string()),
+    faviconUrl: v.optional(v.string()),
     fetchedAt: v.number(),
   }).index("by_url", ["url"]),
 
