@@ -90,6 +90,94 @@ export const listMine = query({
   },
 });
 
+/** How many faces the rail's tooltip shows before collapsing to "+N". Kept
+ * server-side so a busy server doesn't ship a hundred rows for a stack that
+ * only ever renders a handful. */
+const VOICE_AVATAR_LIMIT = 8;
+
+/**
+ * At-a-glance state for every community the user is in: how big it is, and
+ * who's currently sitting in any of its voice channels.
+ *
+ * One query covering all of them rather than one per community, because the
+ * rail needs it for all of them at once — it decides which servers get a
+ * "call in progress" badge, and fills in the tooltip when one is hovered.
+ *
+ * Identity follows the usual rule: the member's profile for *this* community
+ * where they've set one, falling back to their global profile.
+ */
+export const listMineActivity = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const memberships = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    return Promise.all(
+      memberships.map(async (membership) => {
+        const communityId = membership.communityId;
+        const [members, channels] = await Promise.all([
+          ctx.db
+            .query("communityMembers")
+            .withIndex("by_community", (q) => q.eq("communityId", communityId))
+            .collect(),
+          ctx.db
+            .query("channels")
+            .withIndex("by_community", (q) => q.eq("communityId", communityId))
+            .collect(),
+        ]);
+
+        // Deliberately not permission-filtered: this is a count and a set of
+        // faces, the same thing the channel list already shows anyone who can
+        // see the channel, and hiding a private channel's occupants from the
+        // badge would make the badge lie about whether a call is happening.
+        const rows = (
+          await Promise.all(
+            channels
+              .filter((channel) => channel.type === "voice")
+              .map((channel) =>
+                ctx.db
+                  .query("channelCallParticipants")
+                  .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+                  .collect()
+              )
+          )
+        ).flat();
+
+        const voice = await Promise.all(
+          rows.slice(0, VOICE_AVATAR_LIMIT).map(async (row) => {
+            const [user, serverProfile] = await Promise.all([
+              ctx.db.get(row.userId),
+              ctx.db
+                .query("serverProfiles")
+                .withIndex("by_user_community", (q) =>
+                  q.eq("userId", row.userId).eq("communityId", communityId)
+                )
+                .unique(),
+            ]);
+            return {
+              userId: row.userId,
+              name: serverProfile?.displayName ?? user?.name ?? "Unknown",
+              imageUrl: serverProfile?.imageUrl ?? user?.imageUrl,
+            };
+          })
+        );
+
+        return {
+          communityId,
+          memberCount: members.length,
+          voice,
+          /** Everyone in voice, including those past the avatar limit. */
+          voiceCount: rows.length,
+        };
+      })
+    );
+  },
+});
+
 /** Communities the user hasn't joined yet — every community is open-join for now. */
 export const listDiscoverable = query({
   args: {},

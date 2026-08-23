@@ -128,7 +128,7 @@ export function MemberList({ communityId }: MemberListProps) {
   const groups = buildGroups(members);
 
   return (
-    <div className="flex w-56 shrink-0 flex-col bg-accent/40 backdrop-blur-xl m-2 py-2 rounded-2xl">
+    <div className="flex w-56 shrink-0 flex-col py-2">
       <ScrollArea className="min-h-0 flex-1">
         {rawMembers === undefined ? (
           <MemberListSkeleton />

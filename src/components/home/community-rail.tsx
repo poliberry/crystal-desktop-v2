@@ -1,13 +1,19 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Compass, Home } from "lucide-react";
+import { Compass, Home, Volume2 } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarGroup,
+  AvatarGroupCount,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -62,7 +68,7 @@ function RailButton({
           <Button
             variant={active ? "default" : "secondary"}
             size="icon"
-            className="size-12 rounded-full"
+            className="size-12 rounded-none"
             onClick={onClick}
           >
             {children}
@@ -185,6 +191,65 @@ function DiscoverDialog({
   );
 }
 
+interface CommunityActivity {
+  memberCount: number;
+  voice: { userId: Id<"users">; name: string; imageUrl?: string }[];
+  voiceCount: number;
+}
+
+/**
+ * What a server's rail tile says on hover: its name, how big it is, and who's
+ * in voice right now.
+ *
+ * The voice row is the reason this is a component rather than a string — a
+ * stack of faces answers "is anyone I know in there" at a glance, which a
+ * count alone doesn't.
+ */
+function CommunityTooltip({
+  name,
+  activity,
+}: {
+  name: string;
+  activity: CommunityActivity | undefined;
+}) {
+  return (
+    <div className="max-w-56 space-y-2">
+      <div>
+        <p className="font-semibold">{name}</p>
+        {activity && (
+          <p className="text-[11px] text-muted-foreground">
+            {activity.memberCount} {activity.memberCount === 1 ? "member" : "members"}
+          </p>
+        )}
+      </div>
+
+      {!!activity?.voiceCount && (
+        <div className="space-y-1 border-t border-border/50 pt-1.5">
+          <p className="flex items-center gap-1 text-[11px] font-medium text-emerald-500">
+            <Volume2 className="size-3" />
+            {activity.voiceCount} in voice
+          </p>
+          <AvatarGroup data-size="sm">
+            {activity.voice.map((participant) => (
+              <Avatar key={participant.userId} size="sm" title={participant.name}>
+                <AvatarImage src={participant.imageUrl} alt={participant.name} />
+                <AvatarFallback className="text-[8px]">
+                  {participant.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            ))}
+            {activity.voiceCount > activity.voice.length && (
+              <AvatarGroupCount className="text-[10px]">
+                +{activity.voiceCount - activity.voice.length}
+              </AvatarGroupCount>
+            )}
+          </AvatarGroup>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface CommunityRailProps {
   selectedCommunityId: Id<"communities"> | null;
   onSelectHome: () => void;
@@ -228,6 +293,12 @@ export function CommunityRail({
     toggleScreenShare,
   } = controller;
   const communities = useQuery(api.communities.listMine) ?? [];
+  const activityByCommunity = new Map(
+    (useQuery(api.communities.listMineActivity) ?? []).map((entry) => [
+      entry.communityId as string,
+      entry,
+    ])
+  );
 
   return (
     <div className={cn(
@@ -249,17 +320,27 @@ export function CommunityRail({
             room to render without the ScrollArea's own overflow-hidden
             viewport clipping it off the first/last item. */}
         <div className="flex flex-col items-center gap-2 px-2 py-1">
-          {communities.map((community) => (
+          {communities.map((community) => {
+            const activity = activityByCommunity.get(community.id);
+            const inVoice = !!activity?.voiceCount;
+            return (
             <TooltipProvider key={community.id}>
               <Tooltip>
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
+                    {/* The badge sits outside the button because the button
+                        clips its contents — that's what gives the tile its
+                        square-to-squircle morph on hover. */}
+                    <div className="relative">
                     <TooltipTrigger asChild>
                       <button
                         type="button"
+                        aria-label={
+                          inVoice ? `${community.name}, call in progress` : community.name
+                        }
                         onClick={(e) => onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")}
                         className={cn(
-                          "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
+                          "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
                           selectedCommunityId === community.id &&
                             "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-2xl",
                         )}
@@ -276,6 +357,15 @@ export function CommunityRail({
                         </Avatar>
                       </button>
                     </TooltipTrigger>
+                    {inVoice && (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute -right-1 -bottom-1 flex size-5 items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-background"
+                      >
+                        <Volume2 className="size-3" />
+                      </span>
+                    )}
+                    </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
                     {canOpenInCurrentTab && !openCommunityIds.has(community.id) && (
@@ -288,10 +378,13 @@ export function CommunityRail({
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
-                <TooltipContent side="right">{community.name}</TooltipContent>
+                <TooltipContent side="right">
+                  <CommunityTooltip name={community.name} activity={activity} />
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-          ))}
+            );
+          })}
           {communities.length === 0 && (
             <p className="mt-4 px-1 text-center text-[11px] text-muted-foreground">
               No communities yet
