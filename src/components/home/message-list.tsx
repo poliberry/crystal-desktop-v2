@@ -20,6 +20,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EMPTY_EMOJI_MAP } from "@/lib/custom-emoji";
+import {
+  conversationMessagesKey,
+  useCachedFirstPage,
+} from "@/lib/message-cache";
 import { cn } from "@/lib/utils";
 
 interface MessageListProps {
@@ -305,7 +309,15 @@ export function MessageList({ conversationId }: MessageListProps) {
     { conversationId },
     { initialNumItems: 30 }
   );
-  const chronological = [...results].reverse();
+  // A revisit is a cold query as far as Convex is concerned, so show the last
+  // known page while it re-resolves — see src/lib/message-cache.ts.
+  const loadingFirstPage = status === "LoadingFirstPage";
+  const messages = useCachedFirstPage<MessageDoc>(
+    conversationMessagesKey(conversationId),
+    results,
+    loadingFirstPage
+  );
+  const chronological = [...messages].reverse();
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef<string | undefined>(undefined);
@@ -318,7 +330,7 @@ export function MessageList({ conversationId }: MessageListProps) {
     }
   }, [chronological]);
 
-  if (status === "LoadingFirstPage") {
+  if (loadingFirstPage && chronological.length === 0) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <MessageListSkeleton />

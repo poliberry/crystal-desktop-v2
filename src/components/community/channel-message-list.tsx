@@ -16,6 +16,10 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { ServerEmoji } from "@/lib/custom-emoji";
+import {
+  channelMessagesKey,
+  useCachedFirstPage,
+} from "@/lib/message-cache";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
@@ -362,7 +366,17 @@ export function ChannelMessageList({
     { channelId },
     { initialNumItems: 30 }
   );
-  const chronological = [...results].reverse();
+  // Every mount of a paginated query is a fresh query as far as Convex is
+  // concerned, so this is `LoadingFirstPage` on every visit even when nothing
+  // has changed. Show the last page we know about meanwhile — see
+  // src/lib/message-cache.ts.
+  const loadingFirstPage = status === "LoadingFirstPage";
+  const messages = useCachedFirstPage<MessageDoc>(
+    channelMessagesKey(channelId),
+    results,
+    loadingFirstPage
+  );
+  const chronological = [...messages].reverse();
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef<string | undefined>(undefined);
@@ -375,7 +389,9 @@ export function ChannelMessageList({
     }
   }, [chronological]);
 
-  if (status === "LoadingFirstPage") {
+  // Only truly cold channels get a skeleton now: anything opened before, or
+  // warmed by the preloader, has a page to show.
+  if (loadingFirstPage && chronological.length === 0) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <MessageListSkeleton />

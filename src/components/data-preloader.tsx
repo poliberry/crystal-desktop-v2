@@ -1,10 +1,15 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import {
+  channelMessagesKey,
+  conversationMessagesKey,
+  rememberFirstPage,
+} from "@/lib/message-cache";
 import {
   getRecentViewsSnapshot,
   getServerSnapshot,
@@ -32,9 +37,10 @@ import {
  *    list. Thirty messages per channel across every channel of every server
  *    is the one thing here that genuinely doesn't scale.
  *
- * Preload args have to match the view's exactly, or the two are separate
- * subscriptions and the work is wasted — hence `PRELOAD_PAGE`, which must
- * stay in step with the `numItems` the message lists request.
+ * Structure preloads are shared with the views through Convex's own cache —
+ * identical query and args means one subscription. Message preloads can't be,
+ * because `usePaginatedQuery` puts a unique pagination id in its args; those
+ * are handed over through src/lib/message-cache.ts instead.
  */
 
 const PRELOAD_PAGE = { numItems: 30, cursor: null };
@@ -44,8 +50,21 @@ const PRELOAD_PAGE = { numItems: 30, cursor: null };
  * live subscriptions at launch. */
 const MESSAGE_PRELOAD_BUDGET = 40;
 
+/**
+ * Message preloads can't be shared with the view through Convex's own cache:
+ * `usePaginatedQuery` stamps a unique pagination id into its args, so the
+ * view's query is never the same query as this one. The page is handed over
+ * through the message cache instead, which is what the lists read from while
+ * their own paginated query resolves (see src/lib/message-cache.ts).
+ */
 function ChannelMessagesPreloader({ channelId }: { channelId: Id<"channels"> }) {
-  useQuery(api.channelMessages.list, { channelId, paginationOpts: PRELOAD_PAGE });
+  const result = useQuery(api.channelMessages.list, {
+    channelId,
+    paginationOpts: PRELOAD_PAGE,
+  });
+  useEffect(() => {
+    if (result) rememberFirstPage(channelMessagesKey(channelId), result.page);
+  }, [channelId, result]);
   return null;
 }
 
@@ -54,7 +73,10 @@ function ConversationMessagesPreloader({
 }: {
   conversationId: Id<"conversations">;
 }) {
-  useQuery(api.messages.list, { conversationId, paginationOpts: PRELOAD_PAGE });
+  const result = useQuery(api.messages.list, { conversationId, paginationOpts: PRELOAD_PAGE });
+  useEffect(() => {
+    if (result) rememberFirstPage(conversationMessagesKey(conversationId), result.page);
+  }, [conversationId, result]);
   return null;
 }
 
