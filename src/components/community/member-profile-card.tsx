@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDesktopAPI } from "@/lib/desktop";
 import { badgeDefinition } from "@/lib/badges";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
@@ -61,14 +62,19 @@ function ProfileBadges({ userId }: { userId: Id<"users"> }) {
         // a mystery glyph — see src/lib/badges.ts.
         if (!definition) return null;
         const Icon = definition.icon;
-        const label = `${definition.label} — ${definition.description}`;
         return (
-          <Icon
-            key={badge.badgeId}
-            aria-label={label}
-            title={label}
-            className={cn("size-4 shrink-0", definition.className)}
-          />
+          <Tooltip key={badge.badgeId}>
+            <TooltipTrigger asChild>
+              <Icon
+                aria-label={definition.label}
+                className={cn("size-4 shrink-0", definition.className)}
+              />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p className="font-medium">{definition.label}</p>
+              <p className="text-muted-foreground">{definition.description}</p>
+            </TooltipContent>
+          </Tooltip>
         );
       })}
     </div>
