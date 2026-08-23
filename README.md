@@ -89,6 +89,15 @@ packager. Every pull request is labelled `channel:<name>` from its base branch
 (`.github/workflows/pr-channel-label.yml`), so which channel a change deploys to
 is visible on the PR itself.
 
+Each non-Stable channel also runs under its own app name and data directory
+(`electron/appIdentity.ts`), which is what lets it start while Stable is
+running — Electron's single-instance lock is per data directory, so sharing one
+meant the second channel to launch handed its command line to the first and
+quit. The practical consequence is that channels are separate installs all the
+way down: separate sessions, so you sign in to each one, and separate update
+caches. Stable keeps the directory it has always used, so existing installs are
+untouched.
+
 To build a channel locally:
 
 ```bash
