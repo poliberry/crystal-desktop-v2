@@ -958,9 +958,14 @@ function ChannelRowHover({
   channel: ChannelRow;
   children: React.ReactNode;
 }) {
+  const communityId = useSidebarCommunityId();
   if (channel.type !== "voice") return <>{children}</>;
   return (
-    <VoiceChannelHoverCard channelId={channel.id} channelName={channel.name}>
+    <VoiceChannelHoverCard
+      channelId={channel.id}
+      communityId={communityId}
+      channelName={channel.name}
+    >
       {children}
     </VoiceChannelHoverCard>
   );

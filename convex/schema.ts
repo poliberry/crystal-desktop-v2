@@ -203,9 +203,15 @@ export default defineSchema({
     conversationId: v.id("conversations"),
     userId: v.id("users"),
     joinedAt: v.number(),
+    /** Screen-share state, as on `channelCallParticipants`. */
+    streaming: v.optional(v.boolean()),
+    streamThumbnailUrl: v.optional(v.string()),
+    streamThumbnailStorageId: v.optional(v.id("_storage")),
+    streamThumbnailAt: v.optional(v.number()),
   })
     .index("by_conversation", ["conversationId"])
-    .index("by_conversation_user", ["conversationId", "userId"]),
+    .index("by_conversation_user", ["conversationId", "userId"])
+    .index("by_user", ["userId"]),
 
   /**
    * An in-flight "someone is calling you" for a DM or group conversation.
@@ -419,6 +425,13 @@ export default defineSchema({
     muted: v.optional(v.boolean()),
     deafened: v.optional(v.boolean()),
     streaming: v.optional(v.boolean()),
+    /** A recent still from this member's screen share, published by their own
+     * client every few seconds while they're sharing. Lets somebody outside
+     * the call see what's on before deciding to join it — the stream itself
+     * can't be sampled without subscribing to it. */
+    streamThumbnailUrl: v.optional(v.string()),
+    streamThumbnailStorageId: v.optional(v.id("_storage")),
+    streamThumbnailAt: v.optional(v.number()),
     /** Moderator-imposed, unlike `muted`/`deafened` above which the member
      * sets themselves. The connected client enforces these on itself — see
      * CallProvider — so they survive a reconnect. */
@@ -426,7 +439,8 @@ export default defineSchema({
     serverDeafened: v.optional(v.boolean()),
   })
     .index("by_channel", ["channelId"])
-    .index("by_channel_user", ["channelId", "userId"]),
+    .index("by_channel_user", ["channelId", "userId"])
+    .index("by_user", ["userId"]),
 
   /** Custom emoji uploaded per-community. Emoji are referenced in message
    * text and reactions as `<:name:id>` where `id` is the Convex document _id.

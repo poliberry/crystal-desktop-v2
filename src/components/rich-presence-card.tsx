@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Gamepad2, Music, Tv, type LucideIcon } from "lucide-react";
 
 import type { Id } from "../../convex/_generated/dataModel";
+import { StreamBody } from "@/components/call/stream-preview-card";
 import { useUserActivities } from "@/hooks/use-rich-presence";
 import { cn } from "@/lib/utils";
 import type { RichPresenceActivity, RichPresenceActivityType } from "@/types/desktop-api";
@@ -244,6 +245,9 @@ export function RichPresenceCard({
   // Music and video get the media treatment — bigger art, a seek bar, and the
   // app name demoted to the header since the track is the headline.
   const isMedia = activity.type === "listening" || activity.type === "watching";
+  // A stream's headline is the picture, so it gets the widescreen still rather
+  // than a square of box art beside two lines of text.
+  const isStream = activity.type === "streaming";
 
   return (
     <div
@@ -268,9 +272,18 @@ export function RichPresenceCard({
     >
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         {ACTIVITY_VERB[activity.type]}
-        {isMedia && activity.name ? ` · ${activity.name}` : ""}
+        {(isMedia || isStream) && activity.name ? ` · ${activity.name}` : ""}
       </p>
-      {isMedia ? <MediaBody activity={activity} /> : <GameBody activity={activity} />}
+      {isStream ? (
+        <StreamBody
+          label={activity.details ?? activity.name}
+          thumbnailUrl={activity.imageUrl}
+        />
+      ) : isMedia ? (
+        <MediaBody activity={activity} />
+      ) : (
+        <GameBody activity={activity} />
+      )}
     </div>
   );
 }

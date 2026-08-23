@@ -48,7 +48,7 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     unsubscribeFromScreenShare,
   } = controller;
 
-  const { openSharePicker, openShareSettings } = useCall();
+  const { openSharePicker, openShareSettings, watchIntent, clearWatchIntent } = useCall();
 
   // A DM or group call shows everyone in the conversation from the start, so
   // it looks like the room it's about to become rather than an empty box.
@@ -170,6 +170,8 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
           moderation={moderation}
           onSubscribeScreenShare={subscribeToScreenShare}
           onUnsubscribeScreenShare={unsubscribeFromScreenShare}
+          autoWatchIdentity={watchIntent}
+          onAutoWatched={clearWatchIntent}
         />
       </div>
 

@@ -12,6 +12,8 @@ import {
   RichPresenceCards,
   topActivity,
 } from "@/components/rich-presence-card";
+import { useCall } from "@/components/call/call-provider";
+import { StreamPreviewCard } from "@/components/call/stream-preview-card";
 import { UserProfileContent } from "@/components/community/member-profile-card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
@@ -30,6 +32,9 @@ export interface VoiceParticipant {
   streaming: boolean;
   serverMuted: boolean;
   serverDeafened: boolean;
+  /** A recent still of their screen share, published by their own client —
+   * only present while `streaming`. */
+  streamThumbnailUrl?: string;
   activities?: RichPresenceActivity[];
 }
 
@@ -89,6 +94,7 @@ function ParticipantRow({
   soundboardActive = false,
   interactive = true,
   communityId,
+  onWatchStream,
 }: {
   participant: VoiceParticipant;
   speaking: boolean;
@@ -100,6 +106,9 @@ function ParticipantRow({
   /** Which community's profile to resolve the clicked member against.
    * Omitted inside the channel hover card, where the row isn't clickable. */
   communityId?: Id<"communities">;
+  /** Join this channel's call and open this member's share. Omitted where
+   * there's nowhere to navigate from. */
+  onWatchStream?: () => void;
 }) {
   const row = (
     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -154,7 +163,7 @@ function ParticipantRow({
 
   return (
     <Popover>
-      {participant.activities?.length ? (
+      {participant.activities?.length || participant.streaming ? (
         <HoverCard>
           <HoverCardTrigger asChild>{trigger}</HoverCardTrigger>
           <HoverCardContent side="right" className="w-72">
@@ -167,6 +176,15 @@ function ParticipantRow({
               </Avatar>
               <span className="truncate text-sm font-semibold">{participant.name}</span>
             </div>
+            {participant.streaming && (
+              <StreamPreviewCard
+                name={participant.name}
+                imageUrl={participant.imageUrl}
+                thumbnailUrl={participant.streamThumbnailUrl}
+                className="mb-1.5"
+                onWatch={onWatchStream}
+              />
+            )}
             <RichPresenceCards activities={participant.activities} />
           </HoverCardContent>
         </HoverCard>
@@ -196,15 +214,18 @@ function ParticipantRow({
  */
 export function VoiceChannelHoverCard({
   channelId,
+  communityId,
   channelName,
   children,
 }: {
   channelId: Id<"channels">;
+  communityId: Id<"communities">;
   channelName: string;
   children: React.ReactNode;
 }) {
   const participants = (useQuery(api.channels.listVoiceParticipants, { channelId }) ??
     []) as VoiceParticipant[];
+  const { joinChannelCall } = useCall();
 
   if (participants.length === 0) return <>{children}</>;
 
@@ -219,6 +240,16 @@ export function VoiceChannelHoverCard({
           {participants.map((p) => (
             <div key={p.id} className="flex flex-col gap-1.5">
               <ParticipantRow participant={p} speaking={false} interactive={false} />
+              {p.streaming && (
+                <StreamPreviewCard
+                  name={p.name}
+                  imageUrl={p.imageUrl}
+                  thumbnailUrl={p.streamThumbnailUrl}
+                  onWatch={() =>
+                    void joinChannelCall(channelId, communityId, { watchIdentity: p.id })
+                  }
+                />
+              )}
               <RichPresenceCards activities={p.activities} />
             </div>
           ))}
@@ -241,6 +272,7 @@ export function VoiceChannelParticipants({
   // Only meaningful for the channel we're actually connected to — the packet
   // that drives this never reaches us for any other room.
   const soundboardActive = useSoundboardActivity();
+  const { joinChannelCall } = useCall();
 
   useEffect(() => {
     if (!liveRoom) {
@@ -266,6 +298,9 @@ export function VoiceChannelParticipants({
           communityId={communityId}
           speaking={speaking.has(p.id)}
           soundboardActive={!!liveRoom && soundboardActive.has(p.id)}
+          onWatchStream={() =>
+            void joinChannelCall(channelId, communityId, { watchIdentity: p.id })
+          }
         />
       ))}
     </div>

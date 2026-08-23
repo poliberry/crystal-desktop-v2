@@ -73,6 +73,11 @@ interface CallGridProps {
   /** Move a remote participant's screen-share video + audio subscriptions
    * back to "unsubscribed" so bandwidth/decode stop being spent on it. */
   onUnsubscribeScreenShare?: (participantIdentity: string) => void;
+  /** Whose share to open and focus as soon as it shows up — set when the user
+   * arrived here by clicking a stream in the activity feed. Consumed once,
+   * via `onAutoWatched`, so it doesn't fight them later. */
+  autoWatchIdentity?: string | null;
+  onAutoWatched?: () => void;
 }
 
 interface WatchState {
@@ -656,6 +661,8 @@ export function CallGrid({
   onSubscribeScreenShare,
   onUnsubscribeScreenShare,
   moderation,
+  autoWatchIdentity,
+  onAutoWatched,
 }: CallGridProps) {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
@@ -724,6 +731,24 @@ export function CallGrid({
           : undefined,
     };
   };
+
+  /**
+   * Honour "join and watch": the stream the user clicked in the activity feed
+   * isn't published yet when the join completes, so this waits for its tile
+   * and then opens it focused. Consumed once — after that, what's on screen is
+   * the user's business.
+   */
+  useEffect(() => {
+    if (!autoWatchIdentity) return;
+    const tile = tiles.find(
+      (t) => t.kind === "screen" && t.participant.identity === autoWatchIdentity
+    );
+    if (!tile) return;
+    setWatchedKeys(new Set([tile.key]));
+    setFocusedKey(tile.key);
+    onSubscribeScreenShare?.(autoWatchIdentity);
+    onAutoWatched?.();
+  }, [autoWatchIdentity, tiles, onSubscribeScreenShare, onAutoWatched]);
 
   const getSettings = (identity: string) =>
     participantSettings.get(identity) ?? DEFAULT_SETTINGS;

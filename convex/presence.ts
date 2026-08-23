@@ -281,12 +281,17 @@ export const activeNow = query({
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return { calls: [], activities: [] };
 
-    const summarise = async (userId: Id<"users">) => {
+    const summarise = async (
+      userId: Id<"users">,
+      row?: { streaming?: boolean; streamThumbnailUrl?: string }
+    ) => {
       const user = await ctx.db.get(userId);
       return {
         userId,
         name: user?.name ?? "Unknown",
         imageUrl: user?.imageUrl,
+        streaming: row?.streaming ?? false,
+        streamThumbnailUrl: row?.streamThumbnailUrl,
       };
     };
 
@@ -299,7 +304,13 @@ export const activeNow = query({
       channelId: Id<"channels"> | null;
       conversationId: Id<"conversations"> | null;
       communityId: Id<"communities"> | null;
-      participants: { userId: Id<"users">; name: string; imageUrl?: string }[];
+      participants: {
+        userId: Id<"users">;
+        name: string;
+        imageUrl?: string;
+        streaming: boolean;
+        streamThumbnailUrl?: string;
+      }[];
       participantCount: number;
     }[] = [];
 
@@ -332,7 +343,7 @@ export const activeNow = query({
           conversationId: null,
           communityId: community._id,
           participants: await Promise.all(
-            rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId))
+            rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId, row))
           ),
           participantCount: rows.length,
         });
@@ -354,7 +365,7 @@ export const activeNow = query({
       if (!conversation) continue;
 
       const participants = await Promise.all(
-        rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId))
+        rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId, row))
       );
       calls.push({
         key: `conversation:${conversation._id}`,
@@ -403,5 +414,78 @@ export const activeNow = query({
     ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 
     return { calls, activities };
+  },
+});
+
+/**
+ * Where a user is screen sharing right now, if anywhere the caller can see.
+ *
+ * Streaming is an activity like any other as far as a profile card is
+ * concerned — it just isn't reported through the Rich Presence pipeline,
+ * because it's something the app knows about itself. This is what lets the
+ * card list it alongside "Playing …" and count it in the stack.
+ *
+ * Scoped to shared ground: a voice channel in a community both people are in,
+ * or a conversation the caller is a member of. A stream somewhere the caller
+ * has no business being isn't reported at all.
+ */
+export const streamOf = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+
+    const myCommunities = new Set(
+      (
+        await ctx.db
+          .query("communityMembers")
+          .withIndex("by_user", (q) => q.eq("userId", me._id))
+          .collect()
+      ).map((m) => m.communityId as string)
+    );
+
+    const channelRows = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const row of channelRows) {
+      if (!row.streaming) continue;
+      const channel = await ctx.db.get(row.channelId);
+      if (!channel || !myCommunities.has(channel.communityId as string)) continue;
+      const community = await ctx.db.get(channel.communityId);
+      return {
+        kind: "channel" as const,
+        channelId: channel._id,
+        communityId: channel.communityId,
+        where: `#${channel.name}`,
+        context: community?.name ?? null,
+        thumbnailUrl: row.streamThumbnailUrl,
+      };
+    }
+
+    const conversationRows = await ctx.db
+      .query("callParticipants")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const row of conversationRows) {
+      if (!row.streaming) continue;
+      const membership = await ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation_user", (q) =>
+          q.eq("conversationId", row.conversationId).eq("userId", me._id)
+        )
+        .unique();
+      if (!membership) continue;
+      const conversation = await ctx.db.get(row.conversationId);
+      return {
+        kind: "conversation" as const,
+        conversationId: row.conversationId,
+        where: conversation?.name ?? "your call",
+        context: null,
+        thumbnailUrl: row.streamThumbnailUrl,
+      };
+    }
+
+    return null;
   },
 });

@@ -313,6 +313,8 @@ export const listVoiceParticipants = query({
           streaming: row.streaming ?? false,
           serverMuted: row.serverMuted ?? false,
           serverDeafened: row.serverDeafened ?? false,
+          /** Only meaningful while `streaming` — see the schema. */
+          streamThumbnailUrl: row.streamThumbnailUrl,
           activities: activitiesOf(presence),
         };
       })
@@ -568,3 +570,68 @@ export const markRead = mutation({
   },
 });
 
+
+/**
+ * Publish a still from my own screen share so people outside the call can see
+ * what's on before joining.
+ *
+ * Only the sharer can write this — a stream can't be sampled by anyone who
+ * hasn't subscribed to it, which is exactly the cost this avoids. The previous
+ * still is deleted as the new one lands, so a long stream doesn't accumulate a
+ * frame every few seconds in storage forever.
+ */
+export const setStreamThumbnail = mutation({
+  args: { channelId: v.id("channels"), storageId: v.id("_storage") },
+  handler: async (ctx, { channelId, storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
+      .unique();
+    if (!row) {
+      // Not in the call any more — the frame is already stale, so don't keep it.
+      await ctx.storage.delete(storageId);
+      return;
+    }
+
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) return;
+    const previous = row.streamThumbnailStorageId;
+    await ctx.db.patch(row._id, {
+      streamThumbnailUrl: url,
+      streamThumbnailStorageId: storageId,
+      streamThumbnailAt: Date.now(),
+    });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+  },
+});
+
+/** Drop the still when a share ends, so nothing claims to be live that isn't. */
+export const clearStreamThumbnail = mutation({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
+      .unique();
+    if (!row?.streamThumbnailStorageId) return;
+    const previous = row.streamThumbnailStorageId;
+    await ctx.db.patch(row._id, {
+      streamThumbnailUrl: undefined,
+      streamThumbnailStorageId: undefined,
+      streamThumbnailAt: undefined,
+    });
+    await ctx.storage.delete(previous);
+  },
+});
+
+/** Upload target for a stream still. Separate from the message-attachment
+ * uploader only because this is voice plumbing, not messaging. */
+export const generateStreamThumbnailUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return ctx.storage.generateUploadUrl();
+  },
+});

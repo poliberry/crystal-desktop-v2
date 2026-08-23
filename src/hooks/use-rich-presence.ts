@@ -85,12 +85,33 @@ function toPayload(activity: RichPresenceActivity) {
 /** Everything a given user is currently broadcasting, richest first. */
 export function useUserActivities(userId: Id<"users"> | undefined): RichPresenceActivity[] {
   const presence = useQuery(api.presence.getUserPresence, userId ? { userId } : "skip");
-  if (!presence) return [];
-  // `activity` is the pre-list field, still present on older presence rows.
-  const list = (presence.activities ?? []) as RichPresenceActivity[];
-  if (list.length > 0) return list;
-  const legacy = presence.activity as RichPresenceActivity | undefined;
-  return legacy ? [legacy] : [];
+  // Screen sharing is an activity as far as a profile card is concerned; it
+  // just doesn't arrive through the Rich Presence pipeline, because it's
+  // something the app knows about itself rather than something it detected.
+  const stream = useQuery(api.presence.streamOf, userId ? { userId } : "skip");
+
+  const reported = !presence
+    ? []
+    : (() => {
+        // `activity` is the pre-list field, still present on older rows.
+        const list = (presence.activities ?? []) as RichPresenceActivity[];
+        if (list.length > 0) return list;
+        const legacy = presence.activity as RichPresenceActivity | undefined;
+        return legacy ? [legacy] : [];
+      })();
+
+  if (!stream) return reported;
+  // First: a live stream is the most immediate thing anyone is doing, and it's
+  // the one with something to click.
+  return [
+    {
+      type: "streaming",
+      name: stream.where,
+      details: stream.context ?? undefined,
+      imageUrl: stream.thumbnailUrl,
+    },
+    ...reported,
+  ];
 }
 
 /** Diagnostics for the Settings panel — detectable count, IPC socket path. */
