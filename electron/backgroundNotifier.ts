@@ -1,4 +1,4 @@
-import { Notification, type BrowserWindow } from "electron";
+import { Notification, nativeImage, type BrowserWindow, type NativeImage } from "electron";
 import { ConvexClient } from "convex/browser";
 import { anyApi } from "convex/server";
 
@@ -24,6 +24,7 @@ interface FeedConversation {
   messageId: string;
   authorId: string;
   authorName: string;
+  authorImageUrl?: string;
   text: string;
   createdAt: number;
 }
@@ -36,6 +37,7 @@ interface FeedChannel {
   messageId: string;
   authorId: string;
   authorName: string;
+  authorImageUrl?: string;
   text: string;
   createdAt: number;
 }
@@ -44,6 +46,7 @@ interface FeedFriendRequest {
   requestId: string;
   createdAt: number;
   fromName: string;
+  fromImageUrl?: string;
 }
 
 interface Feed {
@@ -120,9 +123,55 @@ function isFocusedOn(kind: "conversation" | "channel", id: string): boolean {
   return !!win && win.isFocused() && activeView?.kind === kind && activeView.id === id;
 }
 
-function notify(title: string, body: string, onClick: () => void): void {
+/**
+ * Avatars already fetched, keyed by URL.
+ *
+ * Avatar URLs are content-addressed, so an entry can never go stale — a new
+ * picture is a new URL. Bounded anyway: a busy server's worth of distinct
+ * senders shouldn't accumulate in the main process forever.
+ */
+const iconCache = new Map<string, NativeImage>();
+const ICON_CACHE_LIMIT = 50;
+
+/**
+ * The sender's avatar as a native image, or undefined if it can't be had.
+ *
+ * The OS won't fetch a remote URL for us, so the bytes have to come through
+ * here. Anything `nativeImage` can't decode (it has no WebP support, which
+ * some avatar CDNs serve by default) simply means no icon — a toast without a
+ * face is still a perfectly good toast.
+ */
+async function iconFor(url: string | undefined): Promise<NativeImage | undefined> {
+  if (!url) return undefined;
+  const cached = iconCache.get(url);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return undefined;
+    const image = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()));
+    if (image.isEmpty()) return undefined;
+    // Toasts render this small; sending a 512px avatar to the shell is waste.
+    const sized = image.resize({ width: 64, height: 64 });
+    if (iconCache.size >= ICON_CACHE_LIMIT) {
+      const oldest = iconCache.keys().next().value;
+      if (oldest !== undefined) iconCache.delete(oldest);
+    }
+    iconCache.set(url, sized);
+    return sized;
+  } catch {
+    return undefined;
+  }
+}
+
+async function notify(
+  title: string,
+  body: string,
+  onClick: () => void,
+  iconUrl?: string
+): Promise<void> {
   if (!Notification.isSupported()) return;
-  const notification = new Notification({ title, body });
+  const notification = new Notification({ title, body, icon: await iconFor(iconUrl) });
   notification.on("click", () => {
     const win = getMainWindow?.();
     win?.show();
@@ -148,9 +197,12 @@ function handleFeed(feed: Feed): void {
     if (c.authorId === myUserId) continue;
     if (isFocusedOn("conversation", c.conversationId)) continue;
 
-    notify(c.conversationName, `${c.authorName}: ${c.text || "Sent an attachment"}`, () => {
-      onNavigate?.({ kind: "conversation", conversationId: c.conversationId });
-    });
+    void notify(
+      c.conversationName,
+      `${c.authorName}: ${c.text || "Sent an attachment"}`,
+      () => onNavigate?.({ kind: "conversation", conversationId: c.conversationId }),
+      c.authorImageUrl
+    );
   }
 
   for (const c of feed.channels) {
@@ -160,14 +212,22 @@ function handleFeed(feed: Feed): void {
     if (c.authorId === myUserId) continue;
     if (isFocusedOn("channel", c.channelId)) continue;
 
-    notify(`#${c.channelName} · ${c.communityName}`, `${c.authorName}: ${c.text || "Sent an attachment"}`, () => {
-      onNavigate?.({ kind: "channel", communityId: c.communityId, channelId: c.channelId });
-    });
+    void notify(
+      `#${c.channelName} · ${c.communityName}`,
+      `${c.authorName}: ${c.text || "Sent an attachment"}`,
+      () => onNavigate?.({ kind: "channel", communityId: c.communityId, channelId: c.channelId }),
+      c.authorImageUrl
+    );
   }
 
   for (const r of feed.friendRequests) {
     if (seenFriendRequests.has(r.requestId)) continue;
     seenFriendRequests.add(r.requestId);
-    notify("Friend request", `${r.fromName} sent you a friend request`, () => {});
+    void notify(
+      "Friend request",
+      `${r.fromName} sent you a friend request`,
+      () => {},
+      r.fromImageUrl
+    );
   }
 }

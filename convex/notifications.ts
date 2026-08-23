@@ -155,6 +155,9 @@ export const feed = query({
             messageId: lastMessage._id,
             authorId: lastMessage.authorId,
             authorName: author?.name ?? "Someone",
+            // For the desktop toast's icon — a notification is easier to
+            // place at a glance from a face than from a name.
+            authorImageUrl: author?.imageUrl,
             text: lastMessage.text ?? "",
             createdAt: lastMessage._creationTime,
           };
@@ -175,6 +178,7 @@ export const feed = query({
       messageId: Id<"channelMessages">;
       authorId: Id<"users">;
       authorName: string;
+      authorImageUrl?: string;
       text: string;
       createdAt: number;
     }[] = [];
@@ -212,6 +216,7 @@ export const feed = query({
           messageId: lastMessage._id,
           authorId: lastMessage.authorId,
           authorName: author?.name ?? "Someone",
+          authorImageUrl: author?.imageUrl,
           text: lastMessage.text ?? "",
           createdAt: lastMessage._creationTime,
         });
@@ -227,7 +232,12 @@ export const feed = query({
     const friendRequests = await Promise.all(
       incomingRequests.map(async (r) => {
         const requester = await ctx.db.get(r.requesterId);
-        return { requestId: r._id, createdAt: r.createdAt, fromName: requester?.name ?? "Someone" };
+        return {
+          requestId: r._id,
+          createdAt: r.createdAt,
+          fromName: requester?.name ?? "Someone",
+          fromImageUrl: requester?.imageUrl,
+        };
       })
     );
 
