@@ -331,6 +331,26 @@ export const markAllRead = mutation({
 });
 
 /**
+ * Delete the inbox outright.
+ *
+ * Distinct from marking read, which keeps the history and only stops it
+ * nagging — this is for a user who wants the list gone. Read state elsewhere
+ * (conversations, channels) is untouched: throwing away the record of being
+ * told about something isn't a claim to have read it.
+ */
+export const clearAll = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const mine = await ctx.db
+      .query("notifications")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+    for (const notification of mine) await ctx.db.delete(notification._id);
+  },
+});
+
+/**
  * The newest notification's identity, for the in-app "new message" chime.
  *
  * Deliberately tiny: the client only needs to know *that* something arrived,

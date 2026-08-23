@@ -4,22 +4,27 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { activitiesOf } from "./lib/activities";
 
 async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
-  const presence = await ctx.db
+  return ctx.db
     .query("presence")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .unique();
-  return presence?.effective ?? "offline";
 }
 
-function summarize(user: Doc<"users">, status: Doc<"presence">["effective"]) {
+function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
   return {
     id: user._id,
     name: user.name,
     username: user.username,
     imageUrl: user.imageUrl,
-    status,
+    /** Cosmetics and activity, so a friend row can say what they're up to
+     * rather than only whether they're reachable. */
+    customStatus: user.customStatus,
+    nameplateUrl: user.nameplateUrl,
+    status: presence?.effective ?? "offline",
+    activities: activitiesOf(presence),
   };
 }
 
@@ -56,7 +61,7 @@ export const listIncomingRequests = query({
       rows.map(async (row) => {
         const requester = await ctx.db.get(row.requesterId);
         if (!requester) return null;
-        return { requestId: row._id, createdAt: row.createdAt, user: summarize(requester, "offline") };
+        return { requestId: row._id, createdAt: row.createdAt, user: summarize(requester, null) };
       })
     );
     return requests.filter((r): r is NonNullable<typeof r> => r !== null);
@@ -76,7 +81,7 @@ export const listOutgoingRequests = query({
       rows.map(async (row) => {
         const recipient = await ctx.db.get(row.recipientId);
         if (!recipient) return null;
-        return { requestId: row._id, createdAt: row.createdAt, user: summarize(recipient, "offline") };
+        return { requestId: row._id, createdAt: row.createdAt, user: summarize(recipient, null) };
       })
     );
     return requests.filter((r): r is NonNullable<typeof r> => r !== null);

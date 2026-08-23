@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { AtSign, Bell, Check, Hash, MessageSquare, UserPlus } from "lucide-react";
+import { AtSign, Bell, Check, Hash, MessageSquare, Trash2, UserPlus } from "lucide-react";
 import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
@@ -53,6 +53,7 @@ export function NotificationInbox() {
   const unreadCount = useQuery(api.notifications.unreadCount) ?? 0;
   const markRead = useMutation(api.notifications.markRead);
   const markAllRead = useMutation(api.notifications.markAllRead);
+  const clearAll = useMutation(api.notifications.clearAll);
   const nav = useNavigation();
 
   const { results, status, loadMore } = usePaginatedQuery(
@@ -99,8 +100,8 @@ export function NotificationInbox() {
       </TooltipProvider>
 
       <PopoverContent align="end" className="w-88 p-0">
-        <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-          <p className="text-sm font-semibold">Inbox</p>
+        <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
+          <p className="mr-auto text-sm font-semibold">Inbox</p>
           {unreadCount > 0 && (
             <Button
               variant="ghost"
@@ -110,6 +111,17 @@ export function NotificationInbox() {
             >
               <Check className="size-3.5" />
               Mark all read
+            </Button>
+          )}
+          {results.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground"
+              onClick={() => void clearAll()}
+            >
+              <Trash2 className="size-3.5" />
+              Clear
             </Button>
           )}
         </div>

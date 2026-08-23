@@ -26,7 +26,9 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     username: user.username,
     imageUrl: user.imageUrl,
     customStatus: user.customStatus,
+    nameplateUrl: user.nameplateUrl,
     status: presence?.effective ?? "offline",
+    activities: activitiesOf(presence),
   };
 }
 
@@ -92,6 +94,9 @@ export const listMine = query({
           members: await otherMembers(ctx, conversation._id, me._id),
           lastMessageText: lastMessage?.text ?? null,
           lastMessageAt: lastMessage?._creationTime ?? conversation.createdAt,
+          /** So the list can prefix the preview with "Me:" — whose turn it is
+           * is most of what a one-line preview is for. */
+          lastMessageMine: lastMessage?.authorId === me._id,
           unread,
           unreadCount,
         };
