@@ -13,6 +13,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 
+import { useCall, type CallVideoKind } from "@/components/call/call-provider";
 import { ParticipantModerationItems } from "@/components/call/participant-moderation-items";
 import { PendingParticipantTile } from "@/components/call/pending-participant-tile";
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
@@ -27,7 +28,6 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Slider } from "@/components/ui/slider";
-import { usePipWindow } from "@/hooks/use-pip-window";
 import { cn } from "@/lib/utils";
 
 export interface CallTile {
@@ -67,12 +67,6 @@ interface CallGridProps {
   /** Set only in a community voice channel — enables the per-participant
    * moderation items in the tile context menu. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
-  /** Move a remote participant's screen-share video + audio subscriptions to
-   * "subscribed" so their stream actually starts flowing. */
-  onSubscribeScreenShare?: (participantIdentity: string) => void;
-  /** Move a remote participant's screen-share video + audio subscriptions
-   * back to "unsubscribed" so bandwidth/decode stop being spent on it. */
-  onUnsubscribeScreenShare?: (participantIdentity: string) => void;
   /** Whose share to open and focus as soon as it shows up — set when the user
    * arrived here by clicking a stream in the activity feed. Consumed once,
    * via `onAutoWatched`, so it doesn't fight them later. */
@@ -223,14 +217,6 @@ function clampZoom(z: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 }
 
-/** How often (ms) to capture and stream a frame to the pip window. Modest
- * on purpose — it's a small preview window, not the primary view, and every
- * frame is a JPEG data URL sent over IPC. */
-const PIP_FRAME_INTERVAL_MS = 1000 / 12;
-/** Hard ceiling regardless of how big the user resizes the pip window to
- * (e.g. maximized on a large display) — keeps frame size/IPC bandwidth sane. */
-const PIP_MAX_CAPTURE_WIDTH = 1920;
-
 /** Whether a participant currently has a live, unmuted camera track —
  * zoom/pop-out only make sense when there's actual video to act on (not an
  * avatar placeholder), and this needs to stay reactive since a participant
@@ -296,103 +282,37 @@ function FocusedTileViewport({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
-  const {
-    isOpen: pipOpen,
-    isSupported: pipSupported,
-    size: pipSize,
-    open: openPip,
-    close: closePip,
-    sendFrame,
-  } = usePipWindow();
+  // The pop-out window belongs to the call, not to this tile — see
+  // CallProvider. Focusing a different tile no longer closes it, and neither
+  // does collapsing the call screen: what's been popped out stays popped out
+  // until it's closed or its source goes away.
+  const { poppedOut, popOutSupported, popOut, closePopOut } = useCall();
+  const videoKind: CallVideoKind = tile.kind === "screen" ? "screen" : "camera";
+  const pipOpen =
+    poppedOut?.identity === tile.participant.identity && poppedOut.kind === videoKind;
   const cameraHasVideo = useParticipantCameraFeed(tile.participant);
   const hasVideo = tile.kind === "screen" || cameraHasVideo;
-  const pipSizeRef = useRef(pipSize);
-  pipSizeRef.current = pipSize;
 
-  // Reset zoom/pan whenever the focused tile changes (new participant/share)
-  // and drop any open pop-out — it was showing the *previous* tile's stream.
+  // Reset zoom/pan whenever the focused tile changes (new participant/share).
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    closePip();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tile.key]);
 
-  // While popped out, the on-screen video is paused (frozen, and already
-  // hidden behind the overlay below) so the main UI isn't still decoding and
-  // painting a full-size copy nobody can see. A second, off-screen <video>
-  // is attached to the same underlying LiveKit track purely to keep feeding
-  // the capture loop — tracks support multiple simultaneous attachments, so
-  // this doesn't disturb the tile's own attach/detach management. Captured
-  // at the pip window's own (live, resize-aware) size — scaled for device
-  // pixel ratio — rather than a fixed guess, since capturing smaller than
-  // the window means the browser upscales a low-res JPEG to fill it.
+  // While this tile is popped out, its on-screen video is paused (frozen, and
+  // already hidden behind the overlay below) so the main UI isn't still
+  // decoding and painting a full-size copy nobody can see. The frames the
+  // pop-out window draws come from CallProvider's own capture loop, which
+  // attaches a second element to the same track.
   useEffect(() => {
     if (!pipOpen) return;
-    const container = videoContainerRef.current;
-    const visibleVideo = container?.querySelector("video") ?? null;
+    const visibleVideo = videoContainerRef.current?.querySelector("video") ?? null;
     visibleVideo?.pause();
-
-    const source =
-      tile.kind === "screen" ? Track.Source.ScreenShare : Track.Source.Camera;
-    const track = tile.participant.getTrackPublication(source)?.track;
-
-    const offscreen = document.createElement("video");
-    offscreen.autoplay = true;
-    offscreen.muted = true;
-    offscreen.playsInline = true;
-    Object.assign(offscreen.style, {
-      position: "fixed",
-      width: "1px",
-      height: "1px",
-      opacity: "0",
-      pointerEvents: "none",
-      top: "0",
-      left: "0",
-    });
-    document.body.appendChild(offscreen);
-    if (track) track.attach(offscreen);
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    let rafId: number;
-    let lastSent = 0;
-
-    const loop = (t: number) => {
-      rafId = requestAnimationFrame(loop);
-      if (!ctx || t - lastSent < PIP_FRAME_INTERVAL_MS) return;
-      const video = offscreen;
-      if (video.readyState < 2 || !video.videoWidth) return;
-      lastSent = t;
-
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const targetW = Math.min(
-        PIP_MAX_CAPTURE_WIDTH,
-        Math.round(pipSizeRef.current.width * dpr),
-      );
-      // Never upscale past the source video's own resolution — pointless
-      // and just makes the JPEG bigger for no visible gain.
-      const w = Math.min(targetW, video.videoWidth);
-      const h = Math.round(w * (video.videoHeight / video.videoWidth));
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-      ctx.drawImage(video, 0, 0, w, h);
-      sendFrame(canvas.toDataURL("image/jpeg", 0.85));
-    };
-    rafId = requestAnimationFrame(loop);
-
     return () => {
-      cancelAnimationFrame(rafId);
-      if (track) track.detach(offscreen);
-      offscreen.remove();
       void visibleVideo?.play().catch(() => {});
     };
-    // `tile` itself is a new object every render (constructed inline in
-    // room-view.tsx); key/kind/participant identify it stably instead.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipOpen, tile.key, tile.kind, tile.participant, sendFrame]);
+  }, [pipOpen]);
 
   const resetZoom = () => {
     setZoom(1);
@@ -465,10 +385,14 @@ function FocusedTileViewport({
 
   const handlePopOutToggle = async () => {
     if (pipOpen) {
-      closePip();
+      closePopOut();
       return;
     }
-    await openPip({ title: displayName, width: 480, height: 270 });
+    await popOut({
+      identity: tile.participant.identity,
+      kind: videoKind,
+      title: displayName,
+    });
   };
 
   return (
@@ -509,7 +433,7 @@ function FocusedTileViewport({
           <span className="text-white/80">{displayName} is popped out</span>
           <button
             type="button"
-            onClick={closePip}
+            onClick={closePopOut}
             className="rounded-md border border-white/20 px-2 py-1 text-xs hover:bg-white/10"
           >
             Bring back
@@ -554,7 +478,7 @@ function FocusedTileViewport({
               <Maximize className="size-3.5" />
             </button>
           )}
-          {pipSupported && (
+          {popOutSupported && (
             <button
               type="button"
               title={
@@ -690,77 +614,38 @@ function GalleryGrid({
 export function CallGrid({
   tiles,
   pending = [],
-  onSubscribeScreenShare,
-  onUnsubscribeScreenShare,
   moderation,
   autoWatchIdentity,
   onAutoWatched,
 }: CallGridProps) {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
-  const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
   const [participantSettings, setParticipantSettings] = useState<
     Map<string, TileSettings>
   >(new Map());
-
-  // Screen-share tile keys are `screen-${identity}` (see `RoomView`), so this
-  // lets cleanup paths look up which participant to unsubscribe from even
-  // after their tile has already disappeared from `tiles`.
-  const screenTiles = tiles.filter((t) => t.kind === "screen");
-  const identityForKey = (key: string) =>
-    screenTiles.find((t) => t.key === key)?.participant.identity ??
-    key.slice("screen-".length);
+  // Which streams are being watched is call state, not grid state — the mini
+  // player shows and stops them while this component isn't even on screen.
+  // Pruning a share that ends lives there too (see CallProvider).
+  const { watchedShares, watchShare, unwatchShare } = useCall();
 
   useEffect(() => {
     if (focusedKey && !tiles.some((t) => t.key === focusedKey))
       setFocusedKey(null);
-    const screenKeys = new Set(
-      tiles.filter((t) => t.kind === "screen").map((t) => t.key),
-    );
-    setWatchedKeys((prev) => {
-      const removed = [...prev].filter((k) => !screenKeys.has(k));
-      if (removed.length === 0) return prev;
-      // The tile disappeared (participant stopped sharing / left) — drop the
-      // subscription too so a re-share later starts from the unwatched state.
-      for (const key of removed)
-        onUnsubscribeScreenShare?.(identityForKey(key));
-      return new Set([...prev].filter((k) => screenKeys.has(k)));
-    });
-  }, [tiles, focusedKey, onUnsubscribeScreenShare]);
+  }, [tiles, focusedKey]);
 
   const getWatchState = (tile: CallTile): WatchState | undefined => {
     if (tile.kind !== "screen" || tile.isLocal) return undefined;
     const identity = tile.participant.identity;
-    const watching = watchedKeys.has(tile.key);
-    const audioEnabled = watchedKeys.size === 0 || watching;
-    const stopWatching = () => {
-      setWatchedKeys((prev) => {
-        const n = new Set(prev);
-        n.delete(tile.key);
-        return n;
-      });
-      onUnsubscribeScreenShare?.(identity);
-    };
-    const startWatching = (replace: boolean) => {
-      setWatchedKeys((prev) => {
-        if (!replace) return new Set([...prev, tile.key]);
-        // "Watch" (not "Add") replaces the whole watch set — unsubscribe
-        // whichever streams are being dropped so they stop downloading.
-        for (const key of prev) {
-          if (key !== tile.key) onUnsubscribeScreenShare?.(identityForKey(key));
-        }
-        return new Set([tile.key]);
-      });
-      onSubscribeScreenShare?.(identity);
-    };
+    const watching = watchedShares.includes(identity);
+    const audioEnabled = watchedShares.length === 0 || watching;
     return {
       watching,
       canWatch: true,
       audioEnabled,
-      onWatch: watching ? stopWatching : () => startWatching(true),
+      onWatch: watching
+        ? () => unwatchShare(identity)
+        : () => watchShare(identity, { replace: true }),
       onWatchAdd:
-        !watching && watchedKeys.size > 0
-          ? () => startWatching(false)
-          : undefined,
+        !watching && watchedShares.length > 0 ? () => watchShare(identity) : undefined,
     };
   };
 
@@ -776,11 +661,10 @@ export function CallGrid({
       (t) => t.kind === "screen" && t.participant.identity === autoWatchIdentity
     );
     if (!tile) return;
-    setWatchedKeys(new Set([tile.key]));
+    watchShare(autoWatchIdentity, { replace: true });
     setFocusedKey(tile.key);
-    onSubscribeScreenShare?.(autoWatchIdentity);
     onAutoWatched?.();
-  }, [autoWatchIdentity, tiles, onSubscribeScreenShare, onAutoWatched]);
+  }, [autoWatchIdentity, tiles, watchShare, onAutoWatched]);
 
   const getSettings = (identity: string) =>
     participantSettings.get(identity) ?? DEFAULT_SETTINGS;

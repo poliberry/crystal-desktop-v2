@@ -44,8 +44,6 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     toggleCamera,
     toggleMicrophone,
     toggleScreenShare,
-    subscribeToScreenShare,
-    unsubscribeFromScreenShare,
   } = controller;
 
   const { openSharePicker, openShareSettings, watchIntent, clearWatchIntent } = useCall();
@@ -168,8 +166,6 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
           tiles={tiles}
           pending={pending}
           moderation={moderation}
-          onSubscribeScreenShare={subscribeToScreenShare}
-          onUnsubscribeScreenShare={unsubscribeFromScreenShare}
           autoWatchIdentity={watchIntent}
           onAutoWatched={clearWatchIntent}
         />
