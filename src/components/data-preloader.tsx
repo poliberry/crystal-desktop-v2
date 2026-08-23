@@ -96,7 +96,6 @@ function ConversationPreloader({ conversationId }: { conversationId: Id<"convers
 
 /** Account-wide lists — nothing per-server or per-conversation. */
 function AccountPreloader() {
-  useQuery(api.users.getCurrentUser);
   useQuery(api.friends.listFriends);
   useQuery(api.friends.listIncomingRequests);
   useQuery(api.friends.listOutgoingRequests);
@@ -109,7 +108,21 @@ function useRecentViews(): RecentView[] {
   return useSyncExternalStore(subscribeRecentViews, getRecentViewsSnapshot, getServerSnapshot);
 }
 
+/**
+ * Nothing is worth warming until there's a signed-in user with a Convex row,
+ * and some of what's below actively can't run before then: the emoji and
+ * soundboard catalogues throw rather than returning nothing when the row
+ * doesn't exist, which it doesn't until `SessionBootstrap` has called
+ * `ensureUser`. This provider mounts above both the sign-in gate and that
+ * bootstrap, so it has to wait for one rather than assume it.
+ */
 export function DataPreloader() {
+  const me = useQuery(api.users.getCurrentUser);
+  if (!me) return null;
+  return <PreloadEverything />;
+}
+
+function PreloadEverything() {
   const communities = useQuery(api.communities.listMine) ?? [];
   const conversations = useQuery(api.conversations.listMine) ?? [];
   const recent = useRecentViews();
