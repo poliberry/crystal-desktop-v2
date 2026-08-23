@@ -75,7 +75,10 @@ const TABS = [
 const NAVIGATION = [
   {
     label: "General",
-    children: [{ value: "profile", label: "Profile", icon: User }],
+    children: [
+      { value: "profile", label: "Profile", icon: User },
+      { value: "updates", label: "Updates", icon: Download },
+    ],
   },
   {
     label: "Customisation",
@@ -167,7 +170,10 @@ export function SettingsShell() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent>
                     <SignOutButton>
-                      <DropdownMenuItem className="text-destructive" onClick={() => window.close()}>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => window.close()}
+                      >
                         <LogOut />
                         <span>Log out</span>
                       </DropdownMenuItem>
