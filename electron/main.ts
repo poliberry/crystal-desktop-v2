@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
+import { applyChannelIdentity } from "./appIdentity";
 import * as backgroundNotifier from "./backgroundNotifier";
 import { REPO, resolveRunningChannel } from "./channels";
 import richPresence from "./richPresence";
@@ -23,6 +24,13 @@ const channel = resolveRunningChannel({
   appPath: app.getAppPath(),
   isPackaged: app.isPackaged,
 });
+
+// Before anything else: this decides the app's name, its data directory and
+// (through that directory) its single-instance lock, so it has to run before
+// any of the three is read. See electron/appIdentity.ts for why a channel that
+// skips it can't start at all while Stable is running.
+applyChannelIdentity(channel);
+
 const PRELOAD = path.join(__dirname, "preload.js");
 
 // MIME types for the static file server (production only)
@@ -150,12 +158,6 @@ let mainWindow: BrowserWindow | null = null;
 // instead of hiding it — see the tray/background-notifications setup in
 // app.whenReady().
 let isQuitting = false;
-
-// Windows requires the App User Model ID to be set before the app is ready
-// for OS toast notifications to be supported (Notification.isSupported()).
-if (process.platform === "win32") {
-  app.setAppUserModelId("dev.crystal.desktop");
-}
 
 // ---------------------------------------------------------------------------
 // crystal:// deep-link / OAuth callback handling
@@ -462,6 +464,14 @@ app.whenReady().then(async () => {
 
   // Register crystal:// as the default protocol client so the OS routes
   // OAuth callback URLs (e.g. crystal://auth/callback?...) back to this app.
+  //
+  // Every channel claims the same scheme, deliberately: it's registered with
+  // Clerk as an allowed redirect, so a per-channel scheme would break sign-in
+  // everywhere but Stable. Because this runs on every launch, the channel the
+  // user most recently started owns the scheme — which is the one they're
+  // signing in to. Worth knowing now that channels have their own sessions: a
+  // callback delivered to a channel with no sign-in in flight simply does
+  // nothing, and the flow can be restarted from the right one.
   app.setAsDefaultProtocolClient("crystal");
 
   const ses = session.defaultSession;
