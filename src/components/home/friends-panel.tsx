@@ -55,14 +55,13 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
       <div className="flex min-w-0 flex-1 flex-col p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Users className="size-5 text-muted-foreground" />
           <h1 className="text-lg font-semibold">Friends</h1>
         </div>
         <AddFriendDialog />
       </div>
 
       <Tabs defaultValue="online" className="min-h-0 flex-1">
-        <TabsList>
+        <TabsList className="w-full">
           <TabsTrigger value="online">Online</TabsTrigger>
           <TabsTrigger value="pending" className="gap-1.5">
             Pending

@@ -60,7 +60,6 @@ export function AddFriendDialog() {
       <DialogTrigger asChild>
         <Button size="sm" className="gap-1.5">
           <UserPlus className="size-4" />
-          Add Friend
         </Button>
       </DialogTrigger>
       <DialogContent>
