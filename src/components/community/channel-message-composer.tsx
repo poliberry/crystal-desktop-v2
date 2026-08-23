@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Paperclip, Send, Smile } from "lucide-react";
+import { AtSign, Paperclip, Send, Smile } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -22,6 +22,8 @@ import { useComposerAttachments } from "@/hooks/use-composer-attachments";
 import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { formatCustomEmoji, matchInProgressShortcode } from "@/lib/custom-emoji";
 import { searchSystemEmoji } from "@/lib/system-emoji";
+import { matchInProgressMention, mentionToken } from "@/lib/mentions";
+import { useMentionNames, useMentionSuggestions } from "@/hooks/use-mentions";
 
 interface ChannelMessageComposerProps {
   channelId: Id<"channels">;
@@ -32,6 +34,9 @@ interface AutocompleteState {
   start: number;
   end: number;
   query: string;
+  /** Which sigil opened it — `:` for emoji, `@` for mentions. They can't be
+   * open at once, and each has its own source of suggestions. */
+  kind: "emoji" | "mention";
 }
 
 interface Suggestion {
@@ -77,6 +82,7 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const serverEmojis = useQuery(api.communityEmojis.list, { communityId });
+  const mentionNames = useMentionNames(communityId);
 
   useEffect(() => {
     return () => {
@@ -85,8 +91,31 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
     };
   }, [channelId, stopTyping]);
 
-  const suggestions: Suggestion[] =
-    autocomplete && autocomplete.query.length >= 2
+  const mentionMatches = useMentionSuggestions(
+    communityId,
+    autocomplete?.kind === "mention" ? autocomplete.query : null
+  );
+
+  const mentionSuggestions: Suggestion[] = mentionMatches.map((match) => ({
+    key: match.key,
+    label: match.hint ? `@${match.label} · ${match.hint}` : `@${match.label}`,
+    preview: match.imageUrl ? (
+      <img src={match.imageUrl} alt="" className="size-4 rounded-full object-cover" />
+    ) : match.target.kind === "role" ? (
+      <span
+        className="size-2.5 rounded-full"
+        style={{ backgroundColor: match.color ?? "currentColor" }}
+      />
+    ) : (
+      <AtSign className="size-3.5" />
+    ),
+    // A trailing space so the next word isn't swallowed into the token, and
+    // so typing straight on doesn't reopen the picker against the id.
+    insert: `${mentionToken(match.target)} `,
+  }));
+
+  const emojiSuggestions: Suggestion[] =
+    autocomplete?.kind === "emoji" && autocomplete.query.length >= 2
       ? (() => {
           const needle = autocomplete.query.toLowerCase();
           const customMatches = (serverEmojis ?? [])
@@ -111,6 +140,9 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
           return [...customMatches, ...systemMatches];
         })()
       : [];
+
+  const suggestions: Suggestion[] =
+    autocomplete?.kind === "mention" ? mentionSuggestions : emojiSuggestions;
 
   useEffect(() => {
     setActiveIndex(0);
@@ -188,7 +220,15 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
   const handleTextChange = (value: string, caret: number) => {
     setText(value);
     handleTyping();
-    setAutocomplete(matchInProgressShortcode(value, caret));
+    // A `:` shortcode wins if both somehow match — it's the narrower pattern
+    // (it needs a colon already typed) so it's the more deliberate one.
+    const shortcode = matchInProgressShortcode(value, caret);
+    if (shortcode) {
+      setAutocomplete({ ...shortcode, kind: "emoji" });
+      return;
+    }
+    const mention = matchInProgressMention(value, caret);
+    setAutocomplete(mention ? { ...mention, kind: "mention" } : null);
   };
 
   const insertEmoji = (emoji: string) => {
@@ -197,7 +237,7 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
   };
 
   return (
-    <div ref={dropZoneRef} className="relative shrink-0 p-3">
+    <div ref={dropZoneRef} className="relative shrink-0 p-2 bg-background">
       <ComposerDropOverlay active={isDraggingOver} />
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
@@ -258,6 +298,7 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
           onBlur={() => setAutocomplete(null)}
           emojiByName={customEmojiByName}
           emojiById={customEmojiById}
+          mentionNames={mentionNames}
           placeholder="Message…"
         />
 

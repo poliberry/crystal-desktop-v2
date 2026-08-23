@@ -10,7 +10,7 @@ import {
   type TrackPublication,
 } from "livekit-client";
 
-import { getAvatarColor } from "@/lib/avatar-color";
+import { useAvatarAccent } from "@/hooks/use-avatar-accent";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,11 @@ interface ParticipantTileProps {
   participant: Participant;
   isLocal?: boolean;
   imageUrl?: string;
+  /** Display name resolved against the community this call belongs to (see
+   * `RoomView`). Falls back to whatever name the LiveKit token carried. */
+  name?: string;
+  /** Cached dominant colour of `imageUrl`. Sampled locally when absent. */
+  accent?: string;
   /** Fill the parent's box exactly (grid/focused view) instead of the
    * default fixed 16:9 card (bottom rail thumbnails). */
   fill?: boolean;
@@ -35,7 +40,8 @@ interface ParticipantTileProps {
  * additionally routed to the hardware sink (Linux) so the app never
  * accidentally re-captures itself.
  */
-export function ParticipantTile({ participant, isLocal = false, imageUrl, fill = false, onClick, localVolume, localMuted, soundboardActive = false }: ParticipantTileProps) {
+export function ParticipantTile({ participant, isLocal = false, imageUrl, name, accent, fill = false, onClick, localVolume, localMuted, soundboardActive = false }: ParticipantTileProps) {
+  const displayName = name || participant.name || participant.identity;
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
   const [hasVideo, setHasVideo] = useState(false);
@@ -44,18 +50,13 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
   // publishes it whenever the local deafen state changes.
   const [deafened, setDeafened] = useState(participant.attributes?.deafened === "1");
   const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
-  const [avatarBg, setAvatarBg] = useState<string | null>(null);
+  const avatarBg = useAvatarAccent(imageUrl, accent);
 
   // Keep refs fresh for use inside audio-attachment closure
   const localVolumeRef = useRef(localVolume ?? 1);
   const localMutedRef = useRef(!!localMuted);
   localVolumeRef.current = localVolume ?? 1;
   localMutedRef.current = !!localMuted;
-
-  useEffect(() => {
-    if (!imageUrl) { setAvatarBg(null); return; }
-    getAvatarColor(imageUrl).then(setAvatarBg);
-  }, [imageUrl]);
 
   useEffect(() => {
     setIsSpeaking(participant.isSpeaking);
@@ -166,7 +167,7 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
   }, [localVolume, localMuted]);
 
   const showVideo = hasVideo;
-  const initials = (participant.name || participant.identity || "?").slice(0, 2).toUpperCase();
+  const initials = (displayName || "?").slice(0, 2).toUpperCase();
 
   return (
     <div
@@ -198,7 +199,7 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
       {!showVideo && (
         <div className="flex size-15 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-2xl font-semibold text-foreground">
           {imageUrl ? (
-            <img src={imageUrl} alt={participant.name || participant.identity} className="size-full object-cover" />
+            <img src={imageUrl} alt={displayName} className="size-full object-cover" />
           ) : (
             initials
           )}
@@ -207,7 +208,7 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, fill =
 
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/60 to-transparent px-2 py-1.5">
         <span className="text-xs font-medium text-white drop-shadow">
-          {participant.name || participant.identity}
+          {displayName}
           {isLocal ? " (You)" : ""}
         </span>
         {/* Status is shown as glyphs rather than words so it reads the same

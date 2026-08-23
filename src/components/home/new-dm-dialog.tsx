@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { MessageSquarePlus } from "lucide-react";
+import { MessageSquarePlus, Plus } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -78,7 +78,7 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
     >
       <DialogTrigger asChild>
         <Button variant="ghost" size="icon" className="size-7">
-          <MessageSquarePlus className="size-4" />
+          <Plus className="size-4" />
         </Button>
       </DialogTrigger>
       <DialogContent>

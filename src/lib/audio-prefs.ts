@@ -47,6 +47,10 @@ export interface AudioPreferences {
   deafened: boolean;
   /** Mic mute state to restore when undeafening. */
   mutedBeforeDeafen: boolean;
+  /** Run the Krisp noise filter over the microphone before publishing it.
+   * A machine preference rather than a per-call one — it costs CPU, so a
+   * weak machine should be able to turn it off once and be done. */
+  noiseSuppression: boolean;
   quality: StreamQuality;
   /** Default "share audio" choice for the next screen share. */
   shareAudio: SystemAudioChoice;
@@ -64,6 +68,7 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   muted: false,
   deafened: false,
   mutedBeforeDeafen: false,
+  noiseSuppression: true,
   quality: { resolution: "1080p", frameRate: 30 },
   shareAudio: { mode: "off" },
   soundboardVolume: 0.7,
@@ -134,6 +139,7 @@ export function readAudioPreferences(): AudioPreferences {
     muted: stored.muted === true,
     deafened: stored.deafened === true,
     mutedBeforeDeafen: stored.mutedBeforeDeafen === true,
+    noiseSuppression: stored.noiseSuppression !== false,
     quality: parseQuality(stored.quality) ?? DEFAULT_AUDIO_PREFERENCES.quality,
     shareAudio: shareAudio ?? DEFAULT_AUDIO_PREFERENCES.shareAudio,
     soundboardVolume: clampVolume(stored.soundboardVolume, DEFAULT_AUDIO_PREFERENCES.soundboardVolume),

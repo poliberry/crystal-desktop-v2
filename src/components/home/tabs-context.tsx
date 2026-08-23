@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import type { Id } from "../../../convex/_generated/dataModel";
+import { recordRecentView } from "@/lib/recent-views";
 
 export type TabTarget =
   | { type: "home" }
@@ -125,13 +126,18 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the address bar in sync with the active tab (enables back/forward).
+  // Keep the address bar in sync with the active tab (enables back/forward),
+  // and note what was opened so the preloader knows where to spend its
+  // budget (see src/lib/recent-views.ts). Both belong here rather than in the
+  // navigation helpers because this also covers tab-bar clicks, back/forward
+  // and deep links.
   useEffect(() => {
     const active = tabs.find((t) => t.id === activeTabId) ?? HOME_TAB;
     const hash = tabPath(active.target);
     if (window.location.hash !== hash) {
       window.history.pushState({ tabId: active.id }, "", hash || window.location.pathname);
     }
+    if (active.target.type !== "home") recordRecentView(active.target);
   }, [activeTabId, tabs]);
 
   useEffect(() => {

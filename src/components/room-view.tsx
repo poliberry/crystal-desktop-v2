@@ -48,7 +48,7 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     unsubscribeFromScreenShare,
   } = controller;
 
-  const { openSharePicker, openShareSettings } = useCall();
+  const { openSharePicker, openShareSettings, watchIntent, clearWatchIntent } = useCall();
 
   // A DM or group call shows everyone in the conversation from the start, so
   // it looks like the room it's about to become rather than an empty box.
@@ -75,9 +75,16 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
     ...participants.filter((p) => p.identity !== room.localParticipant.identity),
   ];
 
+  // LiveKit only knows the name baked into the token at join time, so
+  // identities are resolved here instead — against this call's community when
+  // it has one, so a per-server nickname or avatar shows in the call exactly
+  // as it does in the channel list beside it.
   const userIds = allParticipants.map((p) => p.identity as Id<"users">);
-  const userData = useQuery(api.users.getUsersByIds, { userIds });
-  const imageUrlByIdentity = new Map(userData?.map((u) => [u.id as string, u.imageUrl]) ?? []);
+  const userData = useQuery(api.users.getUsersByIds, {
+    userIds,
+    communityId: activeCall?.kind === "channel" ? activeCall.communityId : undefined,
+  });
+  const profileByIdentity = new Map(userData?.map((u) => [u.id as string, u]) ?? []);
 
   const screenSharers = allParticipants.filter((p) => {
     const pub = p.getTrackPublication(Track.Source.ScreenShare);
@@ -90,13 +97,16 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       kind: "participant" as const,
       participant,
       isLocal: participant === room.localParticipant,
-      imageUrl: imageUrlByIdentity.get(participant.identity),
+      imageUrl: profileByIdentity.get(participant.identity)?.imageUrl,
+      name: profileByIdentity.get(participant.identity)?.name,
+      accent: profileByIdentity.get(participant.identity)?.avatarAccent,
     })),
     ...screenSharers.map((participant) => ({
       key: `screen-${participant.identity}`,
       kind: "screen" as const,
       participant,
       isLocal: participant === room.localParticipant,
+      name: profileByIdentity.get(participant.identity)?.name,
     })),
   ];
 
@@ -160,6 +170,8 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
           moderation={moderation}
           onSubscribeScreenShare={subscribeToScreenShare}
           onUnsubscribeScreenShare={unsubscribeFromScreenShare}
+          autoWatchIdentity={watchIntent}
+          onAutoWatched={clearWatchIntent}
         />
       </div>
 

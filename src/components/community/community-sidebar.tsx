@@ -13,12 +13,25 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery } from "convex/react";
-import { ChevronDown, FolderPlus, Hash, LogOut, Settings, UserPlus, Volume2 } from "lucide-react";
+import {
+  ChevronDown,
+  FolderPlus,
+  Hash,
+  LogOut,
+  Settings,
+  UserPlus,
+  Volume2,
+} from "lucide-react";
 import type { Room } from "livekit-client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -63,7 +76,12 @@ type ChannelRow = {
 };
 
 type ActiveDragItem =
-  | { type: "channel"; id: Id<"channels">; name: string; channelType: "text" | "voice" }
+  | {
+      type: "channel";
+      id: Id<"channels">;
+      name: string;
+      channelType: "text" | "voice";
+    }
   | { type: "category"; id: Id<"channelCategories">; name: string }
   | null;
 
@@ -71,6 +89,40 @@ interface CommunitySidebarProps {
   communityId: Id<"communities">;
   selectedChannelId: Id<"channels"> | null;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
+}
+
+/**
+ * Which community this sidebar is showing.
+ *
+ * A context rather than a prop because it's constant for the whole subtree
+ * and only one leaf deep inside it — the voice channel roster, which resolves
+ * members against their profile *here* — actually needs it. Threading it down
+ * through ChannelTree → CategorySection → ChannelBucket → ChannelItem adds a
+ * parameter to four components that have no use for it.
+ */
+const SidebarCommunityContext = createContext<Id<"communities"> | null>(null);
+
+function useSidebarCommunityId(): Id<"communities"> {
+  const communityId = useContext(SidebarCommunityContext);
+  if (!communityId) {
+    throw new Error("useSidebarCommunityId must be used within <CommunitySidebar>");
+  }
+  return communityId;
+}
+
+/**
+ * Which of a community's channels have unread messages.
+ *
+ * Shares the rail's summary query — it already computes this for every
+ * community to decide which servers get a badge, and Convex dedupes identical
+ * subscriptions, so reading it per channel row costs nothing extra.
+ */
+function useUnreadChannelIds(communityId: Id<"communities">): Set<string> {
+  const activity = useQuery(api.communities.listMineActivity);
+  return useMemo(() => {
+    const entry = activity?.find((a) => a.communityId === communityId);
+    return new Set((entry?.unreadChannelIds ?? []).map((id) => id as string));
+  }, [activity, communityId]);
 }
 
 function ChannelListSkeleton() {
@@ -94,13 +146,18 @@ function ChannelListSkeleton() {
   );
 }
 
-export function CommunitySidebar({ communityId, selectedChannelId, onSelectChannel }: CommunitySidebarProps) {
+export function CommunitySidebar({
+  communityId,
+  selectedChannelId,
+  onSelectChannel,
+}: CommunitySidebarProps) {
   const community = useQuery(api.communities.get, { communityId });
   const rawChannels = useQuery(api.channels.list, { communityId });
   const rawCategories = useQuery(api.channelCategories.list, { communityId });
   const channels = rawChannels ?? [];
   const categories = rawCategories ?? [];
-  const isLoadingChannels = rawChannels === undefined || rawCategories === undefined;
+  const isLoadingChannels =
+    rawChannels === undefined || rawCategories === undefined;
 
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
   const { activeCall, controller, expanded } = useCall();
@@ -116,17 +173,37 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
-  const [createChannelFor, setCreateChannelFor] = useState<Id<"channelCategories"> | null | undefined>(undefined);
+  const [createChannelFor, setCreateChannelFor] = useState<
+    Id<"channelCategories"> | null | undefined
+  >(undefined);
   const [editingChannel, setEditingChannel] = useState<ChannelRow | null>(null);
-  const [editingCategory, setEditingCategory] = useState<{ id: Id<"channelCategories">; name: string } | null>(null);
+  const [editingCategory, setEditingCategory] = useState<{
+    id: Id<"channelCategories">;
+    name: string;
+  } | null>(null);
 
-  const canManageChannels = hasPermission(myPermissions, PERMISSIONS.MANAGE_CHANNELS);
-  const canCreateInvite = hasPermission(myPermissions, PERMISSIONS.CREATE_INVITE);
-  const canManageEmojis = hasPermission(myPermissions, PERMISSIONS.MANAGE_EMOJIS);
+  const canManageChannels = hasPermission(
+    myPermissions,
+    PERMISSIONS.MANAGE_CHANNELS,
+  );
+  const canCreateInvite = hasPermission(
+    myPermissions,
+    PERMISSIONS.CREATE_INVITE,
+  );
+  const canManageEmojis = hasPermission(
+    myPermissions,
+    PERMISSIONS.MANAGE_EMOJIS,
+  );
+  const canManageCommunity = hasPermission(
+    myPermissions,
+    PERMISSIONS.MANAGE_COMMUNITY,
+  );
 
   useEffect(() => {
     if (!selectedChannelId && channels.length > 0) {
-      const firstText = [...channels].sort((a, b) => a.position - b.position).find((c) => c.type === "text");
+      const firstText = [...channels]
+        .sort((a, b) => a.position - b.position)
+        .find((c) => c.type === "text");
       if (firstText) onSelectChannel(firstText.id, "text");
     }
     // Deliberately keyed on communityId/selectedChannelId (not `channels`
@@ -154,7 +231,8 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
   const hasBanner = !!community.bannerUrl;
 
   return (
-    <div className="flex w-64 shrink-0 flex-col m-2 bg-accent/40 backdrop-blur-xl shadow-md rounded-2xl">
+    <SidebarCommunityContext.Provider value={communityId}>
+    <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl shadow-md">
       <DropdownMenu>
         {/* Banner + trigger share a relative container so the trigger can
             overlay the bottom of the banner with a gradient backdrop */}
@@ -162,7 +240,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
           {hasBanner && (
             <>
               <div
-                className="absolute inset-0 bg-cover bg-center rounded-t-2xl"
+                className="absolute inset-0 bg-cover bg-center"
                 style={{
                   backgroundImage: `url(${community.bannerUrl})`,
                 }}
@@ -172,9 +250,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
             </>
           )}
           <DropdownMenuTrigger asChild>
-            <button
-              className="absolute inset-x-0 top-0 flex h-12 w-full items-center justify-between px-3 text-left transition-colors hover:bg-accent/20"
-            >
+            <button className="absolute inset-x-0 top-0 flex h-12 w-full items-center justify-between px-3 text-left transition-colors hover:bg-accent/20">
               <p className="truncate text-sm font-semibold">{community.name}</p>
               <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
             </button>
@@ -200,11 +276,15 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
               </DropdownMenuItem>
             </>
           )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-            <Settings className="size-4" />
-            Community Settings
-          </DropdownMenuItem>
+          {canManageCommunity && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+                <Settings className="size-4" />
+                Community Settings
+              </DropdownMenuItem>
+            </>
+          )}
           {!community.isOwner && (
             <>
               <DropdownMenuSeparator />
@@ -233,13 +313,21 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
                 selectedChannelId={effectiveSelectedChannelId}
                 onSelectChannel={onSelectChannel}
                 canManageChannels={canManageChannels}
-                activeVoiceChannelId={activeCall?.kind === "channel" ? activeCall.channelId : null}
+                activeVoiceChannelId={
+                  activeCall?.kind === "channel" ? activeCall.channelId : null
+                }
                 liveRoom={controller.room}
-                onCreateChannel={(categoryId) => setCreateChannelFor(categoryId)}
+                onCreateChannel={(categoryId) =>
+                  setCreateChannelFor(categoryId)
+                }
                 onEditChannel={setEditingChannel}
-                onDeleteChannel={(channelId) => void deleteChannel({ channelId })}
+                onDeleteChannel={(channelId) =>
+                  void deleteChannel({ channelId })
+                }
                 onEditCategory={setEditingCategory}
-                onDeleteCategory={(categoryId) => void deleteCategory({ categoryId })}
+                onDeleteCategory={(categoryId) =>
+                  void deleteCategory({ categoryId })
+                }
                 onCreateCategory={() => setCreateCategoryOpen(true)}
               />
             )}
@@ -259,7 +347,11 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
         )}
       </ContextMenu>
 
-      <InviteDialog communityId={communityId} open={inviteOpen} onOpenChange={setInviteOpen} />
+      <InviteDialog
+        communityId={communityId}
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+      />
       {createChannelFor !== undefined && (
         <CreateChannelDialog
           communityId={communityId}
@@ -268,14 +360,27 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
           onOpenChange={(open) => !open && setCreateChannelFor(undefined)}
         />
       )}
-      <CreateCategoryDialog communityId={communityId} open={createCategoryOpen} onOpenChange={setCreateCategoryOpen} />
-      <EditChannelDialog channel={editingChannel} onOpenChange={(open) => !open && setEditingChannel(null)} />
-      <EditCategoryDialog category={editingCategory} onOpenChange={(open) => !open && setEditingCategory(null)} />
+      <CreateCategoryDialog
+        communityId={communityId}
+        open={createCategoryOpen}
+        onOpenChange={setCreateCategoryOpen}
+      />
+      <EditChannelDialog
+        channel={editingChannel}
+        onOpenChange={(open) => !open && setEditingChannel(null)}
+      />
+      <EditCategoryDialog
+        category={editingCategory}
+        onOpenChange={(open) => !open && setEditingCategory(null)}
+      />
       <CommunitySettingsDialog
         communityId={communityId}
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        canManageCommunity={hasPermission(myPermissions, PERMISSIONS.MANAGE_COMMUNITY)}
+        canManageCommunity={hasPermission(
+          myPermissions,
+          PERMISSIONS.MANAGE_COMMUNITY,
+        )}
         canManageRoles={hasPermission(myPermissions, PERMISSIONS.MANAGE_ROLES)}
         canManageChannels={canManageChannels}
         canManageEmojis={canManageEmojis}
@@ -283,6 +388,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
         isOwner={community.isOwner}
       />
     </div>
+    </SidebarCommunityContext.Provider>
   );
 }
 
@@ -298,7 +404,10 @@ interface ChannelTreeProps {
   onCreateChannel: (categoryId: Id<"channelCategories"> | null) => void;
   onEditChannel: (channel: ChannelRow) => void;
   onDeleteChannel: (channelId: Id<"channels">) => void;
-  onEditCategory: (category: { id: Id<"channelCategories">; name: string }) => void;
+  onEditCategory: (category: {
+    id: Id<"channelCategories">;
+    name: string;
+  }) => void;
   onDeleteCategory: (categoryId: Id<"channelCategories">) => void;
   onCreateCategory: () => void;
 }
@@ -332,14 +441,19 @@ function ChannelTree({
   const reorderChannels = useMutation(api.channels.reorder);
   const reorderCategories = useMutation(api.channelCategories.reorder);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
   const [activeItem, setActiveItem] = useState<ActiveDragItem>(null);
   /**
    * Tracks which droppable is currently under the dragged item and whether the
    * drop would insert before or after it. Used to render a hairline indicator
    * so the user can see exactly where the item will land.
    */
-  const [overInfo, setOverInfo] = useState<{ id: string; isBefore: boolean } | null>(null);
+  const [overInfo, setOverInfo] = useState<{
+    id: string;
+    isBefore: boolean;
+  } | null>(null);
 
   /**
    * Custom collision detection that restricts candidates to the same drag-type.
@@ -354,12 +468,13 @@ function ChannelTree({
    * active item's type before handing off to `closestCenter`.
    */
   const collisionDetection: CollisionDetection = useCallback((args) => {
-    const activeData = args.active.data.current as { type?: string } | undefined;
+    const activeData = args.active.data.current as
+      { type?: string } | undefined;
     if (activeData?.type === "category") {
       return closestCenter({
         ...args,
         droppableContainers: args.droppableContainers.filter((c) =>
-          String(c.id).startsWith("cat:")
+          String(c.id).startsWith("cat:"),
         ),
       });
     }
@@ -367,7 +482,9 @@ function ChannelTree({
       return closestCenter({
         ...args,
         droppableContainers: args.droppableContainers.filter(
-          (c) => String(c.id).startsWith("chan:") || String(c.id).startsWith("dropzone:")
+          (c) =>
+            String(c.id).startsWith("chan:") ||
+            String(c.id).startsWith("dropzone:"),
         ),
       });
     }
@@ -375,7 +492,9 @@ function ChannelTree({
   }, []);
 
   const { uncategorized, categoryBuckets } = useMemo(() => {
-    const sortedCategories = [...categories].sort((a, b) => a.position - b.position);
+    const sortedCategories = [...categories].sort(
+      (a, b) => a.position - b.position,
+    );
     const byCategory = new Map<string, ChannelRow[]>();
     for (const channel of channels) {
       const key = channel.categoryId ?? "none";
@@ -383,11 +502,16 @@ function ChannelTree({
       list.push(channel);
       byCategory.set(key, list);
     }
-    for (const list of byCategory.values()) list.sort((a, b) => a.position - b.position);
+    for (const list of byCategory.values())
+      list.sort((a, b) => a.position - b.position);
 
     return {
       uncategorized: byCategory.get("none") ?? [],
-      categoryBuckets: sortedCategories.map((c) => ({ id: c.id, name: c.name, channels: byCategory.get(c.id) ?? [] })),
+      categoryBuckets: sortedCategories.map((c) => ({
+        id: c.id,
+        name: c.name,
+        channels: byCategory.get(c.id) ?? [],
+      })),
     };
   }, [channels, categories]);
 
@@ -398,13 +522,17 @@ function ChannelTree({
 
   const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (!over || active.id === over.id) { setOverInfo(null); return; }
+    if (!over || active.id === over.id) {
+      setOverInfo(null);
+      return;
+    }
 
     // Only show the line indicator when hovering directly over a same-type item
     // (not a dropzone, not a cross-type collision).
     const activeData = active.data.current as { type?: string } | undefined;
     const overData = over.data.current as { type?: string } | undefined;
-    const relevantType = activeData?.type === "category" ? "category" : "channel";
+    const relevantType =
+      activeData?.type === "category" ? "category" : "channel";
     if (overData?.type !== relevantType) {
       setOverInfo(null);
       return;
@@ -413,22 +541,36 @@ function ChannelTree({
     // Compare the dragged item's current translated centre with the over
     // item's centre to decide before vs. after.
     const translated = active.rect.current.translated;
-    if (!translated) { setOverInfo(null); return; }
+    if (!translated) {
+      setOverInfo(null);
+      return;
+    }
     const activeCenter = translated.top + translated.height / 2;
     const overCenter = over.rect.top + over.rect.height / 2;
     setOverInfo({ id: String(over.id), isBefore: activeCenter < overCenter });
   };
 
   const handleDragStart = (event: DragStartEvent) => {
-    const data = event.active.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
+    const data = event.active.data.current as
+      { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
     if (!data) return;
 
     if (data.type === "category") {
-      const cat = categories.find((c) => categoryKey(c.id) === String(event.active.id));
+      const cat = categories.find(
+        (c) => categoryKey(c.id) === String(event.active.id),
+      );
       if (cat) setActiveItem({ type: "category", id: cat.id, name: cat.name });
     } else if (data.type === "channel") {
-      const chan = channels.find((c) => channelKey(c.id) === String(event.active.id));
-      if (chan) setActiveItem({ type: "channel", id: chan.id, name: chan.name, channelType: chan.type });
+      const chan = channels.find(
+        (c) => channelKey(c.id) === String(event.active.id),
+      );
+      if (chan)
+        setActiveItem({
+          type: "channel",
+          id: chan.id,
+          name: chan.name,
+          channelType: chan.type,
+        });
     }
   };
 
@@ -437,8 +579,10 @@ function ChannelTree({
     setOverInfo(null);
     const { active, over } = event;
     if (!over) return;
-    const activeData = active.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
-    const overData = over.data.current as { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
+    const activeData = active.data.current as
+      { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
+    const overData = over.data.current as
+      { type: string; categoryId?: Id<"channelCategories"> | null } | undefined;
     if (!activeData) return;
 
     if (activeData.type === "category") {
@@ -448,7 +592,7 @@ function ChannelTree({
       const newIndex = order.indexOf(String(over.id));
       if (oldIndex === -1 || newIndex === -1) return;
       const reordered = arrayMove(order, oldIndex, newIndex).map(
-        (key) => key.slice(4) as Id<"channelCategories">
+        (key) => key.slice(4) as Id<"channelCategories">,
       );
       void reorderCategories({ communityId, orderedCategoryIds: reordered });
       return;
@@ -457,7 +601,9 @@ function ChannelTree({
     if (activeData.type === "channel") {
       const sourceCategoryId = activeData.categoryId ?? null;
       const destCategoryId =
-        overData?.type === "channel" || overData?.type === "channel-dropzone" ? (overData.categoryId ?? null) : undefined;
+        overData?.type === "channel" || overData?.type === "channel-dropzone"
+          ? (overData.categoryId ?? null)
+          : undefined;
       if (destCategoryId === undefined) return;
 
       const destBucket = buckets.find((b) => b.id === destCategoryId);
@@ -466,16 +612,36 @@ function ChannelTree({
 
       if (sourceCategoryId === destCategoryId) {
         const oldIndex = destIds.indexOf(String(active.id));
-        const newIndex = overData?.type === "channel" ? destIds.indexOf(String(over.id)) : destIds.length - 1;
+        const newIndex =
+          overData?.type === "channel"
+            ? destIds.indexOf(String(over.id))
+            : destIds.length - 1;
         if (oldIndex === -1 || newIndex === -1) return;
-        const reordered = arrayMove(destIds, oldIndex, newIndex).map((key) => key.slice(5) as Id<"channels">);
-        void reorderChannels({ communityId, categoryId: destCategoryId, orderedChannelIds: reordered });
+        const reordered = arrayMove(destIds, oldIndex, newIndex).map(
+          (key) => key.slice(5) as Id<"channels">,
+        );
+        void reorderChannels({
+          communityId,
+          categoryId: destCategoryId,
+          orderedChannelIds: reordered,
+        });
       } else {
-        const insertIndex = overData?.type === "channel" ? destIds.indexOf(String(over.id)) : destIds.length;
+        const insertIndex =
+          overData?.type === "channel"
+            ? destIds.indexOf(String(over.id))
+            : destIds.length;
         const next = [...destIds];
-        next.splice(insertIndex === -1 ? next.length : insertIndex, 0, String(active.id));
+        next.splice(
+          insertIndex === -1 ? next.length : insertIndex,
+          0,
+          String(active.id),
+        );
         const reordered = next.map((key) => key.slice(5) as Id<"channels">);
-        void reorderChannels({ communityId, categoryId: destCategoryId, orderedChannelIds: reordered });
+        void reorderChannels({
+          communityId,
+          categoryId: destCategoryId,
+          orderedChannelIds: reordered,
+        });
       }
     }
   };
@@ -509,7 +675,10 @@ function ChannelTree({
           />
         )}
 
-        <SortableContext items={categories.map((c) => categoryKey(c.id))} strategy={verticalListSortingStrategy}>
+        <SortableContext
+          items={categories.map((c) => categoryKey(c.id))}
+          strategy={verticalListSortingStrategy}
+        >
           {categoryBuckets.map((bucket) => (
             <CategorySection
               key={bucket.id}
@@ -569,7 +738,7 @@ function DropLine({ position }: { position: "top" | "bottom" }) {
         "pointer-events-none absolute inset-x-1 z-10 flex items-center gap-1",
         position === "top"
           ? "top-0 -translate-y-1/2"
-          : "bottom-0 translate-y-1/2"
+          : "bottom-0 translate-y-1/2",
       )}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary ring-1 ring-background" />
@@ -613,18 +782,32 @@ function CategorySection({
   onCreateChannel: (categoryId: Id<"channelCategories"> | null) => void;
   onEditChannel: (channel: ChannelRow) => void;
   onDeleteChannel: (channelId: Id<"channels">) => void;
-  onEditCategory: (category: { id: Id<"channelCategories">; name: string }) => void;
+  onEditCategory: (category: {
+    id: Id<"channelCategories">;
+    name: string;
+  }) => void;
   onDeleteCategory: (categoryId: Id<"channelCategories">) => void;
   overInfo: { id: string; isBefore: boolean } | null;
 }) {
   const categoryId = bucket.id;
   const [collapsed, setCollapsed] = useState(false);
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: categoryKey(categoryId),
     data: { type: "category" },
   });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 };
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0 : 1,
+  };
 
   const isDropTarget = overInfo?.id === categoryKey(categoryId);
 
@@ -643,7 +826,12 @@ function CategorySection({
               onClick={() => setCollapsed((v) => !v)}
               className="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
             >
-              <ChevronDown className={cn("size-3 shrink-0 transition-transform", collapsed && "-rotate-90")} />
+              <ChevronDown
+                className={cn(
+                  "size-3 shrink-0 transition-transform",
+                  collapsed && "-rotate-90",
+                )}
+              />
               <span className="truncate">{bucket.name}</span>
             </button>
           </div>
@@ -656,7 +844,11 @@ function CategorySection({
           {canManageChannels && (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onEditCategory({ id: categoryId, name: bucket.name })}>
+              <ContextMenuItem
+                onClick={() =>
+                  onEditCategory({ id: categoryId, name: bucket.name })
+                }
+              >
                 Edit Category
               </ContextMenuItem>
               <ContextMenuItem
@@ -723,14 +915,22 @@ function ChannelBucket({
   const noChannelsAtAll = totalChannelCount === 0;
 
   return (
-    <SortableContext items={bucket.channels.map((c) => channelKey(c.id))} strategy={verticalListSortingStrategy}>
+    <SortableContext
+      items={bucket.channels.map((c) => channelKey(c.id))}
+      strategy={verticalListSortingStrategy}
+    >
       <div ref={setNodeRef} className="mt-1 flex min-h-2 flex-col gap-0.5">
         {bucket.channels.map((channel) => (
           <ChannelItem
             key={channel.id}
             channel={channel}
-            active={selectedChannelId === channel.id || (channel.type === "voice" && activeVoiceChannelId === channel.id)}
-            isVoiceActive={channel.type === "voice" && activeVoiceChannelId === channel.id}
+            active={
+              selectedChannelId === channel.id ||
+              (channel.type === "voice" && activeVoiceChannelId === channel.id)
+            }
+            isVoiceActive={
+              channel.type === "voice" && activeVoiceChannelId === channel.id
+            }
             onSelectChannel={onSelectChannel}
             canManageChannels={canManageChannels}
             liveRoom={liveRoom}
@@ -740,7 +940,9 @@ function ChannelBucket({
           />
         ))}
         {noChannelsAtAll && bucket.id === null && (
-          <p className="px-2 py-1 text-xs text-muted-foreground">No channels yet. Right-click to create one.</p>
+          <p className="px-2 py-1 text-xs text-muted-foreground">
+            No channels yet. Right-click to create one.
+          </p>
         )}
       </div>
     </SortableContext>
@@ -756,9 +958,14 @@ function ChannelRowHover({
   channel: ChannelRow;
   children: React.ReactNode;
 }) {
+  const communityId = useSidebarCommunityId();
   if (channel.type !== "voice") return <>{children}</>;
   return (
-    <VoiceChannelHoverCard channelId={channel.id} channelName={channel.name}>
+    <VoiceChannelHoverCard
+      channelId={channel.id}
+      communityId={communityId}
+      channelName={channel.name}
+    >
       {children}
     </VoiceChannelHoverCard>
   );
@@ -785,11 +992,24 @@ function ChannelItem({
   onDeleteChannel: (channelId: Id<"channels">) => void;
   overInfo: { id: string; isBefore: boolean } | null;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const communityId = useSidebarCommunityId();
+  const unread = useUnreadChannelIds(communityId).has(channel.id);
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: channelKey(channel.id),
     data: { type: "channel", categoryId: channel.categoryId },
   });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 };
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0 : 1,
+  };
 
   const isDropTarget = overInfo?.id === channelKey(channel.id);
 
@@ -801,34 +1021,56 @@ function ChannelItem({
         <ContextMenuTrigger asChild>
           <div {...attributes} {...listeners}>
             <ChannelRowHover channel={channel}>
-            <button
-              type="button"
-              onClick={() => onSelectChannel(channel.id, channel.type)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
-                active
-                  ? "bg-accent text-foreground hover:bg-accent"
-                  : isVoiceActive
-                  ? "text-foreground hover:bg-accent/60"
-                  : "text-muted-foreground hover:bg-accent/60"
-              )}
-            >
-              {channel.type === "text" ? (
-                <Hash className="size-4 shrink-0" />
-              ) : (
-                <Volume2 className={cn("size-4 shrink-0", isVoiceActive && "text-emerald-500")} />
-              )}
-              <span className="truncate">{channel.name}</span>
-              {isVoiceActive && <span className="ml-auto text-[10px] text-emerald-500">Connected</span>}
-            </button>
+              <button
+                type="button"
+                onClick={() => onSelectChannel(channel.id, channel.type)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                  active
+                    ? "bg-accent text-foreground hover:bg-accent"
+                    : isVoiceActive
+                      ? "text-foreground hover:bg-accent/60"
+                      : "text-muted-foreground hover:bg-accent/60",
+                )}
+              >
+                {channel.type === "text" ? (
+                  <Hash className="size-4 shrink-0" />
+                ) : (
+                  <Volume2
+                    className={cn(
+                      "size-4 shrink-0",
+                      isVoiceActive && "text-emerald-500",
+                    )}
+                  />
+                )}
+                <span className={cn("truncate", unread && "font-semibold text-foreground")}>
+                  {channel.name}
+                </span>
+                {isVoiceActive && (
+                  <span className="ml-auto text-[10px] text-emerald-500">
+                    Connected
+                  </span>
+                )}
+                {unread && !isVoiceActive && (
+                  <span
+                    aria-label="Unread messages"
+                    className="ml-auto size-2 shrink-0 rounded-full bg-foreground"
+                  />
+                )}
+              </button>
             </ChannelRowHover>
           </div>
         </ContextMenuTrigger>
         {canManageChannels && (
           <ContextMenuContent>
-            <ContextMenuItem onClick={() => onEditChannel(channel)}>Edit Channel</ContextMenuItem>
+            <ContextMenuItem onClick={() => onEditChannel(channel)}>
+              Edit Channel
+            </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem variant="destructive" onClick={() => onDeleteChannel(channel.id)}>
+            <ContextMenuItem
+              variant="destructive"
+              onClick={() => onDeleteChannel(channel.id)}
+            >
               Delete Channel
             </ContextMenuItem>
           </ContextMenuContent>
@@ -836,7 +1078,11 @@ function ChannelItem({
       </ContextMenu>
 
       {channel.type === "voice" && (
-        <VoiceChannelParticipants channelId={channel.id} liveRoom={isVoiceActive ? liveRoom : null} />
+        <VoiceChannelParticipants
+          channelId={channel.id}
+          communityId={communityId}
+          liveRoom={isVoiceActive ? liveRoom : null}
+        />
       )}
     </div>
   );

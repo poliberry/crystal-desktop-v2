@@ -16,12 +16,15 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { ServerEmoji } from "@/lib/custom-emoji";
+import {
+  channelMessagesKey,
+  useCachedFirstPage,
+} from "@/lib/message-cache";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { MemberProfileCard } from "./member-profile-card";
+import { UserProfileContent } from "./member-profile-card";
 import { AudioAttachment } from "@/components/home/audio-attachment";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
-import type { FriendStatus } from "@/lib/presence";
 
 interface ChannelMessageListProps {
   channelId: Id<"channels">;
@@ -30,6 +33,9 @@ interface ChannelMessageListProps {
   /** Whether the viewer can delete other people's messages in this channel
    * (MANAGE_MESSAGES) — editing is always author-only. */
   canManageMessages: boolean;
+  /** Reports whether the list is scrolled to the end, which is one of the
+   * signals for "this has been read" (see ChannelChatView). */
+  onAtBottomChange?: (atBottom: boolean) => void;
 }
 
 /** Discord-style channel-start marker — the first thing in the scrollable
@@ -89,45 +95,6 @@ interface MessageDoc {
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
-
-function UserProfileContent({
-  userId,
-  communityId,
-  name,
-  username,
-  imageUrl,
-}: {
-  userId: Id<"users">;
-  communityId: Id<"communities">;
-  name: string;
-  username: string;
-  imageUrl?: string;
-}) {
-  const profile = useQuery(api.users.getProfile, { userId, communityId });
-  return (
-    <MemberProfileCard
-      communityId={communityId}
-      member={{
-        userId,
-        // Server profile overrides arrive with the query; until it resolves,
-        // the message list's own (already server-aware) values stand in.
-        name: profile?.name ?? name,
-        username,
-        imageUrl: profile?.imageUrl ?? imageUrl,
-        roles: profile?.roles,
-        isOwner: profile?.isOwner,
-        // Falls back to offline only until the profile query resolves — the
-        // status is real once it does.
-        status: (profile?.status ?? "offline") as FriendStatus,
-        bio: profile?.bio,
-        bannerUrl: profile?.bannerUrl,
-        customStatus: profile?.customStatus,
-        borderGradientStart: profile?.borderGradientStart,
-        borderGradientEnd: profile?.borderGradientEnd,
-      }}
-    />
-  );
-}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -317,6 +284,7 @@ function MessageRow({
             {message.text && (
               <MessageContent
                 text={message.text}
+                communityId={communityId}
                 suffix={
                   message.editedAt && (
                     <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
@@ -396,13 +364,24 @@ export function ChannelMessageList({
   channelName,
   communityId,
   canManageMessages,
+  onAtBottomChange,
 }: ChannelMessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.channelMessages.list,
     { channelId },
     { initialNumItems: 30 }
   );
-  const chronological = [...results].reverse();
+  // Every mount of a paginated query is a fresh query as far as Convex is
+  // concerned, so this is `LoadingFirstPage` on every visit even when nothing
+  // has changed. Show the last page we know about meanwhile — see
+  // src/lib/message-cache.ts.
+  const loadingFirstPage = status === "LoadingFirstPage";
+  const messages = useCachedFirstPage<MessageDoc>(
+    channelMessagesKey(channelId),
+    results,
+    loadingFirstPage
+  );
+  const chronological = [...messages].reverse();
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef<string | undefined>(undefined);
@@ -415,7 +394,9 @@ export function ChannelMessageList({
     }
   }, [chronological]);
 
-  if (status === "LoadingFirstPage") {
+  // Only truly cold channels get a skeleton now: anything opened before, or
+  // warmed by the preloader, has a page to show.
+  if (loadingFirstPage && chronological.length === 0) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <MessageListSkeleton />
@@ -424,7 +405,16 @@ export function ChannelMessageList({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+    <div
+      onScroll={(event) => {
+        if (!onAtBottomChange) return;
+        const el = event.currentTarget;
+        // A few pixels of slack: sub-pixel layout and the auto-scroll on new
+        // messages both leave the scroll position a hair short of the end.
+        onAtBottomChange(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+      }}
+      className="min-h-0 flex-1 overflow-y-auto px-4 py-2 bg-gradient-to-t from-background to-transparent"
+    >
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a

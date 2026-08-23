@@ -9,6 +9,7 @@ import { useAudioPreferences } from "@/components/audio-provider";
 import { IncomingCall } from "@/components/call/incoming-call";
 import { ScreenSharePicker } from "@/components/screen-share-picker";
 import { useRoom, type RoomController } from "@/hooks/use-room";
+import { useStreamThumbnail } from "@/hooks/use-stream-thumbnail";
 import type { SystemAudioChoice } from "@/lib/audio-prefs";
 
 export type ActiveCall =
@@ -24,7 +25,16 @@ interface CallContextValue {
   /** `ring` (default true) rings the other members. Holding Shift on the
    * call button skips it and just connects. */
   joinDmCall: (conversationId: Id<"conversations">, options?: { ring?: boolean }) => Promise<void>;
-  joinChannelCall: (channelId: Id<"channels">, communityId: Id<"communities">) => Promise<void>;
+  /** `watchIdentity` asks the call UI to open that participant's screen share
+   * as soon as it appears — used by the activity feed's "join and watch". */
+  joinChannelCall: (
+    channelId: Id<"channels">,
+    communityId: Id<"communities">,
+    options?: { watchIdentity?: string }
+  ) => Promise<void>;
+  /** Whose share to open on arrival, consumed once by the call UI. */
+  watchIntent: string | null;
+  clearWatchIntent: () => void;
   leaveCall: () => Promise<void>;
   expand: () => void;
   collapse: () => void;
@@ -92,6 +102,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // new one — see `handleShare` below.
   const [sharePickerMode, setSharePickerMode] = useState<"start" | "change">("start");
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [watchIntent, setWatchIntent] = useState<string | null>(null);
   const activeCallRef = useRef<ActiveCall | null>(null);
   activeCallRef.current = activeCall;
 
@@ -172,7 +183,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   );
 
   const joinChannelCall = useCallback(
-    async (channelId: Id<"channels">, communityId: Id<"communities">) => {
+    async (
+      channelId: Id<"channels">,
+      communityId: Id<"communities">,
+      options?: { watchIdentity?: string }
+    ) => {
+      // Set before the early return: asking to watch someone in a call you're
+      // already in should still open their share.
+      if (options?.watchIdentity) setWatchIntent(options.watchIdentity);
       if (activeCallRef.current && sameCall(activeCallRef.current, "channel", channelId)) {
         setExpanded(true);
         return;
@@ -241,6 +259,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       streaming: screenSharing,
     }).catch(() => {});
   }, [activeCall, status, muted, deafened, screenSharing, setVoiceState]);
+
+  // Publish stills of my own share alongside that state, so the voice channel
+  // list and the activity feed can show what's on it — see useStreamThumbnail.
+  useStreamThumbnail(
+    controller.room,
+    activeCall?.kind === "channel" ? activeCall.channelId : null,
+    screenSharing && status === "connected"
+  );
 
   // --- moderation, applied to ourselves -----------------------------------
   // Server mute/deafen and disconnect are recorded on our own participant row
@@ -363,6 +389,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         expanded,
         joinDmCall,
         joinChannelCall,
+        watchIntent,
+        clearWatchIntent: () => setWatchIntent(null),
         leaveCall,
         expand,
         collapse,

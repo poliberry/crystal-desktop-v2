@@ -7,37 +7,8 @@ import { requireCommunity } from "./communities";
 import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
-
-/** Plain-text `@username` mention detection — there's no rich mention syntax
- * in the composer (desktop or mobile) yet, so this just scans the raw
- * message text for `@handle` tokens and resolves them against the channel's
- * community members. */
-const MENTION_RE = /@([a-z0-9_.]{3,32})/gi;
-
-async function resolveMentions(
-  ctx: QueryCtx,
-  communityId: Id<"communities">,
-  text: string,
-  excludeUserId: Id<"users">
-): Promise<Id<"users">[]> {
-  const candidates = Array.from(new Set(Array.from(text.matchAll(MENTION_RE), (m) => m[1].toLowerCase())));
-  if (candidates.length === 0) return [];
-
-  const mentioned: Id<"users">[] = [];
-  for (const username of candidates) {
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_username", (q) => q.eq("username", username))
-      .unique();
-    if (!user || user._id === excludeUserId) continue;
-    const membership = await ctx.db
-      .query("communityMembers")
-      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", user._id))
-      .unique();
-    if (membership) mentioned.push(user._id);
-  }
-  return mentioned;
-}
+import { resolveChannelMentions } from "./lib/mentions";
+import { markChannelRead } from "./channels";
 
 async function requireChannelPerm(
   ctx: QueryCtx,
@@ -243,8 +214,14 @@ export const send = mutation({
     }
 
     const channel = await ctx.db.get(channelId);
+    // Denormalised so unread state is a field comparison rather than a
+    // "newest message" query per channel — see the schema.
+    if (channel) await ctx.db.patch(channelId, { lastMessageAt: Date.now() });
+    // Having just written it, I've read it.
+    if (channel) await markChannelRead(ctx, channelId, channel.communityId, me._id);
+
     if (channel && trimmed) {
-      const mentioned = await resolveMentions(ctx, channel.communityId, trimmed, me._id);
+      const mentioned = await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id);
       if (mentioned.length > 0) {
         await notifyUsers(ctx, {
           userIds: mentioned,

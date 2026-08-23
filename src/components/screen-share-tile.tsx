@@ -16,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 interface ScreenShareTileProps {
   participant: Participant;
   isLocal?: boolean;
+  /** Community-resolved display name, falling back to the token name. */
+  name?: string;
   fill?: boolean;
   onClick?: () => void;
   /** Controls whether screen-share audio plays (used when multiple shares are active). */
@@ -32,6 +34,7 @@ interface ScreenShareTileProps {
 export function ScreenShareTile({
   participant,
   isLocal = false,
+  name: resolvedName,
   fill = false,
   onClick,
   audioEnabled = true,
@@ -160,7 +163,7 @@ export function ScreenShareTile({
     });
   }, [localVolume, localMuted]);
 
-  const name = participant.name || participant.identity;
+  const name = resolvedName || participant.name || participant.identity;
 
   return (
     <div

@@ -2,7 +2,14 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { activitiesOf } from "./lib/activities";
-import { internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
@@ -155,15 +162,38 @@ export const updateProfileExtended = mutation({
   },
 });
 
+/** As `setAvatar`, for the profile banner. */
 export const setBanner = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: {
+    storageId: v.id("_storage"),
+    originalStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, { storageId, originalStorageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Banner upload failed.");
+    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+
     const previous = me.bannerStorageId;
-    await ctx.db.patch(me._id, { bannerUrl: url, bannerStorageId: storageId });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    const previousOriginal = me.bannerOriginalStorageId;
+    await ctx.db.patch(me._id, {
+      bannerUrl: url,
+      bannerStorageId: storageId,
+      ...(originalStorageId
+        ? { bannerOriginalStorageId: originalStorageId, bannerOriginalUrl: originalUrl ?? undefined }
+        : {}),
+    });
+    if (
+      originalStorageId &&
+      previousOriginal &&
+      previousOriginal !== originalStorageId &&
+      previousOriginal !== storageId
+    ) {
+      await ctx.storage.delete(previousOriginal);
+    }
+    if (previous && previous !== storageId && previous !== me.bannerOriginalStorageId) {
+      await ctx.storage.delete(previous);
+    }
     return url;
   },
 });
@@ -173,8 +203,15 @@ export const removeBanner = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.bannerStorageId;
-    await ctx.db.patch(me._id, { bannerUrl: undefined, bannerStorageId: undefined });
-    if (previous) await ctx.storage.delete(previous);
+    const previousOriginal = me.bannerOriginalStorageId;
+    await ctx.db.patch(me._id, {
+      bannerUrl: undefined,
+      bannerStorageId: undefined,
+      bannerOriginalUrl: undefined,
+      bannerOriginalStorageId: undefined,
+    });
+    if (previous && previous !== previousOriginal) await ctx.storage.delete(previous);
+    if (previousOriginal) await ctx.storage.delete(previousOriginal);
   },
 });
 
@@ -220,16 +257,57 @@ async function isReferencedByAttachment(ctx: MutationCtx, storageId: Id<"_storag
   return !!dmAttachment || !!channelAttachment;
 }
 
+/**
+ * Set the avatar to a freshly-cropped render.
+ *
+ * `originalStorageId` accompanies a *new* picture and is the uncropped upload
+ * it came from, kept so the crop stays adjustable later without asking for
+ * the file again. Re-cropping an image already on the profile omits it, which
+ * means "keep the original I already have" rather than "there isn't one".
+ */
 export const setAvatar = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: {
+    storageId: v.id("_storage"),
+    /** The uncropped upload this crop came from. Omitted when re-cropping an
+     * image already on the profile. */
+    originalStorageId: v.optional(v.id("_storage")),
+  },
+  handler: async (ctx, { storageId, originalStorageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Avatar upload failed.");
+    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
 
     const previous = me.avatarStorageId;
-    await ctx.db.patch(me._id, { imageUrl: url, avatarStorageId: storageId });
-    if (previous && previous !== storageId && !(await isReferencedByAttachment(ctx, previous))) {
+    const previousOriginal = me.avatarOriginalStorageId;
+    // Drop the cached accent colour: it describes the old picture. The
+    // client re-samples and calls `setAvatarAccent` with the new one.
+    await ctx.db.patch(me._id, {
+      imageUrl: url,
+      avatarStorageId: storageId,
+      avatarAccent: undefined,
+      avatarAccentUrl: undefined,
+      ...(originalStorageId
+        ? { avatarOriginalStorageId: originalStorageId, avatarOriginalUrl: originalUrl ?? undefined }
+        : {}),
+    });
+    if (
+      originalStorageId &&
+      previousOriginal &&
+      previousOriginal !== originalStorageId &&
+      previousOriginal !== storageId &&
+      !(await isReferencedByAttachment(ctx, previousOriginal))
+    ) {
+      await ctx.storage.delete(previousOriginal);
+    }
+    if (
+      previous &&
+      previous !== storageId &&
+      // The old crop can be the original itself, for an avatar uploaded
+      // before cropping existed — deleting it would take the source with it.
+      previous !== me.avatarOriginalStorageId &&
+      !(await isReferencedByAttachment(ctx, previous))
+    ) {
       // Not caught: a failed delete should abort the whole mutation (Convex
       // mutations are all-or-nothing) rather than silently commit the avatar
       // change while leaving the old object undeleted-but-unreferenced.
@@ -239,12 +317,35 @@ export const setAvatar = mutation({
   },
 });
 
+/**
+ * Cache the dominant colour of my avatar, as sampled by my own client.
+ *
+ * `sourceUrl` is the avatar the colour was taken from: if it no longer
+ * matches, the avatar changed while the sample was in flight and the result
+ * is dropped rather than written as a colour for the wrong picture. Nobody
+ * writes anyone else's — every client samples its own avatar once and the
+ * value is then read by everybody (see `getUsersByIds`).
+ */
+export const setAvatarAccent = mutation({
+  args: { accent: v.string(), sourceUrl: v.string() },
+  handler: async (ctx, { accent, sourceUrl }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (me.imageUrl !== sourceUrl) return;
+    await ctx.db.patch(me._id, { avatarAccent: accent, avatarAccentUrl: sourceUrl });
+  },
+});
+
 export const removeAvatar = mutation({
   args: {},
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.avatarStorageId;
-    await ctx.db.patch(me._id, { imageUrl: undefined, avatarStorageId: undefined });
+    await ctx.db.patch(me._id, {
+      imageUrl: undefined,
+      avatarStorageId: undefined,
+      avatarAccent: undefined,
+      avatarAccentUrl: undefined,
+    });
     if (previous && !(await isReferencedByAttachment(ctx, previous))) {
       await ctx.storage.delete(previous);
     }
@@ -317,14 +418,45 @@ export const getProfile = query({
   },
 });
 
+/**
+ * Names and avatars for a set of users, in one round trip.
+ *
+ * Pass `communityId` to resolve them the way that community sees them —
+ * per-server nickname and avatar where set, falling back field by field to
+ * the global profile. Omit it in DM contexts, which have no server identity.
+ */
 export const getUsersByIds = query({
-  args: { userIds: v.array(v.id("users")) },
-  handler: async (ctx, { userIds }) => {
+  args: {
+    userIds: v.array(v.id("users")),
+    communityId: v.optional(v.id("communities")),
+  },
+  handler: async (ctx, { userIds, communityId }) => {
     if (userIds.length === 0) return [];
     const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
-    return users
-      .filter((u): u is NonNullable<typeof u> => u !== null)
-      .map((u) => ({ id: u._id, name: u.name, imageUrl: u.imageUrl }));
+    return Promise.all(
+      users
+        .filter((u): u is NonNullable<typeof u> => u !== null)
+        .map(async (u) => {
+          const serverProfile = communityId
+            ? await ctx.db
+                .query("serverProfiles")
+                .withIndex("by_user_community", (q) =>
+                  q.eq("userId", u._id).eq("communityId", communityId)
+                )
+                .unique()
+            : null;
+          // The accent has to come from whichever avatar actually won, not
+          // be merged field by field — a server avatar's colour paired with
+          // the global picture would just be wrong.
+          const usingServerAvatar = !!serverProfile?.imageUrl;
+          return {
+            id: u._id,
+            name: serverProfile?.displayName ?? u.name,
+            imageUrl: serverProfile?.imageUrl ?? u.imageUrl,
+            avatarAccent: usingServerAvatar ? serverProfile.avatarAccent : u.avatarAccent,
+          };
+        })
+    );
   },
 });
 
@@ -350,5 +482,85 @@ export const getCurrentUserIdInternal = internalQuery({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     return me?._id ?? null;
+  },
+});
+
+// --- Badges ----------------------------------------------------------------
+
+/**
+ * A user's badges, oldest first.
+ *
+ * Fetched by the profile card itself rather than joined into every query that
+ * returns a member: the card is opened one at a time, and the alternative is
+ * threading a `badges` field through half a dozen unrelated queries so that
+ * one popover can render a row of pills.
+ */
+export const badgesOf = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const rows = await ctx.db
+      .query("userBadges")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return rows
+      .sort((a, b) => a.grantedAt - b.grantedAt)
+      .map((row) => ({ badgeId: row.badgeId, grantedAt: row.grantedAt }));
+  },
+});
+
+/**
+ * Give someone a badge, unless they already have it.
+ *
+ * A plain helper rather than a mutation: badges are granted as a consequence
+ * of something else happening, so this runs inside whatever transaction
+ * decided it was earned.
+ */
+export async function grantBadge(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  badgeId: string
+): Promise<void> {
+  const existing = await ctx.db
+    .query("userBadges")
+    .withIndex("by_user_badge", (q) => q.eq("userId", userId).eq("badgeId", badgeId))
+    .unique();
+  if (existing) return;
+  await ctx.db.insert("userBadges", { userId, badgeId, grantedAt: Date.now() });
+}
+
+/**
+ * One-off: give everyone who already had an account the Early Supporter badge.
+ *
+ * Run by hand (`npx convex run users:grantEarlySupporterToExistingUsers`)
+ * rather than on sign-in, because "was here early" is a fact about the past —
+ * deciding it from a cutoff date at sign-in time would mean picking a date,
+ * and the set of accounts that existed when this shipped is the honest answer.
+ * Idempotent, so running it twice is harmless.
+ */
+export const grantEarlySupporterToExistingUsers = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+    let granted = 0;
+    for (const user of users) {
+      const existing = await ctx.db
+        .query("userBadges")
+        .withIndex("by_user_badge", (q) =>
+          q.eq("userId", user._id).eq("badgeId", "early_supporter")
+        )
+        .unique();
+      if (existing) continue;
+      await ctx.db.insert("userBadges", {
+        userId: user._id,
+        badgeId: "early_supporter",
+        // Their account's creation time, not now: the badge is about when they
+        // showed up, and "Early Supporter since today" would be nonsense.
+        grantedAt: user._creationTime,
+      });
+      granted++;
+    }
+    return { users: users.length, granted };
   },
 });

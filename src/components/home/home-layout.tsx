@@ -60,9 +60,19 @@ export function HomeLayout() {
     openTab(next);
   };
 
-  // Navigation never collapses an active call — the call stage stays visible
-  // until the user explicitly clicks "Back" in the call stage or disconnects.
-  // collapse() is only called by the call stage's own back button and leaveCall.
+  // Going anywhere else puts the call back in the mini bar on the user card:
+  // the call itself is untouched (CallStage stays mounted, just hidden — see
+  // below), but it stops covering whatever the user just asked to look at.
+  // Keyed on the active tab rather than sprinkled through the navigation
+  // helpers so that clicking a tab in the tab bar, following a notification
+  // and using back/forward all behave the same way.
+  const shownTabId = useRef(activeTab.id);
+  useEffect(() => {
+    if (shownTabId.current === activeTab.id) return;
+    shownTabId.current = activeTab.id;
+    collapse();
+  }, [activeTab.id, collapse]);
+
   const openConversation = (id: Id<"conversations">) => {
     setPendingCommunityId(null);
     navigateTo({ type: "dm", conversationId: id });
@@ -112,8 +122,11 @@ export function HomeLayout() {
     // No channel tab open for this community yet — show its sidebar right
     // away; CommunitySidebar's own auto-select-first-channel effect opens
     // one shortly (via selectChannel below), which becomes the new tab.
+    // Collapsing here rather than waiting for that tab keeps the sidebar
+    // swap visible immediately.
     pendingModeRef.current = mode;
     setPendingCommunityId(id);
+    collapse();
   };
 
   /** Search results / the communities popover — matches every other DM or

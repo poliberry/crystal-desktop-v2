@@ -13,6 +13,7 @@ import {
 } from "./lib/notificationPolicy";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { markAllConversationsRead } from "./conversations";
 
 type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
 
@@ -154,6 +155,9 @@ export const feed = query({
             messageId: lastMessage._id,
             authorId: lastMessage.authorId,
             authorName: author?.name ?? "Someone",
+            // For the desktop toast's icon — a notification is easier to
+            // place at a glance from a face than from a name.
+            authorImageUrl: author?.imageUrl,
             text: lastMessage.text ?? "",
             createdAt: lastMessage._creationTime,
           };
@@ -174,6 +178,7 @@ export const feed = query({
       messageId: Id<"channelMessages">;
       authorId: Id<"users">;
       authorName: string;
+      authorImageUrl?: string;
       text: string;
       createdAt: number;
     }[] = [];
@@ -211,6 +216,7 @@ export const feed = query({
           messageId: lastMessage._id,
           authorId: lastMessage.authorId,
           authorName: author?.name ?? "Someone",
+          authorImageUrl: author?.imageUrl,
           text: lastMessage.text ?? "",
           createdAt: lastMessage._creationTime,
         });
@@ -226,7 +232,12 @@ export const feed = query({
     const friendRequests = await Promise.all(
       incomingRequests.map(async (r) => {
         const requester = await ctx.db.get(r.requesterId);
-        return { requestId: r._id, createdAt: r.createdAt, fromName: requester?.name ?? "Someone" };
+        return {
+          requestId: r._id,
+          createdAt: r.createdAt,
+          fromName: requester?.name ?? "Someone",
+          fromImageUrl: requester?.imageUrl,
+        };
       })
     );
 
@@ -307,6 +318,15 @@ export const markRead = mutation({
   },
 });
 
+/**
+ * Clear the inbox, and the unread DMs it was telling you about.
+ *
+ * The notification rows and a conversation's `lastReadAt` are separate records
+ * of the same fact, so clearing only the former emptied the inbox badge while
+ * leaving the DMs lit in the rail — which reads as the button not having
+ * worked. Channels are deliberately left alone: their indicator means "someone
+ * said something", which reading the inbox doesn't make untrue.
+ */
 export const markAllRead = mutation({
   args: {},
   handler: async (ctx) => {
@@ -316,6 +336,27 @@ export const markAllRead = mutation({
       .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
       .collect();
     for (const n of unread) await ctx.db.patch(n._id, { read: true });
+    await markAllConversationsRead(ctx, me._id);
+  },
+});
+
+/**
+ * Delete the inbox outright.
+ *
+ * Distinct from marking read, which keeps the history and only stops it
+ * nagging — this is for a user who wants the list gone. Read state elsewhere
+ * (conversations, channels) is untouched: throwing away the record of being
+ * told about something isn't a claim to have read it.
+ */
+export const clearAll = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const mine = await ctx.db
+      .query("notifications")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+    for (const notification of mine) await ctx.db.delete(notification._id);
   },
 });
 

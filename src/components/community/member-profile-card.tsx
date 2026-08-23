@@ -18,7 +18,9 @@ import {
 } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDesktopAPI } from "@/lib/desktop";
+import { badgeDefinition } from "@/lib/badges";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { ServerProfileDialog } from "./server-profile-dialog";
@@ -37,6 +39,46 @@ export interface MemberProfileMember {
   /** Community-only — omitted for DM member profiles. */
   isOwner?: boolean;
   roles?: { id: Id<"roles">; name: string; color?: string }[];
+}
+
+/**
+ * The badges a user has earned, as a row of glyphs — the name and reason live
+ * on hover rather than taking up a line of the card.
+ *
+ * Fetches its own data rather than taking it as a prop: this card is built
+ * from half a dozen different member shapes across the app, and threading a
+ * `badges` field through all of them to render one row here would be a lot of
+ * plumbing for a query that only runs when a card is actually open.
+ */
+function ProfileBadges({ userId }: { userId: Id<"users"> }) {
+  const badges = useQuery(api.users.badgesOf, { userId }) ?? [];
+  if (badges.length === 0) return null;
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+      {badges.map((badge) => {
+        const definition = badgeDefinition(badge.badgeId);
+        // An id this build doesn't know about is skipped rather than drawn as
+        // a mystery glyph — see src/lib/badges.ts.
+        if (!definition) return null;
+        const Icon = definition.icon;
+        return (
+          <Tooltip key={badge.badgeId}>
+            <TooltipTrigger asChild>
+              <Icon
+                aria-label={definition.label}
+                className={cn("size-4 shrink-0", definition.className)}
+              />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p className="font-medium">{definition.label}</p>
+              <p className="text-muted-foreground">{definition.description}</p>
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </div>
+  );
 }
 
 export function MemberProfileCard({
@@ -184,6 +226,7 @@ export function MemberProfileCard({
             <p className="truncate text-sm text-muted-foreground">
               @{member.username}
             </p>
+            <ProfileBadges userId={member.userId} />
           </div>
         </div>
 
@@ -291,5 +334,54 @@ export function MemberProfileCard({
       </div>
       {/* end inner overlay */}
     </div>
+  );
+}
+
+/**
+ * The profile card for a user we only know by id — the popover body behind
+ * every avatar/name click (message authors, the voice roster).
+ *
+ * Rendered inside `PopoverContent` so mounting it *is* the trigger for
+ * fetching the full profile (bio, banner, roles) rather than paying for it on
+ * every row in a list. The caller passes whatever identity it already has on
+ * screen so the card is complete on the first frame and the query only fills
+ * in the rest; inside a community, the resolved server profile wins once it
+ * arrives. Omit `communityId` for DMs — there's no per-server identity or
+ * role list to show there.
+ */
+export function UserProfileContent({
+  userId,
+  communityId,
+  name,
+  username,
+  imageUrl,
+}: {
+  userId: Id<"users">;
+  communityId?: Id<"communities">;
+  name: string;
+  username: string;
+  imageUrl?: string;
+}) {
+  const profile = useQuery(api.users.getProfile, { userId, communityId });
+  return (
+    <MemberProfileCard
+      communityId={communityId}
+      member={{
+        userId,
+        name: profile?.name ?? name,
+        username,
+        imageUrl: profile?.imageUrl ?? imageUrl,
+        roles: profile?.roles,
+        isOwner: profile?.isOwner,
+        // Falls back to offline only until the profile query resolves — the
+        // status is real once it does.
+        status: (profile?.status ?? "offline") as FriendStatus,
+        bio: profile?.bio,
+        bannerUrl: profile?.bannerUrl,
+        customStatus: profile?.customStatus,
+        borderGradientStart: profile?.borderGradientStart,
+        borderGradientEnd: profile?.borderGradientEnd,
+      }}
+    />
   );
 }

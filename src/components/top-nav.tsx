@@ -9,6 +9,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
 import { GlobalSearch } from "@/components/home/global-search";
+import { NotificationInbox } from "@/components/home/notification-inbox";
 import { useNavigation } from "@/components/home/navigation-context";
 import { TabBar } from "@/components/home/tab-bar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -171,6 +172,8 @@ export function TopNav() {
       {tabsEnabled ? <TabBar /> : <div className="flex-1" />}
 
       <UpdateIndicator />
+
+      <NotificationInbox />
 
       <GlobalSearch />
 

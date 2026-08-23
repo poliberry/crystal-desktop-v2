@@ -128,7 +128,7 @@ export function MemberList({ communityId }: MemberListProps) {
   const groups = buildGroups(members);
 
   return (
-    <div className="flex w-56 shrink-0 flex-col bg-accent/40 backdrop-blur-xl m-2 py-2 rounded-2xl">
+    <div className="flex w-56 shrink-0 flex-col py-2">
       <ScrollArea className="min-h-0 flex-1">
         {rawMembers === undefined ? (
           <MemberListSkeleton />
@@ -162,7 +162,7 @@ export function MemberList({ communityId }: MemberListProps) {
                           <button
                             type="button"
                             className={cn(
-                              "group/member relative flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40",
+                              "group/member relative flex items-center gap-2 rounded-md px-2 py-1.5 max-w-52 text-left hover:bg-accent/40",
                               isOffline && "opacity-50 hover:opacity-80"
                             )}
                           >
@@ -173,17 +173,17 @@ export function MemberList({ communityId }: MemberListProps) {
                             </Avatar>
                             <div className="min-w-0 flex-1">
                               <p
-                                className="truncate text-sm leading-tight"
+                                className="truncate text-sm leading-tight flex flex-row items-center gap-1"
                                 style={colorRole?.color ? { color: colorRole.color } : undefined}
                               >
-                                {member.name}
+                                  {member.name} {member.isOwner ? <Crown size={12} className="text-yellow-400" /> : ""}
                               </p>
                               {/* Custom status wins the line when set;
                                   otherwise the activity fills it, and either
                                   way the activity glyph sits to its left. */}
                               {!isOffline && (!!member.customStatus || !!member.activities?.length) && (
                                 <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                                  <ActivityStatusIcon activities={member.activities} />
+                                    <ActivityStatusIcon activities={member.activities} />
                                   <span className="truncate">
                                     {member.customStatus ??
                                       activitySummary(topActivity(member.activities))}
@@ -191,12 +191,6 @@ export function MemberList({ communityId }: MemberListProps) {
                                 </p>
                               )}
                             </div>
-                            {member.isOwner && <img src="/icons/crown.png" style={{
-                              WebkitMaskImage:
-                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
-                              maskImage:
-                                "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
-                            }} alt="Server Owner" className="size-10 absolute bottom-1 right-1 opacity-80" />}
                             {member.nameplateUrl && (
                               <img
                                 src={member.nameplateUrl}

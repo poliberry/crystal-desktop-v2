@@ -47,9 +47,24 @@ export default defineSchema({
     imageUrl: v.optional(v.string()),
     bio: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
+    /** Dominant colour of the avatar, sampled on the client (see
+     * src/lib/avatar-color.ts) and cached here so a call tile can paint it on
+     * its first frame instead of flashing while it re-samples the image.
+     * Stored with the URL it was derived from, so a new avatar invalidates it
+     * rather than tinting the tile with the old one. */
+    avatarAccent: v.optional(v.string()),
+    avatarAccentUrl: v.optional(v.string()),
+    /** The picture as uploaded, before cropping. `imageUrl` is the cropped
+     * render that everything actually displays; this is kept only so the crop
+     * can be adjusted later without asking for the file again, and without
+     * re-cropping an already-cropped image. */
+    avatarOriginalUrl: v.optional(v.string()),
+    avatarOriginalStorageId: v.optional(v.id("_storage")),
     // Profile cosmetics
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
+    bannerOriginalUrl: v.optional(v.string()),
+    bannerOriginalStorageId: v.optional(v.id("_storage")),
     borderGradientStart: v.optional(v.string()),
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
@@ -64,6 +79,24 @@ export default defineSchema({
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_username", ["username"]),
+
+  /**
+   * Badges earned by a user — "Early Supporter" and whatever comes after.
+   *
+   * A row per (user, badge) rather than a field on `users`, so granting one
+   * doesn't rewrite the user document and `grantedAt` is recorded per badge
+   * ("Early Supporter since March"). `badgeId` is a key into the catalogue in
+   * src/lib/badges.ts rather than a foreign key: what a badge *means* is
+   * presentation, and an id nobody recognises is skipped rather than breaking
+   * the card.
+   */
+  userBadges: defineTable({
+    userId: v.id("users"),
+    badgeId: v.string(),
+    grantedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_badge", ["userId", "badgeId"]),
 
   friendships: defineTable({
     ownerId: v.id("users"),
@@ -188,9 +221,15 @@ export default defineSchema({
     conversationId: v.id("conversations"),
     userId: v.id("users"),
     joinedAt: v.number(),
+    /** Screen-share state, as on `channelCallParticipants`. */
+    streaming: v.optional(v.boolean()),
+    streamThumbnailUrl: v.optional(v.string()),
+    streamThumbnailStorageId: v.optional(v.id("_storage")),
+    streamThumbnailAt: v.optional(v.number()),
   })
     .index("by_conversation", ["conversationId"])
-    .index("by_conversation_user", ["conversationId", "userId"]),
+    .index("by_conversation_user", ["conversationId", "userId"])
+    .index("by_user", ["userId"]),
 
   /**
    * An in-flight "someone is calling you" for a DM or group conversation.
@@ -219,6 +258,30 @@ export default defineSchema({
     description: v.optional(v.string()),
     image: v.optional(v.string()),
     siteName: v.optional(v.string()),
+    /** Recognised provider key ("youtube", "spotify", …) — see
+     * convex/lib/richEmbeds.ts. Absent for the ordinary scraped link that
+     * just gets a generic card. */
+    provider: v.optional(v.string()),
+    /** What the card should offer: a plain link, or something playable. */
+    kind: v.optional(v.union(v.literal("link"), v.literal("video"), v.literal("audio"))),
+    /** Who made it — the uploader, artist or author, where a provider says. */
+    authorName: v.optional(v.string()),
+    authorUrl: v.optional(v.string()),
+    /** In-place player. Always built from a parsed resource id rather than
+     * copied out of a provider's oEmbed HTML, and framed by the client only
+     * if its host is on the client's allow-list. */
+    embedUrl: v.optional(v.string()),
+    /** Player aspect ratio (width ÷ height), for video. */
+    embedAspect: v.optional(v.number()),
+    /** Fixed player height in pixels, for audio. */
+    embedHeight: v.optional(v.number()),
+    /** The site's own accent colour, used for the card's edge. */
+    themeColor: v.optional(v.string()),
+    faviconUrl: v.optional(v.string()),
+    /** Which version of the unfurler produced this row — see
+     * `UNFURL_VERSION` in convex/lib/richEmbeds.ts. Anything older is
+     * re-unfurled on sight. */
+    version: v.optional(v.number()),
     fetchedAt: v.number(),
   }).index("by_url", ["url"]),
 
@@ -307,9 +370,33 @@ export default defineSchema({
     categoryId: v.optional(v.id("channelCategories")),
     position: v.number(),
     createdAt: v.number(),
+    /** When the newest message landed, denormalised from `channelMessages`.
+     * Unread state is a comparison against `channelReads.lastReadAt`, and
+     * doing it from here means one read per channel list rather than one
+     * "newest message" query per channel every time anyone says anything
+     * anywhere. */
+    lastMessageAt: v.optional(v.number()),
   })
     .index("by_community", ["communityId"])
     .index("by_community_position", ["communityId", "position"]),
+
+  /**
+   * How far a member has read in a channel.
+   *
+   * Absent means "never opened it", which reads as unread if the channel has
+   * any message at all — the same thing Discord does with a channel you've
+   * just been invited to. Carries `communityId` so a server's worth of
+   * markers is one indexed read rather than a scan of every channel the user
+   * has ever opened.
+   */
+  channelReads: defineTable({
+    userId: v.id("users"),
+    channelId: v.id("channels"),
+    communityId: v.id("communities"),
+    lastReadAt: v.number(),
+  })
+    .index("by_user_channel", ["userId", "channelId"])
+    .index("by_user_community", ["userId", "communityId"]),
 
   /** Per-channel allow/deny overwrite for a role OR a specific member
    * (exactly one of `roleId`/`userId` is set) — see
@@ -356,6 +443,13 @@ export default defineSchema({
     muted: v.optional(v.boolean()),
     deafened: v.optional(v.boolean()),
     streaming: v.optional(v.boolean()),
+    /** A recent still from this member's screen share, published by their own
+     * client every few seconds while they're sharing. Lets somebody outside
+     * the call see what's on before deciding to join it — the stream itself
+     * can't be sampled without subscribing to it. */
+    streamThumbnailUrl: v.optional(v.string()),
+    streamThumbnailStorageId: v.optional(v.id("_storage")),
+    streamThumbnailAt: v.optional(v.number()),
     /** Moderator-imposed, unlike `muted`/`deafened` above which the member
      * sets themselves. The connected client enforces these on itself — see
      * CallProvider — so they survive a reconnect. */
@@ -363,7 +457,8 @@ export default defineSchema({
     serverDeafened: v.optional(v.boolean()),
   })
     .index("by_channel", ["channelId"])
-    .index("by_channel_user", ["channelId", "userId"]),
+    .index("by_channel_user", ["channelId", "userId"])
+    .index("by_user", ["userId"]),
 
   /** Custom emoji uploaded per-community. Emoji are referenced in message
    * text and reactions as `<:name:id>` where `id` is the Convex document _id.
@@ -410,8 +505,16 @@ export default defineSchema({
     customStatus: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
+    /** Same pairing as `users.avatarAccent`, for the per-server avatar. */
+    avatarAccent: v.optional(v.string()),
+    avatarAccentUrl: v.optional(v.string()),
+    /** Pre-crop originals, as on `users` — kept so the crop stays adjustable. */
+    avatarOriginalUrl: v.optional(v.string()),
+    avatarOriginalStorageId: v.optional(v.id("_storage")),
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
+    bannerOriginalUrl: v.optional(v.string()),
+    bannerOriginalStorageId: v.optional(v.id("_storage")),
     borderGradientStart: v.optional(v.string()),
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),

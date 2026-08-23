@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Camera, Loader2 } from "lucide-react";
+import { Camera, Crop, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -20,6 +20,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { JoinSoundPicker } from "@/components/settings/join-sound-picker";
+import { GradientPicker } from "@/components/profile/gradient-picker";
+import {
+  AVATAR_CROP,
+  BANNER_CROP,
+  ImageCropDialog,
+} from "@/components/profile/image-crop-dialog";
+import { getAvatarColor } from "@/lib/avatar-color";
+import { uploadToStorage } from "@/lib/storage-upload";
 
 const BIO_MAX = 300;
 
@@ -42,6 +50,7 @@ export function ServerProfileDialog({
   const upsertServerProfile = useMutation(api.serverProfiles.upsertServerProfile);
   const generateServerAvatarUploadUrl = useMutation(api.serverProfiles.generateServerAvatarUploadUrl);
   const setServerAvatar = useMutation(api.serverProfiles.setServerAvatar);
+  const setServerAvatarAccent = useMutation(api.serverProfiles.setServerAvatarAccent);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const generateServerBannerUploadUrl = useMutation((api.serverProfiles as any).generateServerBannerUploadUrl);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,6 +76,11 @@ export function ServerProfileDialog({
   const [nameplateUploading, setNameplateUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  /** What the crop editor is open on — see the global profile tab. */
+  const [cropping, setCropping] = useState<{
+    kind: "avatar" | "banner";
+    source: File | string;
+  } | null>(null);
 
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
@@ -115,27 +129,46 @@ export function ServerProfileDialog({
     }
   };
 
-  const handleAvatarPick = (file: File | undefined) =>
-    file &&
-    void uploadMedia(
-      file,
-      () => generateServerAvatarUploadUrl({ communityId }),
-      setAvatarUploading,
-      (storageId) => setServerAvatar({ communityId, storageId }),
-      avatarFileInputRef,
-      "Failed to upload avatar.",
-    );
+  /**
+   * Save a crop, plus the untouched original when this is a newly-picked
+   * file, so the crop stays adjustable later — mirrors the global profile
+   * tab's `saveCrop`.
+   */
+  const saveCrop = async (crop: Blob) => {
+    const target = cropping;
+    if (!target) return;
+    const isAvatar = target.kind === "avatar";
+    const isNewFile = target.source instanceof File;
+    const setLoading = isAvatar ? setAvatarUploading : setBannerUploading;
 
-  const handleBannerPick = (file: File | undefined) =>
-    file &&
-    void uploadMedia(
-      file,
-      () => generateServerBannerUploadUrl({ communityId }),
-      setBannerUploading,
-      (storageId) => setServerBanner({ communityId, storageId }),
-      bannerFileInputRef,
-      "Failed to upload banner.",
-    );
+    setLoading(true);
+    setError(null);
+    try {
+      const generate = () =>
+        isAvatar
+          ? generateServerAvatarUploadUrl({ communityId })
+          : (generateServerBannerUploadUrl({ communityId }) as Promise<string>);
+      const storageId = (await uploadToStorage(await generate(), crop)) as Id<"_storage">;
+      const originalStorageId = isNewFile
+        ? ((await uploadToStorage(await generate(), target.source as File)) as Id<"_storage">)
+        : undefined;
+
+      if (isAvatar) {
+        const url = await setServerAvatar({ communityId, storageId, originalStorageId });
+        // Sample the avatar's dominant colour here, once, rather than in
+        // every client that later renders it in a call tile.
+        const accent = await getAvatarColor(url);
+        if (accent) await setServerAvatarAccent({ communityId, accent, sourceUrl: url });
+      } else {
+        await setServerBanner({ communityId, storageId, originalStorageId });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the image.");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleNameplatePick = (file: File | undefined) =>
     file &&
@@ -206,9 +239,30 @@ export function ServerProfileDialog({
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={(e) => handleAvatarPick(e.target.files?.[0])}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setCropping({ kind: "avatar", source: file });
+                    e.target.value = "";
+                  }}
                 />
-                <p className="text-sm text-muted-foreground">Click your avatar to change it.</p>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Click your avatar to change it.</p>
+                  {serverProfile?.avatarOriginalUrl && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setCropping({
+                          kind: "avatar",
+                          source: serverProfile.avatarOriginalUrl as string,
+                        })
+                      }
+                    >
+                      <Crop className="size-3.5" />
+                      Adjust crop
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -265,6 +319,21 @@ export function ServerProfileDialog({
                   >
                     {bannerUploading ? <Loader2 className="size-4 animate-spin" /> : "Upload banner"}
                   </Button>
+                  {serverProfile?.bannerOriginalUrl && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setCropping({
+                          kind: "banner",
+                          source: serverProfile.bannerOriginalUrl as string,
+                        })
+                      }
+                    >
+                      <Crop className="size-3.5" />
+                      Adjust crop
+                    </Button>
+                  )}
                   {serverProfile?.bannerUrl && (
                     <Button
                       size="sm"
@@ -281,33 +350,21 @@ export function ServerProfileDialog({
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={(e) => handleBannerPick(e.target.files?.[0])}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setCropping({ kind: "banner", source: file });
+                    e.target.value = "";
+                  }}
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <Label>Avatar frame gradient</Label>
-                <div className="flex gap-6">
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Frame start</p>
-                    <input
-                      type="color"
-                      value={gradientStart || "#000000"}
-                      onChange={(e) => setGradientStart(e.target.value)}
-                      className="size-9 cursor-pointer rounded border border-input p-0.5"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Frame end</p>
-                    <input
-                      type="color"
-                      value={gradientEnd || "#000000"}
-                      onChange={(e) => setGradientEnd(e.target.value)}
-                      className="size-9 cursor-pointer rounded border border-input p-0.5"
-                    />
-                  </div>
-                </div>
-              </div>
+              <GradientPicker
+                start={gradientStart}
+                end={gradientEnd}
+                onStartChange={setGradientStart}
+                onEndChange={setGradientEnd}
+                bannerUrl={mergedBannerUrl}
+              />
 
               <div className="space-y-2">
                 <Label>Chat nameplate</Label>
@@ -372,6 +429,19 @@ export function ServerProfileDialog({
             </CardContent>
           </Card>
         </div>
+
+        <ImageCropDialog
+          open={!!cropping}
+          onOpenChange={(open) => !open && setCropping(null)}
+          source={cropping?.source ?? null}
+          shape={cropping?.kind === "banner" ? BANNER_CROP : AVATAR_CROP}
+          title={
+            cropping?.kind === "banner"
+              ? `Position your banner for ${communityName}`
+              : `Position your avatar for ${communityName}`
+          }
+          onCropped={saveCrop}
+        />
       </DialogContent>
     </Dialog>
   );

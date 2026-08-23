@@ -1,7 +1,13 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+} from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
 import {
   PERMISSIONS,
@@ -264,9 +270,19 @@ export const removeOverwrite = mutation({
   },
 });
 
+/**
+ * Everyone currently connected to a voice channel.
+ *
+ * Identity here follows the same rule as the member list and the message
+ * author line: whatever the user set as their profile *for this community*
+ * wins, falling back to their global profile field by field — so a per-server
+ * nickname with no per-server avatar still shows their normal picture.
+ */
 export const listVoiceParticipants = query({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }) => {
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return [];
     const rows = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
@@ -275,20 +291,30 @@ export const listVoiceParticipants = query({
       rows.map(async (row) => {
         const user = await ctx.db.get(row.userId);
         if (!user) return null;
-        const presence = await ctx.db
-          .query("presence")
-          .withIndex("by_user", (q) => q.eq("userId", row.userId))
-          .unique();
+        const [serverProfile, presence] = await Promise.all([
+          ctx.db
+            .query("serverProfiles")
+            .withIndex("by_user_community", (q) =>
+              q.eq("userId", row.userId).eq("communityId", channel.communityId)
+            )
+            .unique(),
+          ctx.db
+            .query("presence")
+            .withIndex("by_user", (q) => q.eq("userId", row.userId))
+            .unique(),
+        ]);
         return {
           id: user._id,
-          name: user.name,
+          name: serverProfile?.displayName ?? user.name,
           username: user.username,
-          imageUrl: user.imageUrl,
+          imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
           muted: row.muted ?? false,
           deafened: row.deafened ?? false,
           streaming: row.streaming ?? false,
           serverMuted: row.serverMuted ?? false,
           serverDeafened: row.serverDeafened ?? false,
+          /** Only meaningful while `streaming` — see the schema. */
+          streamThumbnailUrl: row.streamThumbnailUrl,
           activities: activitiesOf(presence),
         };
       })
@@ -439,5 +465,173 @@ export const recordVoiceLeave = internalMutation({
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
       .collect();
     return remaining.length;
+  },
+});
+
+/**
+ * Record that a member has read a channel up to now.
+ *
+ * Shared with `channelMessages.send`, which marks the author read as a matter
+ * of course — you've read what you just wrote, and without this your own
+ * message would light up your own unread indicator.
+ */
+export async function markChannelRead(
+  ctx: MutationCtx,
+  channelId: Id<"channels">,
+  communityId: Id<"communities">,
+  userId: Id<"users">
+): Promise<void> {
+  const existing = await ctx.db
+    .query("channelReads")
+    .withIndex("by_user_channel", (q) => q.eq("userId", userId).eq("channelId", channelId))
+    .unique();
+  if (existing) {
+    await ctx.db.patch(existing._id, { lastReadAt: Date.now() });
+  } else {
+    await ctx.db.insert("channelReads", {
+      userId,
+      channelId,
+      communityId,
+      lastReadAt: Date.now(),
+    });
+  }
+}
+
+/** Past this the bar can say "a lot" and mean it. */
+const UNREAD_COUNT_CAP = 99;
+
+/**
+ * How much of a channel the caller hasn't seen.
+ *
+ * Their own messages don't count: this feeds the catch-up bar, which is about
+ * what was missed. Capped, because past a hundred the exact figure isn't the
+ * useful part and an uncapped scan of a busy channel is.
+ */
+export const unreadInfo = query({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return { count: 0, since: null as number | null };
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return { count: 0, since: null as number | null };
+
+    const read = await ctx.db
+      .query("channelReads")
+      .withIndex("by_user_channel", (q) => q.eq("userId", me._id).eq("channelId", channelId))
+      .unique();
+    const readAt = read?.lastReadAt ?? 0;
+
+    const recent = await ctx.db
+      .query("channelMessages")
+      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+      .order("desc")
+      .take(UNREAD_COUNT_CAP + 1);
+
+    return {
+      count: recent.filter(
+        (message) => message._creationTime > readAt && message.authorId !== me._id
+      ).length,
+      /** Where they had got to, for "since you were last here". Null when
+       * they've never opened the channel. */
+      since: read?.lastReadAt ?? null,
+    };
+  },
+});
+
+/**
+ * Mark a channel read.
+ *
+ * Called when the reader is demonstrably present — the window is focused on
+ * the channel, or they've scrolled to the end of it — and from the catch-up
+ * bar's button. Deliberately not on mount: a channel sitting in a background
+ * window is not one you've read.
+ *
+ * Also clears any unread mention notifications for it: having looked at the
+ * channel, being told about it in the inbox as well is noise.
+ */
+export const markRead = mutation({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return;
+    await requireMember(ctx, channel.communityId, me._id);
+    await markChannelRead(ctx, channelId, channel.communityId, me._id);
+
+    const mentions = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    for (const notification of mentions) {
+      if (notification.channelId === channelId) {
+        await ctx.db.patch(notification._id, { read: true });
+      }
+    }
+  },
+});
+
+
+/**
+ * Publish a still from my own screen share so people outside the call can see
+ * what's on before joining.
+ *
+ * Only the sharer can write this — a stream can't be sampled by anyone who
+ * hasn't subscribed to it, which is exactly the cost this avoids. The previous
+ * still is deleted as the new one lands, so a long stream doesn't accumulate a
+ * frame every few seconds in storage forever.
+ */
+export const setStreamThumbnail = mutation({
+  args: { channelId: v.id("channels"), storageId: v.id("_storage") },
+  handler: async (ctx, { channelId, storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
+      .unique();
+    if (!row) {
+      // Not in the call any more — the frame is already stale, so don't keep it.
+      await ctx.storage.delete(storageId);
+      return;
+    }
+
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) return;
+    const previous = row.streamThumbnailStorageId;
+    await ctx.db.patch(row._id, {
+      streamThumbnailUrl: url,
+      streamThumbnailStorageId: storageId,
+      streamThumbnailAt: Date.now(),
+    });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+  },
+});
+
+/** Drop the still when a share ends, so nothing claims to be live that isn't. */
+export const clearStreamThumbnail = mutation({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const row = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
+      .unique();
+    if (!row?.streamThumbnailStorageId) return;
+    const previous = row.streamThumbnailStorageId;
+    await ctx.db.patch(row._id, {
+      streamThumbnailUrl: undefined,
+      streamThumbnailStorageId: undefined,
+      streamThumbnailAt: undefined,
+    });
+    await ctx.storage.delete(previous);
+  },
+});
+
+/** Upload target for a stream still. Separate from the message-attachment
+ * uploader only because this is voice plumbing, not messaging. */
+export const generateStreamThumbnailUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return ctx.storage.generateUploadUrl();
   },
 });

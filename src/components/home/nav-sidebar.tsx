@@ -14,6 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PresenceDot } from "@/components/presence-dot";
+import {
+  ActivityStatusIcon,
+  activitySummary,
+  topActivity,
+} from "@/components/rich-presence-card";
+import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { cn } from "@/lib/utils";
 
 interface NavSidebarProps {
@@ -65,7 +73,7 @@ export function NavSidebar({
   );
 
   return (
-    <div className="flex w-64 shrink-0 flex-col m-2 bg-accent/40 backdrop-blur-xl shadow-md rounded-2xl">
+    <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl shadow-md">
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
       <div className="relative">
         <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -128,31 +136,77 @@ export function NavSidebar({
 
               const lastMsgAt = conversation.lastMessageAt;
               const stale = lastMsgAt !== undefined && NOW_MS() - lastMsgAt > DAY_MS;
+              // Hidden while they're offline: an icon for what they were last
+              // playing is a claim about right now. Invisible needs no
+              // separate check — presence resolves it to offline for everyone
+              // but the user themselves.
+              const activities = otherMember?.activities as RichPresenceActivity[] | undefined;
+              const activity = !isGroup && !isOffline ? topActivity(activities) : null;
+
+              // A conversation nobody has touched in a day is better described
+              // by what the other person is up to than by a stale line of
+              // chat. Their own words about it first, then whatever we can
+              // detect, then just whether they're reachable.
+              const presenceLine =
+                otherMember?.customStatus ||
+                activitySummary(activity) ||
+                (otherMember ? STATUS_LABEL[otherMember.status as FriendStatus] : null);
+              const lastMessageLine = conversation.lastMessageText
+                ? conversation.lastMessageMine
+                  ? `Me: ${conversation.lastMessageText}`
+                  : conversation.lastMessageText
+                : null;
               const subtitle =
-                !isGroup && stale && !isOffline && otherMember?.customStatus
-                  ? otherMember.customStatus
-                  : (conversation.lastMessageText ?? "No messages yet");
+                (!isGroup && stale ? presenceLine : null) ??
+                lastMessageLine ??
+                "No messages yet";
 
               return (
                 <button
                   key={conversation.id}
                   onClick={() => onSelectConversation(conversation.id)}
                   className={cn(
-                    "flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-accent/60",
+                    "relative flex items-center gap-2.5 overflow-hidden rounded-none px-2 py-2 text-left hover:bg-accent/60",
                     active && "bg-accent",
                     isOffline && !active && "opacity-60 hover:opacity-90"
                   )}
                 >
+                  {/* Nameplate behind the row, faded out towards the name so
+                      it decorates rather than competes with it. */}
+                  {otherMember?.nameplateUrl && (
+                    <img
+                      src={otherMember.nameplateUrl}
+                      alt=""
+                      className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
+                      style={{
+                        WebkitMaskImage:
+                          "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
+                        maskImage:
+                          "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
+                      }}
+                    />
+                  )}
                   {isGroup ? (
                     <GroupAvatar size="sm" imageUrl={conversation.imageUrl} members={conversation.members} />
                   ) : (
-                    <Avatar size="sm">
+                    <Avatar size="sm" className="relative">
                       <AvatarImage src={avatarUser?.imageUrl} alt={title} />
                       <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
-                      {conversation.unread && <AvatarBadge className="bg-primary" />}
+                      {/* Unread wins the badge slot: which conversations want
+                          you is more urgent than who's online. */}
+                      {conversation.unread ? (
+                        <AvatarBadge className="bg-primary" />
+                      ) : (
+                        otherMember && (
+                          <PresenceDot
+                            status={otherMember.status as FriendStatus}
+                            className="absolute -right-0.5 -bottom-0.5 z-10"
+                          />
+                        )
+                      )}
                     </Avatar>
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="relative min-w-0 flex-1">
                     <p
                       className={cn(
                         "truncate text-sm",
@@ -161,7 +215,10 @@ export function NavSidebar({
                     >
                       {title}
                     </p>
-                    <p className="truncate w-46 text-xs text-muted-foreground">{subtitle}</p>
+                    <p className="flex w-46 items-center gap-1 truncate text-xs text-muted-foreground">
+                      {activity && <ActivityStatusIcon activities={activities} />}
+                      <span className="truncate">{subtitle}</span>
+                    </p>
                   </div>
                 </button>
               );

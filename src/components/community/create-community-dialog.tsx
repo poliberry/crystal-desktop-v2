@@ -61,7 +61,7 @@ export function CreateCommunityDialog({ onCreated, open: controlledOpen, onOpenC
           <Tooltip>
             <TooltipTrigger asChild>
               <DialogTrigger asChild>
-                <Button variant="secondary" size="icon" className="size-12 rounded-full">
+                <Button variant="secondary" size="icon" className="size-12 rounded-none">
                   <Plus />
                 </Button>
               </DialogTrigger>

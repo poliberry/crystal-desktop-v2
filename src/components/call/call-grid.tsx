@@ -36,6 +36,13 @@ export interface CallTile {
   participant: Participant;
   isLocal: boolean;
   imageUrl?: string;
+  /** Cached dominant colour of the avatar, so the tile paints its tint on
+   * the first frame instead of flashing while it re-samples the image. */
+  accent?: string;
+  /** Name and avatar as this call's community sees them — a per-server
+   * nickname wins over the one baked into the LiveKit token at join time
+   * (see `RoomView`). Absent in DM calls, which have no server identity. */
+  name?: string;
 }
 
 /**
@@ -66,6 +73,11 @@ interface CallGridProps {
   /** Move a remote participant's screen-share video + audio subscriptions
    * back to "unsubscribed" so bandwidth/decode stop being spent on it. */
   onUnsubscribeScreenShare?: (participantIdentity: string) => void;
+  /** Whose share to open and focus as soon as it shows up — set when the user
+   * arrived here by clicking a stream in the activity feed. Consumed once,
+   * via `onAutoWatched`, so it doesn't fight them later. */
+  autoWatchIdentity?: string | null;
+  onAutoWatched?: () => void;
 }
 
 interface WatchState {
@@ -106,7 +118,7 @@ function TileWithContextMenu({
   const soundboardActive = useSoundboardActivity().has(
     tile.participant.identity,
   );
-  const name = tile.participant.name || tile.participant.identity;
+  const name = tile.name || tile.participant.name || tile.participant.identity;
   const displayName = tile.kind === "screen" ? `${name}'s screen` : name;
 
   const inner =
@@ -114,6 +126,7 @@ function TileWithContextMenu({
       <ScreenShareTile
         participant={tile.participant}
         isLocal={tile.isLocal}
+        name={tile.name}
         fill
         onClick={onClick}
         audioEnabled={watchState?.audioEnabled ?? true}
@@ -129,6 +142,8 @@ function TileWithContextMenu({
         participant={tile.participant}
         isLocal={tile.isLocal}
         imageUrl={tile.imageUrl}
+        name={tile.name}
+        accent={tile.accent}
         fill
         onClick={onClick}
         localVolume={settings.volume}
@@ -646,6 +661,8 @@ export function CallGrid({
   onSubscribeScreenShare,
   onUnsubscribeScreenShare,
   moderation,
+  autoWatchIdentity,
+  onAutoWatched,
 }: CallGridProps) {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
@@ -715,6 +732,24 @@ export function CallGrid({
     };
   };
 
+  /**
+   * Honour "join and watch": the stream the user clicked in the activity feed
+   * isn't published yet when the join completes, so this waits for its tile
+   * and then opens it focused. Consumed once — after that, what's on screen is
+   * the user's business.
+   */
+  useEffect(() => {
+    if (!autoWatchIdentity) return;
+    const tile = tiles.find(
+      (t) => t.kind === "screen" && t.participant.identity === autoWatchIdentity
+    );
+    if (!tile) return;
+    setWatchedKeys(new Set([tile.key]));
+    setFocusedKey(tile.key);
+    onSubscribeScreenShare?.(autoWatchIdentity);
+    onAutoWatched?.();
+  }, [autoWatchIdentity, tiles, onSubscribeScreenShare, onAutoWatched]);
+
   const getSettings = (identity: string) =>
     participantSettings.get(identity) ?? DEFAULT_SETTINGS;
 
@@ -743,7 +778,7 @@ export function CallGrid({
   if (focused) {
     const rest = tiles.filter((t) => t.key !== focused.key);
     const focusedName =
-      focused.participant.name || focused.participant.identity;
+      focused.name || focused.participant.name || focused.participant.identity;
     return (
       <div className="flex h-full min-h-0 flex-col gap-2">
         <div className="min-h-0 flex-1">

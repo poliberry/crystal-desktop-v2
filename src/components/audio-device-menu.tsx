@@ -1,9 +1,10 @@
 "use client";
 
-import { Headphones, Mic } from "lucide-react";
+import { Headphones, Mic, Sparkles } from "lucide-react";
 
 import { useAudioPreferences } from "@/components/audio-provider";
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -30,6 +31,9 @@ export function AudioDeviceMenuItems() {
     outputDeviceId,
     setInputDeviceId,
     setOutputDeviceId,
+    noiseSuppression,
+    setNoiseSuppression,
+    noiseSuppressionSupported,
   } = useAudioPreferences();
 
   return (
@@ -49,6 +53,22 @@ export function AudioDeviceMenuItems() {
           </DropdownMenuRadioItem>
         ))}
       </DropdownMenuRadioGroup>
+
+      {noiseSuppressionSupported && (
+        <>
+          <DropdownMenuSeparator />
+          {/* Sits with the input device because that's what it processes —
+              switching mic and cleaning it up are the same decision. */}
+          <DropdownMenuCheckboxItem
+            checked={noiseSuppression}
+            onCheckedChange={setNoiseSuppression}
+            onSelect={(event) => event.preventDefault()}
+          >
+            <Sparkles className="size-3.5" />
+            Noise suppression
+          </DropdownMenuCheckboxItem>
+        </>
+      )}
 
       <DropdownMenuSeparator />
 

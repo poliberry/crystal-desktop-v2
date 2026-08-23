@@ -4,6 +4,7 @@ import { useMutation } from "convex/react";
 import { useEffect, useRef } from "react";
 
 import { api } from "../../convex/_generated/api";
+import { useSyncMyAvatarAccent } from "@/hooks/use-avatar-accent";
 import { usePresenceHeartbeat } from "@/hooks/use-presence";
 import { useMessageSound } from "@/hooks/use-message-sound";
 import { useRichPresenceReporter } from "@/hooks/use-rich-presence";
@@ -22,6 +23,7 @@ export function SessionBootstrap() {
     void ensureUser();
   }, [ensureUser]);
 
+  useSyncMyAvatarAccent();
   usePresenceHeartbeat();
   useRichPresenceReporter();
   useMessageSound();

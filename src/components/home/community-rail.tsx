@@ -1,13 +1,19 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Compass, Home } from "lucide-react";
+import { Compass, Home, Volume2 } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarGroup,
+  AvatarGroupCount,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -22,6 +28,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -32,6 +43,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useNavigation } from "@/components/home/navigation-context";
 import { USER_CARD_HEIGHT } from "./user-card";
 import { useCall } from "../call/call-provider";
 
@@ -62,7 +74,7 @@ function RailButton({
           <Button
             variant={active ? "default" : "secondary"}
             size="icon"
-            className="size-12 rounded-full"
+            className="size-12 rounded-none"
             onClick={onClick}
           >
             {children}
@@ -185,6 +197,141 @@ function DiscoverDialog({
   );
 }
 
+interface CommunityActivity {
+  memberCount: number;
+  voice: { userId: Id<"users">; name: string; imageUrl?: string }[];
+  voiceCount: number;
+  unreadChannelIds: Id<"channels">[];
+  mentionCount: number;
+}
+
+/** Past this the badge outgrows the tile and the exact number stops mattering. */
+const BADGE_CAP = 99;
+
+function badgeText(count: number): string {
+  return count > BADGE_CAP ? `${BADGE_CAP}+` : String(count);
+}
+
+/**
+ * Unread DMs, as buttons under Home.
+ *
+ * Only conversations with something waiting appear here — the full list lives
+ * in the DM sidebar. The rail's job is "there's something for you and here's
+ * whose face it belongs to", which is why the avatar is the button rather
+ * than a generic envelope with a number on it.
+ */
+function UnreadDirectMessages() {
+  const nav = useNavigation();
+  const conversations = useQuery(api.conversations.listMine) ?? [];
+  const markRead = useMutation(api.conversations.markRead);
+  const unread = conversations.filter((c) => c.unread);
+  if (unread.length === 0) return null;
+
+  return (
+    <>
+      {unread.map((conversation) => {
+        // A group's first member stands in for it, the same shorthand the DM
+        // list uses; a one-to-one DM has exactly one other person.
+        const other = conversation.members[0];
+        const name = conversation.name ?? other?.name ?? "Direct message";
+        return (
+          <HoverCard key={conversation.id} openDelay={200} closeDelay={100}>
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="relative">
+                  <HoverCardTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => nav.openConversation(conversation.id)}
+                      aria-label={`${name}, ${conversation.unreadCount} unread`}
+                      className="flex size-12 items-center justify-center overflow-hidden rounded-none transition-all duration-200 ease-in-out group"
+                    >
+                      <Avatar className="size-12">
+                        <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} className="rounded-none group-hover:rounded-2xl" />
+                        <AvatarFallback className="text-sm">
+                          {name.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                    </button>
+                  </HoverCardTrigger>
+                  {conversation.unreadCount > 0 && (
+                    <span className="pointer-events-none absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-none bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                      {badgeText(conversation.unreadCount)}
+                    </span>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onClick={() => void markRead({ conversationId: conversation.id })}>
+                  Mark as read
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+            <HoverCardContent side="right" align="start" className="w-fit max-w-md">
+              <p className="truncate text-sm font-semibold">{name}</p>
+            </HoverCardContent>
+          </HoverCard>
+        );
+      })}
+      <Separator className="max-w-8 mx-2" />
+    </>
+  );
+}
+
+/**
+ * What a server's rail tile shows on hover: its name, how big it is, and
+ * who's in voice right now.
+ *
+ * A hover card rather than a tooltip because of the voice row — a stack of
+ * faces answers "is anyone I know in there" at a glance in a way a count
+ * doesn't, and tooltip styling (small, dense, built for one line) fights
+ * that.
+ */
+function CommunityCardBody({
+  name,
+  activity,
+}: {
+  name: string;
+  activity: CommunityActivity | undefined;
+}) {
+  return (
+    <div className="space-y-2">
+      <div>
+        <p className="truncate text-sm font-semibold">{name}</p>
+        {activity && (
+          <p className="text-xs text-muted-foreground">
+            {activity.memberCount} {activity.memberCount === 1 ? "member" : "members"}
+          </p>
+        )}
+      </div>
+
+      {!!activity?.voiceCount && (
+        <div className="space-y-1.5 border-t border-border/50 pt-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-500">
+            <Volume2 className="size-3.5" />
+            {activity.voiceCount} in voice
+          </p>
+          <AvatarGroup data-size="sm">
+            {activity.voice.map((participant) => (
+              <Avatar key={participant.userId} size="sm" title={participant.name}>
+                <AvatarImage src={participant.imageUrl} alt={participant.name} />
+                <AvatarFallback className="text-[8px]">
+                  {participant.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            ))}
+            {activity.voiceCount > activity.voice.length && (
+              <AvatarGroupCount className="text-[10px]">
+                +{activity.voiceCount - activity.voice.length}
+              </AvatarGroupCount>
+            )}
+          </AvatarGroup>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface CommunityRailProps {
   selectedCommunityId: Id<"communities"> | null;
   onSelectHome: () => void;
@@ -228,10 +375,16 @@ export function CommunityRail({
     toggleScreenShare,
   } = controller;
   const communities = useQuery(api.communities.listMine) ?? [];
+  const activityByCommunity = new Map(
+    (useQuery(api.communities.listMineActivity) ?? []).map((entry) => [
+      entry.communityId as string,
+      entry,
+    ])
+  );
 
   return (
     <div className={cn(
-      `flex w-18 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
+      `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
       activeCall && screenSharing ? `mb-52` : activeCall ? `mb-42` : `mb-18`
     )}>
       <RailButton
@@ -244,24 +397,41 @@ export function CommunityRail({
 
       <Separator className="max-w-8 mx-2" />
 
+      <UnreadDirectMessages />
+
       <ScrollArea className="min-h-0 flex-1 w-full">
         {/* py-1 gives the selection ring (ring-2 + ring-offset-2 = ~4px)
             room to render without the ScrollArea's own overflow-hidden
             viewport clipping it off the first/last item. */}
         <div className="flex flex-col items-center gap-2 px-2 py-1">
-          {communities.map((community) => (
-            <TooltipProvider key={community.id}>
-              <Tooltip>
+          {communities.map((community) => {
+            const activity = activityByCommunity.get(community.id);
+            const inVoice = !!activity?.voiceCount;
+            const mentions = activity?.mentionCount ?? 0;
+            const hasUnread = (activity?.unreadChannelIds.length ?? 0) > 0;
+            return (
+            <HoverCard key={community.id} openDelay={200} closeDelay={100}>
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
-                    <TooltipTrigger asChild>
+                    {/* The badge sits outside the button because the button
+                        clips its contents — that's what gives the tile its
+                        square-to-squircle morph on hover. */}
+                    <div className="relative">
+                    <HoverCardTrigger asChild>
                       <button
                         type="button"
+                        aria-label={[
+                          community.name,
+                          inVoice ? "call in progress" : null,
+                          mentions > 0 ? ` mentions` : hasUnread ? "unread messages" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
                         onClick={(e) => onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")}
                         className={cn(
-                          "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
+                          "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
                           selectedCommunityId === community.id &&
-                            "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-2xl",
+                            "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-none",
                         )}
                       >
                         <Avatar className="size-12 rounded-none">
@@ -275,7 +445,32 @@ export function CommunityRail({
                           </AvatarFallback>
                         </Avatar>
                       </button>
-                    </TooltipTrigger>
+                    </HoverCardTrigger>
+                    {inVoice && (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute -right-0.5 -bottom-0.5 flex size-5 items-center justify-center bg-emerald-500 text-white ring-2 ring-primary"
+                      >
+                        <Volume2 className="size-3" />
+                      </span>
+                    )}
+                    {/* A count for mentions, a dot for "something was said".
+                        Only mentions get a number — a busy server would
+                        otherwise wear a permanent badge meaning nothing in
+                        particular. */}
+                    {mentions > 0 ? (
+                      <span className="pointer-events-none absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                        {badgeText(mentions)}
+                      </span>
+                    ) : (
+                      hasUnread && (
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute top-1/2 -left-1.5 size-2 -translate-y-1/2 rounded-full bg-foreground"
+                        />
+                      )
+                    )}
+                    </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
                     {canOpenInCurrentTab && !openCommunityIds.has(community.id) && (
@@ -288,10 +483,12 @@ export function CommunityRail({
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
-                <TooltipContent side="right">{community.name}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ))}
+                <HoverCardContent side="right" align="start" className="w-60">
+                  <CommunityCardBody name={community.name} activity={activity} />
+                </HoverCardContent>
+            </HoverCard>
+            );
+          })}
           {communities.length === 0 && (
             <p className="mt-4 px-1 text-center text-[11px] text-muted-foreground">
               No communities yet

@@ -28,6 +28,9 @@ export const PERMISSIONS = {
   /** Time a member out — they stay in the server but can't talk. */
   MODERATE_MEMBERS: 1 << 15,
   MANAGE_NICKNAMES: 1 << 16,
+  /** Ping a role, `@everyone` or `@here`. Without it those still render as
+   * mentions but notify nobody — see convex/lib/mentions.ts. */
+  MENTION_EVERYONE: 1 << 17,
 } as const;
 
 export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

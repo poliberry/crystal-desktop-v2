@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 
+import type { Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { activitiesOf } from "./lib/activities";
 import {
@@ -259,5 +260,232 @@ export const sweepStale = internalMutation({
       }
       if (running.length > 0) await closeOpenSessions(ctx, row.userId);
     }
+  },
+});
+
+/** Faces per call row before it collapses to "+N". */
+const CALL_AVATAR_LIMIT = 6;
+
+/**
+ * What's happening right now among the people you'd care about: who's sitting
+ * in a call you could join, and what your friends are playing or listening to.
+ *
+ * Calls are scoped to places the caller can actually reach — voice channels in
+ * their servers, and their own group/DM conversations — because "join" is the
+ * point of showing them. Activities are scoped to friends: a server of a
+ * thousand people playing games isn't a feed, it's noise.
+ */
+export const activeNow = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return { calls: [], activities: [] };
+
+    const summarise = async (
+      userId: Id<"users">,
+      row?: { streaming?: boolean; streamThumbnailUrl?: string }
+    ) => {
+      const user = await ctx.db.get(userId);
+      return {
+        userId,
+        name: user?.name ?? "Unknown",
+        imageUrl: user?.imageUrl,
+        streaming: row?.streaming ?? false,
+        streamThumbnailUrl: row?.streamThumbnailUrl,
+      };
+    };
+
+    const calls: {
+      key: string;
+      /** Where it is — "#general" or a group's name. */
+      name: string;
+      /** The server it belongs to, for a voice channel. */
+      context: string | null;
+      channelId: Id<"channels"> | null;
+      conversationId: Id<"conversations"> | null;
+      communityId: Id<"communities"> | null;
+      participants: {
+        userId: Id<"users">;
+        name: string;
+        imageUrl?: string;
+        streaming: boolean;
+        streamThumbnailUrl?: string;
+      }[];
+      participantCount: number;
+    }[] = [];
+
+    const communityMemberships = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    for (const membership of communityMemberships) {
+      const community = await ctx.db.get(membership.communityId);
+      if (!community) continue;
+      const channels = await ctx.db
+        .query("channels")
+        .withIndex("by_community", (q) => q.eq("communityId", membership.communityId))
+        .collect();
+
+      for (const channel of channels) {
+        if (channel.type !== "voice") continue;
+        const rows = await ctx.db
+          .query("channelCallParticipants")
+          .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+          .collect();
+        if (rows.length === 0) continue;
+
+        calls.push({
+          key: `channel:${channel._id}`,
+          name: `#${channel.name}`,
+          context: community.name,
+          channelId: channel._id,
+          conversationId: null,
+          communityId: community._id,
+          participants: await Promise.all(
+            rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId, row))
+          ),
+          participantCount: rows.length,
+        });
+      }
+    }
+
+    const conversationMemberships = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    for (const membership of conversationMemberships) {
+      const rows = await ctx.db
+        .query("callParticipants")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", membership.conversationId))
+        .collect();
+      if (rows.length === 0) continue;
+      const conversation = await ctx.db.get(membership.conversationId);
+      if (!conversation) continue;
+
+      const participants = await Promise.all(
+        rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId, row))
+      );
+      calls.push({
+        key: `conversation:${conversation._id}`,
+        // A DM has no name of its own, so whoever's in the call names it.
+        name:
+          conversation.name ??
+          participants.filter((p) => p.userId !== me._id).map((p) => p.name).join(", ") ??
+          "Call",
+        context: null,
+        channelId: null,
+        conversationId: conversation._id,
+        communityId: null,
+        participants,
+        participantCount: rows.length,
+      });
+    }
+
+    const friendships = await ctx.db
+      .query("friendships")
+      .withIndex("by_owner", (q) => q.eq("ownerId", me._id))
+      .collect();
+
+    const activities = (
+      await Promise.all(
+        friendships.map(async (friendship) => {
+          const presence = await ctx.db
+            .query("presence")
+            .withIndex("by_user", (q) => q.eq("userId", friendship.friendId))
+            .unique();
+          // Someone offline isn't doing anything, whatever their last
+          // reported activity says.
+          if (!presence || presence.effective === "offline") return null;
+          const list = activitiesOf(presence);
+          if (list.length === 0) return null;
+          const friend = await ctx.db.get(friendship.friendId);
+          if (!friend) return null;
+          return {
+            userId: friend._id,
+            name: friend.name,
+            imageUrl: friend.imageUrl,
+            status: presence.effective,
+            activities: list,
+          };
+        })
+      )
+    ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    return { calls, activities };
+  },
+});
+
+/**
+ * Where a user is screen sharing right now, if anywhere the caller can see.
+ *
+ * Streaming is an activity like any other as far as a profile card is
+ * concerned — it just isn't reported through the Rich Presence pipeline,
+ * because it's something the app knows about itself. This is what lets the
+ * card list it alongside "Playing …" and count it in the stack.
+ *
+ * Scoped to shared ground: a voice channel in a community both people are in,
+ * or a conversation the caller is a member of. A stream somewhere the caller
+ * has no business being isn't reported at all.
+ */
+export const streamOf = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+
+    const myCommunities = new Set(
+      (
+        await ctx.db
+          .query("communityMembers")
+          .withIndex("by_user", (q) => q.eq("userId", me._id))
+          .collect()
+      ).map((m) => m.communityId as string)
+    );
+
+    const channelRows = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const row of channelRows) {
+      if (!row.streaming) continue;
+      const channel = await ctx.db.get(row.channelId);
+      if (!channel || !myCommunities.has(channel.communityId as string)) continue;
+      const community = await ctx.db.get(channel.communityId);
+      return {
+        kind: "channel" as const,
+        channelId: channel._id,
+        communityId: channel.communityId,
+        where: `#${channel.name}`,
+        context: community?.name ?? null,
+        thumbnailUrl: row.streamThumbnailUrl,
+      };
+    }
+
+    const conversationRows = await ctx.db
+      .query("callParticipants")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const row of conversationRows) {
+      if (!row.streaming) continue;
+      const membership = await ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation_user", (q) =>
+          q.eq("conversationId", row.conversationId).eq("userId", me._id)
+        )
+        .unique();
+      if (!membership) continue;
+      const conversation = await ctx.db.get(row.conversationId);
+      return {
+        kind: "conversation" as const,
+        conversationId: row.conversationId,
+        where: conversation?.name ?? "your call",
+        context: null,
+        thumbnailUrl: row.streamThumbnailUrl,
+      };
+    }
+
+    return null;
   },
 });

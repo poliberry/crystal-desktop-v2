@@ -25,6 +25,7 @@ export const PERMISSIONS = {
   /** Time a member out — they stay in the server but can't talk. */
   MODERATE_MEMBERS: 1 << 15,
   MANAGE_NICKNAMES: 1 << 16,
+  MENTION_EVERYONE: 1 << 17,
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -47,6 +48,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   BAN_MEMBERS: "Ban members",
   MODERATE_MEMBERS: "Time members out",
   MANAGE_NICKNAMES: "Change members' nicknames",
+  MENTION_EVERYONE: "Mention @everyone, @here and roles",
 } as const;
 
 export function hasPermission(permissions: number, flag: number): boolean {

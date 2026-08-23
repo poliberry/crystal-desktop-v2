@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { activitiesOf } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -26,7 +26,9 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     username: user.username,
     imageUrl: user.imageUrl,
     customStatus: user.customStatus,
+    nameplateUrl: user.nameplateUrl,
     status: presence?.effective ?? "offline",
+    activities: activitiesOf(presence),
   };
 }
 
@@ -44,6 +46,9 @@ async function otherMembers(ctx: QueryCtx, conversationId: Id<"conversations">, 
   );
   return others.filter((o): o is NonNullable<typeof o> => o !== null);
 }
+
+/** Past this a count stops being informative and becomes "a lot". */
+const UNREAD_COUNT_CAP = 99;
 
 export const listMine = query({
   args: {},
@@ -66,6 +71,21 @@ export const listMine = query({
           .order("desc")
           .take(1);
 
+        const unread = (lastMessage?._creationTime ?? 0) > membership.lastReadAt;
+
+        // Only counted for conversations already known to be unread, and
+        // capped: an exact count of a hundred unread messages isn't more
+        // useful than "99+", and this is the only unbounded read here.
+        let unreadCount = 0;
+        if (unread) {
+          const recent = await ctx.db
+            .query("messages")
+            .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
+            .order("desc")
+            .take(UNREAD_COUNT_CAP + 1);
+          unreadCount = recent.filter((m) => m._creationTime > membership.lastReadAt).length;
+        }
+
         return {
           id: conversation._id,
           type: conversation.type,
@@ -74,7 +94,11 @@ export const listMine = query({
           members: await otherMembers(ctx, conversation._id, me._id),
           lastMessageText: lastMessage?.text ?? null,
           lastMessageAt: lastMessage?._creationTime ?? conversation.createdAt,
-          unread: (lastMessage?._creationTime ?? 0) > membership.lastReadAt,
+          /** So the list can prefix the preview with "Me:" — whose turn it is
+           * is most of what a one-line preview is for. */
+          lastMessageMine: lastMessage?.authorId === me._id,
+          unread,
+          unreadCount,
         };
       })
     );
@@ -285,6 +309,38 @@ export const createGroup = mutation({
     return conversationId;
   },
 });
+
+/**
+ * Catch a user up on every conversation they're in.
+ *
+ * Shared with the inbox's "mark all read": clearing the notification rows
+ * without this would empty the badge while leaving the unread DMs lit in the
+ * rail, which reads as the button not having worked.
+ *
+ * Only conversations actually behind are written to. `lastReadAt` moving
+ * forward is always valid, so patching all of them unconditionally would be
+ * correct too — it would just spend a write per conversation to say nothing.
+ */
+export async function markAllConversationsRead(
+  ctx: MutationCtx,
+  userId: Id<"users">
+): Promise<void> {
+  const memberships = await ctx.db
+    .query("conversationMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+
+  const now = Date.now();
+  for (const membership of memberships) {
+    const [lastMessage] = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", membership.conversationId))
+      .order("desc")
+      .take(1);
+    if (!lastMessage || lastMessage._creationTime <= membership.lastReadAt) continue;
+    await ctx.db.patch(membership._id, { lastReadAt: now });
+  }
+}
 
 export const markRead = mutation({
   args: { conversationId: v.id("conversations") },
