@@ -19,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
+import { badgeDefinition } from "@/lib/badges";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { ServerProfileDialog } from "./server-profile-dialog";
@@ -37,6 +38,44 @@ export interface MemberProfileMember {
   /** Community-only — omitted for DM member profiles. */
   isOwner?: boolean;
   roles?: { id: Id<"roles">; name: string; color?: string }[];
+}
+
+/**
+ * The badges a user has earned, as a row of pills.
+ *
+ * Fetches its own data rather than taking it as a prop: this card is built
+ * from half a dozen different member shapes across the app, and threading a
+ * `badges` field through all of them to render one row here would be a lot of
+ * plumbing for a query that only runs when a card is actually open.
+ */
+function ProfileBadges({ userId }: { userId: Id<"users"> }) {
+  const badges = useQuery(api.users.badgesOf, { userId }) ?? [];
+  if (badges.length === 0) return null;
+
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1">
+      {badges.map((badge) => {
+        const definition = badgeDefinition(badge.badgeId);
+        // An id this build doesn't know about is skipped rather than drawn as
+        // a mystery pill — see src/lib/badges.ts.
+        if (!definition) return null;
+        const Icon = definition.icon;
+        return (
+          <span
+            key={badge.badgeId}
+            title={`${definition.label} — ${definition.description}`}
+            className={cn(
+              "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+              definition.className
+            )}
+          >
+            <Icon className="size-3 shrink-0" />
+            {definition.label}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 export function MemberProfileCard({
@@ -184,6 +223,7 @@ export function MemberProfileCard({
             <p className="truncate text-sm text-muted-foreground">
               @{member.username}
             </p>
+            <ProfileBadges userId={member.userId} />
           </div>
         </div>
 

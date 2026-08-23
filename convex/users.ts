@@ -2,7 +2,14 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { activitiesOf } from "./lib/activities";
-import { internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
@@ -475,5 +482,85 @@ export const getCurrentUserIdInternal = internalQuery({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     return me?._id ?? null;
+  },
+});
+
+// --- Badges ----------------------------------------------------------------
+
+/**
+ * A user's badges, oldest first.
+ *
+ * Fetched by the profile card itself rather than joined into every query that
+ * returns a member: the card is opened one at a time, and the alternative is
+ * threading a `badges` field through half a dozen unrelated queries so that
+ * one popover can render a row of pills.
+ */
+export const badgesOf = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const rows = await ctx.db
+      .query("userBadges")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return rows
+      .sort((a, b) => a.grantedAt - b.grantedAt)
+      .map((row) => ({ badgeId: row.badgeId, grantedAt: row.grantedAt }));
+  },
+});
+
+/**
+ * Give someone a badge, unless they already have it.
+ *
+ * A plain helper rather than a mutation: badges are granted as a consequence
+ * of something else happening, so this runs inside whatever transaction
+ * decided it was earned.
+ */
+export async function grantBadge(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  badgeId: string
+): Promise<void> {
+  const existing = await ctx.db
+    .query("userBadges")
+    .withIndex("by_user_badge", (q) => q.eq("userId", userId).eq("badgeId", badgeId))
+    .unique();
+  if (existing) return;
+  await ctx.db.insert("userBadges", { userId, badgeId, grantedAt: Date.now() });
+}
+
+/**
+ * One-off: give everyone who already had an account the Early Supporter badge.
+ *
+ * Run by hand (`npx convex run users:grantEarlySupporterToExistingUsers`)
+ * rather than on sign-in, because "was here early" is a fact about the past —
+ * deciding it from a cutoff date at sign-in time would mean picking a date,
+ * and the set of accounts that existed when this shipped is the honest answer.
+ * Idempotent, so running it twice is harmless.
+ */
+export const grantEarlySupporterToExistingUsers = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+    let granted = 0;
+    for (const user of users) {
+      const existing = await ctx.db
+        .query("userBadges")
+        .withIndex("by_user_badge", (q) =>
+          q.eq("userId", user._id).eq("badgeId", "early_supporter")
+        )
+        .unique();
+      if (existing) continue;
+      await ctx.db.insert("userBadges", {
+        userId: user._id,
+        badgeId: "early_supporter",
+        // Their account's creation time, not now: the badge is about when they
+        // showed up, and "Early Supporter since today" would be nonsense.
+        grantedAt: user._creationTime,
+      });
+      granted++;
+    }
+    return { users: users.length, granted };
   },
 });

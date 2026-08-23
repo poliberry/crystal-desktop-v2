@@ -80,6 +80,24 @@ export default defineSchema({
     .index("by_clerk_id", ["clerkId"])
     .index("by_username", ["username"]),
 
+  /**
+   * Badges earned by a user — "Early Supporter" and whatever comes after.
+   *
+   * A row per (user, badge) rather than a field on `users`, so granting one
+   * doesn't rewrite the user document and `grantedAt` is recorded per badge
+   * ("Early Supporter since March"). `badgeId` is a key into the catalogue in
+   * src/lib/badges.ts rather than a foreign key: what a badge *means* is
+   * presentation, and an id nobody recognises is skipped rather than breaking
+   * the card.
+   */
+  userBadges: defineTable({
+    userId: v.id("users"),
+    badgeId: v.string(),
+    grantedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_badge", ["userId", "badgeId"]),
+
   friendships: defineTable({
     ownerId: v.id("users"),
     friendId: v.id("users"),
