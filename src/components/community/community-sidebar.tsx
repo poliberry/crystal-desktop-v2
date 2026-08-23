@@ -123,6 +123,7 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
   const canManageChannels = hasPermission(myPermissions, PERMISSIONS.MANAGE_CHANNELS);
   const canCreateInvite = hasPermission(myPermissions, PERMISSIONS.CREATE_INVITE);
   const canManageEmojis = hasPermission(myPermissions, PERMISSIONS.MANAGE_EMOJIS);
+  const canManageCommunity = hasPermission(myPermissions, PERMISSIONS.MANAGE_COMMUNITY);
 
   useEffect(() => {
     if (!selectedChannelId && channels.length > 0) {
@@ -200,11 +201,15 @@ export function CommunitySidebar({ communityId, selectedChannelId, onSelectChann
               </DropdownMenuItem>
             </>
           )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-            <Settings className="size-4" />
-            Community Settings
-          </DropdownMenuItem>
+          {canManageCommunity && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+                <Settings className="size-4" />
+                Community Settings
+              </DropdownMenuItem>
+            </>
+          )}
           {!community.isOwner && (
             <>
               <DropdownMenuSeparator />

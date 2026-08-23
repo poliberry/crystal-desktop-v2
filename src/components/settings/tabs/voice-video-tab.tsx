@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Gamepad2, Headphones, Mic, RefreshCw } from "lucide-react";
+import { Gamepad2, Headphones, Mic, RefreshCw, Sparkles } from "lucide-react";
 
 import { useAudioPreferences } from "@/components/audio-provider";
 import { Button } from "@/components/ui/button";
@@ -76,6 +76,9 @@ export function VoiceVideoTab() {
     setOutputDeviceId,
     labelsAvailable,
     refreshDevices,
+    noiseSuppression,
+    setNoiseSuppression,
+    noiseSuppressionSupported,
     quality,
     setQuality,
     shareAudio,
@@ -172,6 +175,30 @@ export function VoiceVideoTab() {
               </SelectContent>
             </Select>
           </div>
+
+          {noiseSuppressionSupported && (
+            <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+              <div className="space-y-1">
+                <Label
+                  htmlFor="noise-suppression"
+                  className="flex items-center gap-2 text-sm font-normal"
+                >
+                  <Sparkles className="size-4 text-muted-foreground" />
+                  Noise suppression
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Runs Krisp over your microphone before it leaves your machine, removing keyboard
+                  clatter, fans and background chatter. Costs some CPU — turn it off if calls feel
+                  heavy.
+                </p>
+              </div>
+              <Switch
+                id="noise-suppression"
+                checked={noiseSuppression}
+                onCheckedChange={setNoiseSuppression}
+              />
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="flex items-center gap-2 text-sm font-normal">

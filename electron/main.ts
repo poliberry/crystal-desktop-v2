@@ -94,7 +94,7 @@ function toTransferable(buf: Buffer): ArrayBuffer {
  */
 function appIconPath(): string | undefined {
   const candidate = isDev
-    ? path.join(__dirname, "..", "build", "icon.png")
+    ? path.join(__dirname, "..", "build", "icon-dev.png")
     : path.join(process.resourcesPath, "icon.png");
   return fs.existsSync(candidate) ? candidate : undefined;
 }

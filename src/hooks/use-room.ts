@@ -20,6 +20,11 @@ import {
 } from "@/lib/system-audio";
 import { getDesktopAPI, isElectron } from "@/lib/desktop";
 import {
+  applyNoiseSuppression,
+  createNoiseFilter,
+  localMicrophoneTrack,
+} from "@/lib/noise-filter";
+import {
   resolveStreamResolution,
   type StreamQuality,
   type SystemAudioChoice,
@@ -87,6 +92,7 @@ export function useRoom() {
     muted,
     deafened,
     quality,
+    noiseSuppression,
     soundboardVolume,
     setMuted,
     playCue,
@@ -123,6 +129,8 @@ export function useRoom() {
   soundboardVolumeRef.current = soundboardVolume;
   const outputDeviceIdRef = useRef(outputDeviceId);
   outputDeviceIdRef.current = outputDeviceId;
+  const noiseSuppressionRef = useRef(noiseSuppression);
+  noiseSuppressionRef.current = noiseSuppression;
 
   /**
    * Play a clip and highlight whoever triggered it for exactly as long as it
@@ -155,6 +163,17 @@ export function useRoom() {
     if (!local) return;
     setCameraEnabled(local.isCameraEnabled);
     setMicrophoneEnabled(local.isMicrophoneEnabled);
+  }, [room]);
+
+  /**
+   * Bring the live microphone in line with the noise-suppression preference.
+   *
+   * Called both when the preference changes and whenever a mic track is
+   * published, because a track captured while muted (or before the plugin had
+   * loaded) arrives without the filter attached.
+   */
+  const syncNoiseFilter = useCallback(() => {
+    void applyNoiseSuppression(localMicrophoneTrack(room), noiseSuppressionRef.current);
   }, [room]);
 
   const syncScreenSharing = useCallback(() => {
@@ -234,6 +253,7 @@ export function useRoom() {
       syncLocalTracks();
       syncScreenSharing();
       syncScreenShares();
+      syncNoiseFilter();
     };
     const onTrackUnpublished = () => {
       syncLocalTracks();
@@ -347,6 +367,7 @@ export function useRoom() {
     applyDeafen,
     highlightWhilePlaying,
     syncLocalTracks,
+    syncNoiseFilter,
     syncScreenSharing,
     syncScreenShares,
   ]);
@@ -387,7 +408,17 @@ export function useRoom() {
 
         // Only the microphone is enabled by default. The camera stays off and
         // its permission is only requested when the user toggles it on.
-        await room.localParticipant.setMicrophoneEnabled(!mutedRef.current);
+        //
+        // The noise filter is handed to the capture rather than attached
+        // afterwards so the very first frames published are already clean —
+        // and only built when it's actually wanted, since a processor that is
+        // never attached to a track would leak its worklet.
+        const filter =
+          noiseSuppressionRef.current && !mutedRef.current ? await createNoiseFilter() : null;
+        await room.localParticipant.setMicrophoneEnabled(
+          !mutedRef.current,
+          filter ? { processor: filter } : undefined
+        );
         syncLocalTracks();
       } catch (err) {
         setStatus("error");
@@ -419,6 +450,13 @@ export function useRoom() {
     if (!connectedRef.current) return;
     void room.switchActiveDevice("audiooutput", toDeviceId(outputDeviceId)).catch(() => {});
   }, [room, outputDeviceId]);
+
+  // Toggling this mid-call is instant: the filter stays attached and is
+  // bypassed, so nobody hears the track being republished.
+  useEffect(() => {
+    if (!connectedRef.current) return;
+    syncNoiseFilter();
+  }, [noiseSuppression, syncNoiseFilter]);
 
   useEffect(() => {
     if (!connectedRef.current) return;

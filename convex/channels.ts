@@ -264,9 +264,19 @@ export const removeOverwrite = mutation({
   },
 });
 
+/**
+ * Everyone currently connected to a voice channel.
+ *
+ * Identity here follows the same rule as the member list and the message
+ * author line: whatever the user set as their profile *for this community*
+ * wins, falling back to their global profile field by field — so a per-server
+ * nickname with no per-server avatar still shows their normal picture.
+ */
 export const listVoiceParticipants = query({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }) => {
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return [];
     const rows = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
@@ -275,15 +285,23 @@ export const listVoiceParticipants = query({
       rows.map(async (row) => {
         const user = await ctx.db.get(row.userId);
         if (!user) return null;
-        const presence = await ctx.db
-          .query("presence")
-          .withIndex("by_user", (q) => q.eq("userId", row.userId))
-          .unique();
+        const [serverProfile, presence] = await Promise.all([
+          ctx.db
+            .query("serverProfiles")
+            .withIndex("by_user_community", (q) =>
+              q.eq("userId", row.userId).eq("communityId", channel.communityId)
+            )
+            .unique(),
+          ctx.db
+            .query("presence")
+            .withIndex("by_user", (q) => q.eq("userId", row.userId))
+            .unique(),
+        ]);
         return {
           id: user._id,
-          name: user.name,
+          name: serverProfile?.displayName ?? user.name,
           username: user.username,
-          imageUrl: user.imageUrl,
+          imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
           muted: row.muted ?? false,
           deafened: row.deafened ?? false,
           streaming: row.streaming ?? false,

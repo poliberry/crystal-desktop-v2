@@ -11,6 +11,7 @@ import {
   type StreamQuality,
   type SystemAudioChoice,
 } from "@/lib/audio-prefs";
+import { isNoiseSuppressionSupported } from "@/lib/noise-filter";
 import { playUiSound, type UiSound } from "@/lib/ui-sounds";
 
 export interface AudioDeviceOption {
@@ -32,6 +33,11 @@ interface AudioPreferencesContextValue extends AudioPreferences {
   toggleMuted: () => void;
   setDeafened: (deafened: boolean) => void;
   toggleDeafened: () => void;
+  setNoiseSuppression: (enabled: boolean) => void;
+  toggleNoiseSuppression: () => void;
+  /** Whether the Krisp filter can run in this renderer at all — false hides
+   * the toggle rather than offering a switch that does nothing. */
+  noiseSuppressionSupported: boolean;
   setQuality: (quality: StreamQuality) => void;
   setShareAudio: (choice: SystemAudioChoice) => void;
   setSoundboardVolume: (volume: number) => void;
@@ -73,9 +79,13 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
   const [labelsAvailable, setLabelsAvailable] = useState(false);
   const [hasMicrophone, setHasMicrophone] = useState(true);
   const [hasCamera, setHasCamera] = useState(true);
+  // Resolved after mount: it reads the user agent, which isn't available
+  // while the shell is being prerendered.
+  const [noiseSuppressionSupported, setNoiseSuppressionSupported] = useState(false);
 
   useEffect(() => {
     setPrefs(readAudioPreferences());
+    setNoiseSuppressionSupported(isNoiseSuppressionSupported());
   }, []);
 
   const enumerate = useCallback(async () => {
@@ -177,12 +187,15 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       labelsAvailable,
       hasMicrophone,
       hasCamera,
+      noiseSuppressionSupported,
       setInputDeviceId: (inputDeviceId) => update({ inputDeviceId }),
       setOutputDeviceId: (outputDeviceId) => update({ outputDeviceId }),
       setMuted,
       toggleMuted: () => setMuted(!prefs.muted),
       setDeafened,
       toggleDeafened: () => setDeafened(!prefs.deafened),
+      setNoiseSuppression: (noiseSuppression) => update({ noiseSuppression }),
+      toggleNoiseSuppression: () => update({ noiseSuppression: !prefs.noiseSuppression }),
       setQuality: (quality) => update({ quality }),
       setShareAudio: (shareAudio) => update({ shareAudio }),
       setSoundboardVolume: (soundboardVolume) => update({ soundboardVolume }),
@@ -198,6 +211,7 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       labelsAvailable,
       hasMicrophone,
       hasCamera,
+      noiseSuppressionSupported,
       update,
       setMuted,
       setDeafened,
