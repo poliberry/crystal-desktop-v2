@@ -6,11 +6,13 @@ import { Check, MessageSquare, Users, X } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { AddFriendDialog } from "@/components/home/add-friend-dialog";
+import { ActivityFeed } from "@/components/home/activity-feed";
 import { FriendRow } from "@/components/home/friend-row";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 
 interface FriendsPanelProps {
   search: string;
@@ -49,7 +51,8 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
   const filteredOutgoing = outgoing.filter((r) => matches(search, r.user.name, r.user.username));
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col p-4">
+    <div className="flex min-h-0 min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Users className="size-5 text-muted-foreground" />
@@ -84,6 +87,9 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
                   username={friend.username}
                   imageUrl={friend.imageUrl}
                   status={friend.status}
+                  customStatus={friend.customStatus}
+                  activities={friend.activities as RichPresenceActivity[]}
+                  nameplateUrl={friend.nameplateUrl}
                   actions={
                     <>
                       <Button
@@ -194,6 +200,9 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
                   username={friend.username}
                   imageUrl={friend.imageUrl}
                   status={friend.status}
+                  customStatus={friend.customStatus}
+                  activities={friend.activities as RichPresenceActivity[]}
+                  nameplateUrl={friend.nameplateUrl}
                   actions={
                     <>
                       <Button
@@ -219,6 +228,9 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
           </ScrollArea>
         </TabsContent>
       </Tabs>
+      </div>
+
+      <ActivityFeed />
     </div>
   );
 }

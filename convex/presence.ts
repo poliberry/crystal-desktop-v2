@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 
+import type { Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { activitiesOf } from "./lib/activities";
 import {
@@ -259,5 +260,148 @@ export const sweepStale = internalMutation({
       }
       if (running.length > 0) await closeOpenSessions(ctx, row.userId);
     }
+  },
+});
+
+/** Faces per call row before it collapses to "+N". */
+const CALL_AVATAR_LIMIT = 6;
+
+/**
+ * What's happening right now among the people you'd care about: who's sitting
+ * in a call you could join, and what your friends are playing or listening to.
+ *
+ * Calls are scoped to places the caller can actually reach — voice channels in
+ * their servers, and their own group/DM conversations — because "join" is the
+ * point of showing them. Activities are scoped to friends: a server of a
+ * thousand people playing games isn't a feed, it's noise.
+ */
+export const activeNow = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return { calls: [], activities: [] };
+
+    const summarise = async (userId: Id<"users">) => {
+      const user = await ctx.db.get(userId);
+      return {
+        userId,
+        name: user?.name ?? "Unknown",
+        imageUrl: user?.imageUrl,
+      };
+    };
+
+    const calls: {
+      key: string;
+      /** Where it is — "#general" or a group's name. */
+      name: string;
+      /** The server it belongs to, for a voice channel. */
+      context: string | null;
+      channelId: Id<"channels"> | null;
+      conversationId: Id<"conversations"> | null;
+      communityId: Id<"communities"> | null;
+      participants: { userId: Id<"users">; name: string; imageUrl?: string }[];
+      participantCount: number;
+    }[] = [];
+
+    const communityMemberships = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    for (const membership of communityMemberships) {
+      const community = await ctx.db.get(membership.communityId);
+      if (!community) continue;
+      const channels = await ctx.db
+        .query("channels")
+        .withIndex("by_community", (q) => q.eq("communityId", membership.communityId))
+        .collect();
+
+      for (const channel of channels) {
+        if (channel.type !== "voice") continue;
+        const rows = await ctx.db
+          .query("channelCallParticipants")
+          .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+          .collect();
+        if (rows.length === 0) continue;
+
+        calls.push({
+          key: `channel:${channel._id}`,
+          name: `#${channel.name}`,
+          context: community.name,
+          channelId: channel._id,
+          conversationId: null,
+          communityId: community._id,
+          participants: await Promise.all(
+            rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId))
+          ),
+          participantCount: rows.length,
+        });
+      }
+    }
+
+    const conversationMemberships = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+
+    for (const membership of conversationMemberships) {
+      const rows = await ctx.db
+        .query("callParticipants")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", membership.conversationId))
+        .collect();
+      if (rows.length === 0) continue;
+      const conversation = await ctx.db.get(membership.conversationId);
+      if (!conversation) continue;
+
+      const participants = await Promise.all(
+        rows.slice(0, CALL_AVATAR_LIMIT).map((row) => summarise(row.userId))
+      );
+      calls.push({
+        key: `conversation:${conversation._id}`,
+        // A DM has no name of its own, so whoever's in the call names it.
+        name:
+          conversation.name ??
+          participants.filter((p) => p.userId !== me._id).map((p) => p.name).join(", ") ??
+          "Call",
+        context: null,
+        channelId: null,
+        conversationId: conversation._id,
+        communityId: null,
+        participants,
+        participantCount: rows.length,
+      });
+    }
+
+    const friendships = await ctx.db
+      .query("friendships")
+      .withIndex("by_owner", (q) => q.eq("ownerId", me._id))
+      .collect();
+
+    const activities = (
+      await Promise.all(
+        friendships.map(async (friendship) => {
+          const presence = await ctx.db
+            .query("presence")
+            .withIndex("by_user", (q) => q.eq("userId", friendship.friendId))
+            .unique();
+          // Someone offline isn't doing anything, whatever their last
+          // reported activity says.
+          if (!presence || presence.effective === "offline") return null;
+          const list = activitiesOf(presence);
+          if (list.length === 0) return null;
+          const friend = await ctx.db.get(friendship.friendId);
+          if (!friend) return null;
+          return {
+            userId: friend._id,
+            name: friend.name,
+            imageUrl: friend.imageUrl,
+            status: presence.effective,
+            activities: list,
+          };
+        })
+      )
+    ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+    return { calls, activities };
   },
 });

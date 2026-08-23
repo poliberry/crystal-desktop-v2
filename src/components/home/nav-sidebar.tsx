@@ -166,7 +166,7 @@ export function NavSidebar({
                   key={conversation.id}
                   onClick={() => onSelectConversation(conversation.id)}
                   className={cn(
-                    "relative flex items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left hover:bg-accent/60",
+                    "relative flex items-center gap-2.5 overflow-hidden rounded-none px-2 py-2 text-left hover:bg-accent/60",
                     active && "bg-accent",
                     isOffline && !active && "opacity-60 hover:opacity-90"
                   )}
