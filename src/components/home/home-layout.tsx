@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { CallPip } from "@/components/call/call-pip";
 import { CallStage } from "@/components/call/call-stage";
 import { useCall } from "@/components/call/call-provider";
 import { ChannelView } from "@/components/community/channel-view";
@@ -279,6 +280,11 @@ export function HomeLayout() {
       )}
 
       <UserCard />
+
+      {/* The call's mini player, while the call screen is collapsed. Rendered
+          here rather than by CallProvider so the provider doesn't have to
+          import a component that reads its own context back out. */}
+      <CallPip />
     </div>
   );
 }
