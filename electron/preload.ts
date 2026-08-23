@@ -14,6 +14,7 @@ const api = {
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
     close: () => ipcRenderer.invoke("window:close"),
     isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+    setZoomFactor: (factor: number) => ipcRenderer.invoke("window:set-zoom", factor),
     onMaximizedChange: (cb: (maximized: boolean) => void) => {
       const handler = (_e: IpcRendererEvent, maximized: boolean) => cb(maximized);
       ipcRenderer.on("window:maximized-changed", handler);

@@ -86,7 +86,16 @@ export const listMine = query({
     const communities = await Promise.all(memberships.map((m) => ctx.db.get(m.communityId)));
     return communities
       .filter((c): c is Doc<"communities"> => c !== null)
-      .map((c) => ({ id: c._id, name: c.name, imageUrl: c.imageUrl, ownerId: c.ownerId }));
+      .map((c) => ({
+        id: c._id,
+        name: c.name,
+        imageUrl: c.imageUrl,
+        ownerId: c.ownerId,
+        // Resolved here rather than compared client-side: the rail's right-click
+        // menu needs it for every server at once (an owner can't leave their
+        // own), and it's already in hand.
+        isOwner: c.ownerId === me._id,
+      }));
   },
 });
 

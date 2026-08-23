@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
 import { AudioAttachment } from "@/components/home/audio-attachment";
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
 
 interface ChannelMessageListProps {
@@ -383,16 +384,10 @@ export function ChannelMessageList({
   );
   const chronological = [...messages].reverse();
 
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const lastIdRef = useRef<string | undefined>(undefined);
-
-  useEffect(() => {
-    const lastId = chronological[chronological.length - 1]?.id;
-    if (lastId && lastId !== lastIdRef.current) {
-      lastIdRef.current = lastId;
-      bottomRef.current?.scrollIntoView({ block: "end" });
-    }
-  }, [chronological]);
+  const { containerRef, contentRef, onScroll } = useStickToBottom({
+    viewKey: channelId,
+    latestKey: chronological[chronological.length - 1]?.id,
+  });
 
   // Only truly cold channels get a skeleton now: anything opened before, or
   // warmed by the preloader, has a page to show.
@@ -406,13 +401,11 @@ export function ChannelMessageList({
 
   return (
     <div
-      onScroll={(event) => {
-        if (!onAtBottomChange) return;
-        const el = event.currentTarget;
-        // A few pixels of slack: sub-pixel layout and the auto-scroll on new
-        // messages both leave the scroll position a hair short of the end.
-        onAtBottomChange(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
-      }}
+      ref={containerRef}
+      // One handler for both jobs: the hook decides whether new messages should
+      // still follow the reader down, and hands back the same answer this view
+      // needs for its own "at the bottom" state.
+      onScroll={() => onAtBottomChange?.(onScroll())}
       className="min-h-0 flex-1 overflow-y-auto px-4 py-2 bg-gradient-to-t from-background to-transparent"
     >
       {/* min-h-full + justify-end pins short conversations to the bottom of
@@ -422,7 +415,7 @@ export function ChannelMessageList({
           ScrollArea here: Radix wraps its Viewport's children in a
           `display: table` div, which ignores the `min-h-full` this pin
           relies on, so short conversations render top-anchored instead. */}
-      <div className="flex min-h-full flex-col justify-end gap-0.5">
+      <div ref={contentRef} className="flex min-h-full flex-col justify-end gap-0.5">
         {status === "Exhausted" && <ChannelWelcome channelName={channelName} />}
 
         {status === "CanLoadMore" && (
@@ -450,7 +443,6 @@ export function ChannelMessageList({
             />
           );
         })}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

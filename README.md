@@ -58,8 +58,49 @@ so you can develop the UI without Electron.
 
 ```bash
 bun run build    # next static export (out/) + tsc for electron (dist-electron/)
-bun run dist     # electron-builder → installers in release/
+bun run dist     # electron-builder → installers in release/ (Stable)
 ```
+
+### Release channels
+
+Crystal ships from four branches. Each publishes its own installers and its own
+update feed, and each is a **separate application** — its own appId, product
+name, icon and install directory — so Canary can sit alongside Stable without
+either one replacing the other.
+
+| Branch        | Channel     | Icon              | Tags                   | GitHub release |
+| ------------- | ----------- | ----------------- | ---------------------- | -------------- |
+| `main`        | Stable      | `icon.png`        | `v1.2.3`               | latest         |
+| `ptb`         | PTB         | `icon.png`        | `ptb-1.2.3`            | prerelease     |
+| `canary`      | Canary      | `icon-canary.png` | `canary-1.2.3`         | prerelease     |
+| `development` | Development | `icon-dev.png`    | `development-1.2.3`    | prerelease     |
+
+`main` *is* the Stable branch — it's the default branch and what PRs target, so
+a separate `stable` branch would only be a second name for the same tip. Work
+is expected to flow `development` → `canary` → `ptb` → `main`; each branch
+carries its own version in `package.json`, so a promotion PR resolves that one
+field. A channel only ever compares against its own releases, so version
+numbers don't need to line up between channels.
+
+The single source of truth for all of it is [`electron/channels.ts`](electron/channels.ts):
+the main process reads it to pick a window icon and an update feed, and
+`scripts/electron-builder-config.cjs` reads its compiled output to configure the
+packager. Every pull request is labelled `channel:<name>` from its base branch
+(`.github/workflows/pr-channel-label.yml`), so which channel a change deploys to
+is visible on the PR itself.
+
+To build a channel locally:
+
+```bash
+CRYSTAL_CHANNEL=canary bun run build
+CRYSTAL_CHANNEL=canary bunx electron-builder --win --config scripts/electron-builder-config.cjs
+```
+
+Non-stable releases are published as GitHub prereleases, which is what keeps
+them out of "latest" — and therefore out of a Stable install's update check.
+Those channels' tags aren't semver, so electron-updater's GitHub provider can't
+find them on its own; `electron/updater.ts` resolves the newest tag for the
+running channel and points a static feed at that release instead.
 
 ---
 

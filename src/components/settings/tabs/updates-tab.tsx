@@ -25,13 +25,26 @@ export function UpdatesTab() {
     <Card>
       <CardHeader>
         <CardTitle>Updates</CardTitle>
-        <CardDescription>Crystal checks GitHub releases for new versions.</CardDescription>
+        <CardDescription>
+          Crystal checks GitHub releases for new versions. Each channel updates only from its
+          own releases, so a Canary install never pulls a Stable build (or the other way
+          round).
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Current version</span>
           <span className="font-medium">{state.currentVersion || "—"}</span>
         </div>
+
+        {/* Only the main process knows the channel — in a plain browser the
+            label is empty and this row is left out rather than guessed at. */}
+        {state.channelLabel && (
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Channel</span>
+            <span className="font-medium">{state.channelLabel}</span>
+          </div>
+        )}
 
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Status</span>

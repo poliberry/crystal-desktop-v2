@@ -25,17 +25,15 @@ import {
   ChevronDown,
   FolderPlus,
   Hash,
-  LogOut,
-  Settings,
-  UserPlus,
   Volume2,
 } from "lucide-react";
 import type { Room } from "livekit-client";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useCall } from "@/components/call/call-provider";
+import { communityActionItems } from "@/components/community/community-actions";
 import { CommunitySettingsDialog } from "@/components/community/community-settings-dialog";
 import { CreateCategoryDialog } from "@/components/community/create-category-dialog";
 import { CreateChannelDialog } from "@/components/community/create-channel-dialog";
@@ -186,17 +184,9 @@ export function CommunitySidebar({
     myPermissions,
     PERMISSIONS.MANAGE_CHANNELS,
   );
-  const canCreateInvite = hasPermission(
-    myPermissions,
-    PERMISSIONS.CREATE_INVITE,
-  );
   const canManageEmojis = hasPermission(
     myPermissions,
     PERMISSIONS.MANAGE_EMOJIS,
-  );
-  const canManageCommunity = hasPermission(
-    myPermissions,
-    PERMISSIONS.MANAGE_COMMUNITY,
   );
 
   useEffect(() => {
@@ -257,46 +247,33 @@ export function CommunitySidebar({
           </DropdownMenuTrigger>
         </div>
         <DropdownMenuContent className="w-56" align="start">
-          {canCreateInvite && (
-            <DropdownMenuItem onClick={() => setInviteOpen(true)}>
-              <UserPlus className="size-4" />
-              Invite People
-            </DropdownMenuItem>
-          )}
-          {canManageChannels && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setCreateChannelFor(null)}>
-                <Hash className="size-4" />
-                Create Channel
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setCreateCategoryOpen(true)}>
-                <FolderPlus className="size-4" />
-                Create Category
-              </DropdownMenuItem>
-            </>
-          )}
-          {canManageCommunity && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                <Settings className="size-4" />
-                Community Settings
-              </DropdownMenuItem>
-            </>
-          )}
-          {!community.isOwner && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => void leaveCommunity({ communityId })}
-              >
-                <LogOut className="size-4" />
-                Leave Server
-              </DropdownMenuItem>
-            </>
-          )}
+          {/* Described once in community-actions.tsx and drawn here, so this
+              and the rail's right-click menu can't drift apart. */}
+          {communityActionItems({
+            permissions: myPermissions,
+            isOwner: community.isOwner,
+            handlers: {
+              invite: () => setInviteOpen(true),
+              createChannel: () => setCreateChannelFor(null),
+              createCategory: () => setCreateCategoryOpen(true),
+              communitySettings: () => setSettingsOpen(true),
+              leave: () => void leaveCommunity({ communityId }),
+            },
+          }).map((item) => {
+            const Icon = item.icon;
+            return (
+              <Fragment key={item.key}>
+                {item.separatorBefore && <DropdownMenuSeparator />}
+                <DropdownMenuItem
+                  variant={item.destructive ? "destructive" : "default"}
+                  onClick={item.onSelect}
+                >
+                  <Icon className="size-4" />
+                  {item.label}
+                </DropdownMenuItem>
+              </Fragment>
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
 

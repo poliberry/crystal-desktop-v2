@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Accessibility,
   Bell,
   ChevronDown,
   Download,
@@ -17,6 +18,7 @@ import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
+import { AccessibilityTab } from "@/components/settings/tabs/accessibility-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
 import { NotificationsTab } from "@/components/settings/tabs/notifications-tab";
@@ -64,6 +66,7 @@ import { useState } from "react";
 const TABS = [
   { value: "profile", label: "Profile", icon: User },
   { value: "appearance", label: "Appearance", icon: Palette },
+  { value: "accessibility", label: "Accessibility", icon: Accessibility },
   { value: "servers", label: "Servers", icon: Server },
   { value: "account", label: "Account", icon: KeyRound },
   { value: "voice", label: "Voice & Video", icon: Mic },
@@ -84,6 +87,7 @@ const NAVIGATION = [
     label: "Customisation",
     children: [
       { value: "appearance", label: "Appearance", icon: Palette },
+      { value: "accessibility", label: "Accessibility", icon: Accessibility },
       { value: "servers", label: "Server Profiles", icon: Server },
     ],
   },
@@ -217,6 +221,7 @@ export function SettingsShell() {
             <div className="mx-auto w-full px-6 py-6">
               {section === "profile" && <ProfileTab />}
               {section === "appearance" && <AppearanceTab />}
+              {section === "accessibility" && <AccessibilityTab />}
               {section === "account" && <AccountTab />}
               {section === "voice" && <VoiceVideoTab />}
               {section === "notifications" && <NotificationsTab />}

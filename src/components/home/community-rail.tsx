@@ -2,10 +2,11 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { Compass, Home, Volume2 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { useCommunityActions } from "@/components/community/community-actions";
 import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
 import {
   Avatar,
@@ -19,6 +20,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -332,6 +334,154 @@ function CommunityCardBody({
   );
 }
 
+/**
+ * One server in the rail: its tile, its hover card, and its right-click menu.
+ *
+ * Its own component rather than markup inside the rail's `map` so each tile can
+ * hold the dialogs its menu opens — and, only once that menu has actually been
+ * opened, a permissions subscription. Hooks can't be called from a loop.
+ */
+function CommunityTile({
+  community,
+  activity,
+  selected,
+  alreadyOpen,
+  canOpenInCurrentTab,
+  onSelectCommunity,
+}: {
+  community: {
+    id: Id<"communities">;
+    name: string;
+    imageUrl?: string;
+    isOwner: boolean;
+  };
+  activity: CommunityActivity | undefined;
+  selected: boolean;
+  /** Whether this community already has a tab open — see `openCommunityIds`. */
+  alreadyOpen: boolean;
+  canOpenInCurrentTab: boolean;
+  onSelectCommunity: (id: Id<"communities">, mode?: "replace" | "new") => void;
+}) {
+  const [menuOpened, setMenuOpened] = useState(false);
+  const { items, dialogs } = useCommunityActions({
+    communityId: community.id,
+    isOwner: community.isOwner,
+    enabled: menuOpened,
+  });
+
+  const inVoice = !!activity?.voiceCount;
+  const mentions = activity?.mentionCount ?? 0;
+  const hasUnread = (activity?.unreadChannelIds.length ?? 0) > 0;
+
+  return (
+    <>
+      <HoverCard openDelay={200} closeDelay={100}>
+        <ContextMenu onOpenChange={(open) => open && setMenuOpened(true)}>
+          <ContextMenuTrigger asChild>
+            {/* The badge sits outside the button because the button clips its
+                contents — that's what gives the tile its square-to-squircle
+                morph on hover. */}
+            <div className="relative">
+              <HoverCardTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={[
+                    community.name,
+                    inVoice ? "call in progress" : null,
+                    mentions > 0 ? ` mentions` : hasUnread ? "unread messages" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")}
+                  onClick={(e) =>
+                    onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")
+                  }
+                  className={cn(
+                    "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
+                    selected &&
+                      "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-none",
+                  )}
+                >
+                  <Avatar className="size-12 rounded-none">
+                    <AvatarImage
+                      src={community.imageUrl}
+                      alt={community.name}
+                      className="rounded-none"
+                    />
+                    <AvatarFallback className="rounded-none text-sm">
+                      {community.name.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                </button>
+              </HoverCardTrigger>
+              {inVoice && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute -right-0.5 -bottom-0.5 flex size-5 items-center justify-center bg-emerald-500 text-white ring-2 ring-primary"
+                >
+                  <Volume2 className="size-3" />
+                </span>
+              )}
+              {/* A count for mentions, a dot for "something was said". Only
+                  mentions get a number — a busy server would otherwise wear a
+                  permanent badge meaning nothing in particular. */}
+              {mentions > 0 ? (
+                <span className="pointer-events-none absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                  {badgeText(mentions)}
+                </span>
+              ) : (
+                hasUnread && (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute top-1/2 -left-1.5 size-2 -translate-y-1/2 rounded-full bg-foreground"
+                  />
+                )
+              )}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            {canOpenInCurrentTab && !alreadyOpen && (
+              <ContextMenuItem
+                onClick={() => onSelectCommunity(community.id, "replace")}
+              >
+                Open in current tab
+              </ContextMenuItem>
+            )}
+            <ContextMenuItem onClick={() => onSelectCommunity(community.id, "new")}>
+              {alreadyOpen ? "Open tab" : "Open in new tab"}
+            </ContextMenuItem>
+            {/* The same actions the sidebar's header dropdown offers, so a
+                server can be invited to, added to or configured without
+                opening it first. Empty for a plain member of a server that
+                grants them nothing. */}
+            {items.length > 0 && <ContextMenuSeparator />}
+            {items.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Fragment key={item.key}>
+                  {item.separatorBefore && <ContextMenuSeparator />}
+                  <ContextMenuItem
+                    variant={item.destructive ? "destructive" : "default"}
+                    onClick={item.onSelect}
+                  >
+                    <Icon className="size-4" />
+                    {item.label}
+                  </ContextMenuItem>
+                </Fragment>
+              );
+            })}
+          </ContextMenuContent>
+        </ContextMenu>
+        <HoverCardContent side="right" align="start" className="w-60">
+          <CommunityCardBody name={community.name} activity={activity} />
+        </HoverCardContent>
+      </HoverCard>
+      {/* Outside the menu: its content unmounts when it closes, and these have
+          to outlive that to still be on screen. */}
+      {dialogs}
+    </>
+  );
+}
+
 interface CommunityRailProps {
   selectedCommunityId: Id<"communities"> | null;
   onSelectHome: () => void;
@@ -404,91 +554,17 @@ export function CommunityRail({
             room to render without the ScrollArea's own overflow-hidden
             viewport clipping it off the first/last item. */}
         <div className="flex flex-col items-center gap-2 px-2 py-1">
-          {communities.map((community) => {
-            const activity = activityByCommunity.get(community.id);
-            const inVoice = !!activity?.voiceCount;
-            const mentions = activity?.mentionCount ?? 0;
-            const hasUnread = (activity?.unreadChannelIds.length ?? 0) > 0;
-            return (
-            <HoverCard key={community.id} openDelay={200} closeDelay={100}>
-                <ContextMenu>
-                  <ContextMenuTrigger asChild>
-                    {/* The badge sits outside the button because the button
-                        clips its contents — that's what gives the tile its
-                        square-to-squircle morph on hover. */}
-                    <div className="relative">
-                    <HoverCardTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label={[
-                          community.name,
-                          inVoice ? "call in progress" : null,
-                          mentions > 0 ? ` mentions` : hasUnread ? "unread messages" : null,
-                        ]
-                          .filter(Boolean)
-                          .join(", ")}
-                        onClick={(e) => onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")}
-                        className={cn(
-                          "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
-                          selectedCommunityId === community.id &&
-                            "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-none",
-                        )}
-                      >
-                        <Avatar className="size-12 rounded-none">
-                          <AvatarImage
-                            src={community.imageUrl}
-                            alt={community.name}
-                            className="rounded-none"
-                          />
-                          <AvatarFallback className="rounded-none text-sm">
-                            {community.name.slice(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                      </button>
-                    </HoverCardTrigger>
-                    {inVoice && (
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute -right-0.5 -bottom-0.5 flex size-5 items-center justify-center bg-emerald-500 text-white ring-2 ring-primary"
-                      >
-                        <Volume2 className="size-3" />
-                      </span>
-                    )}
-                    {/* A count for mentions, a dot for "something was said".
-                        Only mentions get a number — a busy server would
-                        otherwise wear a permanent badge meaning nothing in
-                        particular. */}
-                    {mentions > 0 ? (
-                      <span className="pointer-events-none absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
-                        {badgeText(mentions)}
-                      </span>
-                    ) : (
-                      hasUnread && (
-                        <span
-                          aria-hidden
-                          className="pointer-events-none absolute top-1/2 -left-1.5 size-2 -translate-y-1/2 rounded-full bg-foreground"
-                        />
-                      )
-                    )}
-                    </div>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    {canOpenInCurrentTab && !openCommunityIds.has(community.id) && (
-                      <ContextMenuItem onClick={() => onSelectCommunity(community.id, "replace")}>
-                        Open in current tab
-                      </ContextMenuItem>
-                    )}
-                    <ContextMenuItem onClick={() => onSelectCommunity(community.id, "new")}>
-                      {openCommunityIds.has(community.id) ? "Open tab" : "Open in new tab"}
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                </ContextMenu>
-                <HoverCardContent side="right" align="start" className="w-60">
-                  <CommunityCardBody name={community.name} activity={activity} />
-                </HoverCardContent>
-            </HoverCard>
-            );
-          })}
+          {communities.map((community) => (
+            <CommunityTile
+              key={community.id}
+              community={community}
+              activity={activityByCommunity.get(community.id)}
+              selected={selectedCommunityId === community.id}
+              alreadyOpen={openCommunityIds.has(community.id)}
+              canOpenInCurrentTab={canOpenInCurrentTab}
+              onSelectCommunity={onSelectCommunity}
+            />
+          ))}
           {communities.length === 0 && (
             <p className="mt-4 px-1 text-center text-[11px] text-muted-foreground">
               No communities yet

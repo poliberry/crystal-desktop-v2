@@ -203,3 +203,76 @@ body {
 ::-webkit-resizer {
   background: transparent;
 }
+
+/* ---------------------------------------------------------------------------
+ * Accessibility (Settings → Accessibility)
+ *
+ * The provider (src/components/accessibility-provider.tsx) only sets a class
+ * or a custom property on <html>; every actual change lives here so it applies
+ * to every window the app opens.
+ *
+ * Each rule is written as `:root.a11y-*` rather than `.a11y-*` on purpose: the
+ * theme provider injects its colours into `:root` from a <style> element added
+ * to <head> at runtime, which is *later* in the cascade than this file. A
+ * plain class would tie on specificity and lose; a class plus `:root` wins
+ * regardless of order.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --a11y-text-scale: 1;
+}
+
+/* Percentage rather than a fixed px so the OS/browser's own default text size
+ * is still the baseline this multiplies. */
+html {
+  font-size: calc(100% * var(--a11y-text-scale));
+}
+
+/* Not `animation: none`, which cancels animations that only *end* somewhere
+ * useful (an element fading in would stay invisible). A near-zero duration
+ * jumps straight to the final frame instead. */
+:root.a11y-reduced-motion *,
+:root.a11y-reduced-motion *::before,
+:root.a11y-reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  transition-delay: 0ms !important;
+}
+
+:root.a11y-reduced-motion * {
+  scroll-behavior: auto !important;
+}
+
+:root.a11y-high-contrast {
+  --border: color-mix(in oklch, var(--foreground) 55%, transparent);
+  --input: color-mix(in oklch, var(--foreground) 60%, transparent);
+  --muted-foreground: color-mix(in oklch, var(--foreground) 88%, transparent);
+  --ring: var(--foreground);
+  --sidebar-border: color-mix(in oklch, var(--foreground) 55%, transparent);
+}
+
+/* Focus is normally a subtle ring; at high contrast it's a hard outline that
+ * doesn't depend on picking the ring colour out of the background. */
+:root.a11y-high-contrast *:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Wider letterforms and unambiguous glyph shapes. Atkinson Hyperlegible if the
+ * reader has it installed (it isn't bundled — no webfont fetch on a desktop
+ * app that may be offline), then the two most legible faces that ship with
+ * Windows and macOS respectively. */
+:root.a11y-readable-font {
+  --font-sans:
+    "Atkinson Hyperlegible", "Verdana", "Tahoma", "Helvetica Neue", system-ui,
+    sans-serif;
+  letter-spacing: 0.01em;
+}
+
+:root.a11y-underline-links a,
+:root.a11y-underline-links [role="link"] {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

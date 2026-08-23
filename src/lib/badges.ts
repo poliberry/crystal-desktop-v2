@@ -1,4 +1,4 @@
-import { Sparkles, type LucideIcon } from "lucide-react";
+import { IdCardLanyard, Sparkles, type LucideIcon } from "lucide-react";
 
 /**
  * What each badge looks like and means.
@@ -20,6 +20,12 @@ export interface BadgeDefinition {
 }
 
 export const BADGES: Record<string, BadgeDefinition> = {
+  poliberry_staff: {
+    label: "Poliberry Staff",
+    description: "Works on Crystal at Poliberry.",
+    icon: IdCardLanyard,
+    className: "text-sky-400",
+  },
   early_supporter: {
     label: "Early Supporter",
     description: "Here before it was finished.",

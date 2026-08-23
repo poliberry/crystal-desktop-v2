@@ -13,6 +13,7 @@ import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { UserProfileContent } from "@/components/community/member-profile-card";
 import { AudioAttachment } from "@/components/home/audio-attachment";
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -319,16 +320,10 @@ export function MessageList({ conversationId }: MessageListProps) {
   );
   const chronological = [...messages].reverse();
 
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const lastIdRef = useRef<string | undefined>(undefined);
-
-  useEffect(() => {
-    const lastId = chronological[chronological.length - 1]?.id;
-    if (lastId && lastId !== lastIdRef.current) {
-      lastIdRef.current = lastId;
-      bottomRef.current?.scrollIntoView({ block: "end" });
-    }
-  }, [chronological]);
+  const { containerRef, contentRef, onScroll } = useStickToBottom({
+    viewKey: conversationId,
+    latestKey: chronological[chronological.length - 1]?.id,
+  });
 
   if (loadingFirstPage && chronological.length === 0) {
     return (
@@ -339,7 +334,7 @@ export function MessageList({ conversationId }: MessageListProps) {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+    <div ref={containerRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a
@@ -347,7 +342,7 @@ export function MessageList({ conversationId }: MessageListProps) {
           ScrollArea here: Radix wraps its Viewport's children in a
           `display: table` div, which ignores the `min-h-full` this pin
           relies on, so short conversations render top-anchored instead. */}
-      <div className="flex min-h-full flex-col justify-end gap-0.5">
+      <div ref={contentRef} className="flex min-h-full flex-col justify-end gap-0.5">
         {status === "CanLoadMore" && (
           <div className="flex justify-center py-2">
             <Button variant="ghost" size="sm" onClick={() => loadMore(30)}>
@@ -365,7 +360,6 @@ export function MessageList({ conversationId }: MessageListProps) {
 
           return <MessageRow key={message.id} message={message} startsGroup={startsGroup} />;
         })}
-        <div ref={bottomRef} />
       </div>
     </div>
   );

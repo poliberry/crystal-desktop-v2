@@ -1,3 +1,8 @@
+# Everything that's the same for every build. `appId`, `productName`, `icon`,
+# `extraResources` and the artifact names are per-channel and get layered on
+# top of this by scripts/electron-builder-config.cjs, which every packaging
+# command passes with `--config` — the values here are Stable's, and are what
+# you get if this file is ever used on its own.
 appId: dev.crystal.desktop
 productName: Crystal
 copyright: Copyright © 2026 Crystal
@@ -6,6 +11,10 @@ copyright: Copyright © 2026 Crystal
 icon: build/icon.png
 directories:
   output: release
+# Also mirrored as `REPO` in electron/channels.ts, which the side channels'
+# update feed is built from. Stable uses this provider directly: it resolves
+# "the repo's latest release", which is the newest non-prerelease — i.e. the
+# newest vX.Y.Z tag.
 publish:
   provider: github
   owner: poliberry
@@ -44,6 +53,10 @@ asarUnpack:
 # Register crystal:// as a custom URL scheme so the OS routes OAuth callbacks
 # (crystal://auth/callback?...) back to this app after the system browser
 # completes the auth flow.
+# Kept identical on every channel: this scheme is registered as an allowed
+# redirect with Clerk, so a per-channel scheme (crystal-canary://) would break
+# sign-in on every channel but Stable. Two installed channels means the OS
+# hands the callback to one of them, which is a far smaller problem.
 protocols:
   name: Crystal
   schemes:

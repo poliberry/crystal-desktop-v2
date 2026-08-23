@@ -18,7 +18,7 @@
     "build:native": "bash native/build.sh",
     "start": "bun scripts/run-electron.mjs .",
     "token": "bun scripts/token.mjs",
-    "dist": "bun run build && electron-builder -wl"
+    "dist": "bun run build && electron-builder -wl --config scripts/electron-builder-config.cjs"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.3",

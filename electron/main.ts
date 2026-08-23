@@ -4,13 +4,25 @@ import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import * as backgroundNotifier from "./backgroundNotifier";
+import { REPO, resolveRunningChannel } from "./channels";
 import richPresence from "./richPresence";
 import systemAudio from "./systemAudio";
 import updater from "./updater";
 
-const RELEASES_URL = "https://github.com/poliberry/crystal-desktop-v2/releases/latest";
+const RELEASES_URL = `https://github.com/${REPO.owner}/${REPO.repo}/releases`;
 
 const isDev = !!process.env.ELECTRON_START_URL;
+
+/**
+ * Which build this is: Stable, PTB, Canary or Development (see
+ * electron/channels.ts). Decides the window/tray icon, the name the app
+ * excludes from its own system-audio capture, and — via electron/updater.ts —
+ * which releases it updates from.
+ */
+const channel = resolveRunningChannel({
+  appPath: app.getAppPath(),
+  isPackaged: app.isPackaged,
+});
 const PRELOAD = path.join(__dirname, "preload.js");
 
 // MIME types for the static file server (production only)
@@ -69,8 +81,12 @@ function macAudioHelperPath(): string | null {
 
 /** Bundle ids / app names to keep OUT of the shared system-audio capture. */
 function macAudioExclusions(): string {
-  // Dev: Electron's bundle id + app name. Packaged: the Crystal bundle id.
-  return isDev ? "com.github.Electron,Electron" : "dev.crystal.desktop,Crystal";
+  // Dev: Electron's bundle id + app name. Packaged: this channel's own bundle
+  // id and product name — hardcoding Stable's would let a Canary install
+  // capture its own output back into the call.
+  return isDev
+    ? "com.github.Electron,Electron"
+    : `${channel.appId},${channel.productName}`;
 }
 
 function stopMacAudioChild(): void {
@@ -89,12 +105,14 @@ function toTransferable(buf: Buffer): ArrayBuffer {
 /**
  * Explicit window icon — mainly matters on Linux, where window managers
  * don't derive the taskbar/window icon from the packaged app the way
- * Windows/macOS do. Packaged builds ship it via `extraResources` (see
- * electron-builder.yml); dev mode reads straight from `build/`.
+ * Windows/macOS do. Packaged builds ship their channel's icon as
+ * `icon.png` via `extraResources` (see scripts/electron-builder-config.cjs),
+ * so the name is the same whichever channel this is; dev mode reads the
+ * channel's file straight out of `build/`.
  */
 function appIconPath(): string | undefined {
   const candidate = isDev
-    ? path.join(__dirname, "..", "build", "icon-dev.png")
+    ? path.join(__dirname, "..", "build", channel.icon)
     : path.join(process.resourcesPath, "icon.png");
   return fs.existsSync(candidate) ? candidate : undefined;
 }
@@ -322,7 +340,7 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
     alwaysOnTop: true,
     frame: false,
     backgroundColor: "#000000",
-    title: options?.title ?? "Crystal",
+    title: options?.title ?? channel.productName,
     icon: appIconPath(),
     webPreferences: {
       preload: PRELOAD,
@@ -366,7 +384,7 @@ function createOrFocusSettingsWindow(): void {
     minWidth: 720,
     minHeight: 480,
     autoHideMenuBar: true,
-    title: "Crystal Settings",
+    title: `${channel.productName} Settings`,
     icon: appIconPath(),
     ...FRAMELESS_WINDOW_OPTIONS,
     webPreferences: {
@@ -537,6 +555,9 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("app:info", () => ({
     platform: process.platform,
+    channel: channel.id,
+    channelLabel: channel.label,
+    productName: channel.productName,
     versions: {
       electron: process.versions.electron,
       chrome: process.versions.chrome,
@@ -584,14 +605,25 @@ app.whenReady().then(async () => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
 
+  // Settings -> Accessibility -> Zoom. Each renderer sets its own window's
+  // factor (the Settings window and the main window each apply the stored
+  // value on load), which is why this acts on the sender rather than every
+  // window. Clamped to the range the UI offers so a hand-edited stored value
+  // can't shrink the app to something unclickable.
+  ipcMain.handle("window:set-zoom", (event, factor: number) => {
+    const clamped = Math.min(2, Math.max(0.5, Number(factor) || 1));
+    event.sender.setZoomFactor(clamped);
+    return clamped;
+  });
+
   // Tray icon: lets the app keep running (and keep watching for
   // notifications) after the window is closed, per the `close` handler in
   // createWindow() above.
   const tray = new Tray(appIconPath() ?? nativeImage.createEmpty());
-  tray.setToolTip("Crystal");
+  tray.setToolTip(channel.productName);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Open Crystal", click: () => createOrFocusMainWindow() },
+      { label: `Open ${channel.productName}`, click: () => createOrFocusMainWindow() },
       { type: "separator" },
       {
         label: "Quit",
