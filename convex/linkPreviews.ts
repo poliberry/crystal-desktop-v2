@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import { action, internalMutation, query } from "./_generated/server";
-import { fetchOEmbed, matchProvider } from "./lib/richEmbeds";
+import { fetchOEmbed, matchProvider, UNFURL_VERSION } from "./lib/richEmbeds";
 
 export const get = query({
   args: { url: v.string() },
@@ -37,7 +37,7 @@ export const upsert = internalMutation({
       .query("linkPreviews")
       .withIndex("by_url", (q) => q.eq("url", args.url))
       .unique();
-    const doc = { ...args, fetchedAt: Date.now() };
+    const doc = { ...args, version: UNFURL_VERSION, fetchedAt: Date.now() };
     if (existing) {
       // `replace`, not `patch`: a re-fetch that no longer finds (say) an
       // author or a player must clear the old one rather than leave it

@@ -16,6 +16,17 @@
  * this side promises never to produce anything else.
  */
 
+/**
+ * Bumped whenever this file changes what a stored preview should contain — a
+ * new provider, a corrected player height, an extra field.
+ *
+ * Cached previews are keyed only by URL, so without this a fix here would only
+ * ever apply to links nobody had pasted yet. The renderer compares the stamp
+ * on a row against this and re-unfurls anything older, which turns "I changed
+ * the unfurler" into "the change takes effect" without a migration.
+ */
+export const UNFURL_VERSION = 2;
+
 /** What the card should do with an embed. */
 export type EmbedKind = "link" | "video" | "audio";
 
@@ -104,9 +115,13 @@ export function matchProvider(url: string): ProviderMatch | null {
         kind: "audio",
         oEmbedUrl: `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`,
         embedUrl: `https://open.spotify.com/embed/${type}/${id}`,
-        // A single track is a compact bar; a playlist or album needs room for
-        // its track list, which is the whole point of embedding one.
-        embedHeight: type === "track" || type === "episode" ? 152 : 380,
+        // Spotify draws one of two layouts and doesn't scale to the frame it's
+        // given: a single-row player about 80px tall, or the full square one
+        // at its documented 352. Anything in between (152, which their older
+        // docs suggest) renders the row and leaves the rest of the iframe
+        // empty. A track is the row; a playlist or album gets the full player,
+        // since its track list is the whole point of embedding one.
+        embedHeight: type === "track" || type === "episode" ? 80 : 352,
       };
     }
   }

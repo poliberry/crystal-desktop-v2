@@ -254,6 +254,10 @@ export default defineSchema({
     /** The site's own accent colour, used for the card's edge. */
     themeColor: v.optional(v.string()),
     faviconUrl: v.optional(v.string()),
+    /** Which version of the unfurler produced this row — see
+     * `UNFURL_VERSION` in convex/lib/richEmbeds.ts. Anything older is
+     * re-unfurled on sight. */
+    version: v.optional(v.number()),
     fetchedAt: v.number(),
   }).index("by_url", ["url"]),
 

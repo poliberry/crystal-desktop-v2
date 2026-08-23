@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Play } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
+import { UNFURL_VERSION } from "../../../convex/lib/richEmbeds";
 import { cn } from "@/lib/utils";
 
 interface LinkEmbedCardProps {
@@ -163,10 +164,9 @@ export function LinkEmbedCard({ url }: LinkEmbedCardProps) {
       preview !== null &&
       (preview.status === "error"
         ? Date.now() - preview.fetchedAt > ERROR_RETRY_MS
-        : // Unfurled before providers and players existed. A successful row
-          // always carries a `kind`, so its absence dates the row rather than
-          // describing the link.
-          preview.kind === undefined);
+        : // Unfurled by an older version of the unfurler, so it's missing
+          // fields or carrying corrected ones — see UNFURL_VERSION.
+          preview.version !== UNFURL_VERSION);
 
     if (preview === null || stale) {
       triggeredRef.current = true;
@@ -193,12 +193,15 @@ export function LinkEmbedCard({ url }: LinkEmbedCardProps) {
           authorName={preview.authorName}
           authorUrl={preview.authorUrl}
         />
+        {/* No border of our own: every one of these providers ships a
+            self-contained card with its own background and rounded corners, so
+            framing it again just draws a box around a box. */}
         <iframe
           src={embedUrl}
           title={preview.title ?? "Embedded player"}
           allow={IFRAME_PERMISSIONS}
-          className="w-full rounded-md border"
-          style={{ height: preview.embedHeight ?? 152 }}
+          className="w-full overflow-hidden rounded-xl"
+          style={{ height: preview.embedHeight ?? 80 }}
         />
       </div>
     );
