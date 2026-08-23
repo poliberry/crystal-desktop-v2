@@ -49,6 +49,23 @@ export function HomeLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab.id]);
 
+  // Puts the call back in the mini player when the thing the user just
+  // clicked is behind the expanded call screen.
+  //
+  // The activeTab effect below already does this for a tab *change*, and is
+  // still the general mechanism. What it can't see is asking for the
+  // conversation you're already on: that's a no-op on tab state, so the
+  // effect never fires — which is how clicking your open DM left the call
+  // screen sitting on top of it, with no way back to the mini player short
+  // of opening something else entirely.
+  //
+  // Guarded on the stage actually showing rather than calling collapse()
+  // outright, because collapse() also abandons an in-flight join (it bumps
+  // the join generation) — and a join in flight has nothing expanded yet.
+  const collapseIfCovering = () => {
+    if (expanded && activeCall) collapse();
+  };
+
   // With tabs disabled, opening something new replaces whatever the other
   // (non-Home) tab was instead of adding another one — the classic
   // single-view behavior, since there's no tab bar to show/manage extras.
@@ -58,6 +75,7 @@ export function HomeLayout() {
         if (tab.target.type !== "home") closeTab(tab.id);
       }
     }
+    collapseIfCovering();
     openTab(next);
   };
 
@@ -103,6 +121,7 @@ export function HomeLayout() {
     if (effectiveMode === "replace" && activeTab.id !== "home") {
       closeTab(activeTab.id);
     }
+    collapseIfCovering();
     openTab(target);
   };
 
@@ -117,6 +136,7 @@ export function HomeLayout() {
     }
     const existing = tabs.find((t) => t.target.type === "channel" && t.target.communityId === id);
     if (existing) {
+      collapseIfCovering();
       activateTab(existing.id);
       return;
     }

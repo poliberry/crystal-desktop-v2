@@ -18,7 +18,16 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+        // `max-h-[inherit]` is what makes a `max-h-*` on the root actually
+        // scroll. Radix's root is only `position: relative` — it sets no
+        // overflow — and the viewport's `height: 100%` resolves to auto
+        // against a parent with no definite height, so the viewport grew to
+        // the full content height and spilled straight out of the root box
+        // (the inbox popover running off the bottom of the window). Inheriting
+        // the root's max-height gives the viewport a definite ceiling to
+        // overflow against, and is a no-op for the `h-full`/`flex-1` callers,
+        // where max-height is `none`.
+        className="focus-visible:ring-ring/50 size-full max-h-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

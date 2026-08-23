@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { File as FileIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -12,9 +11,11 @@ import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { UserProfileContent } from "@/components/community/member-profile-card";
-import { AudioAttachment } from "@/components/home/audio-attachment";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
-import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
+import {
+  AttachmentView,
+  type AttachmentSummary,
+} from "@/components/home/message-attachment";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -29,14 +30,6 @@ import { cn } from "@/lib/utils";
 
 interface MessageListProps {
   conversationId: Id<"conversations">;
-}
-
-interface AttachmentSummary {
-  id: string;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
-  url: string | null;
 }
 
 interface ReactionSummary {
@@ -58,83 +51,6 @@ interface MessageDoc {
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** An image attachment that expands into the full-screen viewer on click. */
-function ImageAttachment({
-  attachment,
-  author,
-  createdAt,
-}: {
-  attachment: AttachmentSummary;
-  author?: LightboxAuthor;
-  createdAt?: number;
-}) {
-  const [open, setOpen] = useState(false);
-  if (!attachment.url) return null;
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={attachment.url} alt={attachment.fileName} className="max-h-80 max-w-full" />
-      </button>
-      <ImageLightbox
-        open={open}
-        onOpenChange={setOpen}
-        url={attachment.url}
-        fileName={attachment.fileName}
-        author={author}
-        createdAt={createdAt}
-      />
-    </>
-  );
-}
-
-function AttachmentView({
-  attachment,
-  author,
-  createdAt,
-}: {
-  attachment: AttachmentSummary;
-  author?: LightboxAuthor;
-  createdAt?: number;
-}) {
-  if (!attachment.url) return null;
-  if (attachment.fileType.startsWith("image/")) {
-    return <ImageAttachment attachment={attachment} author={author} createdAt={createdAt} />;
-  }
-  if (attachment.fileType.startsWith("audio/")) {
-    return <AudioAttachment url={attachment.url} fileName={attachment.fileName} />;
-  }
-  if (attachment.fileType.startsWith("video/")) {
-    return (
-      <video src={attachment.url} controls className="mt-1 max-h-80 max-w-full rounded-md border" />
-    );
-  }
-  return (
-    <a
-      href={attachment.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      download={attachment.fileName}
-      className="mt-1 flex w-fit items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm hover:bg-muted/60"
-    >
-      <FileIcon className="size-4 text-muted-foreground" />
-      <span className="max-w-48 truncate">{attachment.fileName}</span>
-      <span className="text-xs text-muted-foreground">{formatBytes(attachment.fileSize)}</span>
-    </a>
-  );
-}
 
 function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup: boolean }) {
   const updateMessage = useMutation(api.messages.update);

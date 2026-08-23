@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { downloadFile } from "@/lib/download";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,31 +35,6 @@ export interface LightboxAuthor {
   name: string;
   imageUrl?: string;
   username?: string;
-}
-
-/**
- * Downloading a cross-origin image needs the bytes in hand: the `download`
- * attribute is ignored for another origin, so a plain anchor would navigate to
- * the file instead of saving it. Fetch it, hand the browser a blob URL, then
- * release it.
- */
-async function downloadImage(url: string, fileName: string): Promise<void> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = fileName || "image";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    // Revoking synchronously can cancel the download in some builds; one turn
-    // of the event loop is enough for the click to have been consumed.
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-  }
 }
 
 /**
@@ -186,7 +162,7 @@ export function ImageLightbox({
     setDownloading(true);
     setError(null);
     try {
-      await downloadImage(url, fileName);
+      await downloadFile(url, fileName);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Download failed.");
     } finally {
