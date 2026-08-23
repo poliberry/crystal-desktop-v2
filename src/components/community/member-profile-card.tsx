@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDesktopAPI } from "@/lib/desktop";
-import { badgeDefinition } from "@/lib/badges";
+import { badgeDefinition, visibleBadgeIds } from "@/lib/badges";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { ServerProfileDialog } from "./server-profile-dialog";
@@ -42,16 +42,27 @@ export interface MemberProfileMember {
 }
 
 /**
+ * Which of a user's badges this build will actually draw.
+ *
+ * Queried by the card rather than by `ProfileBadges` itself, even though only
+ * that row renders them: whether there are any badges also decides where the
+ * custom-status pill sits, because the badge row is what pushes the avatar
+ * down. One consumer of the answer would have been fine self-fetching; two
+ * would mean the same query twice, one of them purely for a layout decision.
+ */
+function useVisibleBadges(userId: Id<"users">) {
+  const badges = useQuery(api.users.badgesOf, { userId }) ?? [];
+  // Collapses the Bug Hunter tiers down to the highest one held — see
+  // src/lib/badges.ts.
+  const shown = new Set(visibleBadgeIds(badges.map((b) => b.badgeId)));
+  return badges.filter((badge) => shown.has(badge.badgeId) && !!badgeDefinition(badge.badgeId));
+}
+
+/**
  * The badges a user has earned, as a row of glyphs — the name and reason live
  * on hover rather than taking up a line of the card.
- *
- * Fetches its own data rather than taking it as a prop: this card is built
- * from half a dozen different member shapes across the app, and threading a
- * `badges` field through all of them to render one row here would be a lot of
- * plumbing for a query that only runs when a card is actually open.
  */
-function ProfileBadges({ userId }: { userId: Id<"users"> }) {
-  const badges = useQuery(api.users.badgesOf, { userId }) ?? [];
+function ProfileBadges({ badges }: { badges: { badgeId: string }[] }) {
   if (badges.length === 0) return null;
 
   return (
@@ -109,6 +120,7 @@ export function MemberProfileCard({
     expanded ? { userId: member.userId, communityId } : "skip"
   );
   const isSelf = !!me && me._id === member.userId;
+  const badges = useVisibleBadges(member.userId);
   const [serverProfileOpen, setServerProfileOpen] = useState(false);
   const [expandedOpen, setExpandedOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -116,6 +128,23 @@ export function MemberProfileCard({
   const hasGradient = !!(
     member.borderGradientStart && member.borderGradientEnd
   );
+
+  /** Rendered in one of two places depending on whether there's a badge row
+   * to push the avatar down — `position` is what differs between them. */
+  const statusPill = (position: string) =>
+    member.customStatus && isSelf ? (
+      <button
+        type="button"
+        title="Change your status"
+        onClick={() => setStatusOpen(true)}
+        className={cn(
+          "cursor-pointer absolute z-10 max-w-40 shadow-lg truncate rounded-full bg-accent/60 hover:bg-accent/80 px-3 py-1 text-sm font-medium text-white backdrop-blur-sm",
+          position
+        )}
+      >
+        {member.customStatus}
+      </button>
+    ) : null;
 
   return (
     <div
@@ -169,38 +198,41 @@ export function MemberProfileCard({
               expanded ? "-mt-12" : "-mt-8"
             )}
           >
-            <Avatar
-              className={cn(
-                "shrink-0 shadow-md rounded-xl ring-4 ring-background/60",
-                expanded ? "size-24" : "size-16"
-              )}
-            >
-              <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-xl" />
-              <AvatarFallback className="text-lg">
-                {member.name.slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-              {/* Larger dot with thicker ring for the profile card */}
-              <AvatarBadge
+            {/* `relative` and shrink-wrapped to the avatar, so the pill inside
+                it can be placed against the avatar rather than the card. */}
+            <div className="relative shrink-0">
+              <Avatar
                 className={cn(
-                  STATUS_DOT_CLASS[member.status],
-                  "min-w-4 min-h-4 ring-[4px] ring-background/60",
-                )}
-              />
-            </Avatar>
-
-            {member.customStatus && isSelf && (
-              <button
-                type="button"
-                title="Change your status"
-                onClick={() => setStatusOpen(true)}
-                className={cn(
-                  expanded ? "top-24" : "top-14",
-                  "cursor-pointer absolute left-4 max-w-40 shadow-lg truncate rounded-full bg-accent/60 hover:bg-accent/80 px-3 py-1 text-sm font-medium text-white backdrop-blur-sm"
+                  "shadow-md rounded-xl ring-4 ring-background/60",
+                  expanded ? "size-24" : "size-16"
                 )}
               >
-                {member.customStatus}
-              </button>
-            )}
+                <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-xl" />
+                <AvatarFallback className="text-lg">
+                  {member.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+                {/* Larger dot with thicker ring for the profile card */}
+                <AvatarBadge
+                  className={cn(
+                    STATUS_DOT_CLASS[member.status],
+                    "min-w-4 min-h-4 ring-[4px] ring-background/60",
+                  )}
+                />
+              </Avatar>
+
+              {/* With badges, the offsets above no longer land: the badge row
+                  makes the name column taller, the avatar is bottom-aligned in
+                  a row that stretches to match that column, so the avatar
+                  slides *down* while a pill pinned to the card doesn't — the
+                  gap in the screenshots. Anchored here instead, the pill sits
+                  4px over the avatar's top edge whatever the column does. */}
+              {badges.length > 0 && statusPill("bottom-[calc(100%-4px)] left-0")}
+            </div>
+
+            {/* Without badges the pill keeps its existing offsets from the
+                top of the card, which are correct there and left untouched. */}
+            {badges.length === 0 &&
+              statusPill(cn("left-4", expanded ? "top-24" : "top-14"))}
           </div>
 
           {isSelf && <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />}
@@ -226,7 +258,7 @@ export function MemberProfileCard({
             <p className="truncate text-sm text-muted-foreground">
               @{member.username}
             </p>
-            <ProfileBadges userId={member.userId} />
+            <ProfileBadges badges={badges} />
           </div>
         </div>
 

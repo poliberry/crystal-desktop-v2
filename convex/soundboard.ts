@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
+import { MAX_SOUND_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import type { Id } from "./_generated/dataModel";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -18,9 +19,6 @@ import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 /** Maximum uploaded soundboard slots per community. */
 const MAX_SOUND_SLOTS = 48;
-
-/** Upload ceiling, matching the ~5s clips a soundboard is for. */
-const MAX_SOUND_BYTES = 2 * 1024 * 1024;
 
 /** Longest clip we accept, so one member can't hold the room hostage. */
 const MAX_SOUND_MS = 8_000;
@@ -79,11 +77,7 @@ export const add = mutation({
       throw new Error(`Sounds must be shorter than ${MAX_SOUND_MS / 1000} seconds.`);
     }
 
-    const meta = await ctx.db.system.get(storageId);
-    if (meta && meta.size > MAX_SOUND_BYTES) {
-      await ctx.storage.delete(storageId).catch(() => {});
-      throw new Error(`Sounds must be smaller than ${MAX_SOUND_BYTES / 1024 / 1024} MB.`);
-    }
+    await requireWithinUploadLimit(ctx, storageId, MAX_SOUND_BYTES, "Sounds");
 
     const existing = await ctx.db
       .query("communitySounds")

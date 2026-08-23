@@ -6,6 +6,7 @@ import { Music4, Volume2 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { useCall } from "@/components/call/call-provider";
 import { useAudioPreferences } from "@/components/audio-provider";
+import { EmojiGlyph } from "@/components/home/emoji-select";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,7 +36,7 @@ function SoundGrid({
             "focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none"
           )}
         >
-          <span className="text-lg leading-none">{clip.emoji || "🔊"}</span>
+          <EmojiGlyph value={clip.emoji} className="text-lg leading-none" />
           <span className="w-full truncate text-center text-[10px] text-muted-foreground">
             {clip.name}
           </span>

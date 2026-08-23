@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Id } from "../../convex/_generated/dataModel";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits";
 
 /**
  * Attachment handling shared by the DM and channel composers: the file
@@ -27,9 +28,6 @@ export interface PendingAttachment {
 /** The subset the `send` mutations accept — their validators are strict, so
  * the client-only `previewUrl` must not travel. */
 export type AttachmentPayload = Omit<PendingAttachment, "previewUrl">;
-
-/** Refuse anything that would fail the upload or lock the UI up for minutes. */
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 /** Guard against a stray multi-hundred-file drop. */
 const MAX_FILES = 10;
@@ -84,8 +82,8 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
       setError(null);
       const accepted: File[] = [];
       for (const file of list) {
-        if (file.size > MAX_FILE_BYTES) {
-          setError(`"${file.name || "File"}" is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB.`);
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          setError(`"${file.name || "File"}" is larger than ${MAX_ATTACHMENT_LABEL}.`);
           continue;
         }
         accepted.push(file);
