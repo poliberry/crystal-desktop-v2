@@ -347,7 +347,7 @@ export function CommunityRail({
                         className={cn(
                           "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
                           selectedCommunityId === community.id &&
-                            "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-2xl",
+                            "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-none",
                         )}
                       >
                         <Avatar className="size-12 rounded-none">
@@ -365,7 +365,7 @@ export function CommunityRail({
                     {inVoice && (
                       <span
                         aria-hidden
-                        className="pointer-events-none absolute -right-1 -bottom-1 flex size-5 items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-background"
+                        className="pointer-events-none absolute -right-0.5 -bottom-0.5 flex size-5 items-center justify-center bg-emerald-500 text-white ring-2 ring-primary"
                       >
                         <Volume2 className="size-3" />
                       </span>

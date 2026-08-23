@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, type Ref } from "react";
 
 import { TAG_OR_SHORTCODE_RE, type ServerEmoji } from "@/lib/custom-emoji";
+import { MENTION_REF_RE, type MentionNames } from "@/lib/mentions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -38,7 +39,12 @@ function readText(root: HTMLElement): string {
 
 function readNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
-  if (node instanceof HTMLImageElement) return node.dataset.shortcode ?? "";
+  // Any chip — an emoji image or a mention pill — stands for the exact source
+  // text it replaced. Checked before the generic element branch below, whose
+  // recursion would otherwise return a mention's *display* name.
+  if (node instanceof HTMLElement && node.dataset.shortcode !== undefined) {
+    return node.dataset.shortcode;
+  }
   if (node instanceof HTMLBRElement) return "\n";
   if (node instanceof HTMLElement) {
     // Browsers wrap lines in <div> on Enter; treat each as a line break.
@@ -75,7 +81,8 @@ function renderText(
   root: HTMLElement,
   text: string,
   emojiByName: Map<string, ServerEmoji>,
-  emojiById: Map<string, ServerEmoji>
+  emojiById: Map<string, ServerEmoji>,
+  mentionNames?: MentionNames
 ): void {
   root.replaceChildren();
   let lastIndex = 0;
@@ -98,6 +105,54 @@ function renderText(
 
   if (lastIndex < text.length) {
     root.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  if (mentionNames) renderMentions(root, mentionNames);
+}
+
+function makeMentionChip(label: string, source: string): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.textContent = `@${label}`;
+  chip.dataset.shortcode = source;
+  chip.contentEditable = "false";
+  chip.className =
+    "rounded-[4px] bg-primary/15 px-1 py-px font-medium text-primary";
+  return chip;
+}
+
+/**
+ * Replace `<@id>` / `<@&id>` references with readable chips.
+ *
+ * A separate pass over the text nodes rather than another branch in
+ * `renderText`: the two grammars are unrelated, and interleaving them into one
+ * regex means juggling capture-group offsets for no benefit. References with
+ * no name behind them (someone who left, a deleted role) are left as raw text,
+ * which is at least honest about the message not resolving.
+ */
+function renderMentions(root: HTMLElement, names: MentionNames): void {
+  for (const node of Array.from(root.childNodes)) {
+    if (node.nodeType !== Node.TEXT_NODE) continue;
+    const text = node.nodeValue ?? "";
+    const matches = Array.from(text.matchAll(MENTION_REF_RE));
+    if (matches.length === 0) continue;
+
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+    for (const match of matches) {
+      const [source, roleId, userId] = match;
+      const label = roleId ? names.role(roleId)?.name : userId ? names.user(userId) : undefined;
+      if (!label) continue;
+      if (match.index! > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index!)));
+      }
+      fragment.appendChild(makeMentionChip(label, source));
+      lastIndex = match.index! + source.length;
+    }
+    if (lastIndex === 0) continue;
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+    node.replaceWith(fragment);
   }
 }
 
@@ -159,6 +214,7 @@ export function EmojiTextInput({
   onChange,
   emojiByName,
   emojiById,
+  mentionNames,
   placeholder,
   className,
   onKeyDown,
@@ -171,6 +227,10 @@ export function EmojiTextInput({
   onChange: (value: string, caret: number) => void;
   emojiByName: Map<string, ServerEmoji>;
   emojiById: Map<string, ServerEmoji>;
+  /** Resolves `<@id>` references so a mention reads as a name rather than
+   * the id the message actually carries. Omitted where there's nothing to
+   * resolve against (a DM). */
+  mentionNames?: MentionNames;
   placeholder?: string;
   className?: string;
   onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
@@ -199,10 +259,10 @@ export function EmojiTextInput({
     const root = rootRef.current;
     if (!root || value === renderedRef.current) return;
     const hadFocus = root.contains(document.activeElement) || document.activeElement === root;
-    renderText(root, value, emojiByName, emojiById);
+    renderText(root, value, emojiByName, emojiById, mentionNames);
     renderedRef.current = value;
     if (hadFocus) setCaretOffset(root, value.length);
-  }, [value, emojiByName, emojiById]);
+  }, [value, emojiByName, emojiById, mentionNames]);
 
   const handleInput = useCallback(() => {
     const root = rootRef.current;
@@ -219,13 +279,13 @@ export function EmojiTextInput({
     const completed = /<:([a-zA-Z0-9_]+):([a-zA-Z0-9]+)>$|:([a-zA-Z0-9_]{2,64}):$/.exec(before);
     const completedName = completed?.[3] ?? completed?.[1];
     if (completedName && emojiByName.has(completedName)) {
-      renderText(root, text, emojiByName, emojiById);
+      renderText(root, text, emojiByName, emojiById, mentionNames);
       renderedRef.current = text;
       setCaretOffset(root, caret);
     }
 
     onChange(text, caret);
-  }, [emojiByName, emojiById, onChange]);
+  }, [emojiByName, emojiById, mentionNames, onChange]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {

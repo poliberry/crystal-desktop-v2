@@ -281,6 +281,7 @@ function MessageRow({
             {message.text && (
               <MessageContent
                 text={message.text}
+                communityId={communityId}
                 suffix={
                   message.editedAt && (
                     <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>

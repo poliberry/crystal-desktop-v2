@@ -13,6 +13,16 @@ import {
   substituteEmojiShortcodes,
 } from "@/lib/custom-emoji";
 import { classifyUrl, extractInviteCodes, extractUrls } from "@/lib/message-links";
+import {
+  MENTION_LINK_SCHEME,
+  parseMentionLink,
+  substituteMentions,
+} from "@/lib/mentions";
+import { useMentionNames } from "@/hooks/use-mentions";
+import { cn } from "@/lib/utils";
+import { useQuery } from "convex/react";
+import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { findSystemEmojiBySlug } from "@/lib/system-emoji";
 
 interface MessageContentProps {
@@ -21,6 +31,10 @@ interface MessageContentProps {
    * "(edited)" tag — so it flows on the same line instead of dropping below
    * the (block-level) paragraph. */
   suffix?: React.ReactNode;
+  /** Which community's members and roles to resolve mentions against. Absent
+   * in a DM, where a `<@id>` can still name a person but there are no roles
+   * and no `@everyone` to speak of. */
+  communityId?: Id<"communities">;
 }
 
 function MediaEmbed({ url }: { url: string }) {
@@ -34,10 +48,13 @@ function MediaEmbed({ url }: { url: string }) {
   return null;
 }
 
-export function MessageContent({ text, suffix }: MessageContentProps) {
+export function MessageContent({ text, suffix, communityId }: MessageContentProps) {
   // Every community the reader belongs to, not just the one they're viewing:
   // a message can carry an emoji from any server they share with the author.
   const { byId: serverEmojiById, byName } = useAccessibleEmojis();
+  const mentionNames = useMentionNames(communityId);
+  const me = useQuery(api.users.getCurrentUser);
+  const myUserId = me?._id as string | undefined;
   const urls = extractUrls(text);
   const mediaUrls = urls.filter((url) => classifyUrl(url) !== "link");
   const linkUrls = urls.filter((url) => classifyUrl(url) === "link");
@@ -52,8 +69,12 @@ export function MessageContent({ text, suffix }: MessageContentProps) {
   // doc comment for why this (rather than a raw-HTML/rehype-raw plugin) is
   // the renderer-side seam, and why it also covers messages sent by hand
   // without ever touching the composer's `:name:` autocomplete.
-  const processedText = substituteEmojiShortcodes(text, findSystemEmojiBySlug, (name) =>
-    byName.get(name)
+  // Mentions go through the same seam, after emoji: `<@id>` and `<:name:id>`
+  // can't be confused for each other, and doing mentions second keeps their
+  // display names out of reach of emoji substitution.
+  const processedText = substituteMentions(
+    substituteEmojiShortcodes(text, findSystemEmojiBySlug, (name) => byName.get(name)),
+    mentionNames
   );
 
   return (
@@ -67,19 +88,45 @@ export function MessageContent({ text, suffix }: MessageContentProps) {
           // text beside it. Let that one scheme through and defer to the
           // default sanitiser for everything else.
           urlTransform={(url) =>
-            url.startsWith(CUSTOM_EMOJI_IMAGE_SCHEME) ? url : defaultUrlTransform(url)
+            url.startsWith(CUSTOM_EMOJI_IMAGE_SCHEME) || url.startsWith(MENTION_LINK_SCHEME)
+              ? url
+              : defaultUrlTransform(url)
           }
           components={{
-            a: ({ href, children }) => (
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline underline-offset-2"
-              >
-                {children}
-              </a>
-            ),
+            a: ({ href, children }) => {
+              // Mentions ride in as links because that's the only inline
+              // markdown node carrying both a label and a payload — see
+              // substituteMentions. They're pills, not links: there's nowhere
+              // to navigate to.
+              const mention = href ? parseMentionLink(href) : null;
+              if (mention) {
+                const isMe = mention.kind === "user" && mention.id === myUserId;
+                const isMassPing =
+                  mention.kind === "everyone" || mention.kind === "here" || mention.kind === "role";
+                return (
+                  <span
+                    className={cn(
+                      "rounded-[4px] px-1 py-px font-medium",
+                      isMe || isMassPing
+                        ? "bg-primary/25 text-primary-foreground"
+                        : "bg-primary/15 text-primary"
+                    )}
+                  >
+                    {children}
+                  </span>
+                );
+              }
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline underline-offset-2"
+                >
+                  {children}
+                </a>
+              );
+            },
             img: ({ src, alt }) => {
               if (typeof src === "string" && src.startsWith(CUSTOM_EMOJI_IMAGE_SCHEME)) {
                 const id = src.slice(CUSTOM_EMOJI_IMAGE_SCHEME.length);

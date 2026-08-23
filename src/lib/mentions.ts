@@ -21,6 +21,11 @@ export type MentionTarget =
 /** Matches every form in one pass, so a message can be walked in order. */
 export const MENTION_RE = /<@&([a-z0-9]+)>|<@([a-z0-9]+)>|@(everyone|here)\b/gi;
 
+/** Just the opaque reference forms. These are the ones that need resolving to
+ * be readable at all — `@everyone` and `@here` already say what they mean, in
+ * a composer as much as in a message. */
+export const MENTION_REF_RE = /<@&([a-z0-9]+)>|<@([a-z0-9]+)>/gi;
+
 /** The reference to store for a target — what the composer inserts. */
 export function mentionToken(target: MentionTarget): string {
   switch (target.kind) {
@@ -33,6 +38,27 @@ export function mentionToken(target: MentionTarget): string {
     case "here":
       return "@here";
   }
+}
+
+/**
+ * An `@` the user is part-way through typing, for the composer's dropdown.
+ *
+ * Anchored to a word boundary so an email address or a `<@id>` already in the
+ * text doesn't reopen the picker, and it matches an `@` on its own — typing
+ * the sigil should show the list before you've narrowed it.
+ */
+const IN_PROGRESS_MENTION_RE = /(?:^|\s)@([\w.-]{0,32})$/;
+
+export function matchInProgressMention(
+  value: string,
+  caret: number
+): { start: number; end: number; query: string } | null {
+  const before = value.slice(0, caret);
+  const match = IN_PROGRESS_MENTION_RE.exec(before);
+  if (!match) return null;
+  // `match[0]` may include the preceding space; the `@` is what we replace from.
+  const query = match[1] ?? "";
+  return { start: caret - query.length - 1, end: caret, query };
 }
 
 /** Every mention in a message, in the order they appear. */
