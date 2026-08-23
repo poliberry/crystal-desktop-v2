@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { AudioAttachment } from "@/components/home/audio-attachment";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
+import { VideoAttachment } from "@/components/home/video-attachment";
 import { downloadFile, formatBytes } from "@/lib/download";
 
 /** One row of `messageAttachments`, as the message queries return it. Shared
@@ -121,9 +122,7 @@ export function AttachmentView({
     return <AudioAttachment url={attachment.url} fileName={attachment.fileName} />;
   }
   if (attachment.fileType.startsWith("video/")) {
-    return (
-      <video src={attachment.url} controls className="mt-1 max-h-80 max-w-full rounded-md border" />
-    );
+    return <VideoAttachment url={attachment.url} fileName={attachment.fileName} />;
   }
   return <FileAttachment attachment={attachment} />;
 }
