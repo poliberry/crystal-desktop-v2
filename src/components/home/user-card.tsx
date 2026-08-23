@@ -98,16 +98,123 @@ export function UserCard() {
       ? "In voice"
       : STATUS_LABEL[status];
 
+  // The card floats over the left column, so its width has to match what's
+  // actually there: the rail plus the sidebar, or — with the communities
+  // popover instead of the rail — the sidebar on its own.
+  //
+  // At the sidebar's own width the identity and the controls can't share a
+  // line: 24px of avatar, four 28px buttons and the gaps between them leave
+  // the name about 24px, which renders as a single letter and an ellipsis. So
+  // they stack instead, which gives the name the full width and doesn't cost
+  // any of the controls.
+  const compact = communityNavStyle !== "rail";
+
+  /**
+   * Mute, deafen, audio devices and settings. Global — they apply whether or
+   * not a call is running, and are the state any call is joined in.
+   *
+   * Pulled out of the row because where it belongs depends on the width:
+   * beside the name when the rail leaves room for both, on its own line under
+   * the name when it doesn't.
+   */
+  const controls = (
+    <TooltipProvider>
+      <div className={cn("flex shrink-0 items-center gap-1", compact && "justify-end")}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "size-7 shrink-0 hover:bg-black/10",
+                muted && "text-destructive hover:bg-destructive/20",
+              )}
+              disabled={!hasMicrophone}
+              onClick={toggleMuted}
+            >
+              {muted ? (
+                <MicOff className="size-4" />
+              ) : (
+                <Mic className="size-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {!hasMicrophone
+              ? "No microphone detected"
+              : muted
+                ? "Unmute"
+                : "Mute"}
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "size-7 shrink-0 hover:bg-black/10",
+                deafened && "text-destructive hover:bg-destructive/20",
+              )}
+              onClick={toggleDeafened}
+            >
+              {deafened ? (
+                <HeadphoneOff className="size-4" />
+              ) : (
+                <Headphones className="size-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {deafened ? "Undeafen" : "Deafen"}
+          </TooltipContent>
+        </Tooltip>
+
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 hover:bg-black/10"
+                >
+                  <ChevronUp className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top">Audio devices</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent side="top" align="end" className="w-64">
+            <AudioDeviceMenuItems />
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 hover:bg-black/10"
+              onClick={() => void getDesktopAPI()?.settings.open()}
+            >
+              <Settings className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">Settings</TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
+  );
+
   return (
     <div
-      className={cn(
-        "shrink-0 p-2 absolute bottom-2 left-2 w-82",
-        communityNavStyle === "rail" ? "w-82" : "w-64",
-      )}
+      className={cn("absolute bottom-0 left-0 shrink-0 p-2", compact ? "w-64" : "w-82")}
     >
       {/* Screen share floating panel */}
       {activeCall && screenSharing && (
-        <div className="flex items-center gap-2 rounded-t-lg border-t border-l border-r border-border/50 bg-card px-2 py-1.5 text-sm">
+        <div className="flex items-center gap-2 border-t border-l border-r border-border/50 bg-card px-2 py-1.5 text-sm">
           <MonitorUp className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate font-medium">
             Sharing{sharedSourceName ? `: ${sharedSourceName}` : ""}
@@ -148,7 +255,7 @@ export function UserCard() {
       {/* Voice connected floating panel */}
       {activeCall && (
         <div
-          className={`${screenSharing ? "rounded-none" : "rounded-t-lg"} border-t border-l border-r border-border/50 bg-card p-2 shadow-sm`}
+          className={`border-t border-l border-r border-border/50 bg-card p-2 shadow-sm`}
         >
           <div className="flex items-center gap-1">
             <button
@@ -271,9 +378,14 @@ export function UserCard() {
 
       {/* Identity card — floating pill */}
       <div
-        className={`${activeCall ? "rounded-t-none rounded-b-lg" : "rounded-lg"} overflow-hidden border border-border/40 bg-card shadow-md`}
+        className={`overflow-hidden border border-border/40 bg-card shadow-md`}
       >
-        <div className="relative flex items-center gap-2 px-3 py-2.5">
+        <div
+          className={cn(
+            "relative flex px-3 py-2.5",
+            compact ? "flex-col gap-1.5" : "items-center gap-2",
+          )}
+        >
           {me.nameplateUrl && (
             <img
               src={me.nameplateUrl}
@@ -287,161 +399,76 @@ export function UserCard() {
               }}
             />
           )}
-          <Popover>
-            <PopoverTrigger asChild>
-              <Avatar size="sm" className="shrink-0 cursor-pointer">
-                <AvatarImage src={me.imageUrl} alt={me.name} />
-                <AvatarFallback>
-                  {me.name.slice(0, 2).toUpperCase()}
-                </AvatarFallback>
-                <AvatarBadge className={STATUS_DOT_CLASS[status]} />
-              </Avatar>
-            </PopoverTrigger>
-            <PopoverContent
-              side="top"
-              align="start"
-              className="w-72 p-0 mb-5 -ml-4"
-            >
-              <MemberProfileCard
-                member={{
-                  userId: me._id,
-                  name: me.name,
-                  username: me.username,
-                  imageUrl: me.imageUrl,
-                  bio: me.bio,
-                  customStatus: me.customStatus,
-                  bannerUrl: me.bannerUrl,
-                  borderGradientStart: me.borderGradientStart,
-                  borderGradientEnd: me.borderGradientEnd,
-                  // "invisible" appears as offline to others; show the same for self
-                  status: (status === "invisible"
-                    ? "offline"
-                    : status) as FriendStatus,
-                }}
-              />
-            </PopoverContent>
-          </Popover>
-
-          {/* The name is the second way into the status dialog — the first
-              (the pill on your profile card) only exists once you already
-              have a custom status set. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => setStatusOpen(true)}
-                className="group/name min-w-0 cursor-pointer flex-1 rounded-md px-1 py-0.5 text-left hover:bg-black/10"
+          <div className={cn("flex min-w-0 items-center gap-2", !compact && "flex-1")}>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Avatar size="sm" className="shrink-0 cursor-pointer">
+                  <AvatarImage src={me.imageUrl} alt={me.name} />
+                  <AvatarFallback>
+                    {me.name.slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                  <AvatarBadge className={STATUS_DOT_CLASS[status]} />
+                </Avatar>
+              </PopoverTrigger>
+              <PopoverContent
+                side="top"
+                align="start"
+                className="w-72 p-0 mb-5 -ml-4"
               >
-                <p className="truncate text-sm font-semibold">{me.name}</p>
-                <div className="relative h-4 overflow-hidden">
-                  {/* The activity glyph rides along with the status line, so a
-                  glance at the user card says "playing / listening / watching"
-                  without opening the profile card. */}
-                  <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
-                    <ActivityStatusIcon activities={activities} />
-                    <span className="truncate">
-                      {activities.length > 0 ? " • " : ""}
-                      {subtitle}
-                    </span>
-                  </p>
-                  <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">
-                    @{me.username}
-                  </p>
-                </div>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Set your status</TooltipContent>
-          </Tooltip>
+                <MemberProfileCard
+                  member={{
+                    userId: me._id,
+                    name: me.name,
+                    username: me.username,
+                    imageUrl: me.imageUrl,
+                    bio: me.bio,
+                    customStatus: me.customStatus,
+                    bannerUrl: me.bannerUrl,
+                    borderGradientStart: me.borderGradientStart,
+                    borderGradientEnd: me.borderGradientEnd,
+                    // "invisible" appears as offline to others; show the same for self
+                    status: (status === "invisible"
+                      ? "offline"
+                      : status) as FriendStatus,
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+
+            {/* The name is the second way into the status dialog — the first
+                (the pill on your profile card) only exists once you already
+                have a custom status set. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setStatusOpen(true)}
+                  className="group/name min-w-0 cursor-pointer flex-1 rounded-md px-1 py-0.5 text-left hover:bg-black/10"
+                >
+                  <p className="truncate text-sm font-semibold">{me.name}</p>
+                  <div className="relative h-4 overflow-hidden">
+                    {/* The activity glyph rides along with the status line, so a
+                    glance at the user card says "playing / listening / watching"
+                    without opening the profile card. */}
+                    <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
+                      <ActivityStatusIcon activities={activities} />
+                      <span className="truncate">
+                        {activities.length > 0 ? " • " : ""}
+                        {subtitle}
+                      </span>
+                    </p>
+                    <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">
+                      @{me.username}
+                    </p>
+                  </div>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Set your status</TooltipContent>
+            </Tooltip>
+          </div>
+
           <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />
-
-          {/* Global mute/deafen — these apply whether or not a call is
-              running, and are the state any call is joined in. */}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "size-7 shrink-0 hover:bg-black/10",
-                    muted && "text-destructive hover:bg-destructive/20",
-                  )}
-                  disabled={!hasMicrophone}
-                  onClick={toggleMuted}
-                >
-                  {muted ? (
-                    <MicOff className="size-4" />
-                  ) : (
-                    <Mic className="size-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {!hasMicrophone
-                  ? "No microphone detected"
-                  : muted
-                    ? "Unmute"
-                    : "Mute"}
-              </TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn(
-                    "size-7 shrink-0 hover:bg-black/10",
-                    deafened && "text-destructive hover:bg-destructive/20",
-                  )}
-                  onClick={toggleDeafened}
-                >
-                  {deafened ? (
-                    <HeadphoneOff className="size-4" />
-                  ) : (
-                    <Headphones className="size-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {deafened ? "Undeafen" : "Deafen"}
-              </TooltipContent>
-            </Tooltip>
-
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7 shrink-0 hover:bg-black/10"
-                    >
-                      <ChevronUp className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="top">Audio devices</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent side="top" align="end" className="w-64">
-                <AudioDeviceMenuItems />
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0 hover:bg-black/10"
-                  onClick={() => void getDesktopAPI()?.settings.open()}
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">Settings</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {controls}
         </div>
       </div>
     </div>

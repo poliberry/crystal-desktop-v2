@@ -217,7 +217,7 @@ export function CommunitySidebar({
 
   return (
     <SidebarCommunityContext.Provider value={communityId}>
-    <div className="flex w-64 shrink-0 flex-col m-2 bg-accent/40 backdrop-blur-xl shadow-md rounded-2xl">
+    <div className="flex w-64 shrink-0 flex-col bg-accent/40 backdrop-blur-xl shadow-md">
       <DropdownMenu>
         {/* Banner + trigger share a relative container so the trigger can
             overlay the bottom of the banner with a gradient backdrop */}
@@ -225,7 +225,7 @@ export function CommunitySidebar({
           {hasBanner && (
             <>
               <div
-                className="absolute inset-0 bg-cover bg-center rounded-t-2xl"
+                className="absolute inset-0 bg-cover bg-center"
                 style={{
                   backgroundImage: `url(${community.bannerUrl})`,
                 }}
