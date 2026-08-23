@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { Hash, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -35,12 +36,25 @@ export function ChannelChatView({
   const [showMembers, setShowMembers] = useState(true);
   const markRead = useMutation(api.channels.markRead);
 
+  /** What was waiting when this channel was opened, for the catch-up bar. */
+  const [missed, setMissed] = useState<{ count: number; since: number | null } | null>(null);
+  // Which channel `missed` describes, so a message arriving while you're
+  // already here doesn't replace the bar with "1 new message".
+  const measuredFor = useRef<Id<"channels"> | null>(null);
+
   // Looking at a channel is what marks it read. Keyed on the newest message
   // rather than just the channel, so a message arriving while it's already on
   // screen doesn't leave the indicator lit behind you.
   const newest = useQuery(api.channels.newestMessageAt, { channelId });
   useEffect(() => {
-    void markRead({ channelId });
+    const firstVisit = measuredFor.current !== channelId;
+    if (firstVisit) setMissed(null);
+    void markRead({ channelId }).then((result) => {
+      measuredFor.current = channelId;
+      if (firstVisit && result && result.unreadCount > 0) {
+        setMissed({ count: result.unreadCount, since: result.since });
+      }
+    });
   }, [channelId, newest, markRead]);
 
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
@@ -81,6 +95,25 @@ export function ChannelChatView({
             </Tooltip>
           </TooltipProvider>
         </div>
+
+        {/* What you missed, under the header where the header's own border
+            would be — dismissible, because once you've read it the count is
+            no longer telling you anything. */}
+        {missed && (
+          <div className="flex shrink-0 items-center gap-2 bg-primary/15 px-3 py-1 text-xs text-primary">
+            <span className="min-w-0 flex-1 truncate">
+              {missed.count === 1 ? "1 new message" : `${missed.count} new messages`}
+              {missed.since ? ` since ${moment(missed.since).fromNow()}` : ""}
+            </span>
+            <button
+              type="button"
+              onClick={() => setMissed(null)}
+              className="shrink-0 font-medium hover:underline"
+            >
+              Mark as read
+            </button>
+          </div>
+        )}
 
         <ChannelMessageList
           channelId={channelId}

@@ -495,9 +495,17 @@ export async function markChannelRead(
   }
 }
 
+/** Past this the bar can say "a lot" and mean it. */
+const UNREAD_COUNT_CAP = 99;
+
 /**
- * Mark a channel read — called when its view is open, and from the sidebar's
- * "mark as read".
+ * Mark a channel read, and report what that just cleared.
+ *
+ * The count is of what was unread *before* this call, which is why it's
+ * returned from the mutation rather than exposed as a query: the view marks
+ * itself read on open, so a separate query would race with it and the caller
+ * would see zero. Messages by the reader don't count — the bar is about what
+ * was missed.
  *
  * Also clears any unread mention notifications for it: having looked at the
  * channel, being told about it in the inbox as well is noise.
@@ -507,8 +515,24 @@ export const markRead = mutation({
   handler: async (ctx, { channelId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const channel = await ctx.db.get(channelId);
-    if (!channel) return;
+    if (!channel) return { unreadCount: 0, since: null as number | null };
     await requireMember(ctx, channel.communityId, me._id);
+
+    const previous = await ctx.db
+      .query("channelReads")
+      .withIndex("by_user_channel", (q) => q.eq("userId", me._id).eq("channelId", channelId))
+      .unique();
+    const readAt = previous?.lastReadAt ?? 0;
+
+    const recent = await ctx.db
+      .query("channelMessages")
+      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+      .order("desc")
+      .take(UNREAD_COUNT_CAP + 1);
+    const missed = recent.filter(
+      (message) => message._creationTime > readAt && message.authorId !== me._id
+    );
+
     await markChannelRead(ctx, channelId, channel.communityId, me._id);
 
     const mentions = await ctx.db
@@ -520,6 +544,13 @@ export const markRead = mutation({
         await ctx.db.patch(notification._id, { read: true });
       }
     }
+
+    return {
+      unreadCount: missed.length,
+      /** Where the reader had got to, for "since you were last here". Null
+       * when they had never opened the channel at all. */
+      since: previous?.lastReadAt ?? null,
+    };
   },
 });
 
