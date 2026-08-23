@@ -11,6 +11,11 @@ const IDLE_STATE: UpdaterState = {
   availableVersion: null,
   progressPercent: null,
   error: null,
+  // Which channel a build belongs to is something only the main process knows.
+  // Left blank rather than guessed at, so the UI can leave the row out
+  // entirely in a plain browser instead of claiming a channel.
+  channel: "stable",
+  channelLabel: "",
 };
 
 /** Subscribes to the main process's updater state (see electron/updater.ts). */

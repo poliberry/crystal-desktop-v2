@@ -36,12 +36,22 @@ export interface SystemAudioState {
 
 export interface AppInfo {
   platform: "linux" | "darwin" | "win32" | string;
+  /** Release channel this build came from — see electron/channels.ts. */
+  channel: ReleaseChannel;
+  /** The channel's display name ("Canary"). */
+  channelLabel: string;
+  /** Installed application name, which differs per channel so channels can be
+   * installed side by side ("Crystal", "Crystal Canary"). */
+  productName: string;
   versions: {
     electron: string;
     chrome: string;
     node: string;
   };
 }
+
+/** Mirrors `ReleaseChannel` in electron/channels.ts. */
+export type ReleaseChannel = "stable" | "ptb" | "canary" | "development";
 
 export type UpdaterPhase =
   | "idle"
@@ -59,6 +69,8 @@ export interface UpdaterState {
   availableVersion: string | null;
   progressPercent: number | null;
   error: string | null;
+  channel: ReleaseChannel;
+  channelLabel: string;
 }
 
 /**
@@ -182,6 +194,11 @@ export interface DesktopAPI {
     close(): Promise<void>;
     isMaximized(): Promise<boolean>;
     onMaximizedChange(cb: (maximized: boolean) => void): () => void;
+    /** Scale this window's contents (Settings → Accessibility → Zoom).
+     * Optional so a renderer running against an older preload — a packaged
+     * build whose window was opened before an update — falls back to CSS
+     * `zoom` instead of throwing. */
+    setZoomFactor?(factor: number): Promise<number>;
   };
   updater: {
     getState(): Promise<UpdaterState>;

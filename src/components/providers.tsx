@@ -8,6 +8,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 
 import { getDesktopAPI } from "@/lib/desktop";
+import { AccessibilityProvider } from "@/components/accessibility-provider";
 import { AudioPreferencesProvider } from "@/components/audio-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
@@ -46,20 +47,22 @@ function AuthCallbackHandler() {
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
-      <UiPreferencesProvider>
-        <AudioPreferencesProvider>
-          <TooltipProvider>
-          <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
-            <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
-              <AuthCallbackHandler />
-              <DataPreloader />
-              <FileDropGuard />
-              {children}
-            </ConvexProviderWithClerk>
-          </ClerkProvider>
-          </TooltipProvider>
-        </AudioPreferencesProvider>
-      </UiPreferencesProvider>
+      <AccessibilityProvider>
+        <UiPreferencesProvider>
+          <AudioPreferencesProvider>
+            <TooltipProvider>
+              <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
+                <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+                  <AuthCallbackHandler />
+                  <DataPreloader />
+                  <FileDropGuard />
+                  {children}
+                </ConvexProviderWithClerk>
+              </ClerkProvider>
+            </TooltipProvider>
+          </AudioPreferencesProvider>
+        </UiPreferencesProvider>
+      </AccessibilityProvider>
     </ThemeProvider>
   );
 }

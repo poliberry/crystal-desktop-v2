@@ -38,6 +38,10 @@ function deriveUsername(identity: { nickname?: string; email?: string; givenName
  * username and bio are independently editable via `updateProfile`/
  * `setAvatar` below, and re-syncing from Clerk here would silently clobber
  * whatever the user customized.
+ *
+ * The one thing it does re-check on every sign-in is the Poliberry Staff badge
+ * (see `syncStaffBadge`), because that follows from the account's email rather
+ * than from anything the user edits.
  */
 export const ensureUser = mutation({
   args: {},
@@ -49,7 +53,10 @@ export const ensureUser = mutation({
       .query("users")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
       .unique();
-    if (existing) return existing._id;
+    if (existing) {
+      await syncStaffBadge(ctx, existing._id, identity.email);
+      return existing._id;
+    }
 
     const name = identity.name ?? identity.nickname ?? identity.email ?? "New user";
     const imageUrl = typeof identity.pictureUrl === "string" ? identity.pictureUrl : undefined;
@@ -66,7 +73,14 @@ export const ensureUser = mutation({
       username = `${deriveUsername(identity) || "user"}${suffix}`;
     }
 
-    return ctx.db.insert("users", { clerkId: identity.subject, name, username, imageUrl });
+    const userId = await ctx.db.insert("users", {
+      clerkId: identity.subject,
+      name,
+      username,
+      imageUrl,
+    });
+    await syncStaffBadge(ctx, userId, identity.email);
+    return userId;
   },
 });
 
@@ -529,6 +543,65 @@ export async function grantBadge(
   if (existing) return;
   await ctx.db.insert("userBadges", { userId, badgeId, grantedAt: Date.now() });
 }
+
+/** Take a badge away, if they have it. The counterpart to `grantBadge`. */
+export async function revokeBadge(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  badgeId: string
+): Promise<void> {
+  const existing = await ctx.db
+    .query("userBadges")
+    .withIndex("by_user_badge", (q) => q.eq("userId", userId).eq("badgeId", badgeId))
+    .unique();
+  if (existing) await ctx.db.delete(existing._id);
+}
+
+/** Accounts on this email domain are Poliberry staff. */
+const STAFF_EMAIL_DOMAIN = "@staff.poliberry.com";
+
+/**
+ * Give (or keep) the Poliberry Staff badge to anyone signing in with a staff
+ * email.
+ *
+ * Derived from the Clerk identity rather than granted by hand, so the badge
+ * can't drift from who actually works here — and re-checked on every
+ * `ensureUser` rather than only at signup, so someone who joins later doesn't
+ * need a migration. Clerk verifies the address before it reaches us, so the
+ * domain is a claim we can trust.
+ *
+ * Deliberately grant-only: revoking is `setBadge` below, run by hand, because
+ * a missing `email` claim (a JWT template that stops including one) would
+ * otherwise strip the badge from every staff account at once.
+ */
+async function syncStaffBadge(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  email: string | undefined
+): Promise<void> {
+  if (!email?.toLowerCase().endsWith(STAFF_EMAIL_DOMAIN)) return;
+  await grantBadge(ctx, userId, "poliberry_staff");
+}
+
+/**
+ * Grant or revoke a badge by username — the manual escape hatch.
+ *
+ * Run by hand for the cases the automatic rule can't see: a staff member whose
+ * account predates the email domain, or one who has left.
+ */
+export const setBadge = internalMutation({
+  args: { username: v.string(), badgeId: v.string(), granted: v.boolean() },
+  handler: async (ctx, { username, badgeId, granted }) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username.trim().toLowerCase()))
+      .unique();
+    if (!user) throw new Error(`No user with username "${username}".`);
+    if (granted) await grantBadge(ctx, user._id, badgeId);
+    else await revokeBadge(ctx, user._id, badgeId);
+    return { userId: user._id, badgeId, granted };
+  },
+});
 
 /**
  * One-off: give everyone who already had an account the Early Supporter badge.

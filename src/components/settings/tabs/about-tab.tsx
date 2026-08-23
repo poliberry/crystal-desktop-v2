@@ -19,6 +19,7 @@ export function AboutTab() {
 
   const rows: [string, string][] = [
     ["Version", APP_VERSION],
+    ["Channel", info?.channelLabel ?? (isElectron() ? "…" : "Browser")],
     ["Platform", info?.platform ?? (isElectron() ? "…" : "Browser")],
     ["Electron", info?.versions.electron ?? "—"],
     ["Chromium", info?.versions.chrome ?? "—"],
@@ -28,7 +29,7 @@ export function AboutTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>About Crystal</CardTitle>
+        <CardTitle>About {info?.productName ?? "Crystal"}</CardTitle>
         <CardDescription>Version and runtime information for this build.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

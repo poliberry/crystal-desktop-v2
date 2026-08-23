@@ -399,10 +399,41 @@ function FocusedTileViewport({
     setPan({ x: 0, y: 0 });
   };
 
+  /**
+   * Clamp a pan offset to what the current zoom actually allows.
+   *
+   * The transform is `scale(z) translate(pan)`, so a pan of `p` moves the
+   * content `z * p` on screen while the zoomed content only overhangs the
+   * viewport by `size * (z - 1) / 2` in each direction. Anything past that is
+   * pulling the video away from an edge and showing background.
+   *
+   * At zoom 1 the limit is 0, which is what fixes zooming back out after
+   * panning: the offset used to survive the zoom change, leaving the video
+   * sitting off-centre at 100%.
+   */
+  const clampPan = (pan: { x: number; y: number }, zoom: number) => {
+    const el = videoContainerRef.current;
+    if (!el || zoom <= 1) return { x: 0, y: 0 };
+    const maxX = (el.clientWidth * (zoom - 1)) / (2 * zoom);
+    const maxY = (el.clientHeight * (zoom - 1)) / (2 * zoom);
+    return {
+      x: Math.min(maxX, Math.max(-maxX, pan.x)),
+      y: Math.min(maxY, Math.max(-maxY, pan.y)),
+    };
+  };
+
+  /** The only way zoom changes — pan is re-clamped in the same breath, so the
+   * two can't get out of step. */
+  const applyZoom = (next: number) => {
+    const zoomed = clampZoom(next);
+    setZoom(zoomed);
+    setPan((p) => clampPan(p, zoomed));
+  };
+
   const handleWheel = (e: React.WheelEvent) => {
     if (!e.deltaY || pipOpen) return;
     e.preventDefault();
-    setZoom((z) => clampZoom(z - e.deltaY * 0.0015));
+    applyZoom(zoom - e.deltaY * 0.0015);
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -419,7 +450,8 @@ function FocusedTileViewport({
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
     drag.x = e.clientX;
     drag.y = e.clientY;
-    setPan((p) => ({ x: p.x + dx / zoom, y: p.y + dy / zoom }));
+    // Clamped as it moves, so a drag can't push the video off an edge either.
+    setPan((p) => clampPan({ x: p.x + dx / zoom, y: p.y + dy / zoom }, zoom));
   };
 
   const handlePointerUp = () => {
@@ -494,7 +526,7 @@ function FocusedTileViewport({
           <button
             type="button"
             title="Zoom out"
-            onClick={() => setZoom((z) => clampZoom(z - 0.25))}
+            onClick={() => applyZoom(zoom - 0.25)}
             className="rounded p-1 hover:bg-white/10 disabled:opacity-40"
             disabled={zoom <= MIN_ZOOM}
           >
@@ -506,7 +538,7 @@ function FocusedTileViewport({
           <button
             type="button"
             title="Zoom in"
-            onClick={() => setZoom((z) => clampZoom(z + 0.25))}
+            onClick={() => applyZoom(zoom + 0.25)}
             className="rounded p-1 hover:bg-white/10 disabled:opacity-40"
             disabled={zoom >= MAX_ZOOM}
           >

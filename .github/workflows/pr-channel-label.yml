@@ -1,0 +1,61 @@
+name: Label PR channel
+
+# Tags every pull request with the channel its base branch publishes, so
+# "where does this deploy?" is visible on the PR itself rather than something
+# you work out from the base branch. Merging a PR labelled `channel:canary` is
+# what eventually ships a `canary-x.y.z` release — see release.yml.
+#
+# Re-runs on `edited` because that's what fires when someone retargets a PR at
+# a different base; the old channel label is removed rather than left behind.
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, ready_for_review]
+
+# pull_request_target so PRs from forks still get labelled (the `pull_request`
+# token is read-only for those). Nothing from the PR is checked out or run
+# here — this only calls the labels API — so the elevated token isn't exposed
+# to the contributor's code.
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply the base branch's channel label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # Mirrors the branch -> channel mapping in electron/channels.ts.
+          case "$BASE" in
+            main)        CHANNEL=stable;      COLOR=0e8a16 ;;
+            ptb)         CHANNEL=ptb;         COLOR=1d76db ;;
+            canary)      CHANNEL=canary;      COLOR=fbca04 ;;
+            development) CHANNEL=development; COLOR=5319e7 ;;
+            *)
+              echo "$BASE publishes no channel — nothing to label."
+              exit 0 ;;
+          esac
+
+          # --force is create-or-update: the label may not exist yet on a fresh
+          # repo, and `gh pr edit --add-label` fails on an unknown one.
+          gh label create "channel:$CHANNEL" \
+            --color "$COLOR" \
+            --description "Deploys to the $CHANNEL release channel" \
+            --force
+
+          # Drop any channel label from a previous base before adding the
+          # current one, so a retargeted PR doesn't claim two channels.
+          for existing in stable ptb canary development; do
+            if [ "$existing" != "$CHANNEL" ]; then
+              gh pr edit "$NUMBER" --remove-label "channel:$existing" 2>/dev/null || true
+            fi
+          done
+
+          gh pr edit "$NUMBER" --add-label "channel:$CHANNEL"
+          echo "Labelled PR #$NUMBER as channel:$CHANNEL"

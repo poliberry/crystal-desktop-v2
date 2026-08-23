@@ -13,6 +13,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import {
+  probeAnimation,
+  renderAnimatedCrop,
+  type AnimatedSource,
+} from "@/lib/animated-image";
 import { cn } from "@/lib/utils";
 
 /** Max zoom, as a multiple of the "just covers the frame" size. Past this the
@@ -29,10 +35,25 @@ export interface CropShape {
   round?: boolean;
   /** Width of the rendered result, in pixels. Height follows from `aspect`. */
   outputWidth: number;
+  /**
+   * Width used when the source is animated. Smaller than `outputWidth` because
+   * the cost is per frame: a 150-frame avatar at 512px is megabytes of WebP,
+   * and nothing in the app draws an avatar anywhere near that big anyway.
+   */
+  animatedOutputWidth: number;
 }
 
-export const AVATAR_CROP: CropShape = { aspect: 1, round: true, outputWidth: 512 };
-export const BANNER_CROP: CropShape = { aspect: 1200 / 480, outputWidth: 1200 };
+export const AVATAR_CROP: CropShape = {
+  aspect: 1,
+  round: true,
+  outputWidth: 512,
+  animatedOutputWidth: 256,
+};
+export const BANNER_CROP: CropShape = {
+  aspect: 1200 / 480,
+  outputWidth: 1200,
+  animatedOutputWidth: 640,
+};
 
 /** Viewport width of the editor. Height follows the shape's aspect. */
 const FRAME_WIDTH = 400;
@@ -60,6 +81,11 @@ const IDENTITY: Transform = { zoom: 1, x: 0, y: 0 };
  * image decoded, and the crop is one `drawImage`. The caller uploads both the
  * result and (for a new picture) the untouched original, so the crop can be
  * adjusted later without asking for the file again.
+ *
+ * An animated source (GIF, animated WebP, APNG) stays animated: the same crop
+ * is applied to every frame and re-encoded as an animated WebP — see
+ * src/lib/animated-image.ts. The user can turn that off per image, which is
+ * also the way out if an animation is too long to encode.
  */
 export function ImageCropDialog({
   open,
@@ -85,6 +111,9 @@ export function ImageCropDialog({
   const [transform, setTransform] = useState<Transform>(IDENTITY);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Non-null when the source turned out to have more than one frame. */
+  const [animation, setAnimation] = useState<AnimatedSource | null>(null);
+  const [keepAnimation, setKeepAnimation] = useState(true);
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null);
 
   // Decode the source up front: the crop needs its intrinsic size to work
@@ -126,6 +155,25 @@ export function ImageCropDialog({
       // URL, so releasing it the moment decoding finished left the frame
       // pointing at nothing.
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [open, source]);
+
+  // Whether the source is animated is a property of the bytes, not of the
+  // decoded first frame, so it's a separate read. A failure here is not worth
+  // surfacing: it just means the still path, which always works.
+  useEffect(() => {
+    if (!open || !source) {
+      setAnimation(null);
+      return;
+    }
+    let cancelled = false;
+    setAnimation(null);
+    setKeepAnimation(true);
+    void probeAnimation(source).then((result) => {
+      if (!cancelled) setAnimation(result);
+    });
+    return () => {
+      cancelled = true;
     };
   }, [open, source]);
 
@@ -198,38 +246,55 @@ export function ImageCropDialog({
     setSaving(true);
     setError(null);
     try {
-      const outputHeight = Math.round(shape.outputWidth / shape.aspect);
-      const canvas = document.createElement("canvas");
-      canvas.width = shape.outputWidth;
-      canvas.height = outputHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Couldn't prepare the image.");
-
       // Map the frame back onto the source image: the frame covers
       // FRAME_WIDTH/scale source pixels, centred on the image's centre plus
-      // whatever the user dragged.
+      // whatever the user dragged. Both paths crop the same rectangle — the
+      // only difference is how many frames it's applied to.
       const scale = coverScale * transform.zoom;
       const sourceWidth = FRAME_WIDTH / scale;
       const sourceHeight = frameHeight / scale;
       const sourceX = (image.naturalWidth - sourceWidth) / 2 - transform.x / scale;
       const sourceY = (image.naturalHeight - sourceHeight) / 2 - transform.y / scale;
 
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(
-        image,
-        sourceX,
-        sourceY,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        shape.outputWidth,
-        outputHeight
-      );
+      const animated = animation && keepAnimation;
+      const outputWidth = animated ? shape.animatedOutputWidth : shape.outputWidth;
+      const outputHeight = Math.round(outputWidth / shape.aspect);
 
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, "image/webp", 0.92)
-      );
+      let blob: Blob | null;
+      if (animated) {
+        blob = await renderAnimatedCrop({
+          animation,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          outputWidth,
+          outputHeight,
+        });
+      } else {
+        const canvas = document.createElement("canvas");
+        canvas.width = outputWidth;
+        canvas.height = outputHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Couldn't prepare the image.");
+
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(
+          image,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          outputWidth,
+          outputHeight
+        );
+
+        blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/webp", 0.92)
+        );
+      }
       if (!blob) throw new Error("Couldn't render the image.");
       await onCropped(blob);
       onOpenChange(false);
@@ -247,6 +312,7 @@ export function ImageCropDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             Drag to reposition, scroll or use the slider to zoom.
+            {animation ? " Every frame gets the same crop." : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -303,6 +369,23 @@ export function ImageCropDialog({
             />
             <ZoomIn className="size-4 shrink-0 text-muted-foreground" />
           </div>
+
+          {animation && (
+            <div className="flex w-full items-center justify-between gap-3 rounded-md border p-3">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">Keep animation</p>
+                <p className="text-xs text-muted-foreground">
+                  {animation.frameCount} frames. Turn this off to save a single frame at full
+                  resolution instead.
+                </p>
+              </div>
+              <Switch
+                checked={keepAnimation}
+                onCheckedChange={setKeepAnimation}
+                disabled={saving}
+              />
+            </div>
+          )}
         </div>
 
         {error && image && <p className="text-sm text-destructive">{error}</p>}
