@@ -8,6 +8,8 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { IncomingCall } from "@/components/call/incoming-call";
 import { ScreenSharePicker } from "@/components/screen-share-picker";
+import { usePipFrameStream } from "@/hooks/use-pip-frame-stream";
+import { usePipWindow } from "@/hooks/use-pip-window";
 import { useRoom, type RoomController } from "@/hooks/use-room";
 import { useStreamThumbnail } from "@/hooks/use-stream-thumbnail";
 import type { SystemAudioChoice } from "@/lib/audio-prefs";
@@ -15,6 +17,15 @@ import type { SystemAudioChoice } from "@/lib/audio-prefs";
 export type ActiveCall =
   | { kind: "dm"; conversationId: Id<"conversations">; roomName: string }
   | { kind: "channel"; channelId: Id<"channels">; communityId: Id<"communities">; roomName: string };
+
+/** Which of a participant's videos something is showing. */
+export type CallVideoKind = "screen" | "camera";
+
+/** What the pop-out window is currently showing. */
+export interface PoppedOutSource {
+  identity: string;
+  kind: CallVideoKind;
+}
 
 interface CallContextValue {
   controller: RoomController;
@@ -55,6 +66,25 @@ interface CallContextValue {
    * this (see home-layout.tsx). */
   joinError: string | null;
   dismissJoinError: () => void;
+  /**
+   * Identities whose screen share we're subscribed to.
+   *
+   * Lifted out of `CallGrid` (where it used to be local state) because the
+   * mini player has to show and stop watching streams while the full call
+   * screen is collapsed — and because "what am I watching" outliving the view
+   * that happens to be drawing it is the honest model.
+   */
+  watchedShares: string[];
+  /** `replace` drops every other watched stream, which is what the tile's
+   * "Watch" does; without it the stream is added alongside them ("Add"). */
+  watchShare: (identity: string, options?: { replace?: boolean }) => void;
+  unwatchShare: (identity: string) => void;
+  /** What the pop-out window is showing, or null when it's closed. */
+  poppedOut: PoppedOutSource | null;
+  /** False in a browser, where there's no second window to open. */
+  popOutSupported: boolean;
+  popOut: (source: PoppedOutSource & { title: string }) => Promise<void>;
+  closePopOut: () => void;
 }
 
 const CallContext = createContext<CallContextValue | null>(null);
@@ -103,8 +133,136 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [sharePickerMode, setSharePickerMode] = useState<"start" | "change">("start");
   const [joinError, setJoinError] = useState<string | null>(null);
   const [watchIntent, setWatchIntent] = useState<string | null>(null);
+  const [watchedShares, setWatchedShares] = useState<string[]>([]);
+  const [poppedOut, setPoppedOut] = useState<PoppedOutSource | null>(null);
   const activeCallRef = useRef<ActiveCall | null>(null);
   activeCallRef.current = activeCall;
+
+  const { screenShares, subscribeToScreenShare, unsubscribeFromScreenShare, notifyStreamView } =
+    controller;
+
+  const watchShare = useCallback(
+    (identity: string, options?: { replace?: boolean }) => {
+      if (options?.replace) {
+        // "Watch" replaces the whole watch set — unsubscribe whichever streams
+        // are being dropped so they stop being downloaded and decoded.
+        for (const other of watchedShares) {
+          if (other !== identity) {
+            unsubscribeFromScreenShare(other);
+            void notifyStreamView(other, false);
+          }
+        }
+        setWatchedShares([identity]);
+      } else {
+        setWatchedShares((prev) => (prev.includes(identity) ? prev : [...prev, identity]));
+      }
+      subscribeToScreenShare(identity);
+      // Only on a genuine change: re-clicking a stream you're already watching
+      // shouldn't chime at the person streaming it again.
+      if (!watchedShares.includes(identity)) void notifyStreamView(identity, true);
+    },
+    [watchedShares, subscribeToScreenShare, unsubscribeFromScreenShare, notifyStreamView]
+  );
+
+  const unwatchShare = useCallback(
+    (identity: string) => {
+      setWatchedShares((prev) => prev.filter((i) => i !== identity));
+      unsubscribeFromScreenShare(identity);
+      void notifyStreamView(identity, false);
+    },
+    [unsubscribeFromScreenShare, notifyStreamView]
+  );
+
+  /**
+   * The screen-share chime, for other people's shares.
+   *
+   * `use-room.ts` already plays this pair for your own share, at the moment you
+   * start or stop it. Everyone else's arrives as a change to `screenShares`,
+   * which is the only signal a viewer gets — so it's diffed here rather than
+   * hooked to a LiveKit event, which would also fire for track republishes
+   * (a quality change re-publishes the track) and chime for nothing.
+   *
+   * Seeded on the first run instead of chiming: walking into a call where two
+   * people are already sharing is not two people starting to share.
+   */
+  const knownSharesRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const remote = new Set(
+      screenShares.filter((identity) => identity !== controller.room.localParticipant.identity)
+    );
+    const known = knownSharesRef.current;
+    knownSharesRef.current = remote;
+    if (!known) return;
+
+    for (const identity of remote) if (!known.has(identity)) playCue("screenShareStart");
+    for (const identity of known) if (!remote.has(identity)) playCue("screenShareStop");
+  }, [screenShares, controller.room, playCue]);
+
+  // Leaving a call has to forget who was sharing in it, or rejoining would
+  // diff against the last call's roster.
+  useEffect(() => {
+    if (!activeCall) knownSharesRef.current = null;
+  }, [activeCall]);
+
+  // A share that ends (they stopped sharing, or left) drops out of the watch
+  // set, so a later re-share starts unwatched rather than silently resuming.
+  useEffect(() => {
+    const stale = watchedShares.filter((identity) => !screenShares.includes(identity));
+    if (stale.length === 0) return;
+    for (const identity of stale) unsubscribeFromScreenShare(identity);
+    setWatchedShares((prev) => prev.filter((identity) => screenShares.includes(identity)));
+  }, [watchedShares, screenShares, unsubscribeFromScreenShare]);
+
+  // --- pop-out window ------------------------------------------------------
+  // Owned here rather than by whichever tile happens to be on screen: the mini
+  // player and the focused tile both pop things out, and a per-component
+  // `usePipWindow` would close the window the moment that component unmounted
+  // — i.e. clicking the mini player to open the call would kill the pop-out it
+  // had just created.
+  const pip = usePipWindow();
+
+  const popOut = useCallback(
+    async (source: PoppedOutSource & { title: string }) => {
+      const opened = await pip.open({ title: source.title, width: 480, height: 270 });
+      if (opened) setPoppedOut({ identity: source.identity, kind: source.kind });
+    },
+    [pip]
+  );
+
+  const closePopOut = useCallback(() => {
+    pip.close();
+    setPoppedOut(null);
+  }, [pip]);
+
+  // The window has its own close button, so "is it open" is not ours to assume.
+  useEffect(() => {
+    if (!pip.isOpen) setPoppedOut(null);
+  }, [pip.isOpen]);
+
+  const poppedOutParticipant =
+    poppedOut === null
+      ? null
+      : poppedOut.identity === controller.room.localParticipant.identity
+        ? controller.room.localParticipant
+        : (controller.participants.find((p) => p.identity === poppedOut.identity) ?? null);
+
+  // Nothing left to show — the participant left, or stopped sharing what was
+  // popped out. Better to close the window than leave a frozen last frame in it.
+  useEffect(() => {
+    if (!poppedOut) return;
+    const gone =
+      !poppedOutParticipant ||
+      (poppedOut.kind === "screen" && !screenShares.includes(poppedOut.identity));
+    if (gone) closePopOut();
+  }, [poppedOut, poppedOutParticipant, screenShares, closePopOut]);
+
+  usePipFrameStream({
+    participant: poppedOutParticipant,
+    kind: poppedOut?.kind ?? "camera",
+    enabled: !!poppedOut,
+    size: pip.size,
+    sendFrame: pip.sendFrame,
+  });
 
   const joinSound = useQuery(
     api.soundboard.myJoinSound,
@@ -399,6 +557,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         openShareSettings,
         joinError,
         dismissJoinError,
+        watchedShares,
+        watchShare,
+        unwatchShare,
+        poppedOut,
+        popOutSupported: pip.isSupported,
+        popOut,
+        closePopOut,
       }}
     >
       {children}

@@ -15,6 +15,9 @@ export const UI_SOUNDS = {
   callLeave: "call-leave",
   screenShareStart: "screenshare-start",
   screenShareStop: "screenshare-stop",
+  /** Someone started / stopped watching a stream *you* are publishing. */
+  viewerJoin: "viewer-join",
+  viewerLeave: "viewer-leave",
   mute: "mute",
   unmute: "unmute",
   deafen: "deafen",

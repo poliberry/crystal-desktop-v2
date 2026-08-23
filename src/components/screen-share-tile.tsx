@@ -195,7 +195,6 @@ export function ScreenShareTile({
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/60 to-transparent px-2 py-1.5">
         <span className="text-xs font-medium text-white drop-shadow">
           {name}
-          {isLocal ? " (You)" : ""}
         </span>
 
         {!isLocal && canWatch && (

@@ -41,6 +41,7 @@ import {
   type SoundboardClip,
   type SoundboardPacket,
 } from "@/lib/soundboard";
+import { decodeStreamView, encodeStreamView, STREAM_VIEW_TOPIC } from "@/lib/stream-view";
 
 export type ConnectionStatus =
   | "idle"
@@ -309,6 +310,14 @@ export function useRoom() {
         return;
       }
 
+      if (topic === STREAM_VIEW_TOPIC) {
+        // Somebody opened, or closed, the stream we're publishing. Purely a
+        // cue for us — nothing about the call changes.
+        const view = decodeStreamView(payload);
+        if (view) playCue(view.watching ? "viewerJoin" : "viewerLeave");
+        return;
+      }
+
       if (topic !== SOUNDBOARD_TOPIC) return;
       let packet: SoundboardPacket;
       try {
@@ -362,6 +371,7 @@ export function useRoom() {
     room,
     applyDeafen,
     highlightWhilePlaying,
+    playCue,
     syncLocalTracks,
     syncNoiseFilter,
     syncScreenSharing,
@@ -690,6 +700,30 @@ export function useRoom() {
    * which is correct — you don't hear the chime of someone who was already
    * there.
    */
+  /**
+   * Tell a streamer we've started (or stopped) watching them.
+   *
+   * Addressed to that one participant — see src/lib/stream-view.ts for why the
+   * viewer has to volunteer this rather than the publisher observing it. Never
+   * sent to ourselves: watching your own preview is not an audience.
+   */
+  const notifyStreamView = useCallback(
+    async (publisherIdentity: string, watching: boolean) => {
+      if (!connectedRef.current) return;
+      if (publisherIdentity === room.localParticipant.identity) return;
+      await room.localParticipant
+        .publishData(encodeStreamView(watching), {
+          reliable: true,
+          topic: STREAM_VIEW_TOPIC,
+          destinationIdentities: [publisherIdentity],
+        })
+        // Deliberately swallowed: failing to tell someone you're watching is
+        // not a reason to fail to watch.
+        .catch(() => {});
+    },
+    [room]
+  );
+
   const broadcastJoinSound = useCallback(
     async (soundId: string, url?: string) => {
       if (!connectedRef.current) return;
@@ -768,6 +802,7 @@ export function useRoom() {
     setScreenShareAudio,
     playSoundboardClip,
     broadcastJoinSound,
+    notifyStreamView,
     subscribeToScreenShare,
     unsubscribeFromScreenShare,
   };

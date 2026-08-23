@@ -163,17 +163,25 @@ jobs:
             # *.yml/*.blockmap are electron-updater's update-metadata files
             # (latest-linux.yml + AppImage blockmap) — without them on the
             # release, the auto-updater has nothing to check against.
+            #
+            # builder-debug.yml is excluded because electron-builder writes one
+            # per platform under the same name: both jobs upload it, the
+            # release step then tries to *update* an asset that's still being
+            # created, and 404s. It's an electron-builder dump nothing reads,
+            # so the fix is to not ship it rather than to de-duplicate it.
             artifact-glob: |
               release/*.AppImage
               release/*.deb
               release/*.yml
               release/*.blockmap
+              !release/builder-debug.yml
           - os: windows-latest
             target: win
             artifact-glob: |
               release/*.exe
               release/*.yml
               release/*.blockmap
+              !release/builder-debug.yml
     runs-on: ${{ matrix.os }}
     env:
       # Read by scripts/electron-builder-config.cjs (product name, appId, icon,
