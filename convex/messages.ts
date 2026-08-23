@@ -5,7 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { renderMentionsAsText } from "./lib/mentions";
 import { notifyUsers } from "./notifications";
-import { requireWithinUploadLimit } from "./uploadLimits";
+import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
 
 async function requireMembership(
@@ -140,7 +140,12 @@ export const send = mutation({
     for (const attachment of attachments ?? []) {
       // Only reachable once the bytes are in storage, so it can't stop an
       // oversized upload — but it does stop it from becoming a message.
-      await requireWithinUploadLimit(ctx, attachment.storageId, "Attachments");
+      await requireWithinUploadLimit(
+        ctx,
+        attachment.storageId,
+        MAX_ATTACHMENT_BYTES,
+        "Attachments"
+      );
     }
 
     const messageId = await ctx.db.insert("messages", {

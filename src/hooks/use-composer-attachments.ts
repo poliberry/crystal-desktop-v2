@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Id } from "../../convex/_generated/dataModel";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits";
 
 /**
  * Attachment handling shared by the DM and channel composers: the file
@@ -82,8 +82,8 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
       setError(null);
       const accepted: File[] = [];
       for (const file of list) {
-        if (file.size > MAX_UPLOAD_BYTES) {
-          setError(`"${file.name || "File"}" is larger than ${MAX_UPLOAD_LABEL}.`);
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          setError(`"${file.name || "File"}" is larger than ${MAX_ATTACHMENT_LABEL}.`);
           continue;
         }
         accepted.push(file);

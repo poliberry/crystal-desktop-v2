@@ -12,7 +12,7 @@ import { EmojiGlyph } from "@/components/home/emoji-select";
 import { Button } from "@/components/ui/button";
 import { MAX_CLIP_MS } from "@/lib/audio-clip";
 import { BUILTIN_SOUNDS, playSound } from "@/lib/soundboard";
-import { MAX_UPLOAD_LABEL } from "@/lib/upload-limits";
+import { MAX_SOUND_LABEL } from "@/lib/upload-limits";
 
 /** Kept in step with `MAX_SOUND_SLOTS` in convex/soundboard.ts. */
 const MAX_SLOTS = 48;
@@ -64,7 +64,7 @@ export function CommunitySettingsSoundboardTab({
             Add a sound
           </Button>
           <p className="text-xs text-muted-foreground">
-            Any audio file up to {MAX_UPLOAD_LABEL} — trim it to {MAX_CLIP_MS / 1000} seconds or
+            Any audio file up to {MAX_SOUND_LABEL} — trim it to {MAX_CLIP_MS / 1000} seconds or
             less on the way in.
           </p>
         </div>

@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
-import { requireWithinUploadLimit } from "./uploadLimits";
+import { MAX_SOUND_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import type { Id } from "./_generated/dataModel";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -77,7 +77,7 @@ export const add = mutation({
       throw new Error(`Sounds must be shorter than ${MAX_SOUND_MS / 1000} seconds.`);
     }
 
-    await requireWithinUploadLimit(ctx, storageId, "Sounds");
+    await requireWithinUploadLimit(ctx, storageId, MAX_SOUND_BYTES, "Sounds");
 
     const existing = await ctx.db
       .query("communitySounds")

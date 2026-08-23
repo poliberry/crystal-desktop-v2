@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { decodeAudioFile, encodeClipToWav, MAX_CLIP_MS } from "@/lib/audio-clip";
 import { uploadToStorage } from "@/lib/storage-upload";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits";
+import { MAX_SOUND_BYTES, MAX_SOUND_LABEL } from "@/lib/upload-limits";
 
 /** What a fresh selection starts as: the first `MAX_CLIP_MS` of the file, or
  * all of it when it's already short enough. */
@@ -84,8 +84,8 @@ export function UploadSoundDialog({
     if (!picked) return;
     setError(null);
 
-    if (picked.size > MAX_UPLOAD_BYTES) {
-      setError(`Files must be smaller than ${MAX_UPLOAD_LABEL}.`);
+    if (picked.size > MAX_SOUND_BYTES) {
+      setError(`Files must be smaller than ${MAX_SOUND_LABEL}.`);
       return;
     }
 
@@ -118,8 +118,8 @@ export function UploadSoundDialog({
     setError(null);
     try {
       const clip = encodeClipToWav(buffer, range.startSec, range.endSec, volume);
-      if (clip.size > MAX_UPLOAD_BYTES) {
-        throw new Error(`The trimmed clip is over ${MAX_UPLOAD_LABEL}. Select a shorter part.`);
+      if (clip.size > MAX_SOUND_BYTES) {
+        throw new Error(`The trimmed clip is over ${MAX_SOUND_LABEL}. Select a shorter part.`);
       }
       const uploadUrl = await generateUploadUrl();
       const storageId = await uploadToStorage(uploadUrl, clip);

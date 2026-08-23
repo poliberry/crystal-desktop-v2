@@ -1,16 +1,29 @@
 /**
- * One ceiling for everything a user uploads.
+ * What the app will let you upload, by what you're uploading it for.
  *
- * Message attachments and soundboard clips used to disagree — 25 MB and 2 MB
- * respectively — which meant two different numbers to explain and two places
- * to change. A single limit is simpler to state in the UI ("up to 10 MB") and
- * simpler to keep honest, since the server checks the same constant.
+ * Two numbers rather than one because the two cases aren't the same shape. An
+ * attachment is whatever file someone wants to send and is downloaded on
+ * demand; a soundboard clip is a few seconds long, is capped at
+ * `MAX_CLIP_MS` anyway, and is fetched by everyone in a call the moment it's
+ * pressed. A ceiling generous enough for the first would be meaningless for
+ * the second.
  *
- * Mirrored by `MAX_UPLOAD_BYTES` in convex/uploadLimits.ts: the client can
- * only ever be a courtesy check, because a storage upload URL is a plain POST
- * anyone can reach. Change one, change the other.
+ * Mirrored in convex/uploadLimits.ts, which is where they're actually
+ * enforced: the checks here are a courtesy that saves a doomed transfer, but a
+ * storage upload URL is a plain POST anyone can reach, so the client's opinion
+ * of a file's size is never the last word. Change one, change the other.
  */
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-/** `10 MB` — how the limit is written in copy and error messages. */
-export const MAX_UPLOAD_LABEL = `${MAX_UPLOAD_BYTES / 1024 / 1024} MB`;
+/** Message attachments — anything, sent into a conversation. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** Soundboard clips. Smaller on purpose: see above. */
+export const MAX_SOUND_BYTES = 10 * 1024 * 1024;
+
+/** `25 MB` — for copy and error messages. */
+export function formatUploadLimit(bytes: number): string {
+  return `${bytes / 1024 / 1024} MB`;
+}
+
+export const MAX_ATTACHMENT_LABEL = formatUploadLimit(MAX_ATTACHMENT_BYTES);
+export const MAX_SOUND_LABEL = formatUploadLimit(MAX_SOUND_BYTES);
