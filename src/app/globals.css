@@ -4,6 +4,51 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ---------------------------------------------------------------------------
+ * Blu Sans — the app's typeface
+ *
+ * Bundled in `public/fonts/` and declared here rather than pulled through
+ * `next/font`, because the font has to reach every window the app opens
+ * (main, Settings, the video pop-out) and because a packaged desktop build
+ * may never have a network — a webfont fetch is not an option.
+ *
+ * Both files are variable across the whole 100–900 weight axis, so one
+ * `@font-face` per style covers every weight the UI asks for; `font-display:
+ * block` rather than `swap` because with the file on local disk there is no
+ * meaningful wait, and swapping would flash the fallback face on first paint.
+ * ------------------------------------------------------------------------- */
+@font-face {
+  font-family: "Blu Sans";
+  src: url("/fonts/BluSans-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Blu Sans";
+  src: url("/fonts/BluSans-Italic-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: block;
+}
+
+/* Overrides Tailwind's own `--font-sans`, which is what the `font-sans`
+ * utility on <body> resolves to — so every view inherits Blu Sans without a
+ * per-component class. Written as a plain `:root` declaration rather than an
+ * `@theme` block on purpose: the two runtime overrides of this variable
+ * (a custom theme's `font`, injected into :root by theme-provider.tsx, and
+ * `:root.a11y-readable-font` in the accessibility section below) both need to
+ * win, and they do — one by cascade order, the other by specificity.
+ *
+ * The emoji faces stay at the tail, matching Tailwind's default stack, so an
+ * emoji in a message still renders in colour where Blu Sans has no glyph. */
+:root {
+  --font-sans:
+    "Blu Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);

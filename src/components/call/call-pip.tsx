@@ -144,6 +144,12 @@ export function CallPip() {
 
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  // Set when a drag ends and read by the click handler that fires immediately
+  // after. It can't live on `dragRef` — `pointerup` comes *before* `click`,
+  // so by the time the click arrives the drag has already been cleared and
+  // "did this move?" has nowhere left to be read from. Which is why dragging
+  // the player anywhere used to reopen the call screen on release.
+  const suppressClickRef = useRef(false);
 
   const visible = !!activeCall && !expanded && status === "connected";
 
@@ -192,6 +198,9 @@ export function CallPip() {
 
   const onPointerDown = (event: React.PointerEvent) => {
     (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    // Cleared here as well as on use, so a drag whose click never arrived
+    // can't swallow the next real one.
+    suppressClickRef.current = false;
     dragRef.current = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -212,7 +221,9 @@ export function CallPip() {
   };
 
   const endDrag = (event: React.PointerEvent) => {
-    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    suppressClickRef.current = dragRef.current.moved;
+    dragRef.current = null;
   };
 
   return (
@@ -232,7 +243,10 @@ export function CallPip() {
       onPointerCancel={endDrag}
       onClick={() => {
         // A drag that ended on this element still fires a click.
-        if (dragRef.current?.moved) return;
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false;
+          return;
+        }
         expand();
       }}
       role="button"
