@@ -36,6 +36,10 @@ export interface CallTile {
   participant: Participant;
   isLocal: boolean;
   imageUrl?: string;
+  /** Name and avatar as this call's community sees them — a per-server
+   * nickname wins over the one baked into the LiveKit token at join time
+   * (see `RoomView`). Absent in DM calls, which have no server identity. */
+  name?: string;
 }
 
 /**
@@ -106,7 +110,7 @@ function TileWithContextMenu({
   const soundboardActive = useSoundboardActivity().has(
     tile.participant.identity,
   );
-  const name = tile.participant.name || tile.participant.identity;
+  const name = tile.name || tile.participant.name || tile.participant.identity;
   const displayName = tile.kind === "screen" ? `${name}'s screen` : name;
 
   const inner =
@@ -114,6 +118,7 @@ function TileWithContextMenu({
       <ScreenShareTile
         participant={tile.participant}
         isLocal={tile.isLocal}
+        name={tile.name}
         fill
         onClick={onClick}
         audioEnabled={watchState?.audioEnabled ?? true}
@@ -129,6 +134,7 @@ function TileWithContextMenu({
         participant={tile.participant}
         isLocal={tile.isLocal}
         imageUrl={tile.imageUrl}
+        name={tile.name}
         fill
         onClick={onClick}
         localVolume={settings.volume}
@@ -743,7 +749,7 @@ export function CallGrid({
   if (focused) {
     const rest = tiles.filter((t) => t.key !== focused.key);
     const focusedName =
-      focused.participant.name || focused.participant.identity;
+      focused.name || focused.participant.name || focused.participant.identity;
     return (
       <div className="flex h-full min-h-0 flex-col gap-2">
         <div className="min-h-0 flex-1">

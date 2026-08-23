@@ -56,7 +56,7 @@ export function isNoiseSuppressionSupported(): boolean {
  * that track stops, and a destroyed one can't be revived — so this always
  * hands back a new one rather than caching a singleton.
  */
-export async function createNoiseFilter(): Promise<NoiseFilter | null> {
+async function createNoiseFilter(): Promise<NoiseFilter | null> {
   if (!isNoiseSuppressionSupported()) return null;
   try {
     const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import(
@@ -86,6 +86,11 @@ export function localMicrophoneTrack(room: Room): LocalAudioTrack | undefined {
  * Bring a live microphone track in line with the user's preference, and
  * report whether the filter ended up running.
  *
+ * Only ever called on a *published* track: LiveKit gives a track its
+ * AudioContext as part of publishing, and an audio processor can't be
+ * attached without one. Publishing also means `setProcessor` fires
+ * `TrackProcessorUpdate`, which is what hands the plugin the room it needs.
+ *
  * Turning it off leaves the processor attached and bypassed rather than
  * detaching it: `setProcessor`/`stopProcessor` republish the track (an
  * audible gap for everyone else), while `setEnabled` is instant. Attaching is
@@ -113,8 +118,6 @@ export async function applyNoiseSuppression(
   if (!filter) return false;
   try {
     await track.setProcessor(filter);
-    // `setProcessor` on an already-published track doesn't re-run the
-    // plugin's own publish hook, so ask for it explicitly.
     await filter.setEnabled(true);
     return filter.isEnabled();
   } catch (err) {

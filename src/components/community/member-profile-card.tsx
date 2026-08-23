@@ -293,3 +293,52 @@ export function MemberProfileCard({
     </div>
   );
 }
+
+/**
+ * The profile card for a user we only know by id — the popover body behind
+ * every avatar/name click (message authors, the voice roster).
+ *
+ * Rendered inside `PopoverContent` so mounting it *is* the trigger for
+ * fetching the full profile (bio, banner, roles) rather than paying for it on
+ * every row in a list. The caller passes whatever identity it already has on
+ * screen so the card is complete on the first frame and the query only fills
+ * in the rest; inside a community, the resolved server profile wins once it
+ * arrives. Omit `communityId` for DMs — there's no per-server identity or
+ * role list to show there.
+ */
+export function UserProfileContent({
+  userId,
+  communityId,
+  name,
+  username,
+  imageUrl,
+}: {
+  userId: Id<"users">;
+  communityId?: Id<"communities">;
+  name: string;
+  username: string;
+  imageUrl?: string;
+}) {
+  const profile = useQuery(api.users.getProfile, { userId, communityId });
+  return (
+    <MemberProfileCard
+      communityId={communityId}
+      member={{
+        userId,
+        name: profile?.name ?? name,
+        username,
+        imageUrl: profile?.imageUrl ?? imageUrl,
+        roles: profile?.roles,
+        isOwner: profile?.isOwner,
+        // Falls back to offline only until the profile query resolves — the
+        // status is real once it does.
+        status: (profile?.status ?? "offline") as FriendStatus,
+        bio: profile?.bio,
+        bannerUrl: profile?.bannerUrl,
+        customStatus: profile?.customStatus,
+        borderGradientStart: profile?.borderGradientStart,
+        borderGradientEnd: profile?.borderGradientEnd,
+      }}
+    />
+  );
+}

@@ -11,10 +11,9 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
-import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { UserProfileContent } from "@/components/community/member-profile-card";
 import { AudioAttachment } from "@/components/home/audio-attachment";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
-import type { FriendStatus } from "@/lib/presence";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -54,39 +53,6 @@ interface MessageDoc {
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
-// Rendered inside PopoverContent so it only mounts when the popover is open,
-// fetching the full profile (bio, banner, etc.) lazily on demand.
-function UserProfileContent({
-  userId,
-  name,
-  username,
-  imageUrl,
-}: {
-  userId: Id<"users">;
-  name: string;
-  username: string;
-  imageUrl?: string;
-}) {
-  const profile = useQuery(api.users.getProfile, { userId });
-  return (
-    <MemberProfileCard
-      member={{
-        userId,
-        name,
-        username,
-        imageUrl,
-        // Falls back to offline only until the profile query resolves — the
-        // status is real once it does.
-        status: (profile?.status ?? "offline") as FriendStatus,
-        bio: profile?.bio,
-        bannerUrl: profile?.bannerUrl,
-        customStatus: profile?.customStatus,
-        borderGradientStart: profile?.borderGradientStart,
-        borderGradientEnd: profile?.borderGradientEnd,
-      }}
-    />
-  );
-}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

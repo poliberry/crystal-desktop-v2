@@ -317,14 +317,40 @@ export const getProfile = query({
   },
 });
 
+/**
+ * Names and avatars for a set of users, in one round trip.
+ *
+ * Pass `communityId` to resolve them the way that community sees them —
+ * per-server nickname and avatar where set, falling back field by field to
+ * the global profile. Omit it in DM contexts, which have no server identity.
+ */
 export const getUsersByIds = query({
-  args: { userIds: v.array(v.id("users")) },
-  handler: async (ctx, { userIds }) => {
+  args: {
+    userIds: v.array(v.id("users")),
+    communityId: v.optional(v.id("communities")),
+  },
+  handler: async (ctx, { userIds, communityId }) => {
     if (userIds.length === 0) return [];
     const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
-    return users
-      .filter((u): u is NonNullable<typeof u> => u !== null)
-      .map((u) => ({ id: u._id, name: u.name, imageUrl: u.imageUrl }));
+    return Promise.all(
+      users
+        .filter((u): u is NonNullable<typeof u> => u !== null)
+        .map(async (u) => {
+          const serverProfile = communityId
+            ? await ctx.db
+                .query("serverProfiles")
+                .withIndex("by_user_community", (q) =>
+                  q.eq("userId", u._id).eq("communityId", communityId)
+                )
+                .unique()
+            : null;
+          return {
+            id: u._id,
+            name: serverProfile?.displayName ?? u.name,
+            imageUrl: serverProfile?.imageUrl ?? u.imageUrl,
+          };
+        })
+    );
   },
 });
 

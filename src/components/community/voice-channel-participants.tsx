@@ -12,9 +12,11 @@ import {
   RichPresenceCards,
   topActivity,
 } from "@/components/rich-presence-card";
+import { UserProfileContent } from "@/components/community/member-profile-card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 
@@ -33,6 +35,9 @@ export interface VoiceParticipant {
 
 interface VoiceChannelParticipantsProps {
   channelId: Id<"channels">;
+  /** The channel's community, so a clicked member resolves to their profile
+   * *here* — server nickname, avatar and roles included. */
+  communityId: Id<"communities">;
   /** The live room, only when the current user happens to be connected to
    * THIS channel's call — lets this show a live "who's speaking" ring. Every
    * other voice channel only knows who's connected (via Convex bookkeeping,
@@ -83,6 +88,7 @@ function ParticipantRow({
   speaking,
   soundboardActive = false,
   interactive = true,
+  communityId,
 }: {
   participant: VoiceParticipant;
   speaking: boolean;
@@ -91,6 +97,9 @@ function ParticipantRow({
   /** False inside the channel hover card, which already shows the activity
    * and must not nest a tooltip inside a tooltip. */
   interactive?: boolean;
+  /** Which community's profile to resolve the clicked member against.
+   * Omitted inside the channel hover card, where the row isn't clickable. */
+  communityId?: Id<"communities">;
 }) {
   const row = (
     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -130,26 +139,50 @@ function ParticipantRow({
     </div>
   );
 
-  if (!interactive || !participant.activities?.length) return row;
+  if (!interactive) return row;
+
+  // Hovering shows what they're playing; clicking opens the same profile card
+  // as the member list and message authors, so the roster is a way *into*
+  // someone rather than a dead end.
+  const trigger = (
+    <PopoverTrigger asChild>
+      <button type="button" className="-mx-1 w-full rounded px-1 text-left hover:bg-accent/40">
+        {row}
+      </button>
+    </PopoverTrigger>
+  );
 
   return (
-    <HoverCard>
-      <HoverCardTrigger asChild>
-        <div>{row}</div>
-      </HoverCardTrigger>
-      <HoverCardContent side="right" className="w-72">
-        <div className="mb-1.5 flex items-center gap-2 px-0.5">
-          <Avatar size="sm" className="size-5">
-            <AvatarImage src={participant.imageUrl} alt={participant.name} />
-            <AvatarFallback className="text-[8px]">
-              {participant.name.slice(0, 2).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <span className="truncate text-sm font-semibold">{participant.name}</span>
-        </div>
-        <RichPresenceCards activities={participant.activities} />
-      </HoverCardContent>
-    </HoverCard>
+    <Popover>
+      {participant.activities?.length ? (
+        <HoverCard>
+          <HoverCardTrigger asChild>{trigger}</HoverCardTrigger>
+          <HoverCardContent side="right" className="w-72">
+            <div className="mb-1.5 flex items-center gap-2 px-0.5">
+              <Avatar size="sm" className="size-5">
+                <AvatarImage src={participant.imageUrl} alt={participant.name} />
+                <AvatarFallback className="text-[8px]">
+                  {participant.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <span className="truncate text-sm font-semibold">{participant.name}</span>
+            </div>
+            <RichPresenceCards activities={participant.activities} />
+          </HoverCardContent>
+        </HoverCard>
+      ) : (
+        trigger
+      )}
+      <PopoverContent side="right" align="start" className="w-72 p-0">
+        <UserProfileContent
+          userId={participant.id}
+          communityId={communityId}
+          name={participant.name}
+          username={participant.username}
+          imageUrl={participant.imageUrl}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -197,7 +230,11 @@ export function VoiceChannelHoverCard({
 
 /** The small "who's in this voice channel" avatar list Discord shows under
  * a voice channel row. */
-export function VoiceChannelParticipants({ channelId, liveRoom }: VoiceChannelParticipantsProps) {
+export function VoiceChannelParticipants({
+  channelId,
+  communityId,
+  liveRoom,
+}: VoiceChannelParticipantsProps) {
   const participants = (useQuery(api.channels.listVoiceParticipants, { channelId }) ??
     []) as VoiceParticipant[];
   const [speaking, setSpeaking] = useState<Set<string>>(new Set());
@@ -226,6 +263,7 @@ export function VoiceChannelParticipants({ channelId, liveRoom }: VoiceChannelPa
         <ParticipantRow
           key={p.id}
           participant={p}
+          communityId={communityId}
           speaking={speaking.has(p.id)}
           soundboardActive={!!liveRoom && soundboardActive.has(p.id)}
         />

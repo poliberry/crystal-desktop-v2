@@ -502,6 +502,7 @@ function ChannelTree({
           <ChannelBucket
             bucket={{ id: null, name: null, channels: uncategorized }}
             totalChannelCount={channels.length}
+            communityId={communityId}
             selectedChannelId={selectedChannelId}
             activeVoiceChannelId={activeVoiceChannelId}
             onSelectChannel={onSelectChannel}
@@ -519,6 +520,7 @@ function ChannelTree({
             <CategorySection
               key={bucket.id}
               bucket={bucket}
+              communityId={communityId}
               selectedChannelId={selectedChannelId}
               activeVoiceChannelId={activeVoiceChannelId}
               onSelectChannel={onSelectChannel}
@@ -597,6 +599,7 @@ interface CategoryBucketData {
 
 function CategorySection({
   bucket,
+  communityId,
   selectedChannelId,
   activeVoiceChannelId,
   onSelectChannel,
@@ -610,6 +613,7 @@ function CategorySection({
   overInfo,
 }: {
   bucket: CategoryBucketData;
+  communityId: Id<"communities">;
   selectedChannelId: Id<"channels"> | null;
   activeVoiceChannelId: Id<"channels"> | null;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
@@ -680,6 +684,7 @@ function CategorySection({
       {!collapsed && (
         <ChannelBucket
           bucket={bucket}
+          communityId={communityId}
           selectedChannelId={selectedChannelId}
           activeVoiceChannelId={activeVoiceChannelId}
           onSelectChannel={onSelectChannel}
@@ -698,6 +703,7 @@ function CategorySection({
 function ChannelBucket({
   bucket,
   totalChannelCount = 0,
+  communityId,
   selectedChannelId,
   activeVoiceChannelId,
   onSelectChannel,
@@ -710,6 +716,7 @@ function ChannelBucket({
 }: {
   bucket: BucketData;
   totalChannelCount?: number;
+  communityId: Id<"communities">;
   selectedChannelId: Id<"channels"> | null;
   activeVoiceChannelId: Id<"channels"> | null;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
@@ -734,6 +741,7 @@ function ChannelBucket({
           <ChannelItem
             key={channel.id}
             channel={channel}
+            communityId={communityId}
             active={selectedChannelId === channel.id || (channel.type === "voice" && activeVoiceChannelId === channel.id)}
             isVoiceActive={channel.type === "voice" && activeVoiceChannelId === channel.id}
             onSelectChannel={onSelectChannel}
@@ -771,6 +779,7 @@ function ChannelRowHover({
 
 function ChannelItem({
   channel,
+  communityId,
   active,
   isVoiceActive,
   onSelectChannel,
@@ -781,6 +790,7 @@ function ChannelItem({
   overInfo,
 }: {
   channel: ChannelRow;
+  communityId: Id<"communities">;
   active: boolean;
   isVoiceActive: boolean;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
@@ -841,7 +851,11 @@ function ChannelItem({
       </ContextMenu>
 
       {channel.type === "voice" && (
-        <VoiceChannelParticipants channelId={channel.id} liveRoom={isVoiceActive ? liveRoom : null} />
+        <VoiceChannelParticipants
+          channelId={channel.id}
+          communityId={communityId}
+          liveRoom={isVoiceActive ? liveRoom : null}
+        />
       )}
     </div>
   );

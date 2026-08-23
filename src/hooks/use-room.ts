@@ -19,11 +19,7 @@ import {
   toggleSystemAudio as toggleSystemAudioLib,
 } from "@/lib/system-audio";
 import { getDesktopAPI, isElectron } from "@/lib/desktop";
-import {
-  applyNoiseSuppression,
-  createNoiseFilter,
-  localMicrophoneTrack,
-} from "@/lib/noise-filter";
+import { applyNoiseSuppression, localMicrophoneTrack } from "@/lib/noise-filter";
 import {
   resolveStreamResolution,
   type StreamQuality,
@@ -409,16 +405,12 @@ export function useRoom() {
         // Only the microphone is enabled by default. The camera stays off and
         // its permission is only requested when the user toggles it on.
         //
-        // The noise filter is handed to the capture rather than attached
-        // afterwards so the very first frames published are already clean —
-        // and only built when it's actually wanted, since a processor that is
-        // never attached to a track would leak its worklet.
-        const filter =
-          noiseSuppressionRef.current && !mutedRef.current ? await createNoiseFilter() : null;
-        await room.localParticipant.setMicrophoneEnabled(
-          !mutedRef.current,
-          filter ? { processor: filter } : undefined
-        );
+        // Noise suppression isn't passed as a capture option here: LiveKit
+        // attaches capture-time processors inside `createLocalTracks`, before
+        // it gives the track an AudioContext, and an audio processor without
+        // one throws. Attaching after the track is published works instead —
+        // that's what `syncNoiseFilter` does off `LocalTrackPublished`.
+        await room.localParticipant.setMicrophoneEnabled(!mutedRef.current);
         syncLocalTracks();
       } catch (err) {
         setStatus("error");

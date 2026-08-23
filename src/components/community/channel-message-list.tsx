@@ -18,10 +18,9 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ServerEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { MemberProfileCard } from "./member-profile-card";
+import { UserProfileContent } from "./member-profile-card";
 import { AudioAttachment } from "@/components/home/audio-attachment";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
-import type { FriendStatus } from "@/lib/presence";
 
 interface ChannelMessageListProps {
   channelId: Id<"channels">;
@@ -89,45 +88,6 @@ interface MessageDoc {
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
-
-function UserProfileContent({
-  userId,
-  communityId,
-  name,
-  username,
-  imageUrl,
-}: {
-  userId: Id<"users">;
-  communityId: Id<"communities">;
-  name: string;
-  username: string;
-  imageUrl?: string;
-}) {
-  const profile = useQuery(api.users.getProfile, { userId, communityId });
-  return (
-    <MemberProfileCard
-      communityId={communityId}
-      member={{
-        userId,
-        // Server profile overrides arrive with the query; until it resolves,
-        // the message list's own (already server-aware) values stand in.
-        name: profile?.name ?? name,
-        username,
-        imageUrl: profile?.imageUrl ?? imageUrl,
-        roles: profile?.roles,
-        isOwner: profile?.isOwner,
-        // Falls back to offline only until the profile query resolves — the
-        // status is real once it does.
-        status: (profile?.status ?? "offline") as FriendStatus,
-        bio: profile?.bio,
-        bannerUrl: profile?.bannerUrl,
-        customStatus: profile?.customStatus,
-        borderGradientStart: profile?.borderGradientStart,
-        borderGradientEnd: profile?.borderGradientEnd,
-      }}
-    />
-  );
-}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
