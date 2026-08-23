@@ -33,6 +33,16 @@ function framable(embedUrl: string | undefined): string | null {
   return EMBED_HOST_ALLOWLIST.some((prefix) => embedUrl.startsWith(prefix)) ? embedUrl : null;
 }
 
+/**
+ * How long a failed unfurl is trusted before trying again.
+ *
+ * Failures are cached so a link with genuinely no metadata isn't re-fetched by
+ * every client that renders the message — but caching them *forever* means one
+ * bad moment (a provider rate-limiting us, a deploy landing mid-fetch) leaves a
+ * URL permanently un-unfurlable, with nothing in the UI to suggest why.
+ */
+const ERROR_RETRY_MS = 60 * 60 * 1000;
+
 const IFRAME_PERMISSIONS =
   "accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture";
 
@@ -148,11 +158,16 @@ export function LinkEmbedCard({ url }: LinkEmbedCardProps) {
 
   useEffect(() => {
     if (preview === undefined || triggeredRef.current) return;
-    // Never unfurled, or unfurled before providers and players existed — a
-    // successful row always carries a `kind`, so its absence dates the row
-    // rather than describing the link. Failures keep `status: "error"` and
-    // are left alone, so a link that can't be unfurled is asked about once.
-    const stale = preview !== null && preview.status === "ok" && preview.kind === undefined;
+
+    const stale =
+      preview !== null &&
+      (preview.status === "error"
+        ? Date.now() - preview.fetchedAt > ERROR_RETRY_MS
+        : // Unfurled before providers and players existed. A successful row
+          // always carries a `kind`, so its absence dates the row rather than
+          // describing the link.
+          preview.kind === undefined);
+
     if (preview === null || stale) {
       triggeredRef.current = true;
       void fetchAndCache({ url });

@@ -180,7 +180,12 @@ export const fetchAndCache = action({
         themeColor: safeColour(firstMeta(html, "theme-color", "msapplication-TileColor")),
         faviconUrl: html ? extractFavicon(html, url) : undefined,
       });
-    } catch {
+    } catch (err) {
+      // Logged, not silent: an unfurl that fails is invisible in the UI by
+      // design (no card), which makes a systematic failure — a provider
+      // blocking us, a schema mismatch — impossible to tell apart from a link
+      // that genuinely has no metadata.
+      console.warn(`Link unfurl failed for ${url}:`, err);
       await ctx.runMutation(internal.linkPreviews.upsert, { url, status: "error" });
     }
   },
