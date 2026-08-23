@@ -28,6 +28,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -198,14 +203,15 @@ interface CommunityActivity {
 }
 
 /**
- * What a server's rail tile says on hover: its name, how big it is, and who's
- * in voice right now.
+ * What a server's rail tile shows on hover: its name, how big it is, and
+ * who's in voice right now.
  *
- * The voice row is the reason this is a component rather than a string — a
- * stack of faces answers "is anyone I know in there" at a glance, which a
- * count alone doesn't.
+ * A hover card rather than a tooltip because of the voice row — a stack of
+ * faces answers "is anyone I know in there" at a glance in a way a count
+ * doesn't, and tooltip styling (small, dense, built for one line) fights
+ * that.
  */
-function CommunityTooltip({
+function CommunityCardBody({
   name,
   activity,
 }: {
@@ -213,20 +219,20 @@ function CommunityTooltip({
   activity: CommunityActivity | undefined;
 }) {
   return (
-    <div className="max-w-56 space-y-2">
+    <div className="space-y-2">
       <div>
-        <p className="font-semibold">{name}</p>
+        <p className="truncate text-sm font-semibold">{name}</p>
         {activity && (
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             {activity.memberCount} {activity.memberCount === 1 ? "member" : "members"}
           </p>
         )}
       </div>
 
       {!!activity?.voiceCount && (
-        <div className="space-y-1 border-t border-border/50 pt-1.5">
-          <p className="flex items-center gap-1 text-[11px] font-medium text-emerald-500">
-            <Volume2 className="size-3" />
+        <div className="space-y-1.5 border-t border-border/50 pt-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-500">
+            <Volume2 className="size-3.5" />
             {activity.voiceCount} in voice
           </p>
           <AvatarGroup data-size="sm">
@@ -324,15 +330,14 @@ export function CommunityRail({
             const activity = activityByCommunity.get(community.id);
             const inVoice = !!activity?.voiceCount;
             return (
-            <TooltipProvider key={community.id}>
-              <Tooltip>
+            <HoverCard key={community.id} openDelay={200} closeDelay={100}>
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
                     {/* The badge sits outside the button because the button
                         clips its contents — that's what gives the tile its
                         square-to-squircle morph on hover. */}
                     <div className="relative">
-                    <TooltipTrigger asChild>
+                    <HoverCardTrigger asChild>
                       <button
                         type="button"
                         aria-label={
@@ -356,7 +361,7 @@ export function CommunityRail({
                           </AvatarFallback>
                         </Avatar>
                       </button>
-                    </TooltipTrigger>
+                    </HoverCardTrigger>
                     {inVoice && (
                       <span
                         aria-hidden
@@ -378,11 +383,10 @@ export function CommunityRail({
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
-                <TooltipContent side="right">
-                  <CommunityTooltip name={community.name} activity={activity} />
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                <HoverCardContent side="right" align="start" className="w-60">
+                  <CommunityCardBody name={community.name} activity={activity} />
+                </HoverCardContent>
+            </HoverCard>
             );
           })}
           {communities.length === 0 && (
