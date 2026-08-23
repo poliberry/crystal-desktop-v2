@@ -99,6 +99,7 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       isLocal: participant === room.localParticipant,
       imageUrl: profileByIdentity.get(participant.identity)?.imageUrl,
       name: profileByIdentity.get(participant.identity)?.name,
+      accent: profileByIdentity.get(participant.identity)?.avatarAccent,
     })),
     ...screenSharers.map((participant) => ({
       key: `screen-${participant.identity}`,

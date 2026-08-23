@@ -112,7 +112,14 @@ export const setServerAvatar = mutation({
       if (existing.avatarStorageId && existing.avatarStorageId !== storageId) {
         await ctx.storage.delete(existing.avatarStorageId);
       }
-      await ctx.db.patch(existing._id, { imageUrl: url, avatarStorageId: storageId });
+      // Cached accent colour describes the old picture — see
+      // `users.setAvatar`.
+      await ctx.db.patch(existing._id, {
+        imageUrl: url,
+        avatarStorageId: storageId,
+        avatarAccent: undefined,
+        avatarAccentUrl: undefined,
+      });
     } else {
       await ctx.db.insert("serverProfiles", {
         userId: me._id,
@@ -238,5 +245,25 @@ export const setServerGradient = mutation({
     } else {
       await ctx.db.insert("serverProfiles", { userId: me._id, communityId, ...patch });
     }
+  },
+});
+
+/**
+ * Cache the dominant colour of my per-server avatar — the community-scoped
+ * twin of `users.setAvatarAccent`, and subject to the same `sourceUrl` guard
+ * so a sample that lands after the avatar changed is discarded.
+ */
+export const setServerAvatarAccent = mutation({
+  args: {
+    communityId: v.id("communities"),
+    accent: v.string(),
+    sourceUrl: v.string(),
+  },
+  handler: async (ctx, { communityId, accent, sourceUrl }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (!existing || existing.imageUrl !== sourceUrl) return;
+    await ctx.db.patch(existing._id, { avatarAccent: accent, avatarAccentUrl: sourceUrl });
   },
 });

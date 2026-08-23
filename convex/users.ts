@@ -228,7 +228,14 @@ export const setAvatar = mutation({
     if (!url) throw new Error("Avatar upload failed.");
 
     const previous = me.avatarStorageId;
-    await ctx.db.patch(me._id, { imageUrl: url, avatarStorageId: storageId });
+    // Drop the cached accent colour: it describes the old picture. The
+    // client re-samples and calls `setAvatarAccent` with the new one.
+    await ctx.db.patch(me._id, {
+      imageUrl: url,
+      avatarStorageId: storageId,
+      avatarAccent: undefined,
+      avatarAccentUrl: undefined,
+    });
     if (previous && previous !== storageId && !(await isReferencedByAttachment(ctx, previous))) {
       // Not caught: a failed delete should abort the whole mutation (Convex
       // mutations are all-or-nothing) rather than silently commit the avatar
@@ -239,12 +246,35 @@ export const setAvatar = mutation({
   },
 });
 
+/**
+ * Cache the dominant colour of my avatar, as sampled by my own client.
+ *
+ * `sourceUrl` is the avatar the colour was taken from: if it no longer
+ * matches, the avatar changed while the sample was in flight and the result
+ * is dropped rather than written as a colour for the wrong picture. Nobody
+ * writes anyone else's — every client samples its own avatar once and the
+ * value is then read by everybody (see `getUsersByIds`).
+ */
+export const setAvatarAccent = mutation({
+  args: { accent: v.string(), sourceUrl: v.string() },
+  handler: async (ctx, { accent, sourceUrl }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (me.imageUrl !== sourceUrl) return;
+    await ctx.db.patch(me._id, { avatarAccent: accent, avatarAccentUrl: sourceUrl });
+  },
+});
+
 export const removeAvatar = mutation({
   args: {},
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.avatarStorageId;
-    await ctx.db.patch(me._id, { imageUrl: undefined, avatarStorageId: undefined });
+    await ctx.db.patch(me._id, {
+      imageUrl: undefined,
+      avatarStorageId: undefined,
+      avatarAccent: undefined,
+      avatarAccentUrl: undefined,
+    });
     if (previous && !(await isReferencedByAttachment(ctx, previous))) {
       await ctx.storage.delete(previous);
     }
@@ -344,10 +374,15 @@ export const getUsersByIds = query({
                 )
                 .unique()
             : null;
+          // The accent has to come from whichever avatar actually won, not
+          // be merged field by field — a server avatar's colour paired with
+          // the global picture would just be wrong.
+          const usingServerAvatar = !!serverProfile?.imageUrl;
           return {
             id: u._id,
             name: serverProfile?.displayName ?? u.name,
             imageUrl: serverProfile?.imageUrl ?? u.imageUrl,
+            avatarAccent: usingServerAvatar ? serverProfile.avatarAccent : u.avatarAccent,
           };
         })
     );

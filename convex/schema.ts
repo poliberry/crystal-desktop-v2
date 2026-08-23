@@ -47,6 +47,13 @@ export default defineSchema({
     imageUrl: v.optional(v.string()),
     bio: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
+    /** Dominant colour of the avatar, sampled on the client (see
+     * src/lib/avatar-color.ts) and cached here so a call tile can paint it on
+     * its first frame instead of flashing while it re-samples the image.
+     * Stored with the URL it was derived from, so a new avatar invalidates it
+     * rather than tinting the tile with the old one. */
+    avatarAccent: v.optional(v.string()),
+    avatarAccentUrl: v.optional(v.string()),
     // Profile cosmetics
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
@@ -410,6 +417,9 @@ export default defineSchema({
     customStatus: v.optional(v.string()),
     imageUrl: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
+    /** Same pairing as `users.avatarAccent`, for the per-server avatar. */
+    avatarAccent: v.optional(v.string()),
+    avatarAccentUrl: v.optional(v.string()),
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
     borderGradientStart: v.optional(v.string()),

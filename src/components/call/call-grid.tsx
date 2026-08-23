@@ -36,6 +36,9 @@ export interface CallTile {
   participant: Participant;
   isLocal: boolean;
   imageUrl?: string;
+  /** Cached dominant colour of the avatar, so the tile paints its tint on
+   * the first frame instead of flashing while it re-samples the image. */
+  accent?: string;
   /** Name and avatar as this call's community sees them — a per-server
    * nickname wins over the one baked into the LiveKit token at join time
    * (see `RoomView`). Absent in DM calls, which have no server identity. */
@@ -135,6 +138,7 @@ function TileWithContextMenu({
         isLocal={tile.isLocal}
         imageUrl={tile.imageUrl}
         name={tile.name}
+        accent={tile.accent}
         fill
         onClick={onClick}
         localVolume={settings.volume}

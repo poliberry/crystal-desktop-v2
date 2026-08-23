@@ -10,7 +10,7 @@ import {
   type TrackPublication,
 } from "livekit-client";
 
-import { getAvatarColor } from "@/lib/avatar-color";
+import { useAvatarAccent } from "@/hooks/use-avatar-accent";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +21,8 @@ interface ParticipantTileProps {
   /** Display name resolved against the community this call belongs to (see
    * `RoomView`). Falls back to whatever name the LiveKit token carried. */
   name?: string;
+  /** Cached dominant colour of `imageUrl`. Sampled locally when absent. */
+  accent?: string;
   /** Fill the parent's box exactly (grid/focused view) instead of the
    * default fixed 16:9 card (bottom rail thumbnails). */
   fill?: boolean;
@@ -38,7 +40,7 @@ interface ParticipantTileProps {
  * additionally routed to the hardware sink (Linux) so the app never
  * accidentally re-captures itself.
  */
-export function ParticipantTile({ participant, isLocal = false, imageUrl, name, fill = false, onClick, localVolume, localMuted, soundboardActive = false }: ParticipantTileProps) {
+export function ParticipantTile({ participant, isLocal = false, imageUrl, name, accent, fill = false, onClick, localVolume, localMuted, soundboardActive = false }: ParticipantTileProps) {
   const displayName = name || participant.name || participant.identity;
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
@@ -48,18 +50,13 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, name, 
   // publishes it whenever the local deafen state changes.
   const [deafened, setDeafened] = useState(participant.attributes?.deafened === "1");
   const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
-  const [avatarBg, setAvatarBg] = useState<string | null>(null);
+  const avatarBg = useAvatarAccent(imageUrl, accent);
 
   // Keep refs fresh for use inside audio-attachment closure
   const localVolumeRef = useRef(localVolume ?? 1);
   const localMutedRef = useRef(!!localMuted);
   localVolumeRef.current = localVolume ?? 1;
   localMutedRef.current = !!localMuted;
-
-  useEffect(() => {
-    if (!imageUrl) { setAvatarBg(null); return; }
-    getAvatarColor(imageUrl).then(setAvatarBg);
-  }, [imageUrl]);
 
   useEffect(() => {
     setIsSpeaking(participant.isSpeaking);

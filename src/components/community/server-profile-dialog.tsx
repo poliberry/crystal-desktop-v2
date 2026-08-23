@@ -20,6 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { JoinSoundPicker } from "@/components/settings/join-sound-picker";
+import { GradientPicker } from "@/components/profile/gradient-picker";
+import { getAvatarColor } from "@/lib/avatar-color";
 
 const BIO_MAX = 300;
 
@@ -42,6 +44,7 @@ export function ServerProfileDialog({
   const upsertServerProfile = useMutation(api.serverProfiles.upsertServerProfile);
   const generateServerAvatarUploadUrl = useMutation(api.serverProfiles.generateServerAvatarUploadUrl);
   const setServerAvatar = useMutation(api.serverProfiles.setServerAvatar);
+  const setServerAvatarAccent = useMutation(api.serverProfiles.setServerAvatarAccent);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const generateServerBannerUploadUrl = useMutation((api.serverProfiles as any).generateServerBannerUploadUrl);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -121,7 +124,13 @@ export function ServerProfileDialog({
       file,
       () => generateServerAvatarUploadUrl({ communityId }),
       setAvatarUploading,
-      (storageId) => setServerAvatar({ communityId, storageId }),
+      // Sample the avatar's dominant colour here, once, rather than in every
+      // client that later renders it in a call tile — see useAvatarAccent.
+      async (storageId) => {
+        const url = await setServerAvatar({ communityId, storageId });
+        const accent = await getAvatarColor(url);
+        if (accent) await setServerAvatarAccent({ communityId, accent, sourceUrl: url });
+      },
       avatarFileInputRef,
       "Failed to upload avatar.",
     );
@@ -285,29 +294,13 @@ export function ServerProfileDialog({
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <Label>Avatar frame gradient</Label>
-                <div className="flex gap-6">
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Frame start</p>
-                    <input
-                      type="color"
-                      value={gradientStart || "#000000"}
-                      onChange={(e) => setGradientStart(e.target.value)}
-                      className="size-9 cursor-pointer rounded border border-input p-0.5"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">Frame end</p>
-                    <input
-                      type="color"
-                      value={gradientEnd || "#000000"}
-                      onChange={(e) => setGradientEnd(e.target.value)}
-                      className="size-9 cursor-pointer rounded border border-input p-0.5"
-                    />
-                  </div>
-                </div>
-              </div>
+              <GradientPicker
+                start={gradientStart}
+                end={gradientEnd}
+                onStartChange={setGradientStart}
+                onEndChange={setGradientEnd}
+                bannerUrl={mergedBannerUrl}
+              />
 
               <div className="space-y-2">
                 <Label>Chat nameplate</Label>

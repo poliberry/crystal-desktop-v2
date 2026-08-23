@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { GradientPicker } from "@/components/profile/gradient-picker";
 
 const BIO_MAX = 300;
 
@@ -229,19 +230,13 @@ export function ProfileTab() {
           <input ref={bannerFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleBannerPick(e.target.files?.[0])} />
         </div>
 
-        <div className="space-y-1.5">
-          <Label>Avatar frame gradient</Label>
-          <div className="flex gap-6">
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Frame start</p>
-              <input type="color" value={gradientStart || "#000000"} onChange={(e) => setGradientStart(e.target.value)} className="size-9 cursor-pointer rounded border border-input p-0.5" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Frame end</p>
-              <input type="color" value={gradientEnd || "#000000"} onChange={(e) => setGradientEnd(e.target.value)} className="size-9 cursor-pointer rounded border border-input p-0.5" />
-            </div>
-          </div>
-        </div>
+        <GradientPicker
+          start={gradientStart}
+          end={gradientEnd}
+          onStartChange={setGradientStart}
+          onEndChange={setGradientEnd}
+          bannerUrl={me.bannerUrl}
+        />
 
         <div className="space-y-2">
           <Label>Chat nameplate</Label>

@@ -60,3 +60,90 @@ export function getAvatarColor(imageUrl: string): Promise<string | null> {
     img.src = imageUrl;
   });
 }
+
+/** Draws an image into an offscreen canvas and hands back its pixels, or
+ * null if it can't be loaded (CORS, 404) or drawn. */
+function readPixels(imageUrl: string, size: number): Promise<Uint8ClampedArray | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, size, size);
+        resolve(ctx.getImageData(0, 0, size, size).data);
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageUrl;
+  });
+}
+
+function toHex(r: number, g: number, b: number): string {
+  const part = (v: number) => Math.round(v).toString(16).padStart(2, "0");
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+/** How far apart two colours must be (summed per-channel difference, 0–765)
+ * to both earn a swatch. Keeps a palette from being six shades of the same
+ * sky. */
+const MIN_SWATCH_DISTANCE = 90;
+
+/**
+ * The most prominent colours in an image, brightest-weighted first, as hex
+ * strings — the candidate stops offered when picking a profile gradient out
+ * of someone's banner.
+ *
+ * Colours are counted in a coarse 32-step-per-channel histogram and each
+ * returned swatch is the true average of its bin, so a photo of a sunset
+ * gives back the orange that's actually in it rather than the nearest bin
+ * corner. Near-duplicates are dropped in favour of covering the image.
+ */
+export async function extractPalette(imageUrl: string, max = 6): Promise<string[]> {
+  const data = await readPixels(imageUrl, 64);
+  if (!data) return [];
+
+  const bins = new Map<number, { r: number; g: number; b: number; n: number }>();
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
+    const bin = bins.get(key);
+    if (bin) {
+      bin.r += r;
+      bin.g += g;
+      bin.b += b;
+      bin.n++;
+    } else {
+      bins.set(key, { r, g, b, n: 1 });
+    }
+  }
+
+  const candidates = [...bins.values()]
+    .sort((a, b) => b.n - a.n)
+    .map((bin) => ({ r: bin.r / bin.n, g: bin.g / bin.n, b: bin.b / bin.n }));
+
+  const picked: { r: number; g: number; b: number }[] = [];
+  for (const colour of candidates) {
+    if (picked.length >= max) break;
+    const tooClose = picked.some(
+      (p) =>
+        Math.abs(p.r - colour.r) + Math.abs(p.g - colour.g) + Math.abs(p.b - colour.b) <
+        MIN_SWATCH_DISTANCE
+    );
+    if (!tooClose) picked.push(colour);
+  }
+
+  return picked.map((c) => toHex(c.r, c.g, c.b));
+}
