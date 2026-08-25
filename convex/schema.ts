@@ -199,7 +199,14 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
-  }).index("by_conversation", ["conversationId"]),
+  })
+    .index("by_conversation", ["conversationId"])
+    // Scoped search — see convex/search.ts. The filter field is what lets a
+    // search mean "in this conversation" without scanning every message.
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["conversationId"],
+    }),
 
   messageAttachments: defineTable({
     messageId: v.id("messages"),
@@ -415,7 +422,16 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
-  }).index("by_channel", ["channelId"]),
+  })
+    .index("by_channel", ["channelId"])
+    // Scoped search — see convex/search.ts. Filtered by channel rather than
+    // community because these rows carry no community id; a server-wide search
+    // fans out over the channels the caller can see instead, which needs no
+    // backfill of existing messages.
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["channelId"],
+    }),
 
   channelMessageAttachments: defineTable({
     messageId: v.id("channelMessages"),
