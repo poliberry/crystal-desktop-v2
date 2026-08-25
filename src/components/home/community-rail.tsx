@@ -44,6 +44,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { cn } from "@/lib/utils";
 import { useNavigation } from "@/components/home/navigation-context";
 import { USER_CARD_HEIGHT } from "./user-card";
@@ -224,7 +225,7 @@ function badgeText(count: number): string {
  */
 function UnreadDirectMessages() {
   const nav = useNavigation();
-  const conversations = useQuery(api.conversations.listMine) ?? [];
+  const conversations = useCachedQuery(api.conversations.listMine, {}, "conversations.listMine") ?? [];
   const markRead = useMutation(api.conversations.markRead);
   const unread = conversations.filter((c) => c.unread);
   if (unread.length === 0) return null;
@@ -524,7 +525,7 @@ export function CommunityRail({
     toggleMicrophone,
     toggleScreenShare,
   } = controller;
-  const communities = useQuery(api.communities.listMine) ?? [];
+  const communities = useCachedQuery(api.communities.listMine, {}, "communities.listMine") ?? [];
   const activityByCommunity = new Map(
     (useQuery(api.communities.listMineActivity) ?? []).map((entry) => [
       entry.communityId as string,

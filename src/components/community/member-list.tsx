@@ -17,6 +17,7 @@ import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/u
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
@@ -121,7 +122,11 @@ function MemberListSkeleton() {
 }
 
 export function MemberList({ communityId }: MemberListProps) {
-  const rawMembers = useQuery(api.communities.listMembers, communityId ? { communityId } : "skip");
+  const rawMembers = useCachedQuery(
+    api.communities.listMembers,
+    communityId ? { communityId } : "skip",
+    communityId ? `communities.listMembers:${communityId}` : null
+  );
   const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
   const me = useQuery(api.users.getCurrentUser);
   const members = (rawMembers ?? []) as Member[];

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 
 interface FriendsPanelProps {
@@ -30,9 +31,11 @@ function EmptyState({ message }: { message: string }) {
 }
 
 export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
-  const friends = useQuery(api.friends.listFriends) ?? [];
-  const incoming = useQuery(api.friends.listIncomingRequests) ?? [];
-  const outgoing = useQuery(api.friends.listOutgoingRequests) ?? [];
+  const friends = useCachedQuery(api.friends.listFriends, {}, "friends.listFriends") ?? [];
+  const incoming =
+    useCachedQuery(api.friends.listIncomingRequests, {}, "friends.listIncomingRequests") ?? [];
+  const outgoing =
+    useCachedQuery(api.friends.listOutgoingRequests, {}, "friends.listOutgoingRequests") ?? [];
 
   const acceptRequest = useMutation(api.friends.acceptFriendRequest);
   const declineRequest = useMutation(api.friends.declineFriendRequest);
