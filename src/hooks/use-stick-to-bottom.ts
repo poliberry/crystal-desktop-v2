@@ -11,49 +11,87 @@ import { useCallback, useEffect, useRef } from "react";
 const PINNED_SLACK_PX = 80;
 
 /**
+ * How long after a wheel/touch/key the resulting scroll events still count as
+ * that gesture. Momentum scrolling keeps firing events well after the finger
+ * or wheel has stopped.
+ */
+const GESTURE_WINDOW_MS = 400;
+
+/**
+ * Gestures that mean "the reader is moving the scroller themselves".
+ *
+ * `pointerdown` is in here for the scrollbar: dragging it produces scroll
+ * events without a wheel, a touch, or a key, and a drag that outlasts the
+ * window above would otherwise stop counting as the reader half way through.
+ * It's held open until the pointer is released rather than timed.
+ */
+const GESTURE_EVENTS = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
+
+/**
  * Keep a message list pinned to its newest message.
  *
- * Three separate things were leaving people mid-conversation, and a single
- * `scrollIntoView` on "the last id changed" only covered the first:
+ * Four things leave people mid-conversation, and scrolling on "the newest id
+ * changed" only covers the first:
  *
  *  1. A new message arrives — jump, as long as the reader was at the bottom.
  *  2. A channel/DM is opened — jump unconditionally. Every view is a fresh
- *     mount (the tab bar renders only the active target), so this is what makes
- *     opening a conversation always land at the end.
- *  3. The laid-out boxes change size after the jump has already happened — an
- *     image or link embed finishing, a late-loading font, or the scroll
- *     viewport itself shrinking because the unread bar or typing indicator
- *     appeared above it. Both boxes are watched, because either one moving the
- *     end off screen looks identical to the reader and neither fires a scroll
- *     event or changes the newest message id.
+ *     mount, so this is what makes opening a conversation land at the end.
+ *  3. The reader sends a message — jump, and re-pin. Sending is a request to
+ *     be at the end, whatever they were reading a moment ago.
+ *  4. The laid-out boxes change size after the jump has already happened — an
+ *     image or link embed finishing, a late-loading font, the viewport
+ *     shrinking because the unread bar appeared, or a cached page being
+ *     replaced by a longer live one. Both boxes are observed, because either
+ *     moving the end off screen looks identical to the reader and neither
+ *     fires a scroll event or changes the newest message id.
  *
- * Pinning is tracked from the reader's own scrolling: scroll up and new
- * messages stop yanking the view; scroll back to the bottom and it follows
- * again.
+ * ## Why the pin is tracked from gestures, not from scroll events
+ *
+ * The hard part is telling *our* scrolling from the reader's, and comparing
+ * `scrollTop` against the value the last jump left doesn't do it. A jump that
+ * doesn't move `scrollTop` — because the list was already at the bottom, or
+ * because the content grew without the offset changing — fires no scroll event
+ * at all, so the recorded position is never cleared and the next real event is
+ * measured against a stale baseline. `updatePinned` then decides the reader
+ * scrolled up, unpins, and the resize pass in (4) stops doing anything: the
+ * list stays wherever the last successful jump left it, which reads as
+ * "opening a channel goes to the bottom of what was cached rather than to the
+ * actual end".
+ *
+ * Gestures don't have that problem. Assigning `scrollTop` never produces a
+ * `wheel`, `touchmove` or `keydown`, so anything arriving through those really
+ * is the reader, and there is nothing to disambiguate. The pin is recomputed
+ * only while one is in flight; every other scroll event is ours and is
+ * ignored. Nothing here can get stuck in the unpinned state, because only a
+ * deliberate gesture can enter it.
  */
 export function useStickToBottom({
   viewKey,
   latestKey,
+  latestIsMine = false,
 }: {
   /** Identifies the open conversation/channel. A change means "jump". */
   viewKey: string;
   /** Identifies the newest message. A change means "jump if pinned". */
   latestKey: string | undefined;
+  /** Whether the newest message is the reader's own. Re-pins. */
+  latestIsMine?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const pinnedRef = useRef(true);
-  /**
-   * Where our own last `jump` left `scrollTop`. Scroll events are dispatched
-   * at the start of the next rendering step, so a jump made in one frame is
-   * reported *after* any content that arrived in the same frame has been laid
-   * out: `updatePinned` would then measure our own already-stale scrollTop
-   * against a taller list, conclude the reader had scrolled up, and unpin —
-   * which is exactly what stopped the resize pass below from finishing the
-   * job and left a freshly-opened channel stranded mid-history.
-   */
-  const jumpedToRef = useRef<number | null>(null);
+  /** When the reader last touched the scroller themselves. */
+  const gestureAtRef = useRef(0);
+  /** A pointer is down on the scroller — possibly dragging the scrollbar, for
+   * as long as it takes. Counts as an ongoing gesture regardless of age. */
+  const draggingRef = useRef(false);
+  /** The newest id already reacted to, so live data replacing an identical
+   * cached page doesn't count as a new message. */
+  const seenLatestRef = useRef<string | undefined>(undefined);
+
+  const isAtBottom = (el: HTMLElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight < PINNED_SLACK_PX;
 
   /** Assigning scrollTop rather than `scrollIntoView` on a sentinel: it can't
    * scroll an unrelated ancestor, and it's a no-op when nothing overflows. */
@@ -61,42 +99,57 @@ export function useStickToBottom({
     const el = containerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    // Read back rather than storing what we asked for: the browser clamps to
-    // scrollHeight - clientHeight, and it's the clamped value the scroll event
-    // will report.
-    jumpedToRef.current = el.scrollTop;
   }, []);
+
+  /**
+   * Jump now, and again on each of the next few frames.
+   *
+   * One assignment is not enough on the web: rows that just mounted may not
+   * have their final height until styles and fonts resolve, so the first jump
+   * targets a content box shorter than the real one. Re-running for a handful
+   * of frames costs nothing — each is a no-op once the list has actually
+   * settled — and covers the gap before the ResizeObserver takes over for the
+   * slower arrivals like images.
+   */
+  const settleToBottom = useCallback(() => {
+    let frames = 0;
+    let handle = 0;
+    const step = () => {
+      jump();
+      if (++frames < 5) handle = requestAnimationFrame(step);
+    };
+    step();
+    return () => cancelAnimationFrame(handle);
+  }, [jump]);
 
   const updatePinned = useCallback(() => {
     const el = containerRef.current;
-    if (!el) return true;
-    // Our own scroll, not the reader's — leave the pin alone. Any real
-    // scrolling moves off this position and takes the branch below.
-    if (jumpedToRef.current !== null && el.scrollTop === jumpedToRef.current) {
-      return pinnedRef.current;
-    }
-    jumpedToRef.current = null;
-    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < PINNED_SLACK_PX;
-    pinnedRef.current = pinned;
-    return pinned;
+    if (!el) return pinnedRef.current;
+    const bottom = isAtBottom(el);
+    const readerDriven =
+      draggingRef.current || Date.now() - gestureAtRef.current <= GESTURE_WINDOW_MS;
+    // Ours, not the reader's — the pin is not theirs to lose. Every
+    // programmatic scroll in this hook lands here.
+    if (!readerDriven) return pinnedRef.current;
+    pinnedRef.current = bottom;
+    return bottom;
   }, []);
 
   // Opening a conversation always starts at the end, whatever the reader was
-  // doing in the last one. The extra frame covers a first paint that hasn't
-  // been laid out yet — at that point scrollHeight is still the empty box.
+  // doing in the last one.
   useEffect(() => {
     pinnedRef.current = true;
-    jump();
-    const frame = requestAnimationFrame(jump);
-    return () => cancelAnimationFrame(frame);
-  }, [viewKey, jump]);
+    seenLatestRef.current = undefined;
+    return settleToBottom();
+  }, [viewKey, settleToBottom]);
 
   useEffect(() => {
-    if (!latestKey || !pinnedRef.current) return;
-    jump();
-    const frame = requestAnimationFrame(jump);
-    return () => cancelAnimationFrame(frame);
-  }, [latestKey, jump]);
+    if (!latestKey || latestKey === seenLatestRef.current) return;
+    seenLatestRef.current = latestKey;
+    if (latestIsMine) pinnedRef.current = true;
+    if (!pinnedRef.current) return;
+    return settleToBottom();
+  }, [latestKey, latestIsMine, settleToBottom]);
 
   /**
    * One observer for both boxes, attached through callback refs rather than an
@@ -107,10 +160,7 @@ export function useStickToBottom({
    * what lands a just-rendered list at the bottom.
    */
   const observe = useCallback(
-    (
-      ref: React.RefObject<HTMLDivElement | null>,
-      node: HTMLDivElement | null
-    ) => {
+    (ref: React.RefObject<HTMLDivElement | null>, node: HTMLDivElement | null) => {
       const previous = ref.current;
       ref.current = node;
       if (typeof ResizeObserver === "undefined") return;
@@ -133,11 +183,43 @@ export function useStickToBottom({
     [jump]
   );
 
+  /**
+   * Marks the scroller as reader-driven. Attached to the container itself
+   * rather than the window so scrolling some other pane can't unpin this one.
+   * `keydown` is included for Page Up / arrow keys, which scroll without any
+   * pointer involvement.
+   */
+  const markGesture = useCallback((event: Event) => {
+    gestureAtRef.current = Date.now();
+    if (event.type === "pointerdown") draggingRef.current = true;
+  }, []);
+
+  // On the window, not the container: a scrollbar drag routinely ends with the
+  // pointer somewhere else entirely, and a release that never arrives would
+  // leave the pin permanently at the reader's mercy.
+  useEffect(() => {
+    const release = () => {
+      draggingRef.current = false;
+      gestureAtRef.current = Date.now();
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, []);
+
   const setContainerRef = useCallback(
     (node: HTMLDivElement | null) => {
+      const previous = containerRef.current;
+      for (const event of GESTURE_EVENTS) {
+        previous?.removeEventListener(event, markGesture);
+        node?.addEventListener(event, markGesture, { passive: true });
+      }
       observe(containerRef, node);
     },
-    [observe]
+    [observe, markGesture]
   );
 
   const setContentRef = useCallback(

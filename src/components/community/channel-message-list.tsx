@@ -301,9 +301,14 @@ export function ChannelMessageList({
   );
   const chronological = [...messages].reverse();
 
+  const latest = chronological[chronological.length - 1];
+
   const { containerRef, contentRef, onScroll } = useStickToBottom({
     viewKey: channelId,
-    latestKey: chronological[chronological.length - 1]?.id,
+    latestKey: latest?.id,
+    // Sending re-pins: whatever the reader was looking at, putting a message
+    // into the conversation is a request to be at the end of it.
+    latestIsMine: latest?.isMine ?? false,
   });
 
   // Only truly cold channels get a skeleton now: anything opened before, or

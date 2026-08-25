@@ -143,6 +143,34 @@ export default defineSchema({
     .index("by_last_heartbeat", ["lastHeartbeat"]),
 
   /**
+   * One row per signed-in device, so "is this user online" becomes a question
+   * about their devices rather than about a single shared counter.
+   *
+   * The `presence` row above is the *answer* — one status per user, which is
+   * what every viewer renders. It used to be the question too: it carried the
+   * only `lastHeartbeat`, so whichever client wrote last owned it, and the
+   * stale sweep flipped the user offline the moment that client stopped. A
+   * phone going into the background could therefore mark someone offline while
+   * their desktop app sat open in front of them.
+   *
+   * Splitting the two lets the sweep ask "are *any* of this user's devices
+   * still beating?" and only fall back to offline when none are.
+   */
+  presenceSessions: defineTable({
+    userId: v.id("users"),
+    /** Stable per-install id. Two clients on one account are two rows. */
+    deviceId: v.string(),
+    platform: v.union(v.literal("desktop"), v.literal("mobile"), v.literal("web")),
+    /** This device's own idle state. A user counts as idle only when every
+     * live device is — a phone in a pocket shouldn't idle out a desktop. */
+    isIdle: v.boolean(),
+    lastHeartbeat: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_device", ["userId", "deviceId"])
+    .index("by_last_heartbeat", ["lastHeartbeat"]),
+
+  /**
    * Play history, one row per (user, game) rather than per session — the
    * profile's "Recent activity" list only needs "what, when last, how long in
    * total", and collapsing it this way keeps the table bounded no matter how
@@ -199,7 +227,14 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
-  }).index("by_conversation", ["conversationId"]),
+  })
+    .index("by_conversation", ["conversationId"])
+    // Scoped search — see convex/search.ts. The filter field is what lets a
+    // search mean "in this conversation" without scanning every message.
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["conversationId"],
+    }),
 
   messageAttachments: defineTable({
     messageId: v.id("messages"),
@@ -415,7 +450,16 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
-  }).index("by_channel", ["channelId"]),
+  })
+    .index("by_channel", ["channelId"])
+    // Scoped search — see convex/search.ts. Filtered by channel rather than
+    // community because these rows carry no community id; a server-wide search
+    // fans out over the channels the caller can see instead, which needs no
+    // backfill of existing messages.
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["channelId"],
+    }),
 
   channelMessageAttachments: defineTable({
     messageId: v.id("channelMessages"),

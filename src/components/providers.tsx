@@ -8,6 +8,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 
 import { getDesktopAPI } from "@/lib/desktop";
+import { pruneExpired, setCacheNamespace } from "@/lib/persistent-cache";
 import { AccessibilityProvider } from "@/components/accessibility-provider";
 import { AudioPreferencesProvider } from "@/components/audio-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -44,6 +45,28 @@ function AuthCallbackHandler() {
   return null;
 }
 
+/**
+ * Points the persistent cache at whoever is signed in, and clears out entries
+ * that have aged past their TTL.
+ *
+ * The namespace is set during render rather than in an effect on purpose:
+ * everything below reads the cache while it renders, so an effect would run a
+ * frame too late and the first paint after switching accounts would come from
+ * the previous account's cache. Assigning a module-level string is idempotent
+ * and observable to nobody, so doing it here is safe in a way that most
+ * render-phase side effects aren't.
+ */
+function CacheScope() {
+  const { userId } = useAuth();
+  setCacheNamespace(userId);
+
+  useEffect(() => {
+    pruneExpired();
+  }, []);
+
+  return null;
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
@@ -53,6 +76,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <TooltipProvider>
               <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
                 <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+                  <CacheScope />
                   <AuthCallbackHandler />
                   <DataPreloader />
                   <FileDropGuard />

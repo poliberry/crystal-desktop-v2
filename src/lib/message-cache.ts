@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 
+import { readCache, writeCache } from "@/lib/persistent-cache";
+
 /**
  * Last known first page of messages, per channel and conversation.
  *
@@ -16,8 +18,13 @@ import { useEffect } from "react";
  * So the page is kept here instead: whatever was last displayed (or last
  * preloaded) is painted immediately while the live query re-establishes, and
  * replaced the moment real results arrive. Stale-while-revalidate, in other
- * words — the data is at most a few seconds old and is only ever shown while
- * something fresher is already on its way.
+ * words — the data is only ever shown while something fresher is already on
+ * its way.
+ *
+ * Pages are mirrored to `localStorage` as well as held in memory, so the same
+ * thing happens on a cold start: reopening the app paints the conversation
+ * you were in rather than a skeleton, while the websocket connects behind it.
+ * Entries past their TTL are treated as absent (see src/lib/persistent-cache.ts).
  */
 
 /** Enough for any plausible session's worth of switching around, bounded so
@@ -45,10 +52,17 @@ export function rememberFirstPage(key: string, page: readonly unknown[]): void {
     if (oldest === undefined) break;
     pages.delete(oldest);
   }
+  writeCache(`messages.${key}`, page);
 }
 
 export function recallFirstPage<T>(key: string): readonly T[] | undefined {
-  return pages.get(key) as readonly T[] | undefined;
+  const inMemory = pages.get(key) as readonly T[] | undefined;
+  if (inMemory) return inMemory;
+  const persisted = readCache<readonly T[]>(`messages.${key}`);
+  // Promote it, so the rest of this session answers from memory and a view
+  // that mounts repeatedly doesn't re-parse the same JSON each time.
+  if (persisted) pages.set(key, persisted);
+  return persisted;
 }
 
 /**

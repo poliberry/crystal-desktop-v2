@@ -36,6 +36,7 @@ import type * as permissions from "../permissions.js";
 import type * as presence from "../presence.js";
 import type * as push from "../push.js";
 import type * as roles from "../roles.js";
+import type * as search from "../search.js";
 import type * as serverProfiles from "../serverProfiles.js";
 import type * as soundboard from "../soundboard.js";
 import type * as typing from "../typing.js";
@@ -77,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   presence: typeof presence;
   push: typeof push;
   roles: typeof roles;
+  search: typeof search;
   serverProfiles: typeof serverProfiles;
   soundboard: typeof soundboard;
   typing: typeof typing;

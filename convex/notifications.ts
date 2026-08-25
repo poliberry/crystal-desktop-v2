@@ -21,7 +21,8 @@ type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "f
 function wants(
   policy: NotificationPolicy,
   type: NotificationType,
-  communityId?: Id<"communities">
+  communityId?: Id<"communities">,
+  isMention = true
 ): boolean {
   switch (type) {
     case "dm_message":
@@ -30,10 +31,16 @@ function wants(
     case "friend_accept":
       return allowsFriendRequest(policy);
     case "channel_mention":
-      // Everything reaching `notifyUsers` with this type really is a mention;
-      // plain channel traffic never creates a notification row, it only
-      // surfaces through the desktop feed below.
-      return communityId ? allowsChannelMessage(policy, communityId, true) : !policy.dnd;
+      // `isMention` distinguishes the two things that reach this type: a real
+      // @-mention, which every server setting short of "none" lets through,
+      // and ordinary channel traffic, which only reaches people who have asked
+      // for all messages. `allowsChannelMessage` has always encoded both — it
+      // just never had a caller for the second until mobile needed one,
+      // because desktop covers plain traffic through its own background
+      // notifier instead (see `feed` below).
+      return communityId
+        ? allowsChannelMessage(policy, communityId, isMention)
+        : !policy.dnd;
   }
 }
 
@@ -59,9 +66,13 @@ export async function notifyUsers(
     requestId?: Id<"friendRequests">;
     title: string;
     body?: string;
+    /** Only meaningful for `channel_mention`: false means ordinary channel
+     * traffic, which each recipient's per-server setting has to have opted
+     * into. Defaults to true, so every existing caller is unaffected. */
+    isMention?: boolean;
   }
 ): Promise<void> {
-  const { userIds, actorId, ...rest } = params;
+  const { userIds, actorId, isMention = true, ...rest } = params;
   const recipients = Array.from(new Set(userIds)).filter((id) => id !== actorId);
   const actorUser = await ctx.db.get("users", actorId as Id<"users">);
 
@@ -69,7 +80,7 @@ export async function notifyUsers(
     // Checked per recipient rather than once: everyone in a channel has their
     // own DND state and their own settings for that server.
     const policy = await loadNotificationPolicy(ctx, userId);
-    if (!wants(policy, rest.type, rest.communityId)) continue;
+    if (!wants(policy, rest.type, rest.communityId, isMention)) continue;
 
     await ctx.db.insert("notifications", {
       userId,
