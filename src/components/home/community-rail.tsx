@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Compass, Home, Volume2 } from "lucide-react";
 import { Fragment, useState } from "react";
 
@@ -44,6 +45,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { cn } from "@/lib/utils";
 import { useNavigation } from "@/components/home/navigation-context";
 import { USER_CARD_HEIGHT } from "./user-card";
@@ -207,6 +209,14 @@ interface CommunityActivity {
   mentionCount: number;
 }
 
+/**
+ * Spring for the rail's add/remove, not a duration: a DM appearing is a
+ * notification, and a spring's slight overshoot reads as something arriving
+ * rather than something fading in. Damped hard enough that the tiles below
+ * don't visibly wobble when one is removed.
+ */
+const RAIL_TRANSITION = { type: "spring" as const, stiffness: 500, damping: 34, mass: 0.7 };
+
 /** Past this the badge outgrows the tile and the exact number stops mattering. */
 const BADGE_CAP = 99;
 
@@ -224,59 +234,83 @@ function badgeText(count: number): string {
  */
 function UnreadDirectMessages() {
   const nav = useNavigation();
-  const conversations = useQuery(api.conversations.listMine) ?? [];
+  const conversations = useCachedQuery(api.conversations.listMine, {}, "conversations.listMine") ?? [];
   const markRead = useMutation(api.conversations.markRead);
   const unread = conversations.filter((c) => c.unread);
-  if (unread.length === 0) return null;
 
   return (
-    <>
-      {unread.map((conversation) => {
-        // A group's first member stands in for it, the same shorthand the DM
-        // list uses; a one-to-one DM has exactly one other person.
-        const other = conversation.members[0];
-        const name = conversation.name ?? other?.name ?? "Direct message";
-        return (
-          <HoverCard key={conversation.id} openDelay={200} closeDelay={100}>
-            <ContextMenu>
-              <ContextMenuTrigger asChild>
-                <div className="relative">
-                  <HoverCardTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => nav.openConversation(conversation.id)}
-                      aria-label={`${name}, ${conversation.unreadCount} unread`}
-                      className="flex size-12 items-center justify-center overflow-hidden rounded-none transition-all duration-200 ease-in-out group"
-                    >
-                      <Avatar className="size-12">
-                        <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} className="rounded-none group-hover:rounded-2xl" />
-                        <AvatarFallback className="text-sm">
-                          {name.slice(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                    </button>
-                  </HoverCardTrigger>
-                  {conversation.unreadCount > 0 && (
-                    <span className="pointer-events-none absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-none bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
-                      {badgeText(conversation.unreadCount)}
-                    </span>
-                  )}
-                </div>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                <ContextMenuItem onClick={() => void markRead({ conversationId: conversation.id })}>
-                  Mark as read
-                </ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
-            <HoverCardContent side="right" align="start" className="w-fit max-w-md">
-              <p className="truncate text-sm font-semibold">{name}</p>
-            </HoverCardContent>
-          </HoverCard>
-        );
-      })}
-      <Separator className="max-w-8 mx-2" />
-    </>
+    <AnimatePresence initial={false}>
+      {unread.length > 0 && (
+        <motion.div
+          key="unread-dms"
+          className="flex w-full flex-col items-center"
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={RAIL_TRANSITION}
+        >
+          <AnimatePresence initial={false}>
+            {unread.map((conversation) => {
+              // A group's first member stands in for it, the same shorthand
+              // the DM list uses; a one-to-one DM has exactly one other
+              // person.
+              const other = conversation.members[0];
+              const name = conversation.name ?? other?.name ?? "Direct message";
+              return (
+                <motion.div
+                  key={conversation.id}
+                  // Height and margin collapse together so the tiles below
+                  // close the gap as well as the tile itself, and the rail
+                  // never shows a hole where a read DM used to be.
+                  initial={{ opacity: 0, scale: 0.5, height: 0, marginBottom: 0 }}
+                  animate={{ opacity: 1, scale: 1, height: 48, marginBottom: 8 }}
+                  exit={{ opacity: 0, scale: 0.5, height: 0, marginBottom: 0 }}
+                  transition={RAIL_TRANSITION}
+                >
+                  <HoverCard openDelay={200} closeDelay={100}>
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <div className="relative">
+                          <HoverCardTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => nav.openConversation(conversation.id)}
+                              aria-label={`${name}, ${conversation.unreadCount} unread`}
+                              className="flex size-12 items-center justify-center overflow-hidden rounded-none transition-all duration-200 ease-in-out group"
+                            >
+                              <Avatar className="size-12">
+                                <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} className="rounded-none group-hover:rounded-2xl" />
+                                <AvatarFallback className="text-sm">
+                                  {name.slice(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                            </button>
+                          </HoverCardTrigger>
+                          {conversation.unreadCount > 0 && (
+                            <span className="pointer-events-none absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-none bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
+                              {badgeText(conversation.unreadCount)}
+                            </span>
+                          )}
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onClick={() => void markRead({ conversationId: conversation.id })}>
+                          Mark as read
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                    <HoverCardContent side="right" align="start" className="w-fit max-w-md">
+                      <p className="truncate text-sm font-semibold">{name}</p>
+                    </HoverCardContent>
+                  </HoverCard>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+          <Separator className="max-w-8 mx-2" />
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -524,7 +558,7 @@ export function CommunityRail({
     toggleMicrophone,
     toggleScreenShare,
   } = controller;
-  const communities = useQuery(api.communities.listMine) ?? [];
+  const communities = useCachedQuery(api.communities.listMine, {}, "communities.listMine") ?? [];
   const activityByCommunity = new Map(
     (useQuery(api.communities.listMineActivity) ?? []).map((entry) => [
       entry.communityId as string,

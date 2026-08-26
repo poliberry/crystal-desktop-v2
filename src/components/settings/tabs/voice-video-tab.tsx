@@ -487,7 +487,11 @@ export function VoiceVideoTab() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           {status.kind === "unsupported" && (
-            <p className="text-muted-foreground">Requires the desktop app.</p>
+            <p className="text-muted-foreground">
+              In the browser, audio is shared through the screen-sharing dialog — tick
+              &ldquo;Share audio&rdquo; there when you pick a tab or screen. The capture
+              backends below are desktop-only.
+            </p>
           )}
           {status.kind === "other" && (
             <p className="text-muted-foreground">

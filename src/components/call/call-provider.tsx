@@ -13,6 +13,7 @@ import { usePipWindow } from "@/hooks/use-pip-window";
 import { useRoom, type RoomController } from "@/hooks/use-room";
 import { useStreamThumbnail } from "@/hooks/use-stream-thumbnail";
 import type { SystemAudioChoice } from "@/lib/audio-prefs";
+import { isElectron } from "@/lib/desktop";
 
 export type ActiveCall =
   | { kind: "dm"; conversationId: Id<"conversations">; roomName: string }
@@ -499,15 +500,46 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
   }, [screenSharing]);
 
+  /**
+   * Start a share, through whichever picker this build actually has.
+   *
+   * The desktop app enumerates sources itself — thumbnails, per-app audio, a
+   * quality control — because Electron exposes them. A browser doesn't: its
+   * own `getDisplayMedia` dialog is the only thing allowed to choose a source,
+   * and picks up the audio option with it. So on the web our dialog is skipped
+   * entirely rather than shown with everything in it disabled.
+   */
   const openSharePicker = useCallback(() => {
+    if (!isElectron()) {
+      const attemptId = ++shareAttemptIdRef.current;
+      void controller
+        .startBrowserScreenShare()
+        .then((started) => {
+          // Only the browser knows which screen or tab was picked, so the
+          // indicator says that something is going out rather than naming it.
+          if (started && shareAttemptIdRef.current === attemptId) {
+            setSharedSourceName("Your screen");
+          }
+        })
+        .catch(() => {
+          // Surfaced through controller.error; a dismissed picker isn't an error.
+        });
+      return;
+    }
     setSharePickerMode("start");
     setSharePickerOpen(true);
-  }, []);
+  }, [controller]);
 
   const openShareSettings = useCallback(() => {
+    // Nothing to re-open on the web: a browser share can only be re-targeted
+    // by asking for a new one, which is what the picker below does.
+    if (!isElectron()) {
+      openSharePicker();
+      return;
+    }
     setSharePickerMode("change");
     setSharePickerOpen(true);
-  }, []);
+  }, [openSharePicker]);
 
   const handleShare = useCallback(
     async (sourceId: string, sourceName: string, audio: SystemAudioChoice) => {

@@ -1,8 +1,13 @@
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
-import { internalMutation, mutation, query } from "./_generated/server";
-import { activitiesOf } from "./lib/activities";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  internalMutation,
+  mutation,
+  type MutationCtx,
+  query,
+} from "./_generated/server";
+import { activitiesOf, visibleActivities } from "./lib/activities";
 import {
   HISTORY_WINDOW_MS,
   closeOpenSessions,
@@ -10,7 +15,19 @@ import {
 } from "./lib/gameHistory";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
+/**
+ * How long a device may go without heartbeating before it stops counting as
+ * live. Clients beat every 20s, so this tolerates two missed beats.
+ */
 const STALE_MS = 60_000;
+
+/**
+ * Devices that never registered a session — a client running a build from
+ * before `presenceSessions` existed — are still represented by the legacy
+ * `presence.lastHeartbeat`. Treated as one implicit desktop session so an old
+ * client doesn't read as offline mid-rollout.
+ */
+const LEGACY_DEVICE_ID = "legacy";
 
 /** Rich Presence payload pushed by the desktop client. Mirrors
  * `activityValidator` in convex/schema.ts minus `positionUpdatedAt`, which
@@ -63,6 +80,75 @@ function computeEffective(manualStatus: "online" | "idle" | "dnd" | "invisible",
   return isIdle ? ("idle" as const) : ("online" as const);
 }
 
+type LiveSession = { platform: "desktop" | "mobile" | "web"; isIdle: boolean };
+
+/** This user's devices that have beaten recently enough to still count. */
+async function liveSessions(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  now: number
+): Promise<LiveSession[]> {
+  const cutoff = now - STALE_MS;
+  const rows = await ctx.db
+    .query("presenceSessions")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  return rows
+    .filter((row) => row.lastHeartbeat > cutoff)
+    .map((row) => ({ platform: row.platform, isIdle: row.isIdle }));
+}
+
+/**
+ * Recompute one user's single `presence` row from their live devices.
+ *
+ * This is the only place `effective` is written, so there's exactly one rule
+ * for it: a user is offline when none of their devices are beating, and
+ * otherwise whatever their manual status says — never something a heartbeat
+ * decided on its own. `manualStatus` is read here, never written, so going
+ * offline and coming back restores the status the user chose instead of
+ * resetting them to "online".
+ *
+ * Idle is the conjunction across devices: a phone locked in a pocket doesn't
+ * make someone idle while they're using their desktop.
+ *
+ * Rich Presence is desktop-only (it comes from `electron/richPresence.ts`), so
+ * activities are cleared exactly when the last desktop session goes — not when
+ * the user goes offline, which would drop them while a phone is still
+ * connected, and not never, which would leave a stale "Playing …" forever.
+ */
+async function reconcile(ctx: MutationCtx, userId: Id<"users">): Promise<void> {
+  const now = Date.now();
+  const row = await ctx.db
+    .query("presence")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .unique();
+  if (!row) return;
+
+  const sessions = await liveSessions(ctx, userId, now);
+  // An old client only writes `presence.lastHeartbeat`, so a fresh timestamp
+  // with no session rows behind it is that client, still running.
+  const legacyAlive = sessions.length === 0 && row.lastHeartbeat > now - STALE_MS;
+  const online = legacyAlive || sessions.length > 0;
+  const anyDesktop =
+    legacyAlive || sessions.some((session) => session.platform === "desktop");
+
+  const isIdle =
+    sessions.length > 0 ? sessions.every((session) => session.isIdle) : row.isIdle;
+  const effective = online
+    ? computeEffective(row.manualStatus, isIdle)
+    : ("offline" as const);
+
+  const dropActivities = !anyDesktop && activitiesOf(row).length > 0;
+  if (row.effective === effective && row.isIdle === isIdle && !dropActivities) return;
+
+  await ctx.db.patch(row._id, {
+    effective,
+    isIdle,
+    ...(dropActivities ? { activities: [], activity: undefined } : {}),
+  });
+  if (dropActivities) await closeOpenSessions(ctx, userId);
+}
+
 export const getMine = query({
   args: {},
   handler: async (ctx) => {
@@ -88,30 +174,213 @@ export const getUserPresence = query({
 });
 
 
+/**
+ * Report that this device is still here.
+ *
+ * `deviceId` and `platform` are optional so a client from before per-device
+ * sessions keeps working: it lands on the shared `LEGACY_DEVICE_ID` row and is
+ * treated as a desktop.
+ *
+ * Note what this deliberately does *not* do: it never writes `manualStatus`,
+ * and it never decides `effective` on its own. A heartbeat only says "this
+ * device is awake"; what that means for the user's visible status is
+ * `reconcile`'s call, made from every device at once. That is what stops a
+ * phone from reverting a status the user set, and what makes reopening the app
+ * restore the status they had rather than leaving them on the offline the
+ * stale sweep wrote.
+ */
 export const heartbeat = mutation({
-  args: { isIdle: v.boolean() },
-  handler: async (ctx, { isIdle }) => {
+  args: {
+    isIdle: v.boolean(),
+    deviceId: v.optional(v.string()),
+    platform: v.optional(
+      v.union(v.literal("desktop"), v.literal("mobile"), v.literal("web"))
+    ),
+  },
+  handler: async (ctx, { isIdle, deviceId, platform }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return;
+    const now = Date.now();
+
+    const session = await ctx.db
+      .query("presenceSessions")
+      .withIndex("by_user_device", (q) =>
+        q.eq("userId", me._id).eq("deviceId", deviceId ?? LEGACY_DEVICE_ID)
+      )
+      .unique();
+    if (session) {
+      await ctx.db.patch(session._id, { isIdle, lastHeartbeat: now });
+    } else {
+      await ctx.db.insert("presenceSessions", {
+        userId: me._id,
+        deviceId: deviceId ?? LEGACY_DEVICE_ID,
+        platform: platform ?? "desktop",
+        isIdle,
+        lastHeartbeat: now,
+      });
+    }
 
     const existing = await ctx.db
       .query("presence")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
       .unique();
-    const manualStatus = existing?.manualStatus ?? "online";
-    const effective = computeEffective(manualStatus, isIdle);
-
-    if (existing) {
-      await ctx.db.patch(existing._id, { isIdle, lastHeartbeat: Date.now(), effective });
-    } else {
+    if (!existing) {
       await ctx.db.insert("presence", {
         userId: me._id,
-        manualStatus,
+        manualStatus: "online",
         isIdle,
-        lastHeartbeat: Date.now(),
-        effective,
+        lastHeartbeat: now,
+        effective: computeEffective("online", isIdle),
       });
+      return;
     }
+    await ctx.db.patch(existing._id, { lastHeartbeat: now });
+    await clearExpiredCustomPresence(ctx, me, now);
+    await reconcile(ctx, me._id);
+  },
+});
+
+/**
+ * Delete a custom status or activity whose "clear after…" deadline has passed.
+ *
+ * Reads already hide expired values (see `lib/activities.ts`), so this is
+ * tidying rather than enforcement — which is why it rides along on the user's
+ * own heartbeat instead of needing a cron: the client that set the thing is
+ * the one that eventually clears it, and no other user's row is ever touched.
+ */
+async function clearExpiredCustomPresence(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  now: number
+): Promise<void> {
+  const patch: Record<string, undefined> = {};
+  if (user.customStatusExpiresAt !== undefined && user.customStatusExpiresAt <= now) {
+    patch.customStatus = undefined;
+    patch.customStatusExpiresAt = undefined;
+  }
+  if (user.customActivityExpiresAt !== undefined && user.customActivityExpiresAt <= now) {
+    patch.customActivity = undefined;
+    patch.customActivityExpiresAt = undefined;
+  }
+  if (Object.keys(patch).length > 0) await ctx.db.patch(user._id, patch);
+}
+
+/** Room for a sentence, not a paragraph — these render on one line. */
+const MAX_ACTIVITY_TEXT = 128;
+/** Buttons sit side by side under the card; a third has nowhere to go. */
+const MAX_ACTIVITY_BUTTONS = 2;
+const MAX_BUTTON_LABEL = 32;
+
+/** Only web links, and only ones a browser will actually open. `javascript:`
+ * and `file:` URLs on someone else's profile card are not a thing we want to
+ * hand around. */
+function requireWebUrl(raw: string, what: string): string {
+  const trimmed = raw.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`${what} must be a full URL, starting with https://`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${what} must be an http or https link.`);
+  }
+  return trimmed;
+}
+
+/**
+ * Publish an activity the user wrote themselves.
+ *
+ * Stored on the profile, not on presence: unlike a detected game it should
+ * outlive the desktop session that set it, and be visible while they're
+ * reading from a phone. `durationMs` is the "clear after…" choice — omitted
+ * means it stays until they take it down.
+ */
+export const setCustomActivity = mutation({
+  args: {
+    type: v.union(
+      v.literal("playing"),
+      v.literal("listening"),
+      v.literal("watching"),
+      v.literal("streaming")
+    ),
+    name: v.string(),
+    details: v.optional(v.string()),
+    state: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
+    buttons: v.optional(v.array(v.object({ label: v.string(), url: v.string() }))),
+    durationMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+
+    const name = args.name.trim().slice(0, MAX_ACTIVITY_TEXT);
+    if (!name) throw new Error("Give your activity a name.");
+
+    const buttons = (args.buttons ?? [])
+      .map((button) => ({
+        label: button.label.trim().slice(0, MAX_BUTTON_LABEL),
+        url: requireWebUrl(button.url, `"${button.label.trim() || "Button"}"`),
+      }))
+      .filter((button) => button.label.length > 0);
+    if (buttons.length > MAX_ACTIVITY_BUTTONS) {
+      throw new Error(`An activity can have at most ${MAX_ACTIVITY_BUTTONS} buttons.`);
+    }
+
+    const trim = (value: string | undefined) => value?.trim().slice(0, MAX_ACTIVITY_TEXT) || undefined;
+
+    await ctx.db.patch(me._id, {
+      customActivity: {
+        type: args.type,
+        name,
+        details: trim(args.details),
+        state: trim(args.state),
+        imageUrl: args.imageUrl ? requireWebUrl(args.imageUrl, "The image") : undefined,
+        buttons: buttons.length > 0 ? buttons : undefined,
+        // Kept across an edit so the elapsed counter doesn't restart every
+        // time a word is changed.
+        startedAt: me.customActivity?.startedAt ?? now,
+        source: "custom",
+      },
+      customActivityExpiresAt: args.durationMs ? now + args.durationMs : undefined,
+    });
+  },
+});
+
+export const clearCustomActivity = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!me.customActivity) return;
+    await ctx.db.patch(me._id, {
+      customActivity: undefined,
+      customActivityExpiresAt: undefined,
+    });
+  },
+});
+
+/**
+ * Drop this device's session — sign-out, or a client shutting down cleanly.
+ *
+ * Without it a user stays online for up to `STALE_MS` after signing out. Other
+ * devices are untouched: signing out on a phone doesn't take a desktop session
+ * with it.
+ */
+export const endSession = mutation({
+  args: { deviceId: v.string() },
+  handler: async (ctx, { deviceId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return;
+    const session = await ctx.db
+      .query("presenceSessions")
+      .withIndex("by_user_device", (q) =>
+        q.eq("userId", me._id).eq("deviceId", deviceId)
+      )
+      .unique();
+    if (!session) return;
+    await ctx.db.delete(session._id);
+    await reconcile(ctx, me._id);
   },
 });
 
@@ -124,24 +393,27 @@ export const setStatus = mutation({
       .withIndex("by_user", (q) => q.eq("userId", me._id))
       .unique();
     const isIdle = existing?.isIdle ?? false;
-    const effective = computeEffective(manualStatus, isIdle);
 
     if (existing) {
       await ctx.db.patch(existing._id, {
         manualStatus,
-        effective,
-        lastHeartbeat: Date.now(),
         ...(manualStatus === "invisible" ? { activities: [], activity: undefined } : {}),
       });
-    } else {
-      await ctx.db.insert("presence", {
-        userId: me._id,
-        manualStatus,
-        isIdle,
-        lastHeartbeat: Date.now(),
-        effective,
-      });
+      // Picking a status isn't a sign of life: it can arrive from a client
+      // whose last heartbeat already aged out, and it must not bump
+      // `lastHeartbeat` — doing that is what used to let the status switcher
+      // quietly mark a signed-out device online again. Recompute from the
+      // devices actually beating instead.
+      await reconcile(ctx, me._id);
+      return;
     }
+    await ctx.db.insert("presence", {
+      userId: me._id,
+      manualStatus,
+      isIdle,
+      lastHeartbeat: Date.now(),
+      effective: computeEffective(manualStatus, isIdle),
+    });
   },
 });
 
@@ -238,28 +510,45 @@ export const recentGames = query({
   },
 });
 
+/**
+ * Retire devices that stopped beating, then recompute the users they belonged
+ * to.
+ *
+ * The recompute is the point. Deleting a stale session decides nothing by
+ * itself — a user with a dead phone session and a live desktop one stays
+ * exactly as they were, which is the behaviour this whole split exists for.
+ * Only when the last session goes does `reconcile` write "offline".
+ *
+ * Presence rows are swept alongside for two cases sessions don't cover: a
+ * legacy client whose implicit session lives on `presence.lastHeartbeat`, and
+ * a row left reading "online" by an earlier build.
+ */
 export const sweepStale = internalMutation({
   args: {},
   handler: async (ctx) => {
     const cutoff = Date.now() - STALE_MS;
-    const stale = await ctx.db
+    const touched = new Set<Id<"users">>();
+
+    const staleSessions = await ctx.db
+      .query("presenceSessions")
+      .withIndex("by_last_heartbeat", (q) => q.lt("lastHeartbeat", cutoff))
+      .collect();
+    for (const session of staleSessions) {
+      await ctx.db.delete(session._id);
+      touched.add(session.userId);
+    }
+
+    const stalePresence = await ctx.db
       .query("presence")
       .withIndex("by_last_heartbeat", (q) => q.lt("lastHeartbeat", cutoff))
       .collect();
-    for (const row of stale) {
-      // A client that stopped heartbeating can't tell us its game exited
-      // either — drop the activities with the status so profile cards don't
-      // keep showing a stale "Playing …" for an offline user.
-      const running = activitiesOf(row);
-      if (row.effective !== "offline" || running.length > 0) {
-        await ctx.db.patch(row._id, {
-          effective: "offline",
-          activities: [],
-          activity: undefined,
-        });
+    for (const row of stalePresence) {
+      if (row.effective !== "offline" || activitiesOf(row).length > 0) {
+        touched.add(row.userId);
       }
-      if (running.length > 0) await closeOpenSessions(ctx, row.userId);
     }
+
+    for (const userId of touched) await reconcile(ctx, userId);
   },
 });
 
@@ -398,10 +687,10 @@ export const activeNow = query({
           // Someone offline isn't doing anything, whatever their last
           // reported activity says.
           if (!presence || presence.effective === "offline") return null;
-          const list = activitiesOf(presence);
-          if (list.length === 0) return null;
           const friend = await ctx.db.get(friendship.friendId);
           if (!friend) return null;
+          const list = visibleActivities(presence, friend);
+          if (list.length === 0) return null;
           return {
             userId: friend._id,
             name: friend.name,

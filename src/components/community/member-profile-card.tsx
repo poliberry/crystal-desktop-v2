@@ -18,7 +18,11 @@ import {
 } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getDesktopAPI } from "@/lib/desktop";
 import { badgeDefinition, visibleBadgeIds } from "@/lib/badges";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
@@ -55,7 +59,9 @@ function useVisibleBadges(userId: Id<"users">) {
   // Collapses the Bug Hunter tiers down to the highest one held — see
   // src/lib/badges.ts.
   const shown = new Set(visibleBadgeIds(badges.map((b) => b.badgeId)));
-  return badges.filter((badge) => shown.has(badge.badgeId) && !!badgeDefinition(badge.badgeId));
+  return badges.filter(
+    (badge) => shown.has(badge.badgeId) && !!badgeDefinition(badge.badgeId),
+  );
 }
 
 /**
@@ -66,7 +72,7 @@ function ProfileBadges({ badges }: { badges: { badgeId: string }[] }) {
   if (badges.length === 0) return null;
 
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+    <div className="mt-1 flex flex-wrap items-center bg-background/50 w-fit p-1 rounded-md gap-1.5">
       {badges.map((badge) => {
         const definition = badgeDefinition(badge.badgeId);
         // An id this build doesn't know about is skipped rather than drawn as
@@ -83,7 +89,6 @@ function ProfileBadges({ badges }: { badges: { badgeId: string }[] }) {
             </TooltipTrigger>
             <TooltipContent side="top">
               <p className="font-medium">{definition.label}</p>
-              <p className="text-muted-foreground">{definition.description}</p>
             </TooltipContent>
           </Tooltip>
         );
@@ -117,7 +122,7 @@ export function MemberProfileCard({
   // to the dialog rather than every popover.
   const profile = useQuery(
     api.users.getProfile,
-    expanded ? { userId: member.userId, communityId } : "skip"
+    expanded ? { userId: member.userId, communityId } : "skip",
   );
   const isSelf = !!me && me._id === member.userId;
   const badges = useVisibleBadges(member.userId);
@@ -139,7 +144,7 @@ export function MemberProfileCard({
         onClick={() => setStatusOpen(true)}
         className={cn(
           "cursor-pointer absolute z-10 max-w-40 shadow-lg truncate rounded-full bg-accent/60 hover:bg-accent/80 px-3 py-1 text-sm font-medium text-white backdrop-blur-sm",
-          position
+          position,
         )}
       >
         {member.customStatus}
@@ -161,41 +166,33 @@ export function MemberProfileCard({
     >
       {/* Inner overlay — 3px inset, clips content and carries the border */}
       <div
-        className={`overflow-hidden rounded-[5px] border border-border/20 ${hasGradient ? " bg-accent backdrop-blur-sm" : " bg-popover"}`}
+        className={`overflow-hidden rounded-[5px] border border-border/20 ${hasGradient ? " bg-background/70" : " bg-accent"}`}
       >
         {/* Banner — always shown if set; if no banner but gradient, just top padding */}
         {member.bannerUrl ? (
           <>
             <div
               className={cn(
-                "absolute top-0 left-0 w-full bg-linear-to-b from-transparent to-accent/80",
-                expanded ? "h-40" : "h-24"
+                "w-full bg-cover bg-center opacity-80",
+                expanded ? "h-40" : "h-24",
               )}
-            />
-            <div
-              className={cn("w-full bg-cover bg-center opacity-80", expanded ? "h-40" : "h-24")}
               style={{
-                filter: "blur(2px)",
                 backgroundImage: `url(${member.bannerUrl})`,
-                WebkitMaskImage:
-                  "linear-gradient(to bottom, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
-                maskImage:
-                  "linear-gradient(to bottom, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
               }}
             />
           </>
         ) : hasGradient ? (
-          <div className="h-10" />
+          <div className="h-24 w-full bg-muted" />
         ) : (
-          <div className="h-16 w-full bg-gradient-to-br from-muted to-muted/60" />
+          <div className="h-24 w-full bg-muted" />
         )}
 
         {/* Avatar + custom status pill — avatar overlaps banner */}
-        <div className={cn("flex gap-2", "flex-row justify-start")}>
+        <div className={cn("flex flex-col gap-2", "flex-col justify-start")}>
           <div
             className={cn(
               "flex items-end gap-3 px-4",
-              expanded ? "-mt-12" : "-mt-8"
+              expanded ? "-mt-12" : "-mt-8",
             )}
           >
             {/* `relative` and shrink-wrapped to the avatar, so the pill inside
@@ -203,11 +200,16 @@ export function MemberProfileCard({
             <div className="relative shrink-0">
               <Avatar
                 className={cn(
-                  "shadow-md rounded-xl ring-4 ring-background/60",
-                  expanded ? "size-24" : "size-16"
+                  "shadow-md rounded-xl ring-4",
+                  expanded ? "size-24" : "size-16",
+                  hasGradient ? "ring-background/70" : "ring-accent",
                 )}
               >
-                <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-xl" />
+                <AvatarImage
+                  src={member.imageUrl}
+                  alt={member.name}
+                  className="rounded-xl"
+                />
                 <AvatarFallback className="text-lg">
                   {member.name.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
@@ -215,7 +217,8 @@ export function MemberProfileCard({
                 <AvatarBadge
                   className={cn(
                     STATUS_DOT_CLASS[member.status],
-                    "min-w-4 min-h-4 ring-[4px] ring-background/60",
+                    "min-w-4 min-h-4 ring-4",
+                    hasGradient ? "ring-background/70" : "ring-accent",
                   )}
                 />
               </Avatar>
@@ -226,7 +229,8 @@ export function MemberProfileCard({
                   slides *down* while a pill pinned to the card doesn't — the
                   gap in the screenshots. Anchored here instead, the pill sits
                   4px over the avatar's top edge whatever the column does. */}
-              {badges.length > 0 && statusPill("bottom-[calc(100%-4px)] left-0")}
+              {badges.length > 0 &&
+                statusPill("bottom-[calc(100%-4px)] left-0")}
             </div>
 
             {/* Without badges the pill keeps its existing offsets from the
@@ -235,25 +239,20 @@ export function MemberProfileCard({
               statusPill(cn("left-4", expanded ? "top-24" : "top-14"))}
           </div>
 
-          {isSelf && <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />}
+          {isSelf && (
+            <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />
+          )}
 
-          <div className={cn("-ml-3 pt-1")}>
+          <div className={cn("ml-4 pt-1")}>
             <div className="flex items-center gap-1.5">
               <p
                 className={cn(
                   "truncate font-bold leading-tight",
-                  expanded ? "text-xl" : "text-base"
+                  expanded ? "text-xl" : "text-base",
                 )}
               >
                 {member.name}
               </p>
-              {member.isOwner && (
-                <img
-                  src="/icons/crown.png"
-                  alt="Server Owner"
-                  className="size-5 opacity-50"
-                />
-              )}
             </div>
             <p className="truncate text-sm text-muted-foreground">
               @{member.username}
@@ -265,7 +264,10 @@ export function MemberProfileCard({
         {/* Content */}
         <div className={cn("space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}>
           {!isSelf && (
-            <FriendActionButton userId={member.userId} username={member.username} />
+            <FriendActionButton
+              userId={member.userId}
+              username={member.username}
+            />
           )}
 
           {member.bio ? (
@@ -333,32 +335,32 @@ export function MemberProfileCard({
             )}
             {isSelf && (
               <>
-              {communityId && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setServerProfileOpen(true)}
-                  >
-                    <UserPen className="size-4" />
-                  </Button>
-                  <ServerProfileDialog
-                    communityId={communityId}
-                    communityName={communityName ?? ""}
-                    open={serverProfileOpen}
-                    onOpenChange={setServerProfileOpen}
-                  />
-                </>
-              )}
+                {communityId && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setServerProfileOpen(true)}
+                    >
+                      <UserPen className="size-4" />
+                    </Button>
+                    <ServerProfileDialog
+                      communityId={communityId}
+                      communityName={communityName ?? ""}
+                      open={serverProfileOpen}
+                      onOpenChange={setServerProfileOpen}
+                    />
+                  </>
+                )}
 
-              <Button
-                variant="ghost"
-                size="icon"
-                title="Settings"
-                onClick={() => void getDesktopAPI()?.settings.open()}
-              >
-                <Cog className="size-4" />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Settings"
+                  onClick={() => void getDesktopAPI()?.settings.open()}
+                >
+                  <Cog className="size-4" />
+                </Button>
               </>
             )}
           </div>

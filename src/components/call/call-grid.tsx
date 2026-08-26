@@ -515,9 +515,9 @@ function GalleryGrid({
   pending: PendingParticipant[];
   onFocus: (key: string) => void;
   getWatchState: (tile: CallTile) => WatchState | undefined;
-  getSettings: (identity: string) => TileSettings;
-  onVolumeChange: (identity: string, v: number) => void;
-  onMuteToggle: (identity: string) => void;
+  getSettings: (tileKey: string) => TileSettings;
+  onVolumeChange: (tileKey: string, v: number) => void;
+  onMuteToggle: (tileKey: string) => void;
   /** Passed through to each tile's context menu; see `CallGridProps`. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
 }) {
@@ -591,13 +591,9 @@ function GalleryGrid({
                         tile={tile}
                         onClick={() => onFocus(tile.key)}
                         watchState={getWatchState(tile)}
-                        settings={getSettings(tile.participant.identity)}
-                        onVolumeChange={(v) =>
-                          onVolumeChange(tile.participant.identity, v)
-                        }
-                        onMuteToggle={() =>
-                          onMuteToggle(tile.participant.identity)
-                        }
+                        settings={getSettings(tile.key)}
+                        onVolumeChange={(v) => onVolumeChange(tile.key, v)}
+                        onMuteToggle={() => onMuteToggle(tile.key)}
                       />
                     </div>
                   ))(cell.tile)
@@ -619,9 +615,16 @@ export function CallGrid({
   onAutoWatched,
 }: CallGridProps) {
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
-  const [participantSettings, setParticipantSettings] = useState<
-    Map<string, TileSettings>
-  >(new Map());
+  /**
+   * Local volume and mute, per *tile* rather than per participant: someone's
+   * camera tile carries their microphone and their screen tile carries the
+   * share's own audio, which are two unrelated things to turn down. Keyed by
+   * `tile.key` ("cam-"/"screen-" plus the identity), so pulling a stream's
+   * volume down no longer takes the person's voice with it.
+   */
+  const [tileSettings, setTileSettings] = useState<Map<string, TileSettings>>(
+    new Map()
+  );
   // Which streams are being watched is call state, not grid state — the mini
   // player shows and stops them while this component isn't even on screen.
   // Pruning a share that ends lives there too (see CallProvider).
@@ -666,19 +669,19 @@ export function CallGrid({
     onAutoWatched?.();
   }, [autoWatchIdentity, tiles, watchShare, onAutoWatched]);
 
-  const getSettings = (identity: string) =>
-    participantSettings.get(identity) ?? DEFAULT_SETTINGS;
+  const getSettings = (tileKey: string) =>
+    tileSettings.get(tileKey) ?? DEFAULT_SETTINGS;
 
-  const updateVolume = (identity: string, volume: number) =>
-    setParticipantSettings((prev) => {
-      const cur = prev.get(identity) ?? DEFAULT_SETTINGS;
-      return new Map(prev).set(identity, { ...cur, volume });
+  const updateVolume = (tileKey: string, volume: number) =>
+    setTileSettings((prev) => {
+      const cur = prev.get(tileKey) ?? DEFAULT_SETTINGS;
+      return new Map(prev).set(tileKey, { ...cur, volume });
     });
 
-  const toggleMute = (identity: string) =>
-    setParticipantSettings((prev) => {
-      const cur = prev.get(identity) ?? DEFAULT_SETTINGS;
-      return new Map(prev).set(identity, { ...cur, muted: !cur.muted });
+  const toggleMute = (tileKey: string) =>
+    setTileSettings((prev) => {
+      const cur = prev.get(tileKey) ?? DEFAULT_SETTINGS;
+      return new Map(prev).set(tileKey, { ...cur, muted: !cur.muted });
     });
 
   if (tiles.length === 0) {
@@ -707,11 +710,9 @@ export function CallGrid({
             }
             onUnfocus={() => setFocusedKey(null)}
             watchState={getWatchState(focused)}
-            settings={getSettings(focused.participant.identity)}
-            onVolumeChange={(v) =>
-              updateVolume(focused.participant.identity, v)
-            }
-            onMuteToggle={() => toggleMute(focused.participant.identity)}
+            settings={getSettings(focused.key)}
+            onVolumeChange={(v) => updateVolume(focused.key, v)}
+            onMuteToggle={() => toggleMute(focused.key)}
             moderation={moderation}
           />
         </div>
@@ -724,11 +725,9 @@ export function CallGrid({
                   tile={tile}
                   onClick={() => setFocusedKey(tile.key)}
                   watchState={getWatchState(tile)}
-                  settings={getSettings(tile.participant.identity)}
-                  onVolumeChange={(v) =>
-                    updateVolume(tile.participant.identity, v)
-                  }
-                  onMuteToggle={() => toggleMute(tile.participant.identity)}
+                  settings={getSettings(tile.key)}
+                  onVolumeChange={(v) => updateVolume(tile.key, v)}
+                  onMuteToggle={() => toggleMute(tile.key)}
                 />
               </div>
             ))}

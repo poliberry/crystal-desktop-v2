@@ -222,6 +222,7 @@ export function SettingsShell() {
               {section === "profile" && <ProfileTab />}
               {section === "appearance" && <AppearanceTab />}
               {section === "accessibility" && <AccessibilityTab />}
+              {section === "servers" && <ServerProfilesTab />}
               {section === "account" && <AccountTab />}
               {section === "voice" && <VoiceVideoTab />}
               {section === "notifications" && <NotificationsTab />}

@@ -9,9 +9,11 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { useCall } from "@/components/call/call-provider";
 import { DmMemberList } from "@/components/home/dm-member-list";
 import { GroupAvatar } from "@/components/home/group-avatar";
+import { GroupSettingsDialog } from "@/components/home/group-settings-dialog";
 import { MessageComposer } from "@/components/home/message-composer";
 import { MessageList } from "@/components/home/message-list";
 import { TypingIndicator } from "@/components/typing-indicator";
+import { useWindowFocus } from "@/hooks/use-window-focus";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,13 +29,24 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const conversation = useQuery(api.conversations.get, { conversationId });
   const callParticipants = useQuery(api.calls.listParticipants, { conversationId }) ?? [];
   const markRead = useMutation(api.conversations.markRead);
+  const focused = useWindowFocus();
   const { activeCall } = useCall();
   const isActiveCall = activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
   const [showMembers, setShowMembers] = useState(true);
+  const [editingGroup, setEditingGroup] = useState(false);
 
+  /**
+   * Read means read *by someone who was there*: this conversation open in a
+   * focused window. A DM left open in a background window stays unread.
+   *
+   * `conversation?.unread` is a dependency so a message landing while you're
+   * sitting here is marked read too, rather than lighting up the rail for a
+   * conversation you're looking at.
+   */
   useEffect(() => {
+    if (!focused) return;
     void markRead({ conversationId });
-  }, [conversationId, markRead]);
+  }, [conversationId, focused, conversation?.unread, markRead]);
 
   if (!conversation) {
     return (
@@ -53,24 +66,33 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
     <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-          <div className="flex items-center gap-2">
-            {isGroup ? (
+          {/* For a group the whole identity block is the way into its
+              settings — the icon and name are what you'd click to change
+              them, so there's no separate button for it. */}
+          {isGroup ? (
+            <button
+              type="button"
+              onClick={() => setEditingGroup(true)}
+              title="Group settings"
+              className="flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/60"
+            >
               <GroupAvatar imageUrl={conversation.imageUrl} members={conversation.members} />
-            ) : (
+              <div>
+                <p className="text-sm font-semibold">{title}</p>
+                <p className="text-xs text-muted-foreground">
+                  {conversation.members.length + 1} members
+                </p>
+              </div>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
               <Avatar size="sm">
                 <AvatarImage src={avatarUser?.imageUrl} alt={title} />
                 <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
-            )}
-            <div>
               <p className="text-sm font-semibold">{title}</p>
-              {isGroup && (
-                <p className="text-xs text-muted-foreground">
-                  {conversation.members.length + 1} members
-                </p>
-              )}
             </div>
-          </div>
+          )}
 
           <div className="flex items-center gap-1.5">
             <Button
@@ -115,6 +137,18 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
       </div>
 
       {isGroup && showMembers && <DmMemberList conversationId={conversationId} />}
+
+      {isGroup && (
+        <GroupSettingsDialog
+          conversationId={conversationId}
+          name={conversation.name ?? null}
+          imageUrl={conversation.imageUrl}
+          members={conversation.members}
+          fallbackName={conversation.members.map((m) => m.name).join(", ")}
+          open={editingGroup}
+          onOpenChange={setEditingGroup}
+        />
+      )}
     </div>
   );
 }

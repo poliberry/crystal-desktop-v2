@@ -94,8 +94,8 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
         {startsGroup && (
           <Popover>
             <PopoverTrigger asChild>
-              <Avatar size="sm" className="cursor-pointer">
-                <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
+              <Avatar size="default" className="cursor-pointer">
+                <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
                 <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
             </PopoverTrigger>
@@ -236,9 +236,14 @@ export function MessageList({ conversationId }: MessageListProps) {
   );
   const chronological = [...messages].reverse();
 
+  const latest = chronological[chronological.length - 1];
+
   const { containerRef, contentRef, onScroll } = useStickToBottom({
     viewKey: conversationId,
-    latestKey: chronological[chronological.length - 1]?.id,
+    latestKey: latest?.id,
+    // Sending re-pins: whatever the reader was looking at, putting a message
+    // into the conversation is a request to be at the end of it.
+    latestIsMine: latest?.isMine ?? false,
   });
 
   if (loadingFirstPage && chronological.length === 0) {

@@ -92,8 +92,15 @@ export function UserCard() {
   const { cameraEnabled, screenSharing, toggleCamera, toggleScreenShare } =
     controller;
 
-  const subtitle = me.customStatus
-    ? `${me.customStatus}`
+  // Your own card reads the raw profile, so the deadline has to be applied
+  // here — everyone else sees it through a query that already has.
+  const customStatus =
+    me.customStatusExpiresAt && me.customStatusExpiresAt <= Date.now()
+      ? undefined
+      : me.customStatus;
+
+  const subtitle = customStatus
+    ? `${customStatus}`
     : activeCall
       ? "In voice"
       : STATUS_LABEL[status];
@@ -422,7 +429,7 @@ export function UserCard() {
                     username: me.username,
                     imageUrl: me.imageUrl,
                     bio: me.bio,
-                    customStatus: me.customStatus,
+                    customStatus,
                     bannerUrl: me.bannerUrl,
                     borderGradientStart: me.borderGradientStart,
                     borderGradientEnd: me.borderGradientEnd,

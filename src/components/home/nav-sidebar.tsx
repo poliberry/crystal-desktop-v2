@@ -22,6 +22,7 @@ import {
 } from "@/components/rich-presence-card";
 import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { cn } from "@/lib/utils";
 
 interface NavSidebarProps {
@@ -66,7 +67,11 @@ export function NavSidebar({
   onSelectFriends,
   onSelectConversation,
 }: NavSidebarProps) {
-  const rawConversations = useQuery(api.conversations.listMine);
+  const rawConversations = useCachedQuery(
+    api.conversations.listMine,
+    {},
+    "conversations.listMine"
+  );
   const conversations = rawConversations ?? [];
   const filtered = conversations.filter((c) =>
     matches(search, c.name ?? "", ...c.members.map((m) => m.name))

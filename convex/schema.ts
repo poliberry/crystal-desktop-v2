@@ -34,8 +34,13 @@ const activityValidator = v.object({
    * interpolate the seek bar against one authoritative clock instead of the
    * broadcaster's — which may be minutes off. */
   positionUpdatedAt: v.optional(v.number()),
+  /** Up to two link buttons under the card, the same shape Discord's Rich
+   * Presence uses. Only custom activities set these today — nothing we detect
+   * has anywhere to point. */
+  buttons: v.optional(v.array(v.object({ label: v.string(), url: v.string() }))),
   /** Where this came from: "detectable" (process scan), "ipc" (a game
-   * connected to our Discord-compatible RPC socket), or "music". */
+   * connected to our Discord-compatible RPC socket), "music", or "custom"
+   * (written by the user themselves). */
   source: v.optional(v.string()),
 });
 
@@ -69,6 +74,24 @@ export default defineSchema({
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
     customStatus: v.optional(v.string()),
+    /** When the custom status stops being shown, for the "clear after…"
+     * presets. Absent means it stays until cleared by hand. Enforced on read
+     * as well as by the sweep, so an expired status is never shown even if
+     * nothing has run to delete it yet. */
+    customStatusExpiresAt: v.optional(v.number()),
+    /**
+     * A Rich Presence activity the user wrote themselves, shown ahead of
+     * anything detected.
+     *
+     * Lives on the profile rather than on `presence` because it outlives a
+     * session: detected activities are cleared when the last desktop client
+     * disconnects (see `reconcile`), whereas "I'm at work until 5" should
+     * survive closing the app and be visible from a phone.
+     */
+    customActivity: v.optional(activityValidator),
+    /** When `customActivity` stops being shown. Same rules as
+     * `customStatusExpiresAt`. */
+    customActivityExpiresAt: v.optional(v.number()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
     /** Clip played to everyone else when this user joins a call. Either a
@@ -143,6 +166,34 @@ export default defineSchema({
     .index("by_last_heartbeat", ["lastHeartbeat"]),
 
   /**
+   * One row per signed-in device, so "is this user online" becomes a question
+   * about their devices rather than about a single shared counter.
+   *
+   * The `presence` row above is the *answer* — one status per user, which is
+   * what every viewer renders. It used to be the question too: it carried the
+   * only `lastHeartbeat`, so whichever client wrote last owned it, and the
+   * stale sweep flipped the user offline the moment that client stopped. A
+   * phone going into the background could therefore mark someone offline while
+   * their desktop app sat open in front of them.
+   *
+   * Splitting the two lets the sweep ask "are *any* of this user's devices
+   * still beating?" and only fall back to offline when none are.
+   */
+  presenceSessions: defineTable({
+    userId: v.id("users"),
+    /** Stable per-install id. Two clients on one account are two rows. */
+    deviceId: v.string(),
+    platform: v.union(v.literal("desktop"), v.literal("mobile"), v.literal("web")),
+    /** This device's own idle state. A user counts as idle only when every
+     * live device is — a phone in a pocket shouldn't idle out a desktop. */
+    isIdle: v.boolean(),
+    lastHeartbeat: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_device", ["userId", "deviceId"])
+    .index("by_last_heartbeat", ["lastHeartbeat"]),
+
+  /**
    * Play history, one row per (user, game) rather than per session — the
    * profile's "Recent activity" list only needs "what, when last, how long in
    * total", and collapsing it this way keeps the table bounded no matter how
@@ -199,7 +250,14 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
-  }).index("by_conversation", ["conversationId"]),
+  })
+    .index("by_conversation", ["conversationId"])
+    // Scoped search — see convex/search.ts. The filter field is what lets a
+    // search mean "in this conversation" without scanning every message.
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["conversationId"],
+    }),
 
   messageAttachments: defineTable({
     messageId: v.id("messages"),
@@ -415,7 +473,16 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
-  }).index("by_channel", ["channelId"]),
+  })
+    .index("by_channel", ["channelId"])
+    // Scoped search — see convex/search.ts. Filtered by channel rather than
+    // community because these rows carry no community id; a server-wide search
+    // fans out over the channels the caller can see instead, which needs no
+    // backfill of existing messages.
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["channelId"],
+    }),
 
   channelMessageAttachments: defineTable({
     messageId: v.id("channelMessages"),

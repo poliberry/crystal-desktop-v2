@@ -61,6 +61,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
@@ -150,8 +151,16 @@ export function CommunitySidebar({
   onSelectChannel,
 }: CommunitySidebarProps) {
   const community = useQuery(api.communities.get, { communityId });
-  const rawChannels = useQuery(api.channels.list, { communityId });
-  const rawCategories = useQuery(api.channelCategories.list, { communityId });
+  const rawChannels = useCachedQuery(
+    api.channels.list,
+    { communityId },
+    `channels.list:${communityId}`
+  );
+  const rawCategories = useCachedQuery(
+    api.channelCategories.list,
+    { communityId },
+    `channelCategories.list:${communityId}`
+  );
   const channels = rawChannels ?? [];
   const categories = rawCategories ?? [];
   const isLoadingChannels =

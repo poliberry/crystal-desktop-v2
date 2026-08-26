@@ -8,6 +8,7 @@ import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
+import { unexpiredCustomStatus } from "./lib/activities";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
 
@@ -145,7 +146,7 @@ export const list = query({
                 imageUrl: serverProfile?.imageUrl ?? author.imageUrl,
                 bio: serverProfile?.bio ?? author.bio,
                 bannerUrl: serverProfile?.bannerUrl ?? author.bannerUrl,
-                customStatus: serverProfile?.customStatus ?? author.customStatus,
+                customStatus: serverProfile?.customStatus ?? unexpiredCustomStatus(author),
                 roleColor: decoration?.roleColor,
               }
             : null,
@@ -234,6 +235,11 @@ export const send = mutation({
 
     if (channel && trimmed) {
       const mentioned = await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id);
+      // Rendered once and shared by both notifications below — it's a plain
+      // text body, so the `<@id>` tags have to become readable names here;
+      // nothing downstream of this renders them.
+      const bodyText = await renderMentionsAsText(ctx, trimmed);
+
       if (mentioned.length > 0) {
         await notifyUsers(ctx, {
           userIds: mentioned,
@@ -243,10 +249,50 @@ export const send = mutation({
           communityId: channel.communityId,
           channelMessageId: messageId,
           title: `${me.name} mentioned you in #${channel.name}`,
-          // Plain text, so the `<@id>` tags have to become readable names
-          // here — nothing downstream of this renders them.
-          body: await renderMentionsAsText(ctx, trimmed),
+          body: bodyText,
+          isMention: true,
         });
+      }
+
+      // Everyone else in the channel.
+      //
+      // Only reaches people whose per-server setting is "all messages":
+      // `notifyUsers` asks `allowsChannelMessage(policy, communityId, false)`
+      // for each of them, so the default ("mentions only") is untouched and
+      // nobody starts getting notified without having asked to be.
+      //
+      // Membership alone can't decide who this is. A private channel is
+      // private because of permission overwrites, so notifying past them
+      // would leak both the message and the channel's existence.
+      const community = await ctx.db.get(channel.communityId);
+      if (community) {
+        const mentionedSet = new Set<string>(mentioned);
+        const members = await ctx.db
+          .query("communityMembers")
+          .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
+          .collect();
+
+        const others: Id<"users">[] = [];
+        for (const member of members) {
+          if (member.userId === me._id || mentionedSet.has(member.userId)) continue;
+          const perms = await getChannelPermissions(ctx, community, channelId, member.userId);
+          if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
+          others.push(member.userId);
+        }
+
+        if (others.length > 0) {
+          await notifyUsers(ctx, {
+            userIds: others,
+            actorId: me._id,
+            type: "channel_mention",
+            channelId,
+            communityId: channel.communityId,
+            channelMessageId: messageId,
+            title: `${me.name} in #${channel.name}`,
+            body: bodyText,
+            isMention: false,
+          });
+        }
       }
     }
 
