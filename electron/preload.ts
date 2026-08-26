@@ -64,6 +64,8 @@ const api = {
   screenShare: {
     getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
     setSource: (id: string) => ipcRenderer.invoke("screen-share:set-source", id),
+    permission: () => ipcRenderer.invoke("screen-share:permission"),
+    openPermissionSettings: () => ipcRenderer.invoke("screen-share:open-permission-settings"),
   },
   richPresence: {
     get: () => ipcRenderer.invoke("rich-presence:get"),

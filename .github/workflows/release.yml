@@ -378,6 +378,21 @@ jobs:
             fi
             echo "Developer ID signature confirmed."
 
+            # A signed build runs under the hardened runtime, which silently
+            # blocks the microphone unless the entitlement is present — the app
+            # launches, joins a call and sends nothing. Chromium captures in a
+            # helper process, so the main bundle alone proves nothing; every
+            # signed component is checked.
+            for BINARY in "$APP" "$APP"/Contents/Frameworks/*.app; do
+              [ -e "$BINARY" ] || continue
+              if ! codesign -d --entitlements :- "$BINARY" 2>/dev/null \
+                   | grep -q "com.apple.security.device.audio-input"; then
+                echo "::error::$(basename "$BINARY") is missing com.apple.security.device.audio-input — the microphone will not work."
+                exit 1
+              fi
+            done
+            echo "Microphone entitlement present on the app and its helpers."
+
             if [ -n "${APPLE_ID:-}" ]; then
               # Checks for a stapled notarization ticket, and asks Gatekeeper
               # for the verdict a user's Mac will reach on first launch.

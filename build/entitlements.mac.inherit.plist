@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements for everything inside the bundle that isn't
+  the app itself: the Electron helper apps, and the CrystalSystemAudio binary.
+
+  A separate file because electron-builder resolves the two independently —
+  `entitlements.mac.plist` for the app, `entitlements.mac.inherit.plist` for
+  every other signed component (see getOptionsForFile in app-builder-lib's
+  MacTargetHelper). Providing only the first leaves the helpers on the stock
+  template, and that is the file that matters most here: Chromium captures
+  microphone audio in its audio service — a helper process — not in the main
+  process, so the entitlement has to be on both or the mic stays dead.
+
+  Deliberately identical to entitlements.mac.plist. Keep them in step.
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8. https://github.com/electron/electron-notarize#prerequisites -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- https://github.com/electron-userland/electron-builder/issues/3940 -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Voice chat: the microphone, and the camera for video calls, which the
+         hardened runtime blocks just as thoroughly. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+  </dict>
+</plist>
