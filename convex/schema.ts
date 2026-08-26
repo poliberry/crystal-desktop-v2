@@ -34,8 +34,13 @@ const activityValidator = v.object({
    * interpolate the seek bar against one authoritative clock instead of the
    * broadcaster's — which may be minutes off. */
   positionUpdatedAt: v.optional(v.number()),
+  /** Up to two link buttons under the card, the same shape Discord's Rich
+   * Presence uses. Only custom activities set these today — nothing we detect
+   * has anywhere to point. */
+  buttons: v.optional(v.array(v.object({ label: v.string(), url: v.string() }))),
   /** Where this came from: "detectable" (process scan), "ipc" (a game
-   * connected to our Discord-compatible RPC socket), or "music". */
+   * connected to our Discord-compatible RPC socket), "music", or "custom"
+   * (written by the user themselves). */
   source: v.optional(v.string()),
 });
 
@@ -69,6 +74,24 @@ export default defineSchema({
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
     customStatus: v.optional(v.string()),
+    /** When the custom status stops being shown, for the "clear after…"
+     * presets. Absent means it stays until cleared by hand. Enforced on read
+     * as well as by the sweep, so an expired status is never shown even if
+     * nothing has run to delete it yet. */
+    customStatusExpiresAt: v.optional(v.number()),
+    /**
+     * A Rich Presence activity the user wrote themselves, shown ahead of
+     * anything detected.
+     *
+     * Lives on the profile rather than on `presence` because it outlives a
+     * session: detected activities are cleared when the last desktop client
+     * disconnects (see `reconcile`), whereas "I'm at work until 5" should
+     * survive closing the app and be visible from a phone.
+     */
+    customActivity: v.optional(activityValidator),
+    /** When `customActivity` stops being shown. Same rules as
+     * `customStatusExpiresAt`. */
+    customActivityExpiresAt: v.optional(v.number()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
     /** Clip played to everyone else when this user joins a call. Either a

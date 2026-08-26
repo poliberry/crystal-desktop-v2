@@ -8,6 +8,7 @@ import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
+import { unexpiredCustomStatus } from "./lib/activities";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
 
@@ -145,7 +146,7 @@ export const list = query({
                 imageUrl: serverProfile?.imageUrl ?? author.imageUrl,
                 bio: serverProfile?.bio ?? author.bio,
                 bannerUrl: serverProfile?.bannerUrl ?? author.bannerUrl,
-                customStatus: serverProfile?.customStatus ?? author.customStatus,
+                customStatus: serverProfile?.customStatus ?? unexpiredCustomStatus(author),
                 roleColor: decoration?.roleColor,
               }
             : null,

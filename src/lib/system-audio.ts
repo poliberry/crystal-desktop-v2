@@ -474,6 +474,18 @@ async function acquirePcmLoopbackTrack(opts: {
 export async function shareSystemAudio(room: Room): Promise<LocalAudioTrack> {
   if (activeTrack) return activeTrack;
 
+  // Every backend below needs the main process: a PCM helper, a virtual sink,
+  // or Electron's loopback display-media handler. In a browser the share's
+  // audio comes from `getDisplayMedia` alongside the video instead (see
+  // `startBrowserScreenShare`), and `getPlatform()` alone wouldn't catch this
+  // — `navigator.platform` reports "win32" for Chrome on Windows, which would
+  // otherwise send a browser down the WASAPI loopback path.
+  if (!isElectron()) {
+    throw new Error(
+      "On the web, tick “Share audio” in the browser's screen-sharing dialog."
+    );
+  }
+
   const platform = getPlatform();
   let track: LocalAudioTrack | null = null;
 

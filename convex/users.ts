@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import {
   internalMutation,
   internalQuery,
@@ -157,6 +157,33 @@ export const generateUploadUrl = mutation({
   },
 });
 
+/**
+ * Set (or clear) the custom status, with an optional deadline.
+ *
+ * Separate from `updateProfileExtended` because of the deadline: that mutation
+ * patches whichever cosmetic fields it was given, and "clear after 2 hours"
+ * has to write two fields together or not at all. An empty `text` clears both.
+ *
+ * The text itself is never deleted just because the user goes offline — that's
+ * a display rule applied on read (see `visibleCustomStatus`), so "Back Monday"
+ * is still there when they come back.
+ */
+export const setCustomStatus = mutation({
+  args: {
+    text: v.string(),
+    /** How long it should last. Omitted means "until I clear it". */
+    durationMs: v.optional(v.number()),
+  },
+  handler: async (ctx, { text, durationMs }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = text.trim().slice(0, 128);
+    await ctx.db.patch(me._id, {
+      customStatus: trimmed || undefined,
+      customStatusExpiresAt: trimmed && durationMs ? Date.now() + durationMs : undefined,
+    });
+  },
+});
+
 export const updateProfileExtended = mutation({
   args: {
     customStatus: v.optional(v.string()),
@@ -166,9 +193,13 @@ export const updateProfileExtended = mutation({
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const patch: Record<string, string | undefined> = {};
-    if (args.customStatus !== undefined)
+    const patch: Record<string, string | number | undefined> = {};
+    if (args.customStatus !== undefined) {
       patch.customStatus = args.customStatus.trim().slice(0, 128) || undefined;
+      // A status written without a deadline replaces one that had one, rather
+      // than inheriting its expiry and vanishing at someone else's schedule.
+      patch.customStatusExpiresAt = undefined;
+    }
     if (args.borderGradientStart !== undefined) patch.borderGradientStart = args.borderGradientStart || undefined;
     if (args.borderGradientEnd !== undefined) patch.borderGradientEnd = args.borderGradientEnd || undefined;
     if (args.profileBg !== undefined) patch.profileBg = args.profileBg || undefined;
@@ -421,11 +452,15 @@ export const getProfile = query({
       imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
       bio: serverProfile?.bio ?? user.bio,
       bannerUrl: serverProfile?.bannerUrl ?? user.bannerUrl,
-      customStatus: serverProfile?.customStatus ?? user.customStatus,
+      customStatus: visibleCustomStatus(
+        user,
+        presence?.effective ?? "offline",
+        serverProfile?.customStatus
+      ),
       borderGradientStart: serverProfile?.borderGradientStart ?? user.borderGradientStart,
       borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
       status: presence?.effective ?? "offline",
-      activities: activitiesOf(presence),
+      activities: visibleActivities(presence, user),
       roles,
       isOwner,
     };

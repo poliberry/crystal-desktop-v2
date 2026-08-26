@@ -284,6 +284,38 @@ export function RichPresenceCard({
       ) : (
         <GameBody activity={activity} />
       )}
+      <ActivityButtons activity={activity} />
+    </div>
+  );
+}
+
+/**
+ * The link buttons under a custom activity.
+ *
+ * Anchors rather than buttons so the desktop shell's window-open handler
+ * sends them to the system browser (see electron/main.ts) and the web build
+ * gets the same behaviour for free. The click is stopped from bubbling
+ * because the card itself is often a button that fans the activity deck open.
+ */
+function ActivityButtons({ activity }: { activity: RichPresenceActivity }) {
+  const buttons = activity.buttons?.slice(0, 2) ?? [];
+  if (buttons.length === 0) return null;
+
+  return (
+    <div className="mt-2.5 flex gap-1.5">
+      {buttons.map((button, index) => (
+        <a
+          key={`${button.url}-${index}`}
+          href={button.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          onClick={(event) => event.stopPropagation()}
+          title={button.url}
+          className="min-w-0 flex-1 truncate rounded border border-border/60 bg-background/60 px-2 py-1 text-center text-xs font-medium transition-colors hover:bg-accent"
+        >
+          {button.label}
+        </a>
+      ))}
     </div>
   );
 }

@@ -156,7 +156,10 @@ export interface RichPresenceActivity {
    * `positionMs` is accurate as of. This is what viewers interpolate
    * against — see `useInterpolatedPosition`. */
   positionUpdatedAt?: number;
-  source?: "detectable" | "ipc" | "music";
+  /** Up to two link buttons under the card. Only custom activities set these
+   * — nothing we detect has anywhere to point. */
+  buttons?: { label: string; url: string }[];
+  source?: "detectable" | "ipc" | "music" | "custom";
 }
 
 /** Diagnostics for the Settings → Voice & Video panel. */

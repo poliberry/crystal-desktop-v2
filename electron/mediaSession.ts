@@ -1,4 +1,7 @@
+import { app } from "electron";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+
+import { CHANNELS } from "./channels";
 
 /**
  * Cross-platform "what is playing right now", read from the operating
@@ -247,6 +250,18 @@ class MediaSession {
   private async publish(raw: RawNowPlaying): Promise<void> {
     if (this.stopped) return;
 
+    // Our own playback is not "listening to music". Chromium publishes every
+    // <audio>/<video> element to the OS media layer, so a voice message, a
+    // video attachment or a soundboard clip would otherwise come straight
+    // back to us as a now-playing session and get announced as an activity.
+    if (isOwnPlayback(raw.source)) {
+      if (this.current) {
+        this.current = null;
+        this.emit();
+      }
+      return;
+    }
+
     if (!raw.playing || !raw.title) {
       if (this.current) {
         this.current = null;
@@ -334,6 +349,39 @@ class MediaSession {
       }
     }
   }
+}
+
+// --- our own sessions ------------------------------------------------------
+
+/** Lowercased, stripped of everything that isn't a letter or digit, so an
+ * AUMID ("dev.crystal.desktop.canary!App"), a bus name and a bare executable
+ * all compare on the same footing. */
+function identityKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Every identifier the OS might report Crystal's own media under.
+ *
+ * Built from the channel table rather than guessed: each channel installs
+ * under its own product name and App User Model ID, and a dev run reports
+ * whatever Electron's binary is called. Computed once — none of it changes
+ * while the app is running.
+ */
+let ownIdentityKeys: string[] | null = null;
+
+function isOwnPlayback(rawSource: string | undefined): boolean {
+  if (!rawSource) return false;
+  if (!ownIdentityKeys) {
+    const candidates = [
+      app.getName(),
+      app.getPath("exe").replace(/\\/g, "/").split("/").pop() ?? "",
+      ...Object.values(CHANNELS).flatMap((c) => [c.appId, c.productName, c.fileName]),
+    ];
+    ownIdentityKeys = [...new Set(candidates.map(identityKey).filter((k) => k.length >= 5))];
+  }
+  const key = identityKey(rawSource);
+  return ownIdentityKeys.some((own) => key.includes(own));
 }
 
 // --- source naming ---------------------------------------------------------

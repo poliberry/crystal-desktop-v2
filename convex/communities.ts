@@ -10,7 +10,7 @@ import {
   requireAbove,
   requireCommunityPermission,
 } from "./permissions";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -494,7 +494,11 @@ export const listMembers = query({
           username: user?.username ?? "unknown",
           imageUrl: serverProfile?.imageUrl ?? user?.imageUrl,
           bio: serverProfile?.bio ?? user?.bio,
-          customStatus: serverProfile?.customStatus ?? user?.customStatus,
+          customStatus: visibleCustomStatus(
+            user,
+            presence?.effective ?? "offline",
+            serverProfile?.customStatus
+          ),
           nameplateUrl: serverProfile?.nameplateUrl ?? user?.nameplateUrl,
           bannerUrl: serverProfile?.bannerUrl ?? user?.bannerUrl,
           borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
@@ -502,7 +506,7 @@ export const listMembers = query({
           isOwner: community.ownerId === member.userId,
           timeoutUntil: member.timeoutUntil,
           status: presence?.effective ?? "offline",
-          activities: activitiesOf(presence),
+          activities: visibleActivities(presence, user),
           roles: roleIds
             .map((id) => roleById.get(id))
             .filter((r): r is Doc<"roles"> => !!r)

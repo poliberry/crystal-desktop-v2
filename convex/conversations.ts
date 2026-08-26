@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
@@ -20,15 +20,16 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     .query("presence")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .unique();
+  const status = presence?.effective ?? "offline";
   return {
     id: user._id,
     name: user.name,
     username: user.username,
     imageUrl: user.imageUrl,
-    customStatus: user.customStatus,
     nameplateUrl: user.nameplateUrl,
-    status: presence?.effective ?? "offline",
-    activities: activitiesOf(presence),
+    status,
+    customStatus: visibleCustomStatus(user, status),
+    activities: visibleActivities(presence, user),
   };
 }
 
@@ -50,6 +51,37 @@ async function otherMembers(ctx: QueryCtx, conversationId: Id<"conversations">, 
 /** Past this a count stops being informative and becomes "a lot". */
 const UNREAD_COUNT_CAP = 99;
 
+/** The newest message in a conversation, or `undefined` if it has none. */
+async function lastMessageOf(ctx: QueryCtx, conversationId: Id<"conversations">) {
+  const [last] = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+    .order("desc")
+    .take(1);
+  return last;
+}
+
+/**
+ * Whether a conversation has something waiting for `me`.
+ *
+ * Your own messages never count. `send` marks the author read, but its
+ * `Date.now()` is the transaction's start while `_creationTime` is the
+ * commit, so the message you just sent lands fractionally *after* your own
+ * read mark and would otherwise light up the rail. Same rule as channels:
+ * unread is what you missed.
+ */
+function isUnread(
+  lastMessage: Doc<"messages"> | undefined,
+  lastReadAt: number,
+  me: Id<"users">
+): boolean {
+  return (
+    lastMessage !== undefined &&
+    lastMessage.authorId !== me &&
+    lastMessage._creationTime > lastReadAt
+  );
+}
+
 export const listMine = query({
   args: {},
   handler: async (ctx) => {
@@ -65,13 +97,8 @@ export const listMine = query({
         const conversation = await ctx.db.get(membership.conversationId);
         if (!conversation) return null;
 
-        const [lastMessage] = await ctx.db
-          .query("messages")
-          .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
-          .order("desc")
-          .take(1);
-
-        const unread = (lastMessage?._creationTime ?? 0) > membership.lastReadAt;
+        const lastMessage = await lastMessageOf(ctx, conversation._id);
+        const unread = isUnread(lastMessage, membership.lastReadAt, me._id);
 
         // Only counted for conversations already known to be unread, and
         // capped: an exact count of a hundred unread messages isn't more
@@ -83,7 +110,9 @@ export const listMine = query({
             .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
             .order("desc")
             .take(UNREAD_COUNT_CAP + 1);
-          unreadCount = recent.filter((m) => m._creationTime > membership.lastReadAt).length;
+          unreadCount = recent.filter(
+            (m) => m._creationTime > membership.lastReadAt && m.authorId !== me._id
+          ).length;
         }
 
         return {
@@ -131,6 +160,13 @@ export const get = query({
       name: conversation.name,
       imageUrl: conversation.imageUrl,
       members: await otherMembers(ctx, conversationId, me._id),
+      /** Live, so the open chat can catch a message that arrives while
+       * you're sitting in it rather than leaving the rail lit behind you. */
+      unread: isUnread(
+        await lastMessageOf(ctx, conversationId),
+        membership.lastReadAt,
+        me._id
+      ),
     };
   },
 });
@@ -169,16 +205,72 @@ export const listMembersWithPresence = query({
           username: user?.username ?? "unknown",
           imageUrl: user?.imageUrl,
           bio: user?.bio,
-          customStatus: user?.customStatus,
           nameplateUrl: user?.nameplateUrl,
           bannerUrl: user?.bannerUrl,
           borderGradientStart: user?.borderGradientStart,
           borderGradientEnd: user?.borderGradientEnd,
           status: presence?.effective ?? "offline",
-          activities: activitiesOf(presence),
+          customStatus: visibleCustomStatus(user, presence?.effective ?? "offline"),
+          activities: visibleActivities(presence, user),
         };
       })
     );
+  },
+});
+
+/**
+ * The group everyone in it can edit.
+ *
+ * A group DM has no roles, so membership *is* the permission — the same
+ * footing everyone joined on. One-to-one DMs are excluded: their name and
+ * picture belong to the other person, not the conversation.
+ */
+async function requireGroupMembership(
+  ctx: MutationCtx,
+  conversationId: Id<"conversations">,
+  userId: Id<"users">
+): Promise<Doc<"conversations">> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation) throw new Error("Conversation not found.");
+  if (conversation.type !== "group") throw new Error("Only groups can be renamed or re-iconed.");
+  const membership = await ctx.db
+    .query("conversationMembers")
+    .withIndex("by_conversation_user", (q) =>
+      q.eq("conversationId", conversationId).eq("userId", userId)
+    )
+    .unique();
+  if (!membership) throw new Error("Not a member of this conversation.");
+  return conversation;
+}
+
+/** Past this the name stops fitting anywhere it's shown. */
+const MAX_GROUP_NAME_LENGTH = 64;
+
+export const renameGroup = mutation({
+  args: { conversationId: v.id("conversations"), name: v.string() },
+  handler: async (ctx, { conversationId, name }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireGroupMembership(ctx, conversationId, me._id);
+
+    const trimmed = name.trim();
+    if (trimmed.length > MAX_GROUP_NAME_LENGTH) {
+      throw new Error(`Group names are at most ${MAX_GROUP_NAME_LENGTH} characters.`);
+    }
+    // Clearing it is allowed and meaningful: an unnamed group falls back to
+    // listing its members, which is the right title for most of them.
+    await ctx.db.patch(conversationId, { name: trimmed || undefined });
+  },
+});
+
+export const removeGroupIcon = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const conversation = await requireGroupMembership(ctx, conversationId, me._id);
+    await ctx.db.patch(conversationId, { imageUrl: undefined, iconStorageId: undefined });
+    if (conversation.iconStorageId) {
+      await ctx.storage.delete(conversation.iconStorageId).catch(() => {});
+    }
   },
 });
 
@@ -194,17 +286,7 @@ export const setGroupIcon = mutation({
   args: { conversationId: v.id("conversations"), storageId: v.id("_storage") },
   handler: async (ctx, { conversationId, storageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const conversation = await ctx.db.get(conversationId);
-    if (!conversation) throw new Error("Conversation not found.");
-    if (conversation.type !== "group") throw new Error("Only group conversations have an icon.");
-
-    const membership = await ctx.db
-      .query("conversationMembers")
-      .withIndex("by_conversation_user", (q) =>
-        q.eq("conversationId", conversationId).eq("userId", me._id)
-      )
-      .unique();
-    if (!membership) throw new Error("Not a member of this conversation.");
+    const conversation = await requireGroupMembership(ctx, conversationId, me._id);
 
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Icon upload failed.");
@@ -353,6 +435,11 @@ export const markRead = mutation({
       )
       .unique();
     if (!membership) return;
+    // Only write when actually behind: the open chat re-runs this every time
+    // its unread flag flips, and re-stamping a conversation with nothing new
+    // in it spends a write to say nothing.
+    const lastMessage = await lastMessageOf(ctx, conversationId);
+    if (!lastMessage || lastMessage._creationTime <= membership.lastReadAt) return;
     await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
   },
 });

@@ -26,6 +26,7 @@ import {
   BANNER_CROP,
   ImageCropDialog,
 } from "@/components/profile/image-crop-dialog";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 import { getAvatarColor } from "@/lib/avatar-color";
 import { uploadToStorage } from "@/lib/storage-upload";
 
@@ -44,6 +45,7 @@ export function ServerProfileDialog({
   open,
   onOpenChange,
 }: ServerProfileDialogProps) {
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
   const me = useQuery(api.users.getCurrentUser);
   const serverProfile = useQuery(api.serverProfiles.getMyServerProfile, { communityId });
 
@@ -211,7 +213,7 @@ export function ServerProfileDialog({
           <DialogTitle>Edit Server Profile</DialogTitle>
           <DialogDescription>Your profile for {communityName}.</DialogDescription>
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto">
+        <div ref={smoothRef} className="flex-1 overflow-y-auto">
           <Card className="rounded-none border-0 shadow-none">
             <CardContent className="space-y-6 px-6 py-4">
               <div className="flex items-center gap-4">

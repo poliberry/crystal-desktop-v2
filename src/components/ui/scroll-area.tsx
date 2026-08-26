@@ -3,6 +3,7 @@
 import * as React from "react";
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 
+import { useSmoothScroll } from "@/hooks/use-smooth-scroll";
 import { cn } from "@/lib/utils";
 
 function ScrollArea({
@@ -10,6 +11,12 @@ function ScrollArea({
   children,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+  // Every ScrollArea in the app gets smooth wheel scrolling from here, which
+  // is most of them — the exceptions are the message lists, which own their
+  // own scroller (see `use-stick-to-bottom.ts`).
+  const viewportRef = React.useRef<HTMLDivElement | null>(null);
+  useSmoothScroll(viewportRef);
+
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -17,6 +24,7 @@ function ScrollArea({
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
+        ref={viewportRef}
         data-slot="scroll-area-viewport"
         // `max-h-[inherit]` is what makes a `max-h-*` on the root actually
         // scroll. Radix's root is only `position: relative` — it sets no

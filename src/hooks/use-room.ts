@@ -6,6 +6,7 @@ import {
   RoomEvent,
   Track,
   createLocalScreenTracks,
+  type LocalTrack,
   type LocalVideoTrack,
   type Participant,
   type RemoteParticipant,
@@ -113,6 +114,10 @@ export function useRoom() {
   const screenSharingRef = useRef(false);
   const connectedRef = useRef(false);
   const screenShareSourceIdRef = useRef<string | null>(null);
+  /** The audio track a browser share came with, when the user ticked "share
+   * audio" in Chromium's picker. Held separately from the Electron
+   * system-audio pipeline, which captures independently of the video. */
+  const browserShareAudioRef = useRef<LocalTrack | null>(null);
 
   // Preferences are read inside stable callbacks and event handlers, where a
   // dependency on the live value would mean re-subscribing every change.
@@ -517,6 +522,16 @@ export function useRoom() {
       await stopSystemAudio(room);
       setSystemAudioSharing(false);
     }
+    // On the web the share's audio is a track from the same capture rather
+    // than anything the system-audio pipeline knows about, so it's torn down
+    // here instead.
+    const browserAudio = browserShareAudioRef.current;
+    if (browserAudio) {
+      await local.unpublishTrack(browserAudio).catch(() => {});
+      browserAudio.stop();
+      browserShareAudioRef.current = null;
+      setSystemAudioSharing(false);
+    }
     screenSharingRef.current = false;
     screenShareSourceIdRef.current = null;
     setScreenShareSourceId(null);
@@ -625,6 +640,81 @@ export function useRoom() {
     },
     [publishScreenVideo, setScreenShareAudio, playCue]
   );
+
+  /**
+   * Start a share the way a browser does it: the user picks the screen, window
+   * or tab in Chromium's own dialog, and ticks "share audio" there if they
+   * want it.
+   *
+   * The desktop path can't be reused on the web and vice versa. On desktop we
+   * enumerate sources ourselves (for thumbnails and per-app audio) and hand
+   * the chosen id to the main process before capture; a browser has no such
+   * API — `getDisplayMedia` *is* the picker, and it's the only thing allowed
+   * to choose. Audio arrives on the same capture as a second track rather than
+   * through the system-audio pipeline, which is Electron-only.
+   *
+   * Returns false when the user dismissed the picker, so callers can tell
+   * "cancelled" from "failed" — a cancellation is not an error to report.
+   */
+  const startBrowserScreenShare = useCallback(async (): Promise<boolean> => {
+    const local = room.localParticipant;
+    try {
+      const tracks = await createLocalScreenTracks({
+        // Asks Chromium to offer the "share audio" checkbox. Whether it
+        // appears at all is the browser's call (tab audio: yes; whole screen:
+        // Windows and ChromeOS only), so the audio track is optional below.
+        audio: true,
+        resolution: resolveStreamResolution(qualityRef.current),
+      });
+
+      const videoTrack = tracks.find((t) => t.kind === Track.Kind.Video) as
+        | LocalVideoTrack
+        | undefined;
+      if (!videoTrack) throw new Error("The browser didn't return a screen to share.");
+
+      const existing = local.getTrackPublication(Track.Source.ScreenShare)?.track;
+      if (existing) {
+        await local.unpublishTrack(existing);
+        existing.stop();
+      }
+
+      await local.publishTrack(videoTrack, { source: Track.Source.ScreenShare });
+
+      const audioTrack = tracks.find((t) => t.kind === Track.Kind.Audio);
+      if (audioTrack) {
+        await local.publishTrack(audioTrack, { source: Track.Source.ScreenShareAudio });
+        browserShareAudioRef.current = audioTrack;
+        setSystemAudioSharing(true);
+        setScreenShareAudioState({ mode: "system" });
+      } else {
+        setScreenShareAudioState({ mode: "off" });
+      }
+
+      // Chromium's own "Stop sharing" bar ends the underlying track without
+      // going anywhere near our UI. Without this the app would keep believing
+      // it was sharing a stream that had already stopped.
+      videoTrack.mediaStreamTrack.addEventListener(
+        "ended",
+        () => {
+          void stopScreenShare();
+        },
+        { once: true }
+      );
+
+      // There's no source id to remember: only the browser knows what was
+      // picked, and re-picking means opening its dialog again.
+      screenShareSourceIdRef.current = null;
+      setScreenShareSourceId(null);
+      playCue("screenShareStart");
+      return true;
+    } catch (err) {
+      // Dismissing the browser picker rejects with NotAllowedError — the user
+      // changing their mind, not a failure worth surfacing.
+      if (err instanceof DOMException && err.name === "NotAllowedError") return false;
+      setError(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }, [room, playCue, stopScreenShare]);
 
   /** Swap which screen/window is being shared, keeping audio as-is. */
   const changeScreenShareSource = useCallback(
@@ -798,6 +888,7 @@ export function useRoom() {
     toggleMicrophone,
     toggleScreenShare,
     startScreenShare,
+    startBrowserScreenShare,
     changeScreenShareSource,
     setScreenShareAudio,
     playSoundboardClip,

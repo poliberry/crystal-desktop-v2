@@ -94,8 +94,8 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
         {startsGroup && (
           <Popover>
             <PopoverTrigger asChild>
-              <Avatar size="sm" className="cursor-pointer">
-                <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} />
+              <Avatar size="default" className="cursor-pointer">
+                <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
                 <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
             </PopoverTrigger>
