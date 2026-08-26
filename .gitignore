@@ -9,3 +9,7 @@ dist-electron
 release
 *.tsbuildinfo
 .DS_Store
+# SwiftPM's build tree for the macOS system-audio helper — ~100MB of module
+# caches, and the binary itself is produced by `bun run build:native` on the
+# machine (or CI runner) doing the packaging.
+native/**/.build

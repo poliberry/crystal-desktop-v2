@@ -23,7 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { getDesktopAPI } from "@/lib/desktop";
+import { useOpenSettings } from "@/components/settings/settings-dialog";
 import { badgeDefinition, visibleBadgeIds } from "@/lib/badges";
 import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -129,6 +129,7 @@ export function MemberProfileCard({
   const [serverProfileOpen, setServerProfileOpen] = useState(false);
   const [expandedOpen, setExpandedOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const openSettings = useOpenSettings();
 
   const hasGradient = !!(
     member.borderGradientStart && member.borderGradientEnd
@@ -357,7 +358,7 @@ export function MemberProfileCard({
                   variant="ghost"
                   size="icon"
                   title="Settings"
-                  onClick={() => void getDesktopAPI()?.settings.open()}
+                  onClick={openSettings}
                 >
                   <Cog className="size-4" />
                 </Button>

@@ -100,7 +100,12 @@ const NAVIGATION = [
   },
 ];
 
-export function SettingsShell() {
+/**
+ * @param onRequestClose How to dismiss whatever is hosting this. Omitted when
+ *   the host is a window of its own (the Electron Settings window), where
+ *   closing the window is the same thing as closing the browser tab.
+ */
+export function SettingsShell({ onRequestClose }: { onRequestClose?: () => void }) {
   const me = useQuery(api.users.getCurrentUser);
   const { status, manualStatus, activities } = useMyPresence();
   const [section, setSection] = useState("profile");
@@ -176,7 +181,10 @@ export function SettingsShell() {
                     <SignOutButton>
                       <DropdownMenuItem
                         className="text-destructive"
-                        onClick={() => window.close()}
+                        // Signing out should leave Settings behind either way;
+                        // `window.close()` only does that when this owns the
+                        // window, and is a no-op in a browser tab.
+                        onClick={() => (onRequestClose ? onRequestClose() : window.close())}
                       >
                         <LogOut />
                         <span>Log out</span>

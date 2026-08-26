@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
-import { getDesktopAPI } from "@/lib/desktop";
+import { useOpenSettings } from "@/components/settings/settings-dialog";
 import {
   STATUS_DOT_CLASS,
   STATUS_LABEL,
@@ -83,6 +83,7 @@ export function UserCard() {
   const { muted, deafened, toggleMuted, toggleDeafened } =
     useAudioPreferences();
   const [statusOpen, setStatusOpen] = useState(false);
+  const openSettings = useOpenSettings();
   const title = useCallTitle(activeCall);
   const { communityNavStyle } = useUiPreferences();
   const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
@@ -204,7 +205,7 @@ export function UserCard() {
               variant="ghost"
               size="icon"
               className="size-7 shrink-0 hover:bg-black/10"
-              onClick={() => void getDesktopAPI()?.settings.open()}
+              onClick={openSettings}
             >
               <Settings className="size-4" />
             </Button>
