@@ -35,6 +35,11 @@ const base = yaml.load(fs.readFileSync(path.join(repoRoot, "electron-builder.yml
  * These are the two variables electron-builder itself reads to find a
  * certificate (a base64/path to a .p12, or a name in the keychain), so asking
  * about them is the same question electron-builder is about to ask.
+ *
+ * CI sets CSC_NAME, not CSC_LINK: it imports the certificate into a keychain
+ * itself, because electron-builder's own import passes the certificate
+ * password where `security set-key-partition-list` wants the keychain
+ * password and dies. See the signing step in .github/workflows/release.yml.
  */
 const hasSigningCertificate = !!(process.env.CSC_LINK || process.env.CSC_NAME);
 
