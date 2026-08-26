@@ -182,11 +182,40 @@ jobs:
               release/*.yml
               release/*.blockmap
               !release/builder-debug.yml
+          - os: macos-latest
+            target: mac
+            # The system-audio helper (native/) is a Swift binary compiled on
+            # the runner; only this job has a Swift toolchain, and only the mac
+            # app ships the helper. `native: true` is what gates that step —
+            # the other two jobs never invoke it.
+            native: true
+            # macos-latest runners are Apple Silicon, and the helper `swift
+            # build` produces is host-arch only — an x64 app would ship an
+            # arm64 binary that can't run on the Intel Mac it was built for.
+            # So this is deliberately an arm64-only build; Intel support means
+            # first making the helper a universal binary.
+            extra-args: --arm64
+            # *.zip alongside the *.dmg is not optional: latest-mac.yml points
+            # electron-updater at the zip, and a dmg-only release leaves the
+            # macOS auto-updater with nothing it can download.
+            artifact-glob: |
+              release/*.dmg
+              release/*.zip
+              release/*.yml
+              release/*.blockmap
+              !release/builder-debug.yml
     runs-on: ${{ matrix.os }}
     env:
       # Read by scripts/electron-builder-config.cjs (product name, appId, icon,
       # artifact names) and stamped into the packaged app as `buildChannel`.
       CRYSTAL_CHANNEL: ${{ needs.check.outputs.channel }}
+      # No Developer ID certificate is available here, and electron-builder's
+      # default is to go looking for one in the runner's keychain and fail the
+      # build when it finds none. Off means the mac app ships ad-hoc signed:
+      # it runs, but Gatekeeper shows the unidentified-developer prompt on
+      # first launch until signing/notarization secrets are wired up.
+      # Ignored on the Windows and Linux runners.
+      CSC_IDENTITY_AUTO_DISCOVERY: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -198,6 +227,14 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Kept out of `bun run build` so the Windows and Linux jobs skip it
+      # outright rather than shelling into a script that has nothing to do.
+      # It only has to precede packaging — electron-builder.yml's `mac` block
+      # copies the compiled binary in as a resource.
+      - name: Build the macOS system-audio helper
+        if: matrix.native
+        run: bun run build:native
 
       - name: Build app
         run: bun run build
@@ -222,7 +259,7 @@ jobs:
           "
 
       - name: Package (${{ matrix.target }})
-        run: bunx electron-builder --${{ matrix.target }} --config scripts/electron-builder-config.cjs --publish never
+        run: bunx electron-builder --${{ matrix.target }} ${{ matrix.extra-args }} --config scripts/electron-builder-config.cjs --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

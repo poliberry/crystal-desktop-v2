@@ -126,6 +126,29 @@ function appIconPath(): string | undefined {
 }
 
 /**
+ * The app icon sized for a tray/menu-bar slot.
+ *
+ * `new Tray(path)` uses the image at its natural size, and our icons ship at
+ * 512px+ for the installer — which on macOS is drawn into the menu bar as-is,
+ * swallowing the bar. macOS wants roughly an 18pt image, so it's drawn at 2x
+ * and the buffer tagged as a Retina representation: the logical size stays
+ * 18pt while the pixels stay sharp on a Retina display. Windows and Linux
+ * both want 16px. Not a template image — templates are drawn from alpha
+ * alone, which would reduce a full-colour logo to a solid blob.
+ */
+function trayIconImage(): Electron.NativeImage {
+  const source = appIconPath();
+  if (!source) return nativeImage.createEmpty();
+  const image = nativeImage.createFromPath(source);
+  if (image.isEmpty()) return nativeImage.createEmpty();
+  if (process.platform === "darwin") {
+    const retina = image.resize({ width: 36, height: 36, quality: "best" });
+    return nativeImage.createFromBuffer(retina.toPNG(), { scaleFactor: 2 });
+  }
+  return image.resize({ width: 16, height: 16, quality: "best" });
+}
+
+/**
  * Both windows are frameless (no native titlebar/menu — the renderer draws
  * its own, see TopNav / SettingsShell's window-controls row) but NOT
  * transparent. `transparent: true` disables the OS drop shadow and (on
@@ -629,8 +652,11 @@ app.whenReady().then(async () => {
   // Tray icon: lets the app keep running (and keep watching for
   // notifications) after the window is closed, per the `close` handler in
   // createWindow() above.
-  const tray = new Tray(appIconPath() ?? nativeImage.createEmpty());
+  const tray = new Tray(trayIconImage());
   tray.setToolTip(channel.productName);
+  // Without this macOS swallows the first click of a double-click and delays
+  // the menu; the tray has no double-click behaviour to preserve.
+  if (process.platform === "darwin") tray.setIgnoreDoubleClickEvents(true);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Open ${channel.productName}`, click: () => createOrFocusMainWindow() },

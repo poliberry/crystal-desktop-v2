@@ -74,6 +74,56 @@ function toDeviceId(preferred: string): string {
   return preferred || "default";
 }
 
+/** `getUserMedia` rejects with this when an `exact` constraint names a device
+ * the browser can't produce — "Constraints could not be satisfied". Note it
+ * isn't an `Error` subclass in Chromium, so it has to be sniffed by name. */
+function isOverconstrained(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name;
+  return name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError";
+}
+
+/** Whether `deviceId` is a device the browser will actually hand us right
+ * now, so we know if it's safe to ask for it exactly. */
+async function deviceIsAvailable(kind: MediaDeviceKind, deviceId: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return false;
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  return devices.some((d) => d.kind === kind && d.deviceId === deviceId);
+}
+
+/**
+ * Point the room at the user's chosen input/output.
+ *
+ * `switchActiveDevice` constrains with `exact` by default, which is right for
+ * a device the user picked by hand but fatal for our `""` ("let the OS
+ * decide") default: `exact: "default"` only resolves in Chromium, so on the
+ * web every other browser answers the join with an `OverconstrainedError`. A
+ * saved id is just as brittle — Firefox and Safari mint fresh device ids per
+ * origin/session, so yesterday's choice names nothing today. So `exact` is
+ * only used for an id we can still see in `enumerateDevices`; anything else
+ * degrades to a hint the browser is free to ignore.
+ */
+async function applyDevice(room: Room, kind: MediaDeviceKind, preferred: string): Promise<void> {
+  const exact = preferred ? await deviceIsAvailable(kind, preferred) : false;
+  await room.switchActiveDevice(kind, toDeviceId(preferred), exact).catch(() => {});
+}
+
+/**
+ * Open the mic, and if the requested input turns out not to exist, open it on
+ * whatever the OS offers instead. Losing the exact device is a far better
+ * outcome than failing the join over it.
+ */
+async function enableMicrophone(room: Room, enabled: boolean): Promise<void> {
+  try {
+    await room.localParticipant.setMicrophoneEnabled(enabled);
+  } catch (err) {
+    if (!enabled || !isOverconstrained(err)) throw err;
+    // Passing `exact: false` replaces the stale constraint with a mere
+    // preference, which is what makes the retry able to succeed.
+    await room.switchActiveDevice("audioinput", "default", false).catch(() => {});
+    await room.localParticipant.setMicrophoneEnabled(enabled);
+  }
+}
+
 export function useRoom() {
   const [room] = useState(
     () =>
@@ -403,12 +453,8 @@ export function useRoom() {
         // Join with whatever devices and mute state the user has set globally
         // — the mute/deafen buttons in the user card apply outside a call
         // precisely so they decide how you enter the next one.
-        await room
-          .switchActiveDevice("audioinput", toDeviceId(inputDeviceId))
-          .catch(() => {});
-        await room
-          .switchActiveDevice("audiooutput", toDeviceId(outputDeviceId))
-          .catch(() => {});
+        await applyDevice(room, "audioinput", inputDeviceId);
+        await applyDevice(room, "audiooutput", outputDeviceId);
         applyDeafen();
         // Deafen is a purely local decision, so nothing about the published
         // tracks reveals it — participant attributes are how the rest of the
@@ -425,7 +471,7 @@ export function useRoom() {
         // it gives the track an AudioContext, and an audio processor without
         // one throws. Attaching after the track is published works instead —
         // that's what `syncNoiseFilter` does off `LocalTrackPublished`.
-        await room.localParticipant.setMicrophoneEnabled(!mutedRef.current);
+        await enableMicrophone(room, !mutedRef.current);
         syncLocalTracks();
       } catch (err) {
         setStatus("error");
@@ -450,12 +496,12 @@ export function useRoom() {
   // switching the speaker re-points every attached audio element.
   useEffect(() => {
     if (!connectedRef.current) return;
-    void room.switchActiveDevice("audioinput", toDeviceId(inputDeviceId)).catch(() => {});
+    void applyDevice(room, "audioinput", inputDeviceId);
   }, [room, inputDeviceId]);
 
   useEffect(() => {
     if (!connectedRef.current) return;
-    void room.switchActiveDevice("audiooutput", toDeviceId(outputDeviceId)).catch(() => {});
+    void applyDevice(room, "audiooutput", outputDeviceId);
   }, [room, outputDeviceId]);
 
   // Toggling this mid-call is instant: the filter stays attached and is
@@ -467,8 +513,7 @@ export function useRoom() {
 
   useEffect(() => {
     if (!connectedRef.current) return;
-    room.localParticipant
-      .setMicrophoneEnabled(!muted)
+    enableMicrophone(room, !muted)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(syncLocalTracks);
   }, [room, muted, syncLocalTracks]);

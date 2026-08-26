@@ -41,6 +41,17 @@ module.exports = {
   // `icon.png` at runtime whichever channel it is, so each channel ships its
   // own icon under that one name.
   extraResources: [{ from: `build/${channel.icon}`, to: "icon.png" }],
+  mac: {
+    ...base.mac,
+    // A platform block *replaces* the shared `extraResources` rather than
+    // adding to it, so the mac entry (the system-audio helper) would otherwise
+    // leave the packaged app without the `icon.png` the main process looks up
+    // at runtime — which is what the tray falls back to. Both, explicitly.
+    extraResources: [
+      ...(base.mac?.extraResources ?? []),
+      { from: `build/${channel.icon}`, to: "icon.png" },
+    ],
+  },
   // A product name with a space in it ("Crystal Canary") is exactly the
   // filename mismatch the `nsis` comment in electron-builder.yml describes:
   // electron-builder writes dashes into latest.yml while GitHub's asset upload

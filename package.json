@@ -11,14 +11,14 @@
     "dev": "concurrently -k -s first \"bun run dev:next\" \"bun run dev:electron\" \"bun run dev:convex\"",
     "dev:next": "next dev -p 3000",
     "dev:convex": "convex dev",
-    "dev:electron": "bun run build:electron && wait-on http-get://localhost:3000 && cross-env ELECTRON_START_URL=http://localhost:3000 bun scripts/run-electron.mjs .",
+    "dev:electron": "bun run build:native && bun run build:electron && wait-on http-get://localhost:3000 && cross-env ELECTRON_START_URL=http://localhost:3000 bun scripts/run-electron.mjs .",
     "build": "bun run build:next && bun run build:electron",
     "build:next": "next build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:native": "bash native/build.sh",
     "start": "bun scripts/run-electron.mjs .",
     "token": "bun scripts/token.mjs",
-    "dist": "bun run build && electron-builder -wl --config scripts/electron-builder-config.cjs"
+    "dist": "bun run build:native && bun run build && electron-builder -m --config scripts/electron-builder-config.cjs"
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.61.3",
