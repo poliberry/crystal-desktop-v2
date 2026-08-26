@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements for the signed macOS build.
+
+  The hardened runtime denies access to protected resources unless the app
+  holds the matching entitlement, and electron-builder's built-in template
+  (templates/entitlements.mac.plist) grants only the three JIT/library
+  exceptions Electron needs to start. It says nothing about the microphone or
+  the camera — so a hardened build captures no audio at all, which is not a
+  permission the user can grant their way out of: without the entitlement the
+  request never reaches TCC, so Crystal never even appears under
+  Privacy & Security.
+
+  This file replaces that template (electron-builder picks it up by name from
+  directories.buildResources). The first three are copied from it verbatim and
+  are still required; the device entitlements are the addition.
+
+  Only the ad-hoc branch escapes this, because it turns hardened runtime off —
+  which is why the mic worked in unsigned builds and broke the moment real
+  signing landed. See scripts/electron-builder-config.cjs.
+
+  Keep in step with entitlements.mac.inherit.plist, which covers the helper
+  processes — Chromium captures audio in a helper, not in the main process, so
+  granting this only here fixes nothing.
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8. https://github.com/electron/electron-notarize#prerequisites -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- https://github.com/electron-userland/electron-builder/issues/3940 -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Voice chat: the microphone, and the camera for video calls, which the
+         hardened runtime blocks just as thoroughly. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+  </dict>
+</plist>
