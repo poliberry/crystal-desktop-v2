@@ -269,10 +269,17 @@ export function MemberProfileCard({
                 text={customStatus}
                 kind={statusBubble}
                 onClick={isSelf ? () => setStatusOpen(true) : undefined}
-                // `ml-3` on top of the row's own gap, because the tail hangs
-                // off the bubble's left edge and has to land in that gap
-                // rather than on the avatar.
-                className={cn("mb-1 ml-3 min-w-0", expanded ? "max-w-64" : "max-w-40")}
+                // Up against the avatar's top rather than sitting on the row's
+                // baseline: the row is as tall as the avatar, and a bubble at
+                // the bottom of it reads as attached to the shoulders.
+                //
+                // `ml-3` on top of the row's own gap, because the tail hangs off
+                // the bubble's left edge and has to land in that gap rather
+                // than on the avatar.
+                className={cn(
+                  "mt-1 ml-3 min-w-0 self-start",
+                  expanded ? "max-w-64" : "max-w-40",
+                )}
               />
             )}
           </div>

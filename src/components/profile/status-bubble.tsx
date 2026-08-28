@@ -65,16 +65,17 @@ export function StatusBubble({
       )}
     >
       {thought ? (
-        // Two circles trailing back towards the avatar, smaller as they go and
-        // dropping as they do.
+        // Two circles trailing up and back towards the avatar, smaller as they
+        // go — the bubble sits below the head it came out of, so the thought
+        // rises towards it rather than dropping away from it.
         <>
           <span
             aria-hidden
-            className={cn("absolute top-1/2 -left-3 size-2.5 rounded-full", SURFACE)}
+            className={cn("absolute top-1 -left-3 size-2.5 rounded-full", SURFACE)}
           />
           <span
             aria-hidden
-            className={cn("absolute top-[72%] -left-5 size-1.5 rounded-full", SURFACE)}
+            className={cn("absolute -top-1.5 -left-5 size-1.5 rounded-full", SURFACE)}
           />
         </>
       ) : (
@@ -84,10 +85,11 @@ export function StatusBubble({
         <span
           aria-hidden
           className={cn(
-            // Butted against the bubble with a pixel to spare, not over it:
-            // the surface is translucent, so any overlap would show as a
+            // Up near the top edge, pointing back at the avatar beside it.
+            // Butted against the bubble with a pixel to spare rather than over
+            // it: the surface is translucent, so any overlap would show as a
             // darker patch where the two stack.
-            "absolute top-1/2 -left-[9px] size-2.5 -translate-y-1/2",
+            "absolute top-1.5 -left-[9px] size-2.5",
             "[clip-path:polygon(100%_0,100%_100%,0_50%)]",
             SURFACE
           )}
