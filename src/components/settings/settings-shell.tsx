@@ -64,7 +64,7 @@ import {
 } from "@/lib/presence";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "../ui/avatar";
 import { useMyPresence } from "@/hooks/use-presence";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 const TABS = [
   { value: "appearance", label: "Appearance", icon: Palette },
@@ -145,22 +145,32 @@ function SettingsSection({
    * the viewport inside it does — and React doesn't delegate scroll events, so
    * an `onScroll` on the root would never fire.
    *
-   * Done in a ref callback so the restore happens after layout and before the
-   * browser paints, which is what keeps it from being visible as a jump. The
-   * returned cleanup is React 19's; it runs when the section changes and this
-   * element is torn down.
+   * The restore happens in a ref callback, after layout and before the browser
+   * paints, so it isn't visible as a jump. The returned cleanup is React 19's.
+   *
+   * `useCallback` is load-bearing rather than an optimisation. A ref callback
+   * that changes identity is torn down and re-run on *every* render, and this
+   * panel re-renders whenever presence ticks — so the restore would fire
+   * constantly, and each one would slam `scrollTop` back to the last committed
+   * value mid-gesture, cancelling the wheel animation in `useSmoothScroll`.
+   * The symptom is a page that refuses to scroll at all. Keyed on the section,
+   * it runs once per section instead.
    */
-  const attach = (root: HTMLDivElement | null) => {
-    const viewport = root?.querySelector<HTMLElement>(
-      '[data-slot="scroll-area-viewport"]',
-    );
-    if (!viewport) return;
+  const attach = useCallback(
+    (root: HTMLDivElement | null) => {
+      const viewport = root?.querySelector<HTMLElement>(
+        '[data-slot="scroll-area-viewport"]',
+      );
+      if (!viewport) return;
 
-    viewport.scrollTop = offsets.current.get(section) ?? 0;
-    const remember = () => offsets.current.set(section, viewport.scrollTop);
-    viewport.addEventListener("scroll", remember, { passive: true });
-    return () => viewport.removeEventListener("scroll", remember);
-  };
+      const saved = offsets.current.get(section) ?? 0;
+      if (saved) viewport.scrollTop = saved;
+      const remember = () => offsets.current.set(section, viewport.scrollTop);
+      viewport.addEventListener("scroll", remember, { passive: true });
+      return () => viewport.removeEventListener("scroll", remember);
+    },
+    [section],
+  );
 
   return (
     <ScrollArea key={section} ref={attach} className="h-full min-h-0 p-4">
