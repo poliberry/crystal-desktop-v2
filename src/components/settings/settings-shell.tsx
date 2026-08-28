@@ -4,6 +4,7 @@ import {
   Accessibility,
   Bell,
   ChevronDown,
+  Code2,
   Download,
   Info,
   KeyRound,
@@ -14,6 +15,9 @@ import {
   User,
 } from "lucide-react";
 
+import { useOpenCustomCss } from "@/components/settings/custom-css-dialog";
+import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
+
 import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,7 +26,6 @@ import { AccessibilityTab } from "@/components/settings/tabs/accessibility-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
 import { NotificationsTab } from "@/components/settings/tabs/notifications-tab";
-import { ProfileTab } from "@/components/settings/tabs/profile-tab";
 import { ServerProfilesTab } from "@/components/settings/tabs/server-profiles-tab";
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
@@ -64,7 +67,6 @@ import { useMyPresence } from "@/hooks/use-presence";
 import { useState } from "react";
 
 const TABS = [
-  { value: "profile", label: "Profile", icon: User },
   { value: "appearance", label: "Appearance", icon: Palette },
   { value: "accessibility", label: "Accessibility", icon: Accessibility },
   { value: "servers", label: "Servers", icon: Server },
@@ -75,11 +77,21 @@ const TABS = [
   { value: "about", label: "About", icon: Info },
 ] as const;
 
-const NAVIGATION = [
+/** A row that opens something instead of switching the panel. The profile
+ * editor is three panes wide and belongs in its own dialog, but this is still
+ * where people come looking for it. */
+type NavChild = {
+  value: string;
+  label: string;
+  icon: typeof User;
+  opens?: "profile-editor" | "custom-css";
+};
+
+const NAVIGATION: { label: string; children: NavChild[] }[] = [
   {
     label: "General",
     children: [
-      { value: "profile", label: "Profile", icon: User },
+      { value: "profile", label: "Edit Profile", icon: User, opens: "profile-editor" },
       { value: "account", label: "Account", icon: KeyRound },
       { value: "updates", label: "Updates", icon: Download },
     ],
@@ -90,6 +102,7 @@ const NAVIGATION = [
       { value: "appearance", label: "Appearance", icon: Palette },
       { value: "accessibility", label: "Accessibility", icon: Accessibility },
       { value: "servers", label: "Server Profiles", icon: Server },
+      { value: "custom-css", label: "Custom CSS", icon: Code2, opens: "custom-css" },
     ],
   },
   {
@@ -113,7 +126,11 @@ export function SettingsShell({
 }) {
   const me = useQuery(api.users.getCurrentUser);
   const { status, manualStatus, activities } = useMyPresence();
-  const [section, setSection] = useState("profile");
+  const openProfileEditor = useOpenProfileEditor();
+  const openCustomCss = useOpenCustomCss();
+  // Account rather than profile: the profile editor is a dialog of its own
+  // now, so opening Settings can't land on it.
+  const [section, setSection] = useState("account");
 
   const subtitle = me?.customStatus
     ? `${me?.customStatus}`
@@ -206,10 +223,25 @@ export function SettingsShell({
                       (NAV_CHILD_ITEM, NAV_CHILD_ITEM_INDEX) => (
                         <SidebarMenuItem
                           key={NAV_CHILD_ITEM_INDEX}
-                          onClick={() => setSection(NAV_CHILD_ITEM.value)}
+                          onClick={() => {
+                            if (NAV_CHILD_ITEM.opens === "profile-editor") {
+                              openProfileEditor();
+                              return;
+                            }
+                            if (NAV_CHILD_ITEM.opens === "custom-css") {
+                              openCustomCss();
+                              return;
+                            }
+                            setSection(NAV_CHILD_ITEM.value);
+                          }}
                         >
                           <SidebarMenuButton
-                            isActive={section === NAV_CHILD_ITEM.value}
+                            // A row that opens a dialog is never the panel's
+                            // current section, so it never reads as selected.
+                            isActive={
+                              !NAV_CHILD_ITEM.opens &&
+                              section === NAV_CHILD_ITEM.value
+                            }
                             className="flex flex-row gap-2 items-center"
                           >
                             <NAV_CHILD_ITEM.icon />
@@ -225,14 +257,6 @@ export function SettingsShell({
           </SidebarContent>
           <SidebarFooter />
         </Sidebar>
-        {/* Profile is full-bleed: it draws its own three-pane layout and needs
-            the panel's whole height, whereas every other tab is a column of
-            cards in a padded, scrolling box. */}
-        {section === "profile" ? (
-          <main className="min-h-0 w-full pt-9">
-            <ProfileTab />
-          </main>
-        ) : (
         <main className="w-full pt-9">
           <ScrollArea className="min-h-0 h-full flex-1">
             <div className="mx-auto w-full px-6 py-6">
@@ -247,7 +271,6 @@ export function SettingsShell({
             </div>
           </ScrollArea>
         </main>
-        )}
       </SidebarProvider>
 
       <Tabs defaultValue="profile" className="h-full min-h-0 gap-0">

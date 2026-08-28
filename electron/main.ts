@@ -126,6 +126,17 @@ function appIconPath(): string | undefined {
 }
 
 /**
+ * Where the user's custom stylesheet lives.
+ *
+ * Under `userData`, which is per-channel (see `applyChannelIdentity`) — a
+ * stable release and a beta running side by side get their own, which is what
+ * you want when the point of the file is to be experimented with.
+ */
+function customCssPath(): string {
+  return path.join(app.getPath("userData"), "custom.css");
+}
+
+/**
  * The app icon sized for a tray/menu-bar slot.
  *
  * `new Tray(path)` uses the image at its natural size, and our icons ship at
@@ -585,6 +596,45 @@ app.whenReady().then(async () => {
       node: process.versions.node,
     },
   }));
+
+  /**
+   * The user's custom stylesheet, as a real file in the app's data directory.
+   *
+   * A file rather than a preference blob because that's what a stylesheet is:
+   * it can be opened in an editor, kept in version control, copied between
+   * machines, and — most usefully — fixed from outside the app when a rule in
+   * it has made the UI unusable. The renderer keeps a copy in `localStorage`
+   * so the web build has the same feature and so the first paint doesn't wait
+   * on IPC; this is the copy that survives a reinstall.
+   */
+  ipcMain.handle("custom-css:read", () => {
+    try {
+      return fs.readFileSync(customCssPath(), "utf8");
+    } catch {
+      // Not written yet, or unreadable. Either way the answer is "no styles".
+      return "";
+    }
+  });
+
+  ipcMain.handle("custom-css:write", (_event, css: string) => {
+    const file = customCssPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof css === "string" ? css : "", "utf8");
+    return file;
+  });
+
+  /** Where that file lives, so the UI can tell the user where to look. */
+  ipcMain.handle("custom-css:path", () => customCssPath());
+
+  ipcMain.handle("custom-css:reveal", async () => {
+    const file = customCssPath();
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "", "utf8");
+    }
+    shell.showItemInFolder(file);
+    return true;
+  });
 
   ipcMain.handle("pip:open", (_event, options?: { width?: number; height?: number; title?: string }) => {
     createOrFocusPipWindow(options);

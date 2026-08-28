@@ -8,7 +8,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { FriendActionButton } from "@/components/friend-action-button";
 import { StatusDialog } from "@/components/status-dialog";
-import { ProfileDialog } from "@/components/profile-dialog";
+import { useOpenProfile } from "@/components/profile/profile-page";
+import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
 import { UserRichPresenceCard } from "@/components/rich-presence-card";
 import {
   Avatar,
@@ -38,7 +39,6 @@ import {
 } from "@/components/profile/status-bubble";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
-import { ServerProfileDialog } from "./server-profile-dialog";
 
 export interface MemberProfileMember {
   userId: Id<"users">;
@@ -129,7 +129,7 @@ export function MemberProfileCard({
   member: MemberProfileMember;
   communityId?: Id<"communities">;
   communityName?: string;
-  /** False inside `ProfileDialog`, which is itself the expanded view. */
+  /** False inside the profile page, which is itself the expanded view. */
   expandable?: boolean;
   /** Larger layout for the dialog: taller banner, bigger avatar, name on its
    * own line under it. */
@@ -166,10 +166,10 @@ export function MemberProfileCard({
   // bubble sits, because the badge row is what pushes the avatar down.
   const badges = (useQuery(api.users.badgesOf, { userId: member.userId }) ??
     []) as ProfileBadge[];
-  const [serverProfileOpen, setServerProfileOpen] = useState(false);
-  const [expandedOpen, setExpandedOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const openSettings = useOpenSettings();
+  const openProfile = useOpenProfile();
+  const openProfileEditor = useOpenProfileEditor();
 
   const hasGradient = !!(
     member.borderGradientStart && member.borderGradientEnd
@@ -408,43 +408,34 @@ export function MemberProfileCard({
 
           <div className="absolute top-2 right-2 flex items-center gap-0.5">
             {expandable && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Expand profile"
-                  onClick={() => setExpandedOpen(true)}
-                >
-                  <Maximize2 className="size-4" />
-                </Button>
-                <ProfileDialog
-                  open={expandedOpen}
-                  onOpenChange={setExpandedOpen}
-                  member={member}
-                  communityId={communityId}
-                  communityName={communityName}
-                />
-              </>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="Open profile"
+                // A page rather than a dialog now — see `ProfilePageProvider`.
+                // The identity this card already has is handed over so the page
+                // paints complete on its first frame.
+                onClick={() =>
+                  openProfile({ member, communityId, communityName })
+                }
+              >
+                <Maximize2 className="size-4" />
+              </Button>
             )}
             {isSelf && (
               <>
-                {communityId && (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setServerProfileOpen(true)}
-                    >
-                      <UserPen className="size-4" />
-                    </Button>
-                    <ServerProfileDialog
-                      communityId={communityId}
-                      communityName={communityName ?? ""}
-                      open={serverProfileOpen}
-                      onOpenChange={setServerProfileOpen}
-                    />
-                  </>
-                )}
+                {/* One editor for both scopes: it has a dropdown for picking
+                    the account or any server you're in, so a separate
+                    "server profile" dialog would be a second way to write the
+                    same fields. */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Edit profile"
+                  onClick={openProfileEditor}
+                >
+                  <UserPen className="size-4" />
+                </Button>
 
                 <Button
                   variant="ghost"

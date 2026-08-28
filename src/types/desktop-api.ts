@@ -197,6 +197,18 @@ export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
   appInfo(): Promise<AppInfo>;
+  /**
+   * The user's custom stylesheet, kept as a real file in the app's data
+   * directory. Optional so a renderer running against an older preload — a
+   * packaged build whose window predates an update — falls back to the
+   * `localStorage` copy rather than throwing.
+   */
+  customCss?: {
+    read(): Promise<string>;
+    write(css: string): Promise<string>;
+    path(): Promise<string>;
+    reveal(): Promise<boolean>;
+  };
   window: {
     minimize(): Promise<void>;
     toggleMaximize(): Promise<void>;

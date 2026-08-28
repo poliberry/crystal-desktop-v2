@@ -6,6 +6,12 @@ const api = {
   isElectron: true,
   platform: process.platform,
   appInfo: () => ipcRenderer.invoke("app:info"),
+  customCss: {
+    read: () => ipcRenderer.invoke("custom-css:read"),
+    write: (css: string) => ipcRenderer.invoke("custom-css:write", css),
+    path: () => ipcRenderer.invoke("custom-css:path"),
+    reveal: () => ipcRenderer.invoke("custom-css:reveal"),
+  },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize"),
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),

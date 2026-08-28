@@ -15,6 +15,10 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
 import { DataPreloader } from "@/components/data-preloader";
 import { FileDropGuard } from "@/components/home/composer-attachments";
+import { CustomCssProvider } from "@/components/custom-css-provider";
+import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog";
+import { ProfileEditorProvider } from "@/components/profile/profile-editor-dialog";
+import { ProfilePageProvider } from "@/components/profile/profile-page";
 import { SettingsDialogProvider } from "@/components/settings/settings-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -71,6 +75,9 @@ function CacheScope() {
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider>
+      {/* Outside everything: the user's own stylesheet is injected into
+          `document.head` and has to be able to reach anything below. */}
+      <CustomCssProvider>
       <AccessibilityProvider>
         <UiPreferencesProvider>
           <AudioPreferencesProvider>
@@ -81,15 +88,27 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   <AuthCallbackHandler />
                   <DataPreloader />
                   <FileDropGuard />
-                  {/* Inside Convex/Clerk: the settings shell it renders on the
-                      web queries the current user and their presence. */}
-                  <SettingsDialogProvider>{children}</SettingsDialogProvider>
+                  {/* All inside Convex/Clerk: each of these renders something
+                      that queries the current user.
+
+                      Settings is outermost of the three dialog hosts because
+                      its sidebar is what opens the other two — the profile
+                      editor and the CSS editor are reachable from there, and a
+                      provider cannot be used by something above it. */}
+                  <CustomCssProviderDialog>
+                    <ProfileEditorProvider>
+                      <ProfilePageProvider>
+                        <SettingsDialogProvider>{children}</SettingsDialogProvider>
+                      </ProfilePageProvider>
+                    </ProfileEditorProvider>
+                  </CustomCssProviderDialog>
                 </ConvexProviderWithClerk>
               </ClerkProvider>
             </TooltipProvider>
           </AudioPreferencesProvider>
         </UiPreferencesProvider>
       </AccessibilityProvider>
+      </CustomCssProvider>
     </ThemeProvider>
   );
 }
