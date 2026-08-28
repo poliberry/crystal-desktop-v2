@@ -246,7 +246,10 @@ export function MemberProfileCard({
                 <AvatarFallback className="text-lg">
                   {member.name.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
-                <AvatarDecoration src={decorationSrc(avatarDecoration)} />
+                {/* The one place a decoration plays on its own: this card
+                    is about one person, and is opened to look at them.
+                    Everywhere else waits to be pointed at. */}
+                <AvatarDecoration src={decorationSrc(avatarDecoration)} animate />
                 {/* Larger dot with thicker ring for the profile card — and a
                     cake sized to match on the day. */}
                 <PresenceBadge

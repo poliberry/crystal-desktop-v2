@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Avatar as AvatarPrimitive } from "radix-ui"
 
+import { useStaticFrame } from "@/hooks/use-static-frame"
 import { cn } from "@/lib/utils"
 
 function Avatar({
@@ -84,14 +85,51 @@ function AvatarFallback({
  */
 function AvatarDecoration({
   src,
+  animate = "hover",
   className,
   ...props
-}: React.ComponentProps<"img"> & { src: string | undefined }) {
+}: React.ComponentProps<"img"> & {
+  src: string | undefined;
+  /**
+   * When an animated decoration is allowed to play. `"hover"` — the default —
+   * holds it on its first frame until the avatar is pointed at, because a
+   * member list is fifty avatars and fifty looping animations is a room full
+   * of moving parts nobody asked to look at. `true` is for the places that are
+   * *about* one person, where the decoration is worth seeing in full.
+   */
+  animate?: boolean | "hover";
+}) {
+  const ref = React.useRef<HTMLImageElement>(null);
+  const [hovered, setHovered] = React.useState(false);
+  const frozen = animate !== true && !hovered;
+  const poster = useStaticFrame(src, frozen);
+
+  // The hover target is the avatar, not this: the decoration is
+  // `pointer-events-none` (it overhangs the avatar on every side, and a frame
+  // that swallowed clicks would break whatever the avatar is a button for), so
+  // it can't be told about its own hover. Its parent is the `Avatar` root by
+  // construction — this has to be a child of one to be positioned at all.
+  React.useEffect(() => {
+    const parent = ref.current?.parentElement;
+    if (!parent || animate === true) return;
+    const enter = () => setHovered(true);
+    const leave = () => setHovered(false);
+    parent.addEventListener("pointerenter", enter);
+    parent.addEventListener("pointerleave", leave);
+    return () => {
+      parent.removeEventListener("pointerenter", enter);
+      parent.removeEventListener("pointerleave", leave);
+    };
+  }, [animate]);
+
   if (!src) return null;
   return (
     <img
+      ref={ref}
       data-slot="avatar-decoration"
-      src={src}
+      // The poster is a still of this same file, so a decoration that isn't
+      // animated in the first place is bit-for-bit what it always was.
+      src={poster ?? src}
       alt=""
       aria-hidden
       draggable={false}
