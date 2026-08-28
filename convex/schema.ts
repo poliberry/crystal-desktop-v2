@@ -50,6 +50,7 @@ export default defineSchema({
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
+    dob: v.optional(v.string()),
     bio: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
     /** Dominant colour of the avatar, sampled on the client (see

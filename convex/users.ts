@@ -190,10 +190,23 @@ export const updateProfileExtended = mutation({
     borderGradientStart: v.optional(v.string()),
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
+    /** `YYYY-MM-DD`, or empty to clear it. */
+    dob: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
     const patch: Record<string, string | number | undefined> = {};
+    if (args.dob !== undefined) {
+      const dob = args.dob.trim();
+      // Anything that isn't `YYYY-MM-DD` is rejected rather than stored and
+      // silently ignored later: the birthday check splits on the dashes, so a
+      // malformed value would just never match and look like a bug in the
+      // greeting instead of in the field that set it.
+      if (dob && !/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+        throw new Error("Date of birth must be in YYYY-MM-DD form.");
+      }
+      patch.dob = dob || undefined;
+    }
     if (args.customStatus !== undefined) {
       patch.customStatus = args.customStatus.trim().slice(0, 128) || undefined;
       // A status written without a deadline replaces one that had one, rather

@@ -199,6 +199,353 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * Fade masks
+ *
+ * Nameplates and the channel-welcome glyph are decoration behind real
+ * content, so they fade out rather than stopping at a hard edge. A mask is
+ * the only way to do that over an unknown backdrop — the rows underneath are
+ * translucent and change colour on hover and when selected, so an overlay
+ * gradient would have to name a colour that isn't always the one behind it.
+ *
+ * Why a class and not an inline `style` (which is what these used to be):
+ * inline styles are the first thing a `style-src` CSP drops, which takes the
+ * mask with it and leaves the image at full strength — the desktop build has
+ * no such policy, so the split only ever showed up on the web. Living in the
+ * stylesheet also means the prefixed and unprefixed properties are written
+ * once instead of at six call sites.
+ *
+ * `mask-repeat`/`mask-size` are spelled out because their initial values
+ * (`repeat` / `auto`) differ from what a single full-bleed gradient wants,
+ * and engines have historically disagreed about the defaults for the
+ * prefixed form.
+ * ------------------------------------------------------------------------- */
+
+/* Fades leftward, so the plate is solid at the right edge and gone by the
+ * time it reaches the name. */
+.fade-mask-l {
+  -webkit-mask-image: linear-gradient(to left, #000 0%, #000 30%, transparent 100%);
+  mask-image: linear-gradient(to left, #000 0%, #000 30%, transparent 100%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  mask-mode: alpha;
+}
+
+/* Corner-to-corner, for a square glyph that should dissolve into the page
+ * rather than sit on it. */
+.fade-mask-br {
+  -webkit-mask-image: linear-gradient(
+    to bottom right,
+    #000 0%,
+    #000 5%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to bottom right, #000 0%, #000 5%, transparent 100%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  mask-mode: alpha;
+}
+
+/* Nothing to fall back to on an engine with no masking at all: these are
+ * <img> elements, so there's no pseudo-element to lay a gradient over, and an
+ * unfaded plate running under the text is worse than no plate. Masking has
+ * been available everywhere since Firefox 53 and Safari 15.4, so this is a
+ * floor, not a path anyone is expected to take. */
+@supports not (mask-image: linear-gradient(#000, transparent)) {
+  @supports not (-webkit-mask-image: linear-gradient(#000, transparent)) {
+    .fade-mask-l,
+    .fade-mask-br {
+      display: none;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Birthday gift
+ *
+ * A real box rather than a picture of one: five faces per lid and base, laid
+ * out in a `preserve-3d` scene so the sides catch different shading and the
+ * lid can lift off along the scene's own Y axis. The ribbon is a gradient
+ * baked into each face instead of extra elements — a stripe that has to line
+ * up across five surfaces is easier to keep in register as one percentage
+ * than as five positioned divs.
+ *
+ * Sizes are fixed px, and every face is centred with `translate(-50%, -50%)`
+ * before its own rotation, so a face only has to know how far out from the
+ * middle it sits. Structure lives here; the choreography (shake, lift, exit)
+ * is framer-motion's, on wrapper elements that own no static transform of
+ * their own — the two must never write to `transform` on the same node.
+ * ------------------------------------------------------------------------- */
+
+.gift-scene {
+  --gift-body: oklch(0.52 0.18 255);
+  --gift-ribbon: oklch(0.76 0.19 156);
+  perspective: 900px;
+  perspective-origin: 50% 40%;
+}
+
+/* Every wrapper between the scene and the faces needs this: `perspective`
+ * only reaches direct children, so each intermediate node has to pass the 3D
+ * context down or the box collapses to a flat sticker. */
+.gift-3d {
+  transform-style: preserve-3d;
+}
+
+/* The resting tilt — down from above and round to the left, so three faces
+ * are visible at once, which is what sells it as an object. Static, and it
+ * owns the `transform` of this node alone: any framer-motion animation must
+ * live on a wrapper, or it overwrites this and flattens the box. */
+.gift-tilt {
+  transform: rotateX(-22deg) rotateY(-32deg);
+  transform-style: preserve-3d;
+}
+
+.gift-base,
+.gift-lid {
+  position: absolute;
+  transform-style: preserve-3d;
+}
+
+.gift-base {
+  left: 50%;
+  top: 50%;
+  width: 168px;
+  height: 116px;
+  margin: -58px 0 0 -84px;
+}
+
+/* Sits above the base by its own height plus a hair, and overhangs it
+ * slightly the way a real lid does. */
+/* The base is 116 tall and centred, so its rim is 58 above centre; the lid is
+ * 40 tall, and its own top therefore has to land at -96 for the two to meet.
+ * The extra 2px of overlap is the skirt sitting over the rim rather than
+ * balancing on it. */
+.gift-lid {
+  left: 50%;
+  top: 50%;
+  width: 184px;
+  height: 40px;
+  margin: -96px 0 0 -92px;
+}
+
+.gift-face {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background-color: var(--gift-body);
+  backface-visibility: hidden;
+}
+
+/* Front and back carry a single vertical ribbon; the sides carry the same
+ * stripe so it wraps continuously around the box. */
+/* Two layers: a top-down sheen over the ribbon, so a face isn't one flat
+ * rectangle of colour. Paper catches light unevenly, and without this the
+ * faces read as swatches even once the geometry is right. */
+.gift-face--wrap {
+  background-image:
+    linear-gradient(
+      175deg,
+      oklch(1 0 0 / 0.18) 0%,
+      transparent 42%,
+      oklch(0 0 0 / 0.24) 100%
+    ),
+    linear-gradient(
+      90deg,
+      transparent 0 42%,
+      var(--gift-ribbon) 42% 58%,
+      transparent 58% 100%
+    );
+}
+
+/* The lit face, the shaded sides, the face turned away: enough separation to
+ * read as volume without pretending to be a light model. */
+.gift-face--side {
+  filter: brightness(0.82);
+}
+.gift-face--back {
+  filter: brightness(0.68);
+}
+.gift-face--top {
+  filter: brightness(1.06);
+}
+
+.gift-base .gift-face--front {
+  width: 168px;
+  height: 116px;
+  transform: translate(-50%, -50%) translateZ(84px);
+}
+.gift-base .gift-face--back {
+  width: 168px;
+  height: 116px;
+  transform: translate(-50%, -50%) rotateY(180deg) translateZ(84px);
+}
+.gift-base .gift-face--left {
+  width: 168px;
+  height: 116px;
+  transform: translate(-50%, -50%) rotateY(-90deg) translateZ(84px);
+}
+.gift-base .gift-face--right {
+  width: 168px;
+  height: 116px;
+  transform: translate(-50%, -50%) rotateY(90deg) translateZ(84px);
+}
+
+.gift-lid .gift-face--front {
+  width: 184px;
+  height: 40px;
+  transform: translate(-50%, -50%) translateZ(92px);
+}
+.gift-lid .gift-face--back {
+  width: 184px;
+  height: 40px;
+  transform: translate(-50%, -50%) rotateY(180deg) translateZ(92px);
+}
+.gift-lid .gift-face--left {
+  width: 184px;
+  height: 40px;
+  transform: translate(-50%, -50%) rotateY(-90deg) translateZ(92px);
+}
+.gift-lid .gift-face--right {
+  width: 184px;
+  height: 40px;
+  transform: translate(-50%, -50%) rotateY(90deg) translateZ(92px);
+}
+
+/* The base's top only matters for the moment the lid is airborne — without
+ * it the box reads as a hollow shell, since the far faces are
+ * `backface-visibility: hidden` and you'd see straight through. Dark, so it
+ * passes for the inside of a box rather than a lid that failed to leave. */
+.gift-base .gift-face--top {
+  width: 168px;
+  height: 168px;
+  transform: translate(-50%, -50%) rotateX(90deg) translateZ(58px);
+  filter: brightness(0.32);
+}
+
+.gift-lid .gift-face--top {
+  width: 184px;
+  height: 184px;
+  transform: translate(-50%, -50%) rotateX(90deg) translateZ(20px);
+  background-image:
+    radial-gradient(
+      120% 120% at 30% 20%,
+      oklch(1 0 0 / 0.22),
+      transparent 60%
+    ),
+    linear-gradient(
+      90deg,
+      transparent 0 42%,
+      var(--gift-ribbon) 42% 58%,
+      transparent 58% 100%
+    ),
+    linear-gradient(
+      0deg,
+      transparent 0 42%,
+      var(--gift-ribbon) 42% 58%,
+      transparent 58% 100%
+    );
+}
+
+/* A dark line where the lid's skirt meets the box, which is most of what
+ * makes a lid look like a separate piece rather than a stripe. */
+.gift-lid .gift-face--front,
+.gift-lid .gift-face--back,
+.gift-lid .gift-face--left,
+.gift-lid .gift-face--right {
+  box-shadow: inset 0 -5px 0 oklch(0 0 0 / 0.25);
+}
+
+/* A bow that stands up off the lid rather than being painted on it.
+ *
+ * A plain div already lies in the vertical plane — it's the *horizontal*
+ * faces that need rotating — so each loop starts upright and only needs
+ * splaying: `rotateY` swings it around the knot, `rotate` fans it outward.
+ * Four loops at two different `rotateY` angles is what reads as a bow from
+ * any viewing angle; two would vanish edge-on as the box turns.
+ *
+ * The group lives in the lid's own 3D space, so it lifts, tilts and drops
+ * with the lid without any of it being animated separately. */
+.gift-bow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-style: preserve-3d;
+  /* Half the lid's height up from its centre, i.e. resting on the top face. */
+  transform: translateY(-20px);
+}
+
+/* Taller than it is wide, so a loop reads as a length of ribbon doubled back
+ * on itself rather than as a ring. The bottom edge sits on the surface and
+ * the pivot is bottom-centre, which is where the knot lands — every loop is
+ * then just an angle away from that one point. */
+.gift-bow__loop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 50px;
+  margin: -50px 0 0 -18px;
+  border: 9px solid var(--gift-ribbon);
+  border-radius: 50% 50% 42% 42%;
+  transform-origin: 50% 100%;
+}
+
+/* The lean is the whole trick: a loop that stays upright reads as a ring
+ * standing on the box, and two of them side by side read as goggles. At ~65°
+ * off vertical they splay out low over the lid the way a real bow does.
+ *
+ * The first pair falls left and right; the second is turned a quarter turn
+ * first, so it falls toward and away from the viewer instead. Four
+ * directions means the bow still has loops facing you at any angle the box
+ * turns through. */
+.gift-bow__loop--left {
+  transform: rotate(-66deg);
+}
+.gift-bow__loop--right {
+  transform: rotate(66deg);
+}
+.gift-bow__loop--front {
+  transform: rotateY(90deg) rotate(-58deg);
+  filter: brightness(1.08);
+}
+/* Darker, because it's the one leaning away from the light. */
+.gift-bow__loop--back {
+  transform: rotateY(90deg) rotate(58deg);
+  filter: brightness(0.75);
+}
+
+/* Sits over the join. The offset highlight is what turns a flat disc into
+ * something rounded. */
+.gift-knot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  margin: -19px 0 0 -12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, oklch(1 0 0 / 0.55), transparent 62%),
+    var(--gift-ribbon);
+}
+
+/* Grounds the box. A flat ellipse on the floor of the scene rather than a
+ * `box-shadow`, which would sit on the front face and travel with it. */
+.gift-shadow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 220px;
+  height: 220px;
+  margin: -110px 0 0 -110px;
+  transform: rotateX(90deg) translateZ(-62px);
+  background: radial-gradient(closest-side, oklch(0 0 0 / 0.55), transparent);
+}
+
+/* ---------------------------------------------------------------------------
  * Scrollbars
  *
  * Chromium is the only engine here (Electron), so the `::-webkit-scrollbar`

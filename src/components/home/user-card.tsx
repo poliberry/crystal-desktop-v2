@@ -398,20 +398,14 @@ export function UserCard() {
             <img
               src={me.nameplateUrl}
               alt=""
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-              style={{
-                WebkitMaskImage:
-                  "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                maskImage:
-                  "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-              }}
+              className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
             />
           )}
           <div className={cn("flex min-w-0 items-center gap-2", !compact && "flex-1")}>
             <Popover>
               <PopoverTrigger asChild>
-                <Avatar size="sm" className="shrink-0 cursor-pointer">
-                  <AvatarImage src={me.imageUrl} alt={me.name} />
+                <Avatar size="default" className="shrink-0 cursor-pointer">
+                  <AvatarImage src={me.imageUrl} alt={me.name} className="rounded-md" />
                   <AvatarFallback>
                     {me.name.slice(0, 2).toUpperCase()}
                   </AvatarFallback>

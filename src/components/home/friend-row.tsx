@@ -43,7 +43,7 @@ export function FriendRow({
 
   const line =
     subtitle ??
-    customStatus ??
+    (offline ? null : customStatus) ??
     (offline ? null : activitySummary(activity)) ??
     (status ? STATUS_LABEL[status] : `@${username}`);
 
@@ -55,11 +55,7 @@ export function FriendRow({
         <img
           src={nameplateUrl}
           alt=""
-          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-          style={{
-            WebkitMaskImage: "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-            maskImage: "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-          }}
+          className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
         />
       )}
       <Avatar className="relative">

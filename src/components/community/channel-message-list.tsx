@@ -51,12 +51,11 @@ interface ChannelMessageListProps {
 function ChannelWelcome({ channelName }: { channelName: string }) {
   return (
     <div className="px-1 pt-4 pb-6">
-      <img src="/icons/channel.png" alt={channelName} className="size-30 opacity-40" style={{
-        WebkitMaskImage:
-          "linear-gradient(to bottom right, var(--accent) 0%, var(--accent) 5%, transparent 100%)",
-        maskImage:
-          "linear-gradient(to bottom right, var(--accent) 0%, var(--accent) 5%, transparent 100%)",
-      }} />
+      <img
+        src="/icons/channel.png"
+        alt={channelName}
+        className="fade-mask-br size-30 opacity-40"
+      />
       <h2 className="text-2xl font-bold">Welcome to #{channelName}!</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         This is the start of the #{channelName} channel.

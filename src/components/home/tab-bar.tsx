@@ -24,8 +24,8 @@ function DmTabLabel({ conversationId }: { conversationId: Id<"conversations"> })
       {isGroup ? (
         <GroupAvatar size="sm" imageUrl={conversation.imageUrl} members={conversation.members} />
       ) : (
-        <Avatar size="sm" className="size-4">
-          <AvatarImage src={conversation.members[0]?.imageUrl} alt={title} />
+        <Avatar size="sm" className="size-4 rounded-md">
+          <AvatarImage src={conversation.members[0]?.imageUrl} alt={title} className="rounded-md" />
           <AvatarFallback className="text-[8px]">{title.slice(0, 2).toUpperCase()}</AvatarFallback>
         </Avatar>
       )}
@@ -46,7 +46,7 @@ function ChannelTabLabel({ channelId }: { channelId: Id<"channels"> }) {
   return (
     <>
       <Avatar size="sm" className="size-4 shrink-0">
-        <AvatarImage src={community?.imageUrl} alt={communityName} />
+        <AvatarImage src={community?.imageUrl} alt={communityName} className="rounded-md" />
         <AvatarFallback className="text-[8px]">{communityName.slice(0, 2).toUpperCase()}</AvatarFallback>
       </Avatar>
       <span className="flex min-w-0 items-center gap-1">
@@ -86,7 +86,7 @@ function TabButton({ tab }: { tab: Tab }) {
     <div
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       className={cn(
-        "group flex h-7 max-w-56 min-w-0 items-center gap-1 rounded-md py-1 pr-1 pl-2 text-xs transition-colors",
+        "group flex h-7 max-w-56 min-w-0 items-center gap-1 rounded-md py-1 pr-1 pl-0 text-xs transition-colors",
         isActive ? "bg-background text-foreground" : "text-muted-foreground hover:bg-accent/60"
       )}
     >

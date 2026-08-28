@@ -2,7 +2,7 @@
 
 import { Users } from "lucide-react";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
 interface GroupAvatarMember {
@@ -44,6 +44,11 @@ export function GroupAvatar({ imageUrl, members, size = "default", className }: 
         <AvatarFallback>
           <Users className={dims.icon} />
         </AvatarFallback>
+        <span
+          className={cn(
+            "size-4 flex flex-row items-center justify-center rounded-full bg-primary border-2 border-background absolute -right-0.5 -bottom-0.5 z-10",
+          )}
+        ><Users className="size-2 text-background" /></span>
       </Avatar>
     );
   }
