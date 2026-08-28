@@ -78,6 +78,7 @@ export function FriendRow({
           <PresenceDot
             status={status}
             isBirthday={isBirthday}
+            decorated={!!avatarDecoration}
             className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
           />
         )}

@@ -242,9 +242,14 @@ export function MemberProfileCard({
             <div className="relative shrink-0">
               <Avatar
                 className={cn(
-                  "shadow-md rounded-xl ring-4",
+                  "shadow-md rounded-xl",
                   expanded ? "size-24" : "size-16",
-                  hasGradient ? "ring-background/70" : "ring-accent",
+                  // The ring is the card's own frame around the avatar. A
+                  // decoration is a frame too, and two of them stacked read as
+                  // a border somebody forgot to remove — so whoever is
+                  // wearing one gets theirs instead.
+                  !avatarDecoration && "ring-4",
+                  !avatarDecoration && (hasGradient ? "ring-background/70" : "ring-accent"),
                 )}
               >
                 <AvatarImage
@@ -261,6 +266,7 @@ export function MemberProfileCard({
                 <PresenceBadge
                   status={member.status}
                   isBirthday={isBirthday}
+                  decorated={!!avatarDecoration}
                   className={cn(
                     "min-w-4 min-h-4 ring-4",
                     hasGradient ? "ring-background/70" : "ring-accent",

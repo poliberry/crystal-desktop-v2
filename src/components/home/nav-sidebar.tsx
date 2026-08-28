@@ -215,6 +215,7 @@ export function NavSidebar({
                         <PresenceDot
                           status={otherMember.status as FriendStatus}
                           isBirthday={otherMember.isBirthday}
+                          decorated={!!otherMember.avatarDecoration}
                           className="absolute -right-0.5 -bottom-0.5 z-10"
                         />
                       )}

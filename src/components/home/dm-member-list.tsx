@@ -82,7 +82,11 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                   <AvatarImage src={member.imageUrl} alt={member.name} />
                   <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                   <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
-                  <PresenceBadge status={member.status} isBirthday={member.isBirthday} />
+                  <PresenceBadge
+                    status={member.status}
+                    isBirthday={member.isBirthday}
+                    decorated={!!member.avatarDecoration}
+                  />
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{member.name}</p>

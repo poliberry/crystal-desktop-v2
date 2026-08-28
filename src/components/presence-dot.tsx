@@ -8,6 +8,17 @@ interface PresenceDotProps {
    * for the day — you can find that out by looking at them, and the whole
    * point of the cake is that it's noticed. */
   isBirthday?: boolean;
+  /**
+   * There is a decoration drawn around this avatar, so the dot moves out of
+   * its way — out along the diagonal, onto the frame, instead of sitting
+   * inside it half over the picture.
+   *
+   * A shift of its own width rather than of the avatar's, because the dot is
+   * the only one of the two this component is given: it is already sized in
+   * proportion to the avatar wherever it is used, so a proportion of it lands
+   * in the same place either way.
+   */
+  decorated?: boolean;
   className?: string;
 }
 
@@ -33,7 +44,14 @@ function CakeGlyph() {
   );
 }
 
-export function PresenceDot({ status, isBirthday, className }: PresenceDotProps) {
+const DECORATED_OFFSET = "translate-x-[35%] translate-y-[35%]";
+
+export function PresenceDot({
+  status,
+  isBirthday,
+  decorated,
+  className,
+}: PresenceDotProps) {
   if (isBirthday) {
     return (
       <span
@@ -46,7 +64,8 @@ export function PresenceDot({ status, isBirthday, className }: PresenceDotProps)
           // colour. Anything the caller sizes it with therefore lands the same
           // way it would on the dot.
           "flex size-4 items-center justify-center rounded-full border-3 border-background bg-muted select-none",
-          className
+          className,
+          decorated && DECORATED_OFFSET
         )}
       >
         <CakeGlyph />
@@ -60,7 +79,10 @@ export function PresenceDot({ status, isBirthday, className }: PresenceDotProps)
         "block size-4 rounded-full border-3 border-background",
         STATUS_DOT_CLASS[status],
         status === "invisible" && "ring-1 ring-foreground/40",
-        className
+        className,
+        // After `className`, which is where a caller puts the dot: a decoration
+        // moves it from wherever that was rather than to a fixed corner.
+        decorated && DECORATED_OFFSET
       )}
     />
   );
@@ -73,14 +95,19 @@ export function PresenceDot({ status, isBirthday, className }: PresenceDotProps)
  *
  * Must be a child of `Avatar`: both branches position themselves against it.
  */
-export function PresenceBadge({ status, isBirthday, className }: PresenceDotProps) {
+export function PresenceBadge({
+  status,
+  isBirthday,
+  decorated,
+  className,
+}: PresenceDotProps) {
   if (isBirthday) {
     return (
       <AvatarBadge
         role="img"
         title={BIRTHDAY_LABEL}
         aria-label={BIRTHDAY_LABEL}
-        className={cn("bg-muted", className)}
+        className={cn("bg-muted", className, decorated && DECORATED_OFFSET)}
       >
         {/* Wrapped, because AvatarBadge sizes (and at `sm`, hides) a direct
             `svg` child — those rules are for the icons it was built to hold,
@@ -92,5 +119,9 @@ export function PresenceBadge({ status, isBirthday, className }: PresenceDotProp
     );
   }
 
-  return <AvatarBadge className={cn(STATUS_DOT_CLASS[status], className)} />;
+  return (
+    <AvatarBadge
+      className={cn(STATUS_DOT_CLASS[status], className, decorated && DECORATED_OFFSET)}
+    />
+  );
 }

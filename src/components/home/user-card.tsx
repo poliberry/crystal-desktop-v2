@@ -414,7 +414,11 @@ export function UserCard() {
                     {me.name.slice(0, 2).toUpperCase()}
                   </AvatarFallback>
                   <AvatarDecoration src={decorationSrc(decoration)} />
-                  <PresenceBadge status={status} isBirthday={isBirthday} />
+                  <PresenceBadge
+                    status={status}
+                    isBirthday={isBirthday}
+                    decorated={!!decoration}
+                  />
                 </Avatar>
               </PopoverTrigger>
               <PopoverContent

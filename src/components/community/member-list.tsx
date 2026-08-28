@@ -187,6 +187,7 @@ export function MemberList({ communityId }: MemberListProps) {
                               <PresenceBadge
                                 status={member.status}
                                 isBirthday={member.isBirthday}
+                                decorated={!!member.avatarDecoration}
                               />
                             </Avatar>
                             <div className="min-w-0 flex-1">

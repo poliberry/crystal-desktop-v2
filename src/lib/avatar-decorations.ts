@@ -74,6 +74,26 @@ const HEART_PATH =
 const SQUIRCLE_R = (inset: number) => round((100 - inset * 2) * 0.2);
 
 /**
+ * How far in from the overlay's edge a ring is drawn.
+ *
+ * The avatar occupies the middle 76 units — from 12 to 88 — and a ring is
+ * drawn *on* that edge rather than out from it: with a 4.5-wide stroke centred
+ * at 10 the two touch, which is what a frame around a picture does. Any gap
+ * reads as the decoration having missed.
+ */
+const RING_INSET = 10;
+
+/**
+ * Where ornaments sit, per preset: on the same rounded-square path as a ring,
+ * near enough in to sit against the avatar and far enough in that the shape
+ * itself still fits — the viewBox clips, so a star of radius 7 cannot be
+ * centred further out than 43.
+ */
+const SPARKLE_RADIUS = 42.5;
+const HEART_RADIUS = 44;
+const CONFETTI_RADIUS = 44;
+
+/**
  * Points spaced around a rounded square, in SVG coordinates.
  *
  * A superellipse rather than a circle, for the same reason the rings are: an
@@ -108,17 +128,18 @@ function auroraRing(): string {
       `<stop offset="0.5" stop-color="${hue(200)}"/>` +
       `<stop offset="1" stop-color="${hue(330)}"/>` +
       `</linearGradient></defs>` +
-      `<rect x="8" y="8" width="84" height="84" rx="${SQUIRCLE_R(
-        8
-      )}" stroke="url(#a)" stroke-width="4.5"/>` +
-      `<rect x="2.5" y="2.5" width="95" height="95" rx="${SQUIRCLE_R(
-        2.5
-      )}" stroke="url(#a)" stroke-width="1.6" opacity="0.45"/>`
+      // One ring, out at the edge of the overlay. Drawn there rather than
+      // hugging the avatar so there's daylight between the picture and the
+      // frame — a ring a few pixels off the edge reads as a border on the
+      // avatar itself, which is not what a decoration is.
+      `<rect x="${RING_INSET}" y="${RING_INSET}" width="${100 - RING_INSET * 2}" height="${
+        100 - RING_INSET * 2
+      }" rx="${SQUIRCLE_R(RING_INSET)}" stroke="url(#a)" stroke-width="4.5"/>`
   );
 }
 
 function sparkles(): string {
-  const stars = squircleRing(6, 46, -110)
+  const stars = squircleRing(6, SPARKLE_RADIUS, -110)
     .map(({ x, y, index }) => {
       // Alternating sizes so the ring reads as scattered rather than as six
       // copies of one shape.
@@ -133,7 +154,7 @@ function sparkles(): string {
 }
 
 function hearts(): string {
-  const shapes = squircleRing(5, 46, -90)
+  const shapes = squircleRing(5, HEART_RADIUS, -90)
     .map(({ x, y, index }) => {
       const scale = index % 2 === 0 ? 1.05 : 0.7;
       const colour = index % 2 === 0 ? hue(348, 90, 66) : hue(320, 85, 74);
@@ -169,7 +190,7 @@ function crown(): string {
  * the day and the thing that popped up that morning look related.
  */
 export function birthdayDecorationSrc(hueA: number, hueB: number): string {
-  const confetti = squircleRing(9, 48, -70)
+  const confetti = squircleRing(9, CONFETTI_RADIUS, -70)
     .map(({ x, y, index }) => {
       const colour = index % 2 === 0 ? hue(hueA, 90, 66) : hue(hueB, 90, 70);
       // Squares and dots in turn, each tipped a different way.
@@ -192,7 +213,9 @@ export function birthdayDecorationSrc(hueA: number, hueB: number): string {
     `</g>`;
 
   return svg(
-    `<rect x="7" y="7" width="86" height="86" rx="${SQUIRCLE_R(7)}" stroke="${hue(
+    `<rect x="${RING_INSET}" y="${RING_INSET}" width="${100 - RING_INSET * 2}" height="${
+      100 - RING_INSET * 2
+    }" rx="${SQUIRCLE_R(RING_INSET)}" stroke="${hue(
       hueA,
       90,
       64
