@@ -7,7 +7,10 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberContextMenu } from "@/components/community/member-context-menu";
 import { Nameplate } from "@/components/profile/nameplate";
-import { MemberProfileCard } from "@/components/community/member-profile-card";
+import {
+  MemberProfileCard,
+  PROFILE_POPOVER_CLASS,
+} from "@/components/community/member-profile-card";
 import {
   ActivityStatusIcon,
   activitySummary,
@@ -215,7 +218,11 @@ export function MemberList({ communityId }: MemberListProps) {
                           </button>
                         </PopoverTrigger>
                         </MemberContextMenu>
-                        <PopoverContent side="left" align="start" className="w-72 p-0">
+                        <PopoverContent
+                          side="left"
+                          align="start"
+                          className={PROFILE_POPOVER_CLASS}
+                        >
                           <MemberProfileCard
                             member={member}
                             communityId={communityId}

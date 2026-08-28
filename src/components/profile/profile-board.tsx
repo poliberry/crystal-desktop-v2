@@ -83,6 +83,7 @@ export function ProfileWidgetCard({
 
   return (
     <div
+      data-slot="profile-widget"
       className={cn(
         "overflow-hidden rounded-lg border border-border/50 bg-card/60 backdrop-blur-sm",
         className,
@@ -93,7 +94,7 @@ export function ProfileWidgetCard({
       style={accent ? { borderColor: `${accent}66` } : undefined}
     >
       {widget.imageUrl && (
-        <div className="relative h-24 w-full overflow-hidden">
+        <div data-slot="profile-widget-image" className="relative h-24 w-full overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={widget.imageUrl}
@@ -112,6 +113,7 @@ export function ProfileWidgetCard({
           <div className="min-w-0">
             {widget.title && (
               <p
+                data-slot="profile-widget-title"
                 className="truncate text-sm font-semibold"
                 style={accent ? { color: accent } : undefined}
               >
@@ -127,7 +129,10 @@ export function ProfileWidgetCard({
         )}
 
         {widget.description && (
-          <p className="text-sm whitespace-pre-wrap text-foreground/90">
+          <p
+            data-slot="profile-widget-description"
+            className="text-sm whitespace-pre-wrap text-foreground/90"
+          >
             {widget.description}
           </p>
         )}
@@ -231,7 +236,7 @@ export function ProfileBoard({
   }
 
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
+    <div data-slot="profile-board" className="grid gap-2 sm:grid-cols-2">
       {widgets.map((widget) => (
         <ProfileWidgetCard key={widget.id} widget={widget as BoardWidget} />
       ))}

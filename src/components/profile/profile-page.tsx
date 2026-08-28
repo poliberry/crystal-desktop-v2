@@ -18,6 +18,10 @@ import {
   type MemberProfileMember,
 } from "@/components/community/member-profile-card";
 import { ProfileBoard } from "@/components/profile/profile-board";
+import {
+  ProfileCssLayer,
+  profileCssAttributes,
+} from "@/components/profile/profile-css";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -124,6 +128,24 @@ function ProfilePageBody({
   const activities = useUserActivities(member.userId);
   const recentGames =
     useQuery(api.presence.recentGames, { userId: member.userId, limit: 10 }) ?? [];
+  /**
+   * The owner's own stylesheet.
+   *
+   * The page wears it as well as the card, because the page *is* their
+   * profile — the board, the activity list and the tabs above them are all
+   * theirs, and a stylesheet that could only reach the card in the corner
+   * would be a strange half-measure. It's still confined to this subtree, so
+   * it reaches none of the app around it.
+   *
+   * The card inside renders the same rules under its own copy of the
+   * attribute. Identical declarations at identical specificity, so the
+   * duplication costs a few bytes and changes nothing.
+   */
+  const profile = useQuery(api.users.getProfile, {
+    userId: member.userId,
+    communityId,
+  });
+  const profileCss = profile?.profileCss ?? member.profileCss;
 
   // Escape closes it, the way the dialog it replaced did. A page without this
   // is a page you can only leave by finding the right button.
@@ -136,13 +158,19 @@ function ProfilePageBody({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background mt-9">
+    <div
+      data-slot="profile-page"
+      {...profileCssAttributes(profileCss, member.userId)}
+      className="fixed inset-0 z-50 flex flex-col bg-background mt-9"
+    >
+      <ProfileCssLayer css={profileCss} scopeId={member.userId} />
       {/* The banner bleeds a tint across the whole page, as it did across the
           dialog — at this size it's what stops a wide layout reading as an
           empty grey sheet. */}
       {member.bannerUrl && (
         <div
           aria-hidden
+          data-slot="profile-page-backdrop"
           className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-20 blur-3xl"
           style={{ backgroundImage: `url(${member.bannerUrl})` }}
         />
@@ -152,6 +180,7 @@ function ProfilePageBody({
         // The titlebar row stays draggable on the desktop, so a full-screen
         // page doesn't cost the user the ability to move the window.
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        data-slot="profile-page-header"
         className="relative flex h-11 shrink-0 items-center justify-between px-4 mt-2"
       >
         <span className="text-sm font-medium text-muted-foreground">
@@ -169,8 +198,11 @@ function ProfilePageBody({
         </Button>
       </div>
 
-      <div className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[380px_1fr]">
-        <div className="min-h-0">
+      <div
+        data-slot="profile-page-body"
+        className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[380px_1fr]"
+      >
+        <div data-slot="profile-page-card-column" className="min-h-0">
           <ScrollArea className="h-full">
             {/* The card reserves its own room for the frame — see
                 MemberProfileCard. */}
@@ -188,12 +220,17 @@ function ProfilePageBody({
           </ScrollArea>
         </div>
 
-        <div className="flex min-h-0 flex-col">
-          <div className="mb-3 flex items-center gap-4 border-b border-border/40">
+        <div data-slot="profile-page-panel" className="flex min-h-0 flex-col">
+          <div
+            data-slot="profile-page-tabs"
+            className="mb-3 flex items-center gap-4 border-b border-border/40"
+          >
             {(["board", "activity"] as const).map((value) => (
               <button
                 key={value}
                 type="button"
+                data-slot="profile-page-tab"
+                data-state={tab === value ? "active" : "inactive"}
                 onClick={() => setTab(value)}
                 className={cn(
                   "border-b-2 pb-2 text-sm font-semibold capitalize transition-colors",

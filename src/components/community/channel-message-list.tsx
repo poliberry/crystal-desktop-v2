@@ -28,7 +28,7 @@ import {
 } from "@/lib/message-cache";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { UserProfileContent } from "./member-profile-card";
+import { PROFILE_POPOVER_CLASS, UserProfileContent } from "./member-profile-card";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import {
   AttachmentView,
@@ -159,7 +159,11 @@ function MessageRow({
                 <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
               </Avatar>
             </PopoverTrigger>
-            <PopoverContent side="top" align="start" className="w-72 p-0">
+            <PopoverContent
+              side="top"
+              align="start"
+              className={PROFILE_POPOVER_CLASS}
+            >
               {message.author && (
                 <UserProfileContent
                   userId={message.author.id}

@@ -10,7 +10,10 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
-import { UserProfileContent } from "@/components/community/member-profile-card";
+import {
+  PROFILE_POPOVER_CLASS,
+  UserProfileContent,
+} from "@/components/community/member-profile-card";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import {
   AttachmentView,
@@ -117,7 +120,11 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
                 <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
               </Avatar>
             </PopoverTrigger>
-            <PopoverContent side="top" align="start" className="w-72 p-0">
+            <PopoverContent
+              side="top"
+              align="start"
+              className={PROFILE_POPOVER_CLASS}
+            >
               {message.author && (
                 <UserProfileContent
                   userId={message.author.id}

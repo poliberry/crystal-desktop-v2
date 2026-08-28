@@ -420,16 +420,99 @@ export const CSS_SELECTOR_GROUPS: CssSelectorGroup[] = [
 /**
  * What a profile stylesheet can reach.
  *
- * A much shorter list than the one above, deliberately: profile CSS is confined
- * to the card it belongs to (see src/lib/scoped-css.ts), so a selector for the
+ * A shorter list than the one above, deliberately: profile CSS is confined to
+ * the profile it belongs to (see src/lib/scoped-css.ts), so a selector for the
  * sidebar would simply never match. Offering one would be inviting somebody to
  * write a rule and then wonder why nothing happened.
+ *
+ * "The profile" means the card *and* the full page it opens into — the board,
+ * the activity list and the tabs above them are all equally the owner's, and a
+ * stylesheet that could only reach the card in the corner would be a strange
+ * half-measure.
  *
  * The `:root` entry is worth reading twice — inside a scoped sheet the root
  * *is* the card, so setting --card or --primary there restyles everything on it
  * at once, and is almost always the right first move.
  */
 export const PROFILE_CSS_SELECTOR_GROUPS: CssSelectorGroup[] = [
+  {
+    label: "The page",
+    selectors: [
+      {
+        selector: '[data-slot="profile-page"]',
+        label: "Whole page",
+        description:
+          "The full-page profile — everything, card and board and all. Set a background here and it's behind the lot.",
+      },
+      {
+        selector: '[data-slot="profile-page-backdrop"]',
+        label: "Blurred backdrop",
+        description: "The tint your banner throws across the page behind everything.",
+      },
+      {
+        selector: '[data-slot="profile-page-header"]',
+        label: "Header bar",
+        description: "The strip at the top with your name and the close button.",
+      },
+      {
+        selector: '[data-slot="profile-page-body"]',
+        label: "Layout",
+        description:
+          "The two-column grid. Change grid-template-columns here to give the card more or less room.",
+      },
+      {
+        selector: '[data-slot="profile-page-card-column"]',
+        label: "Card column",
+        description: "The left column, which holds the card.",
+      },
+      {
+        selector: '[data-slot="profile-page-panel"]',
+        label: "Right panel",
+        description: "The column holding the tabs and whatever they show.",
+      },
+      {
+        selector: '[data-slot="profile-page-tabs"]',
+        label: "Tab row",
+        description: "Board and Activity, and the line under them.",
+      },
+      {
+        selector: '[data-slot="profile-page-tab"]',
+        label: "One tab",
+        description: 'Add [data-state="active"] for the selected one.',
+      },
+    ],
+  },
+  {
+    label: "Board",
+    selectors: [
+      {
+        selector: '[data-slot="profile-board"]',
+        label: "The board",
+        description:
+          "The grid your widgets sit in. grid-template-columns here changes how many go across.",
+      },
+      {
+        selector: '[data-slot="profile-widget"]',
+        label: "A widget",
+        description: "One card on your board.",
+      },
+      {
+        selector: '[data-slot="profile-widget-image"]',
+        label: "Widget image",
+        description: "The picture across the top of a widget.",
+      },
+      {
+        selector: '[data-slot="profile-widget-title"]',
+        label: "Widget title",
+        description: "A widget's heading.",
+      },
+      {
+        selector: '[data-slot="profile-widget-description"]',
+        label: "Widget text",
+        description: "A widget's description.",
+      },
+    ],
+  },
   {
     label: "The card",
     selectors: [
@@ -472,6 +555,50 @@ export const PROFILE_CSS_SELECTOR_GROUPS: CssSelectorGroup[] = [
 /** Starting points for a profile's own stylesheet. Short, because a card is a
  * small thing and most of what people want from one is a colour and a corner. */
 export const PROFILE_CSS_SNIPPET_GROUPS: CssSnippetGroup[] = [
+  {
+    label: "Whole page",
+    snippets: [
+      {
+        key: "profile-page-background",
+        label: "Page background",
+        hint: "A picture or gradient behind your whole profile page.",
+        code: `[data-slot="profile-page"] {
+  background-image: linear-gradient(160deg, #1b1030, #2b1244 60%, #401a3a);
+}
+
+/* Turn the banner's blur down so it doesn't wash the above out. */
+[data-slot="profile-page-backdrop"] {
+  opacity: 0.08;
+}`,
+      },
+      {
+        key: "profile-page-columns",
+        label: "Wider card column",
+        hint: "Gives the card more of the page and the board less.",
+        code: `[data-slot="profile-page-body"] {
+  grid-template-columns: 460px 1fr;
+}`,
+      },
+      {
+        key: "profile-board-columns",
+        label: "Board in one column",
+        hint: "Stacks your widgets instead of pairing them.",
+        code: `[data-slot="profile-board"] {
+  grid-template-columns: 1fr;
+}`,
+      },
+      {
+        key: "profile-widget",
+        label: "Widget styling",
+        hint: "The cards on your board.",
+        code: `[data-slot="profile-widget"] {
+  border-radius: 1rem;
+  background-color: color-mix(in oklab, var(--card) 65%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 35%, transparent);
+}`,
+      },
+    ],
+  },
   {
     label: "Whole card",
     snippets: [

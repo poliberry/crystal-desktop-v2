@@ -4,7 +4,10 @@ import { useQuery } from "convex/react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { MemberProfileCard } from "@/components/community/member-profile-card";
+import {
+  MemberProfileCard,
+  PROFILE_POPOVER_CLASS,
+} from "@/components/community/member-profile-card";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
   ActivityStatusIcon,
@@ -104,7 +107,11 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 <Nameplate url={member.nameplateUrl} className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10" />
               </button>
             </PopoverTrigger>
-            <PopoverContent side="left" align="start" className="w-72 p-0">
+            <PopoverContent
+              side="left"
+              align="start"
+              className={PROFILE_POPOVER_CLASS}
+            >
               <MemberProfileCard member={member} />
             </PopoverContent>
           </Popover>
