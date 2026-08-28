@@ -68,16 +68,115 @@ async function applySink(audio: HTMLAudioElement, outputDeviceId?: string): Prom
   await withSink.setSinkId(outputDeviceId).catch(() => {});
 }
 
-/** Play a one-shot effect. Fire-and-forget; failures are silent by design —
- * a UI sound that can't play should never interrupt the action it accompanies. */
-export function playUiSound(sound: UiSound, options: UiSoundOptions = {}): void {
+export interface ClipOptions extends UiSoundOptions {
+  /** Playback rate. Nudging this per repeat keeps a clip fired several times
+   * in a row from sounding like a stuck key. */
+  rate?: number;
+}
+
+/** Play a one-shot clip from any URL under `public/`. Fire-and-forget;
+ * failures are silent by design — a sound that can't play should never
+ * interrupt the action it accompanies. */
+export function playClip(url: string, options: ClipOptions = {}): void {
   if (typeof window === "undefined") return;
   const volume = options.volume ?? 1;
   if (volume < 0.01) return;
 
-  const audio = new Audio(urlFor(sound));
+  const audio = new Audio(url);
   audio.volume = Math.min(1, volume);
+  if (options.rate) audio.playbackRate = options.rate;
   void applySink(audio, options.outputDeviceId).then(() => audio.play().catch(() => {}));
+}
+
+/** Play a one-shot effect. */
+export function playUiSound(sound: UiSound, options: UiSoundOptions = {}): void {
+  playClip(urlFor(sound), options);
+}
+
+export interface MusicOptions extends UiSoundOptions {
+  /** Where in the track to start, in seconds. */
+  startAt?: number;
+  fadeInMs?: number;
+}
+
+/**
+ * Start a piece of music, fading it up from silence, and return the function
+ * that stops it — fading back down unless asked for silence immediately.
+ *
+ * Unlike the one-shots above this is long enough to be worth ramping: a track
+ * that cuts in at full volume under a running animation reads as a mistake.
+ * The stopper is safe to call more than once, and is what a caller should run
+ * on unmount so a track can't outlive whatever it was scoring.
+ */
+export function startMusicTrack(
+  url: string,
+  options: MusicOptions = {}
+): (fadeOutMs?: number) => void {
+  if (typeof window === "undefined") return () => {};
+  const target = Math.min(1, options.volume ?? 1);
+  if (target < 0.01) return () => {};
+
+  const audio = new Audio(url);
+  audio.volume = 0;
+
+  const startAt = options.startAt ?? 0;
+  if (startAt > 0) {
+    // `currentTime` doesn't stick until the browser knows how long the track
+    // is, so seek now if the metadata is already in and on arrival if not.
+    const seek = () => {
+      try {
+        audio.currentTime = startAt;
+      } catch {
+        // Unseekable source; it'll just start from the beginning.
+      }
+    };
+    if (audio.readyState >= 1) seek();
+    else audio.addEventListener("loadedmetadata", seek, { once: true });
+  }
+
+  let ramp: ReturnType<typeof setInterval> | undefined;
+  let stopped = false;
+
+  /** Walk `audio.volume` to `to` over `ms`, replacing any ramp in flight. */
+  const fade = (to: number, ms: number, done?: () => void) => {
+    if (ramp) clearInterval(ramp);
+    const step = 40;
+    const from = audio.volume;
+    const steps = Math.max(1, Math.round(ms / step));
+    let i = 0;
+    ramp = setInterval(() => {
+      i += 1;
+      audio.volume = Math.max(0, Math.min(1, from + ((to - from) * i) / steps));
+      if (i >= steps) {
+        clearInterval(ramp);
+        ramp = undefined;
+        done?.();
+      }
+    }, step);
+  };
+
+  void applySink(audio, options.outputDeviceId).then(() => {
+    if (stopped) return;
+    void audio.play().then(
+      () => fade(target, options.fadeInMs ?? 1500),
+      () => {}
+    );
+  });
+
+  return (fadeOutMs = 600) => {
+    if (stopped) return;
+    stopped = true;
+    const end = () => {
+      audio.pause();
+      audio.remove();
+    };
+    if (fadeOutMs <= 0) {
+      if (ramp) clearInterval(ramp);
+      end();
+      return;
+    }
+    fade(0, fadeOutMs, end);
+  };
 }
 
 /**

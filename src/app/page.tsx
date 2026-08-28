@@ -12,6 +12,7 @@ import { Show } from "@clerk/react";
 import { Google_Sans_Flex } from "next/font/google";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
+import { BirthdayProvider } from "@/components/home/birthday-provider";
 
 const googleSansFlex = Google_Sans_Flex({
   subsets: ["latin"],
@@ -135,12 +136,14 @@ export default function HomePage() {
         <CallProvider>
           <TabsProvider>
             <NavigationProvider>
-              <div className="flex h-full flex-col">
-                <TopNav />
-                <div className="min-h-0 flex-1">
-                  <HomeLayout />
+              <BirthdayProvider>
+                <div className="flex h-full flex-col">
+                  <TopNav />
+                  <div className="min-h-0 flex-1">
+                    <HomeLayout />
+                  </div>
                 </div>
-              </div>
+              </BirthdayProvider>
             </NavigationProvider>
           </TabsProvider>
         </CallProvider>

@@ -48,6 +48,7 @@ import {
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { cn } from "@/lib/utils";
 import { useNavigation } from "@/components/home/navigation-context";
+import { SelectionPill } from "@/components/home/selection-pill";
 import { USER_CARD_HEIGHT } from "./user-card";
 import { useCall } from "../call/call-provider";
 
@@ -414,8 +415,8 @@ function CommunityTile({
           <ContextMenuTrigger asChild>
             {/* The badge sits outside the button because the button clips its
                 contents — that's what gives the tile its square-to-squircle
-                morph on hover. */}
-            <div className="relative">
+                morph on hover. `group` is for the pill's hover step. */}
+            <div className="group relative">
               <HoverCardTrigger asChild>
                 <button
                   type="button"
@@ -431,8 +432,10 @@ function CommunityTile({
                   }
                   className={cn(
                     "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
-                    selected &&
-                      "ring-2 ring-primary ring-offset-2 ring-offset-background rounded-none",
+                    // The pill says which tile is open now, so the selected
+                    // tile just holds the squircle hover settles on rather
+                    // than wearing a ring saying the same thing twice.
+                    selected && "rounded-2xl",
                   )}
                 >
                   <Avatar className="size-12 rounded-none">
@@ -455,21 +458,21 @@ function CommunityTile({
                   <Volume2 className="size-3" />
                 </span>
               )}
-              {/* A count for mentions, a dot for "something was said". Only
-                  mentions get a number — a busy server would otherwise wear a
-                  permanent badge meaning nothing in particular. */}
-              {mentions > 0 ? (
+              {/* Mentions still get a number — "someone said your name" is a
+                  different claim from "something was said", and the pill on
+                  the left already carries the latter. A busy server would
+                  otherwise wear a permanent count meaning nothing much. */}
+              {mentions > 0 && (
                 <span className="pointer-events-none absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white ring-2 ring-background">
                   {badgeText(mentions)}
                 </span>
-              ) : (
-                hasUnread && (
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute top-1/2 -left-1.5 size-2 -translate-y-1/2 rounded-full bg-foreground"
-                  />
-                )
               )}
+              {/* Hangs off the tile into the rail's left gutter, where it
+                  lines up with every other tile's pill. */}
+              <SelectionPill
+                className="-left-2"
+                state={selected ? "active" : hasUnread || mentions > 0 ? "unread" : "idle"}
+              />
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
@@ -584,9 +587,9 @@ export function CommunityRail({
       <UnreadDirectMessages />
 
       <ScrollArea className="min-h-0 flex-1 w-full">
-        {/* py-1 gives the selection ring (ring-2 + ring-offset-2 = ~4px)
-            room to render without the ScrollArea's own overflow-hidden
-            viewport clipping it off the first/last item. */}
+        {/* px-2 leaves the gutter the selection pills hang into, and py-1
+            keeps the first and last tile's badges off the edge of the
+            ScrollArea's overflow-hidden viewport. */}
         <div className="flex flex-col items-center gap-2 px-2 py-1">
           {communities.map((community) => (
             <CommunityTile

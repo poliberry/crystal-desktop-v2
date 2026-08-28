@@ -171,8 +171,8 @@ export function MemberList({ communityId }: MemberListProps) {
                               isOffline && "opacity-50 hover:opacity-80"
                             )}
                           >
-                            <Avatar size="sm">
-                              <AvatarImage src={member.imageUrl} alt={member.name} />
+                            <Avatar size="default">
+                              <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-md" />
                               <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                               <AvatarBadge className={STATUS_DOT_CLASS[member.status]} />
                             </Avatar>
@@ -200,13 +200,7 @@ export function MemberList({ communityId }: MemberListProps) {
                               <img
                                 src={member.nameplateUrl}
                                 alt=""
-                                style={{
-                                  WebkitMaskImage:
-                                    "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
-                                  maskImage:
-                                    "linear-gradient(to left, var(--accent) 0%, var(--accent) 20%, transparent 100%)",
-                                }}
-                                className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20"
+                                className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20"
                               />
                             )}
                           </button>

@@ -10,7 +10,7 @@ export function PresenceDot({ status, className }: PresenceDotProps) {
   return (
     <span
       className={cn(
-        "block size-2.5 rounded-full border-2 border-background",
+        "block size-4 rounded-full border-3 border-background",
         STATUS_DOT_CLASS[status],
         status === "invisible" && "ring-1 ring-foreground/40",
         className

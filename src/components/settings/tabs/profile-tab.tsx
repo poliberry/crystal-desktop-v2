@@ -40,6 +40,7 @@ export function ProfileTab() {
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
   const [customStatus, setCustomStatus] = useState("");
+  const [dob, setDob] = useState("");
   const [gradientStart, setGradientStart] = useState("");
   const [gradientEnd, setGradientEnd] = useState("");
   const [saving, setSaving] = useState(false);
@@ -66,6 +67,7 @@ export function ProfileTab() {
     setUsername(me.username);
     setBio(me.bio ?? "");
     setCustomStatus(me.customStatus ?? "");
+    setDob(me.dob ?? "");
     setGradientStart(me.borderGradientStart ?? "");
     setGradientEnd(me.borderGradientEnd ?? "");
   }, [me]);
@@ -84,6 +86,7 @@ export function ProfileTab() {
       username !== me.username ||
       bio !== (me.bio ?? "") ||
       customStatus !== (me.customStatus ?? "") ||
+      dob !== (me.dob ?? "") ||
       gradientStart !== (me.borderGradientStart ?? "") ||
       gradientEnd !== (me.borderGradientEnd ?? ""));
 
@@ -161,6 +164,7 @@ export function ProfileTab() {
       const result = await updateProfile({ name, username, bio });
       await updateProfileExtended({
         customStatus: trimmedStatus,
+        dob,
         borderGradientStart: gradientStart || undefined,
         borderGradientEnd: gradientEnd || undefined,
       });
@@ -265,6 +269,25 @@ export function ProfileTab() {
         <div className="space-y-1.5">
           <Label htmlFor="profile-status">Custom status</Label>
           <Input id="profile-status" value={customStatus} onChange={(e) => setCustomStatus(e.target.value.slice(0, 128))} maxLength={128} placeholder="What are you up to?" />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="profile-dob">Date of birth</Label>
+          {/* `max` is today, since a birthday in the future is always a
+              mistake, and the native picker enforces it before the mutation
+              has to. */}
+          <Input
+            id="profile-dob"
+            type="date"
+            value={dob}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setDob(e.target.value)}
+            className="w-fit [color-scheme:dark]"
+          />
+          <p className="text-xs text-muted-foreground">
+            Only the day and month are used, to wish you a happy birthday. Leave it
+            empty to opt out.
+          </p>
         </div>
 
         <div className="space-y-2">
