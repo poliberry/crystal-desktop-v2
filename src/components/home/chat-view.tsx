@@ -12,7 +12,16 @@ import { GroupAvatar } from "@/components/home/group-avatar";
 import { GroupSettingsDialog } from "@/components/home/group-settings-dialog";
 import { CakeRain } from "@/components/home/cake-rain";
 import { MessageComposer } from "@/components/home/message-composer";
+import { DmProfilePanel } from "@/components/home/dm-profile-panel";
 import { MessageList } from "@/components/home/message-list";
+import { PresenceBadge } from "@/components/presence-dot";
+import {
+  ActivityStatusIcon,
+  activitySummary,
+  topActivity,
+} from "@/components/rich-presence-card";
+import type { FriendStatus } from "@/lib/presence";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import {
@@ -99,6 +108,12 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
     ? conversation.name || conversation.members.map((m) => m.name).join(", ")
     : (conversation.members[0]?.name ?? "Unknown");
   const avatarUser = isGroup ? undefined : conversation.members[0];
+  const activities = (avatarUser?.activities ?? []) as RichPresenceActivity[];
+  // Their own words outrank anything detected, the same order the friends list
+  // and the user card use.
+  const headerLine =
+    avatarUser?.customStatus ?? activitySummary(topActivity(activities)) ?? null;
+  const panelName = isGroup ? "member list" : "profile";
   // Everyone in here whose birthday it is — the composer prompt is about them.
   // A plural list because a group DM can, eventually, have two.
   const birthdayMembers = conversation.members
@@ -128,13 +143,32 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               </div>
             </button>
           ) : (
-            <div className="flex items-center gap-2">
-              <Avatar size="sm">
+            <div className="flex min-w-0 items-center gap-2">
+              <Avatar size="default">
                 <AvatarImage src={avatarUser?.imageUrl} alt={title} />
                 <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
                 <AvatarDecoration src={decorationSrc(avatarUser?.avatarDecoration)} />
+                {avatarUser && (
+                  <PresenceBadge
+                    status={avatarUser.status as FriendStatus}
+                    isBirthday={avatarUser.isBirthday}
+                    decorated={!!avatarUser.avatarDecoration}
+                  />
+                )}
               </Avatar>
-              <p className="text-sm font-semibold">{title}</p>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold leading-tight">{title}</p>
+                {/* Their own words first, then whatever they are doing. Nothing
+                    at all when there is neither: the dot on the avatar already
+                    says whether they are reachable, and a line repeating it in
+                    words would be the same fact twice. */}
+                {headerLine && (
+                  <p className="flex items-center gap-1 truncate text-xs text-muted-foreground leading-tight">
+                    <ActivityStatusIcon activities={activities} />
+                    <span className="truncate">{headerLine}</span>
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -154,24 +188,22 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                   : "Call"}
             </Button>
 
-            {isGroup && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" onClick={() => setShowMembers((v) => !v)}>
-                      {showMembers ? (
-                        <PanelRightClose className="size-4" />
-                      ) : (
-                        <PanelRightOpen className="size-4" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {showMembers ? "Hide member list" : "Show member list"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" onClick={() => setShowMembers((v) => !v)}>
+                    {showMembers ? (
+                      <PanelRightClose className="size-4" />
+                    ) : (
+                      <PanelRightOpen className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {showMembers ? `Hide ${panelName}` : `Show ${panelName}`}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
 
@@ -183,7 +215,14 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
         />
       </div>
 
-      {isGroup && showMembers && <DmMemberList conversationId={conversationId} />}
+      {showMembers &&
+        (isGroup ? (
+          <DmMemberList conversationId={conversationId} />
+        ) : (
+          avatarUser && (
+            <DmProfilePanel conversationId={conversationId} userId={avatarUser.id} />
+          )
+        ))}
 
       {isGroup && (
         <GroupSettingsDialog
