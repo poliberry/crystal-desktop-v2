@@ -6,32 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAccessibility } from "@/components/accessibility-provider";
 import { useAudioPreferences } from "@/components/audio-provider";
+import { CONFETTI_COLOURS, scatter } from "@/lib/celebration";
 import { playClip, startMusicTrack } from "@/lib/ui-sounds";
 import { Button } from "@/components/ui/button";
 
 /** Where the celebration is up to. `gift` waits on a click; the rest run
  * themselves. */
 type Stage = "gift" | "opening" | "party";
-
-const CONFETTI_COLOURS = [
-  "oklch(0.78 0.19 25)",
-  "oklch(0.85 0.17 92)",
-  "oklch(0.82 0.17 150)",
-  "oklch(0.72 0.16 240)",
-  "oklch(0.75 0.2 330)",
-];
-
-/**
- * Deterministic per-index scatter.
- *
- * `Math.random()` would give a different layout on the server render than on
- * the client one and trip hydration; a hash of the index gives the same
- * jumble every time while still looking unplanned.
- */
-function scatter(index: number, salt: number): number {
-  const x = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
-  return x - Math.floor(x);
-}
 
 interface Piece {
   id: number;

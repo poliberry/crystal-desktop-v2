@@ -9,6 +9,7 @@ import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
 import { unexpiredCustomStatus } from "./lib/activities";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
 
@@ -147,6 +148,9 @@ export const list = query({
                 bio: serverProfile?.bio ?? author.bio,
                 bannerUrl: serverProfile?.bannerUrl ?? author.bannerUrl,
                 customStatus: serverProfile?.customStatus ?? unexpiredCustomStatus(author),
+                // Not overridden per server: the frame is worn by the account.
+                avatarDecoration: effectiveDecoration(author),
+                isBirthday: isBirthdayNow(author),
                 roleColor: decoration?.roleColor,
               }
             : null,

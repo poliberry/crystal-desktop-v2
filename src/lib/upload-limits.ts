@@ -20,6 +20,10 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** Soundboard clips. Smaller on purpose: see above. */
 export const MAX_SOUND_BYTES = 10 * 1024 * 1024;
 
+/** Custom avatar decorations. Smaller again: one is fetched everywhere its
+ * owner appears, so its weight is paid many times over per screen. */
+export const MAX_DECORATION_BYTES = 2 * 1024 * 1024;
+
 /** `25 MB` — for copy and error messages. */
 export function formatUploadLimit(bytes: number): string {
   return `${bytes / 1024 / 1024} MB`;
@@ -27,3 +31,4 @@ export function formatUploadLimit(bytes: number): string {
 
 export const MAX_ATTACHMENT_LABEL = formatUploadLimit(MAX_ATTACHMENT_BYTES);
 export const MAX_SOUND_LABEL = formatUploadLimit(MAX_SOUND_BYTES);
+export const MAX_DECORATION_LABEL = formatUploadLimit(MAX_DECORATION_BYTES);

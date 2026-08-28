@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { PanelRightClose, PanelRightOpen, PhoneCall } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -10,13 +10,39 @@ import { useCall } from "@/components/call/call-provider";
 import { DmMemberList } from "@/components/home/dm-member-list";
 import { GroupAvatar } from "@/components/home/group-avatar";
 import { GroupSettingsDialog } from "@/components/home/group-settings-dialog";
+import { CakeRain } from "@/components/home/cake-rain";
 import { MessageComposer } from "@/components/home/message-composer";
+import { DmProfilePanel } from "@/components/home/dm-profile-panel";
 import { MessageList } from "@/components/home/message-list";
+import { PresenceBadge } from "@/components/presence-dot";
+import {
+  ActivityStatusIcon,
+  activitySummary,
+  topActivity,
+} from "@/components/rich-presence-card";
+import type { FriendStatus } from "@/lib/presence";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { useWindowFocus } from "@/hooks/use-window-focus";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
+import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+/**
+ * How recent a birthday wish has to be for the cakes to fall for it.
+ *
+ * Opening a conversation subscribes you to its latest wish whenever it was
+ * sent, so there has to be a line between "this just happened" and "this
+ * happened at some point". Half a minute is long enough to cover a slow
+ * round trip and short enough that nobody sees a stranger's cakes.
+ */
+const WISH_FRESH_MS = 30_000;
 
 interface ChatViewProps {
   conversationId: Id<"conversations">;
@@ -34,6 +60,27 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const isActiveCall = activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
   const [showMembers, setShowMembers] = useState(true);
   const [editingGroup, setEditingGroup] = useState(false);
+  /**
+   * A birthday wish landing in this conversation — for either person, sender
+   * or recipient — sets the cakes off.
+   *
+   * "Landing" is the fresh-enough test below rather than anything about who
+   * sent it: the two clients learn about the message the same way, so they
+   * play it at the same moment without either of them being told to.
+   */
+  const latestWish = useQuery(api.messages.latestBirthdayWish, { conversationId });
+  const [raining, setRaining] = useState(false);
+  const playedWish = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!latestWish) return;
+    if (playedWish.current === latestWish.id) return;
+    // Marked seen either way, so a wish that was already old when this
+    // conversation was opened is passed over once rather than reconsidered on
+    // every re-render.
+    playedWish.current = latestWish.id;
+    if (Date.now() - latestWish.createdAt < WISH_FRESH_MS) setRaining(true);
+  }, [latestWish]);
 
   /**
    * Read means read *by someone who was there*: this conversation open in a
@@ -61,6 +108,17 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
     ? conversation.name || conversation.members.map((m) => m.name).join(", ")
     : (conversation.members[0]?.name ?? "Unknown");
   const avatarUser = isGroup ? undefined : conversation.members[0];
+  const activities = (avatarUser?.activities ?? []) as RichPresenceActivity[];
+  // Their own words outrank anything detected, the same order the friends list
+  // and the user card use.
+  const headerLine =
+    avatarUser?.customStatus ?? activitySummary(topActivity(activities)) ?? null;
+  const panelName = isGroup ? "member list" : "profile";
+  // Everyone in here whose birthday it is — the composer prompt is about them.
+  // A plural list because a group DM can, eventually, have two.
+  const birthdayMembers = conversation.members
+    .filter((member) => member.isBirthday)
+    .map((member) => ({ name: member.name }));
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
@@ -85,12 +143,32 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               </div>
             </button>
           ) : (
-            <div className="flex items-center gap-2">
-              <Avatar size="sm">
+            <div className="flex min-w-0 items-center gap-2">
+              <Avatar size="default">
                 <AvatarImage src={avatarUser?.imageUrl} alt={title} />
                 <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarDecoration src={decorationSrc(avatarUser?.avatarDecoration)} />
+                {avatarUser && (
+                  <PresenceBadge
+                    status={avatarUser.status as FriendStatus}
+                    isBirthday={avatarUser.isBirthday}
+                    decorated={!!avatarUser.avatarDecoration}
+                  />
+                )}
               </Avatar>
-              <p className="text-sm font-semibold">{title}</p>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold leading-tight">{title}</p>
+                {/* Their own words first, then whatever they are doing. Nothing
+                    at all when there is neither: the dot on the avatar already
+                    says whether they are reachable, and a line repeating it in
+                    words would be the same fact twice. */}
+                {headerLine && (
+                  <p className="flex items-center gap-1 truncate text-xs text-muted-foreground leading-tight">
+                    <ActivityStatusIcon activities={activities} />
+                    <span className="truncate">{headerLine}</span>
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
@@ -110,33 +188,41 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                   : "Call"}
             </Button>
 
-            {isGroup && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" onClick={() => setShowMembers((v) => !v)}>
-                      {showMembers ? (
-                        <PanelRightClose className="size-4" />
-                      ) : (
-                        <PanelRightOpen className="size-4" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {showMembers ? "Hide member list" : "Show member list"}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" onClick={() => setShowMembers((v) => !v)}>
+                    {showMembers ? (
+                      <PanelRightClose className="size-4" />
+                    ) : (
+                      <PanelRightOpen className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {showMembers ? `Hide ${panelName}` : `Show ${panelName}`}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
 
         <MessageList conversationId={conversationId} />
         <TypingIndicator conversationId={conversationId} />
-        <MessageComposer conversationId={conversationId} />
+        <MessageComposer
+          conversationId={conversationId}
+          birthdayMembers={birthdayMembers}
+        />
       </div>
 
-      {isGroup && showMembers && <DmMemberList conversationId={conversationId} />}
+      {showMembers &&
+        (isGroup ? (
+          <DmMemberList conversationId={conversationId} />
+        ) : (
+          avatarUser && (
+            <DmProfilePanel conversationId={conversationId} userId={avatarUser.id} />
+          )
+        ))}
 
       {isGroup && (
         <GroupSettingsDialog
@@ -149,6 +235,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
           onOpenChange={setEditingGroup}
         />
       )}
+
+      {raining && <CakeRain onDone={() => setRaining(false)} />}
     </div>
   );
 }

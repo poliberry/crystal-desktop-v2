@@ -16,7 +16,13 @@ import {
   AttachmentView,
   type AttachmentSummary,
 } from "@/components/home/message-attachment";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
+import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -44,7 +50,14 @@ interface MessageDoc {
   createdAt: number;
   editedAt: number | null;
   isMine: boolean;
-  author: { id: Id<"users">; name: string; username: string; imageUrl?: string } | null;
+  author: {
+    id: Id<"users">;
+    name: string;
+    username: string;
+    imageUrl?: string;
+    /** The frame around their avatar, as stored — see `decorationSrc`. */
+    avatarDecoration?: string;
+  } | null;
   attachments: AttachmentSummary[];
   reactions: ReactionSummary[];
 }
@@ -97,6 +110,7 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
               <Avatar size="default" className="cursor-pointer">
                 <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
                 <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
               </Avatar>
             </PopoverTrigger>
             <PopoverContent side="top" align="start" className="w-72 p-0">

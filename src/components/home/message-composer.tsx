@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { Paperclip, Send, Smile } from "lucide-react";
+import { Paperclip, Send, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -25,6 +25,23 @@ import { searchSystemEmoji } from "@/lib/system-emoji";
 
 interface MessageComposerProps {
   conversationId: Id<"conversations">;
+  /** Who in this conversation is having a birthday today, if anyone — the
+   * prompt above the input is about them. Empty or omitted the rest of the
+   * year, which is when the prompt isn't there at all. */
+  birthdayMembers?: { name: string }[];
+}
+
+/** "Ana", "Ana and Bo", "Ana, Bo and Cy". */
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** What the prompt puts in the box. A starting point rather than the message:
+ * it's left editable and unsent, because a wish somebody typed over is worth
+ * more than one they only pressed a button for. */
+function defaultWish(names: string[]): string {
+  return `🎂 Happy birthday, ${joinNames(names)}! Hope you have a great one.`;
 }
 
 interface AutocompleteState {
@@ -36,8 +53,20 @@ interface AutocompleteState {
 /** Minimum bar per spec — a working click-driven dropdown, not fully
  * polished virtualized/fuzzy autocomplete. DMs have no community, so this
  * only ever surfaces system-emoji `:slug:` matches (no `communityId` here). */
-export function MessageComposer({ conversationId }: MessageComposerProps) {
+export function MessageComposer({
+  conversationId,
+  birthdayMembers,
+}: MessageComposerProps) {
   const [text, setText] = useState("");
+  /** The prompt was used and hasn't been sent yet, so the next send is the
+   * wish. Only a hint: the server checks somebody's birthday actually is today
+   * before letting a message set cakes falling for everyone. */
+  const [wishArmed, setWishArmed] = useState(false);
+  /** Dismissed for this mounting of the composer — the prompt shouldn't be a
+   * thing you have to keep closing, but it also shouldn't be gone for good
+   * from a mis-click. */
+  const [wishDismissed, setWishDismissed] = useState(false);
+  const birthdayNames = (birthdayMembers ?? []).map((member) => member.name);
   // The composer holds readable `:name:` shortcodes; the message has to carry
   // `<:name:id>` so any reader can resolve the emoji without guessing which
   // server it came from.
@@ -109,8 +138,10 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
         conversationId,
         text: trimmed ? encodeCustomEmojiShortcodes(trimmed, (name) => customEmojiByName.get(name)) : undefined,
         attachments: pending.length ? attachmentsPayload() : undefined,
+        birthdayWish: wishArmed || undefined,
       });
       setText("");
+      setWishArmed(false);
       clearAttachments();
     } finally {
       setSending(false);
@@ -160,6 +191,9 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
 
   const handleTextChange = (value: string, caret: number) => {
     setText(value);
+    // Emptying the box takes the wish back: whatever gets sent next is a
+    // different message, and shouldn't rain cakes on anyone.
+    if (wishArmed && !value.trim()) setWishArmed(false);
     handleTyping();
     setAutocomplete(matchInProgressShortcode(value, caret));
   };
@@ -188,6 +222,43 @@ export function MessageComposer({ conversationId }: MessageComposerProps) {
               <span className="text-muted-foreground">{s.label}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Birthday prompt. Above the box rather than in it, so it reads as
+          something the app noticed rather than as text you have to clear. */}
+      {birthdayNames.length > 0 && !wishDismissed && (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-1.5">
+          <span aria-hidden className="text-base leading-none">
+            🎂
+          </span>
+          <p className="min-w-0 flex-1 truncate text-xs">
+            It&apos;s <span className="font-semibold">{joinNames(birthdayNames)}</span>
+            &apos;s {birthdayNames.length > 1 ? "birthdays" : "birthday"} today.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-7 shrink-0 text-xs"
+            onClick={() => {
+              setText(defaultWish(birthdayNames));
+              setWishArmed(true);
+              textareaRef.current?.focus();
+            }}
+          >
+            Wish them happy birthday
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Dismiss"
+            className="size-7 shrink-0"
+            onClick={() => setWishDismissed(true)}
+          >
+            <X className="size-3.5" />
+          </Button>
         </div>
       )}
 

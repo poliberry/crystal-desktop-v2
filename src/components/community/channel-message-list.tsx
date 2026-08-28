@@ -11,7 +11,13 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
+import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -81,6 +87,8 @@ interface MessageDoc {
     name: string;
     username: string;
     imageUrl?: string;
+    /** The frame around their avatar, as stored — see `decorationSrc`. */
+    avatarDecoration?: string;
     /** Colour of the author's highest coloured role in this community. */
     roleColor?: string;
   } | null;
@@ -146,6 +154,7 @@ function MessageRow({
               <Avatar size="default" className="cursor-pointer">
                 <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
                 <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
               </Avatar>
             </PopoverTrigger>
             <PopoverContent side="top" align="start" className="w-72 p-0">

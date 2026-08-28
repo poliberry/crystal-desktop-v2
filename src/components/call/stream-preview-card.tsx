@@ -31,7 +31,11 @@ export function StreamBody({
 }) {
   return (
     <>
-      <div className="relative aspect-video w-full overflow-hidden rounded bg-black">
+      {/* `min-w-0`: the still inside is a replaced element, so without it this
+          box's min-content width is the thumbnail's own pixel width — 1280 of
+          them — and every container up to the profile card is sized to fit a
+          picture that is being scaled down anyway. */}
+      <div className="relative aspect-video w-full min-w-0 overflow-hidden rounded bg-black">
         {thumbnailUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={thumbnailUrl} alt={label} className="size-full object-cover" />

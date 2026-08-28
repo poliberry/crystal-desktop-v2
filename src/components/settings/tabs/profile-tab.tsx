@@ -20,8 +20,76 @@ import {
 } from "@/components/profile/image-crop-dialog";
 import { getAvatarColor } from "@/lib/avatar-color";
 import { uploadToStorage } from "@/lib/storage-upload";
+import {
+  DECORATION_PRESETS,
+  isCustomDecoration,
+} from "@/lib/avatar-decorations";
+import { MAX_DECORATION_BYTES, MAX_DECORATION_LABEL } from "@/lib/upload-limits";
+import {
+  StatusBubble,
+  STATUS_BUBBLE_KINDS,
+  type StatusBubbleKind,
+} from "@/components/profile/status-bubble";
+import { cn } from "@/lib/utils";
 
 const BIO_MAX = 300;
+
+/**
+ * One choice in the decoration picker: the user's own avatar wearing it, since
+ * what a decoration looks like depends entirely on the picture inside it.
+ *
+ * The overlay geometry is the one `AvatarDecoration` uses, down to sizing the
+ * image as a percentage of the avatar rather than by insets — an `<img>` given
+ * insets alone falls back to its own pixel size. This is a standalone preview
+ * rather than an `Avatar`, so it carries its own copy of both.
+ */
+function DecorationSwatch({
+  label,
+  imageUrl,
+  name,
+  decorationSrc,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  imageUrl?: string;
+  name: string;
+  decorationSrc?: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "flex w-20 flex-col items-center gap-1 rounded-md border p-2 transition-colors",
+        selected ? "border-primary bg-accent/60" : "border-transparent hover:bg-accent/40",
+      )}
+    >
+      <span className="relative flex size-10 shrink-0 items-center justify-center">
+        {imageUrl ? (
+          <img src={imageUrl} alt="" className="size-full rounded-md object-cover" />
+        ) : (
+          <span className="flex size-full items-center justify-center rounded-md bg-muted text-xs text-muted-foreground">
+            {name.slice(0, 2).toUpperCase()}
+          </span>
+        )}
+        {decorationSrc && (
+          <img
+            src={decorationSrc}
+            alt=""
+            className="pointer-events-none absolute top-1/2 left-1/2 h-[126%] w-[126%] max-w-none -translate-x-1/2 -translate-y-1/2 object-contain"
+          />
+        )}
+      </span>
+      <span className="w-full truncate text-center text-[11px] text-muted-foreground">
+        {label}
+      </span>
+    </button>
+  );
+}
 
 export function ProfileTab() {
   const me = useQuery(api.users.getCurrentUser);
@@ -35,18 +103,23 @@ export function ProfileTab() {
   const setAvatarAccent = useMutation(api.users.setAvatarAccent);
   const setNameplate = useMutation(api.users.setNameplate);
   const removeNameplate = useMutation(api.users.removeNameplate);
+  const setAvatarDecoration = useMutation(api.users.setAvatarDecoration);
+  const setCustomAvatarDecoration = useMutation(api.users.setCustomAvatarDecoration);
+  const removeAvatarDecoration = useMutation(api.users.removeAvatarDecoration);
 
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
   const [customStatus, setCustomStatus] = useState("");
   const [dob, setDob] = useState("");
+  const [statusBubble, setStatusBubble] = useState<StatusBubbleKind>("speech");
   const [gradientStart, setGradientStart] = useState("");
   const [gradientEnd, setGradientEnd] = useState("");
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [bannerUploading, setBannerUploading] = useState(false);
   const [nameplateUploading, setNameplateUploading] = useState(false);
+  const [decorationUploading, setDecorationUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   /** What the crop editor is open on: a just-picked file, or the stored
@@ -58,6 +131,7 @@ export function ProfileTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
   const nameplateFileInputRef = useRef<HTMLInputElement>(null);
+  const decorationFileInputRef = useRef<HTMLInputElement>(null);
   const hydrated = useRef(false);
 
   useEffect(() => {
@@ -67,6 +141,7 @@ export function ProfileTab() {
     setUsername(me.username);
     setBio(me.bio ?? "");
     setCustomStatus(me.customStatus ?? "");
+    setStatusBubble(me.statusBubble ?? "speech");
     setDob(me.dob ?? "");
     setGradientStart(me.borderGradientStart ?? "");
     setGradientEnd(me.borderGradientEnd ?? "");
@@ -86,6 +161,7 @@ export function ProfileTab() {
       username !== me.username ||
       bio !== (me.bio ?? "") ||
       customStatus !== (me.customStatus ?? "") ||
+      statusBubble !== (me.statusBubble ?? "speech") ||
       dob !== (me.dob ?? "") ||
       gradientStart !== (me.borderGradientStart ?? "") ||
       gradientEnd !== (me.borderGradientEnd ?? ""));
@@ -155,6 +231,25 @@ export function ProfileTab() {
   const handleNameplatePick = (file: File | undefined) =>
     file && void uploadMedia(file, setNameplateUploading, (id) => setNameplate({ storageId: id }), nameplateFileInputRef, "Failed to upload nameplate.");
 
+  const handleDecorationPick = (file: File | undefined) => {
+    if (!file) return;
+    // Checked before the transfer as a courtesy — the mutation enforces it
+    // once the bytes have landed, which is the only place the real size is
+    // knowable. See src/lib/upload-limits.ts.
+    if (file.size > MAX_DECORATION_BYTES) {
+      setError(`Decorations must be smaller than ${MAX_DECORATION_LABEL}.`);
+      if (decorationFileInputRef.current) decorationFileInputRef.current.value = "";
+      return;
+    }
+    void uploadMedia(
+      file,
+      setDecorationUploading,
+      (id) => setCustomAvatarDecoration({ storageId: id }),
+      decorationFileInputRef,
+      "Failed to upload decoration.",
+    );
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -164,6 +259,7 @@ export function ProfileTab() {
       const result = await updateProfile({ name, username, bio });
       await updateProfileExtended({
         customStatus: trimmedStatus,
+        statusBubble,
         dob,
         borderGradientStart: gradientStart || undefined,
         borderGradientEnd: gradientEnd || undefined,
@@ -271,6 +367,44 @@ export function ProfileTab() {
           <Input id="profile-status" value={customStatus} onChange={(e) => setCustomStatus(e.target.value.slice(0, 128))} maxLength={128} placeholder="What are you up to?" />
         </div>
 
+        <div className="space-y-2">
+          <Label>Status bubble</Label>
+          <p className="text-xs text-muted-foreground">
+            The shape your status is drawn in beside your avatar, on your
+            profile card.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {STATUS_BUBBLE_KINDS.map((option) => (
+              <button
+                key={option.kind}
+                type="button"
+                aria-pressed={statusBubble === option.kind}
+                onClick={() => setStatusBubble(option.kind)}
+                className={cn(
+                  "flex flex-1 min-w-52 flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
+                  statusBubble === option.kind
+                    ? "border-primary bg-accent/60"
+                    : "border-border hover:bg-accent/40",
+                )}
+              >
+                {/* Shown against an avatar-sized square, because the tail is
+                    the difference between the two and it only reads as one
+                    when there's something for it to point at. */}
+                <span className="flex items-center gap-3">
+                  <span className="size-8 shrink-0 rounded-md bg-muted" />
+                  <StatusBubble
+                    text={customStatus.trim() || "What are you up to?"}
+                    kind={option.kind}
+                    className="max-w-32"
+                  />
+                </span>
+                <span className="text-xs font-medium">{option.label}</span>
+                <span className="text-xs text-muted-foreground">{option.hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="space-y-1.5">
           <Label htmlFor="profile-dob">Date of birth</Label>
           {/* `max` is today, since a birthday in the future is always a
@@ -355,6 +489,83 @@ export function ProfileTab() {
             )}
           </div>
           <input ref={nameplateFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleNameplatePick(e.target.files?.[0])} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Avatar decoration</Label>
+          <p className="text-xs text-muted-foreground">
+            A frame drawn around your avatar wherever you appear. On your
+            birthday you&apos;ll wear one made for the day instead, and get this
+            one back the morning after.
+          </p>
+          <div className="flex flex-wrap items-start gap-2">
+            <DecorationSwatch
+              label="None"
+              imageUrl={me.imageUrl}
+              name={me.name}
+              selected={!me.avatarDecoration}
+              onSelect={() => void setAvatarDecoration({ value: "" })}
+            />
+            {DECORATION_PRESETS.map((preset) => (
+              <DecorationSwatch
+                key={preset.key}
+                label={preset.name}
+                imageUrl={me.imageUrl}
+                name={me.name}
+                decorationSrc={preset.src}
+                selected={me.avatarDecoration === preset.value}
+                onSelect={() => void setAvatarDecoration({ value: preset.value })}
+              />
+            ))}
+            {/* Only shown once there is one: an empty "yours" slot would look
+                like a preset that failed to load. */}
+            {isCustomDecoration(me.avatarDecoration) && (
+              <DecorationSwatch
+                label="Yours"
+                imageUrl={me.imageUrl}
+                name={me.name}
+                decorationSrc={me.avatarDecoration}
+                selected
+                onSelect={() => {}}
+              />
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => decorationFileInputRef.current?.click()}
+              disabled={decorationUploading}
+            >
+              {decorationUploading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Upload your own"
+              )}
+            </Button>
+            {me.avatarDecoration && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => void removeAvatarDecoration()}
+              >
+                Remove
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A square, transparent PNG or GIF works best — it isn&apos;t cropped,
+            it&apos;s drawn over and around your avatar. Up to{" "}
+            {MAX_DECORATION_LABEL}.
+          </p>
+          <input
+            ref={decorationFileInputRef}
+            type="file"
+            accept="image/png,image/gif,image/webp,image/svg+xml"
+            className="hidden"
+            onChange={(e) => handleDecorationPick(e.target.files?.[0])}
+          />
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

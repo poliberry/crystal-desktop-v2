@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as badges from "../badges.js";
 import type * as callTokens from "../callTokens.js";
 import type * as calls from "../calls.js";
 import type * as channelCalls from "../channelCalls.js";
@@ -21,6 +22,7 @@ import type * as crons from "../crons.js";
 import type * as friends from "../friends.js";
 import type * as http from "../http.js";
 import type * as lib_activities from "../lib/activities.js";
+import type * as lib_birthday from "../lib/birthday.js";
 import type * as lib_callReconciliation from "../lib/callReconciliation.js";
 import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_liveKitAdmin from "../lib/liveKitAdmin.js";
@@ -50,6 +52,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  badges: typeof badges;
   callTokens: typeof callTokens;
   calls: typeof calls;
   channelCalls: typeof channelCalls;
@@ -63,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   friends: typeof friends;
   http: typeof http;
   "lib/activities": typeof lib_activities;
+  "lib/birthday": typeof lib_birthday;
   "lib/callReconciliation": typeof lib_callReconciliation;
   "lib/gameHistory": typeof lib_gameHistory;
   "lib/liveKitAdmin": typeof lib_liveKitAdmin;

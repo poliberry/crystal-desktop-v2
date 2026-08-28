@@ -1,7 +1,19 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { visibleActivities, visibleCustomStatus } from "./lib/activities";
+import {
+  unexpiredCustomStatus,
+  visibleActivities,
+} from "./lib/activities";
+import {
+  effectiveDecoration,
+  generateBirthdayDecoration,
+  isBirthdayNow,
+  isPlausibleBirthdayClaim,
+  MAX_BIRTHDAY_WINDOW_MS,
+} from "./lib/birthday";
+import { badgeByIdMap, badgeView } from "./badges";
+import { MAX_DECORATION_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import {
   internalMutation,
   internalQuery,
@@ -192,6 +204,8 @@ export const updateProfileExtended = mutation({
     profileBg: v.optional(v.string()),
     /** `YYYY-MM-DD`, or empty to clear it. */
     dob: v.optional(v.string()),
+    /** How the custom status is drawn on the profile card. */
+    statusBubble: v.optional(v.union(v.literal("speech"), v.literal("thought"))),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
@@ -206,6 +220,12 @@ export const updateProfileExtended = mutation({
         throw new Error("Date of birth must be in YYYY-MM-DD form.");
       }
       patch.dob = dob || undefined;
+      // A birthday already claimed was claimed about the *old* date, so it
+      // goes with it: the decoration and the cake come back within a moment
+      // (the client re-claims — see BirthdayProvider) if the new date is still
+      // today, and stop immediately if it isn't.
+      patch.birthdayUntil = undefined;
+      patch.birthdayDecoration = undefined;
     }
     if (args.customStatus !== undefined) {
       patch.customStatus = args.customStatus.trim().slice(0, 128) || undefined;
@@ -216,6 +236,9 @@ export const updateProfileExtended = mutation({
     if (args.borderGradientStart !== undefined) patch.borderGradientStart = args.borderGradientStart || undefined;
     if (args.borderGradientEnd !== undefined) patch.borderGradientEnd = args.borderGradientEnd || undefined;
     if (args.profileBg !== undefined) patch.profileBg = args.profileBg || undefined;
+    // Stored even when it is the default, so "speech" can be chosen back after
+    // "thought" — the two are a pair of choices rather than a flag.
+    if (args.statusBubble !== undefined) patch.statusBubble = args.statusBubble;
     if (Object.keys(patch).length > 0) await ctx.db.patch(me._id, patch);
   },
 });
@@ -293,6 +316,107 @@ export const removeNameplate = mutation({
     const previous = me.nameplateStorageId;
     await ctx.db.patch(me._id, { nameplateUrl: undefined, nameplateStorageId: undefined });
     if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+// --- Avatar decorations ----------------------------------------------------
+
+/** The shape of a preset value, not the catalogue of them: which keys exist is
+ * presentation and lives in src/lib/avatar-decorations.ts, where an
+ * unrecognised one already renders as no decoration at all. Checked so the
+ * field can only ever hold a preset or a storage URL this file wrote. */
+const PRESET_RE = /^builtin:[a-z0-9-]{1,32}$/;
+
+/**
+ * Wear one of the built-in decorations, or none.
+ *
+ * Drops any custom upload it replaces: nothing else references it, so keeping
+ * it would be a billable file no code path can ever reach again.
+ */
+export const setAvatarDecoration = mutation({
+  args: { value: v.string() },
+  handler: async (ctx, { value }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = value.trim();
+    if (trimmed && !PRESET_RE.test(trimmed)) {
+      throw new Error("Not a built-in decoration.");
+    }
+    const previous = me.avatarDecorationStorageId;
+    await ctx.db.patch(me._id, {
+      avatarDecoration: trimmed || undefined,
+      avatarDecorationStorageId: undefined,
+    });
+    if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+/** Wear a decoration of your own. Unlike an avatar this isn't cropped: the
+ * frame is drawn at a fixed size around the picture, so what the file has to
+ * be is square and transparent, which cropping can't produce. */
+export const setCustomAvatarDecoration = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireWithinUploadLimit(ctx, storageId, MAX_DECORATION_BYTES, "Avatar decorations");
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Decoration upload failed.");
+    const previous = me.avatarDecorationStorageId;
+    await ctx.db.patch(me._id, {
+      avatarDecoration: url,
+      avatarDecorationStorageId: storageId,
+    });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    return url;
+  },
+});
+
+export const removeAvatarDecoration = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.avatarDecorationStorageId;
+    await ctx.db.patch(me._id, {
+      avatarDecoration: undefined,
+      avatarDecorationStorageId: undefined,
+    });
+    if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+/**
+ * "It's my birthday, and my day ends at `expiresAt`."
+ *
+ * Called by the client on the day (see BirthdayProvider), because only it
+ * knows what timezone its user is in — the server has no idea when local
+ * midnight is, and a birthday is a local date. What it does know is roughly
+ * what date it is, so a claim more than a day away from the stored `dob` is
+ * refused, and the window is capped: the client picks the hour its user's day
+ * ends, not whether they get a birthday at all.
+ *
+ * Also mints the decoration, once. Re-running while the window is open is a
+ * no-op rather than a re-roll, so the frame doesn't change colour every time
+ * the app is reopened.
+ */
+export const claimBirthday = mutation({
+  args: { expiresAt: v.number() },
+  handler: async (ctx, { expiresAt }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+    if (!me.dob) return null;
+    if (!isPlausibleBirthdayClaim(me.dob, now)) return null;
+    if (expiresAt <= now || expiresAt > now + MAX_BIRTHDAY_WINDOW_MS) return null;
+
+    const alreadyRunning = me.birthdayUntil !== undefined && me.birthdayUntil > now;
+    if (alreadyRunning && me.birthdayDecoration) return me.birthdayDecoration;
+
+    const decoration = alreadyRunning
+      ? me.birthdayDecoration ?? generateBirthdayDecoration(me, now)
+      : generateBirthdayDecoration(me, now);
+    await ctx.db.patch(me._id, {
+      birthdayUntil: Math.max(expiresAt, me.birthdayUntil ?? 0),
+      birthdayDecoration: decoration,
+    });
+    return decoration;
   },
 });
 
@@ -410,6 +534,33 @@ export const removeAvatar = mutation({
   },
 });
 
+/**
+ * Put the birthday decoration away once the day is over.
+ *
+ * Needed because "is it still their birthday" is a question about the clock,
+ * and a Convex query only re-runs when *data* changes: at midnight nothing is
+ * written, so every subscriber would go on being told about a birthday that
+ * ended — until something unrelated happened to invalidate the query, or they
+ * restarted the app. Clearing the fields is that write, and it puts everyone
+ * back on the user's own decoration at once.
+ *
+ * Called by the birthday-haver's own client, which is the one that knows when
+ * their day ends. Refuses to run while the day is still going, so a client
+ * with a wrong clock can't cut its user's birthday short for everybody else.
+ */
+export const releaseBirthday = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (me.birthdayUntil === undefined && me.birthdayDecoration === undefined) return;
+    if (isBirthdayNow(me)) return;
+    await ctx.db.patch(me._id, {
+      birthdayUntil: undefined,
+      birthdayDecoration: undefined,
+    });
+  },
+});
+
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => getCurrentUserOrNull(ctx),
@@ -465,11 +616,27 @@ export const getProfile = query({
       imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
       bio: serverProfile?.bio ?? user.bio,
       bannerUrl: serverProfile?.bannerUrl ?? user.bannerUrl,
-      customStatus: visibleCustomStatus(
-        user,
-        presence?.effective ?? "offline",
-        serverProfile?.customStatus
-      ),
+      /**
+       * Not filtered by presence, unlike the lists.
+       *
+       * A row in a member list hides an offline person's status because the
+       * row is about whether you can reach them, and "Back Monday" under a
+       * dimmed name reads as a claim about right now. Opening someone's
+       * profile is the opposite: their own words about what they're up to are
+       * the reason you opened it, and hiding them there loses the only place
+       * a status set for later can still be read. The deadline still applies —
+       * an expired status is gone everywhere.
+       */
+      customStatus: serverProfile?.customStatus ?? unexpiredCustomStatus(user),
+      /** Said or thought — the shape the card draws that status in. Always the
+       * account's own choice, even when the text came from a server profile:
+       * it's how this person likes their status to read. */
+      statusBubble: user.statusBubble ?? "speech",
+      // Account-level, both of them: a decoration is worn by the person rather
+      // than by one of their server identities, and a birthday isn't a
+      // per-server fact either.
+      avatarDecoration: effectiveDecoration(user),
+      isBirthday: isBirthdayNow(user),
       borderGradientStart: serverProfile?.borderGradientStart ?? user.borderGradientStart,
       borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
       status: presence?.effective ?? "offline",
@@ -516,6 +683,8 @@ export const getUsersByIds = query({
             name: serverProfile?.displayName ?? u.name,
             imageUrl: serverProfile?.imageUrl ?? u.imageUrl,
             avatarAccent: usingServerAvatar ? serverProfile.avatarAccent : u.avatarAccent,
+            avatarDecoration: effectiveDecoration(u),
+            isBirthday: isBirthdayNow(u),
           };
         })
     );
@@ -550,25 +719,53 @@ export const getCurrentUserIdInternal = internalQuery({
 // --- Badges ----------------------------------------------------------------
 
 /**
- * A user's badges, oldest first.
+ * A user's badges, resolved and ready to draw.
  *
  * Fetched by the profile card itself rather than joined into every query that
  * returns a member: the card is opened one at a time, and the alternative is
  * threading a `badges` field through half a dozen unrelated queries so that
  * one popover can render a row of pills.
+ *
+ * Resolved *here* rather than in the client, because the catalogue is a table
+ * now (see convex/badges.ts): an id with no definition is dropped, and where a
+ * badge is one tier of something — Bug Hunter bronze through diamond — only
+ * the highest tier held survives, since five identical bug glyphs say less
+ * than one diamond one.
  */
 export const badgesOf = query({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    const rows = await ctx.db
-      .query("userBadges")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-    return rows
-      .sort((a, b) => a.grantedAt - b.grantedAt)
-      .map((row) => ({ badgeId: row.badgeId, grantedAt: row.grantedAt }));
+    const [rows, definitions] = await Promise.all([
+      ctx.db
+        .query("userBadges")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+      badgeByIdMap(ctx),
+    ]);
+
+    const held = rows
+      .map((row) => ({ row, badge: definitions.get(row.badgeId) }))
+      .filter((entry): entry is { row: typeof entry.row; badge: Doc<"badges"> } => !!entry.badge);
+
+    // Highest tier per group, decided across everything held before anything
+    // is dropped — the tiers may have been granted in any order.
+    const bestTier = new Map<string, number>();
+    for (const { badge } of held) {
+      if (!badge.group) continue;
+      const tier = badge.tier ?? 0;
+      if (tier > (bestTier.get(badge.group) ?? -Infinity)) bestTier.set(badge.group, tier);
+    }
+
+    return held
+      .filter(({ badge }) => !badge.group || (badge.tier ?? 0) === bestTier.get(badge.group))
+      .sort(
+        (a, b) =>
+          (a.badge.position ?? 0) - (b.badge.position ?? 0) ||
+          a.row.grantedAt - b.row.grantedAt
+      )
+      .map(({ row, badge }) => ({ ...badgeView(badge), grantedAt: row.grantedAt }));
   },
 });
 

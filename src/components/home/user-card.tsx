@@ -24,11 +24,11 @@ import { useCall } from "@/components/call/call-provider";
 import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
-import { PresenceDot } from "@/components/presence-dot";
+import { PresenceBadge } from "@/components/presence-dot";
 import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import {
   Avatar,
-  AvatarBadge,
+  AvatarDecoration,
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
@@ -49,10 +49,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
+import { decorationSrc, ownDecorationState } from "@/lib/avatar-decorations";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
 import { useOpenSettings } from "@/components/settings/settings-dialog";
 import {
-  STATUS_DOT_CLASS,
   STATUS_LABEL,
   type FriendStatus,
   type ManualStatus,
@@ -87,6 +87,10 @@ export function UserCard() {
   const title = useCallTitle(activeCall);
   const { communityNavStyle } = useUiPreferences();
   const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
+  // Resolved here rather than by a query: this card reads the raw user
+  // document, so the birthday-overrides-your-choice rule has to be applied
+  // locally — see ownDecorationState.
+  const { decoration, isBirthday } = ownDecorationState(me);
 
   if (!me) return null;
 
@@ -409,7 +413,12 @@ export function UserCard() {
                   <AvatarFallback>
                     {me.name.slice(0, 2).toUpperCase()}
                   </AvatarFallback>
-                  <AvatarBadge className={STATUS_DOT_CLASS[status]} />
+                  <AvatarDecoration src={decorationSrc(decoration)} />
+                  <PresenceBadge
+                    status={status}
+                    isBirthday={isBirthday}
+                    decorated={!!decoration}
+                  />
                 </Avatar>
               </PopoverTrigger>
               <PopoverContent
@@ -426,6 +435,8 @@ export function UserCard() {
                     bio: me.bio,
                     customStatus,
                     bannerUrl: me.bannerUrl,
+                    avatarDecoration: decoration,
+                    isBirthday,
                     borderGradientStart: me.borderGradientStart,
                     borderGradientEnd: me.borderGradientEnd,
                     // "invisible" appears as offline to others; show the same for self
