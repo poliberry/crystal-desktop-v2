@@ -21,6 +21,10 @@ export const STATUS_BUBBLE_KINDS: {
   { kind: "thought", label: "Thought", hint: "Just thinking it." },
 ];
 
+/** The bubble and its tail are the same surface, so they read as one shape
+ * rather than as a pill with something stuck to it. */
+const SURFACE = "bg-accent/60 shadow-lg backdrop-blur-sm";
+
 /**
  * A custom status, beside the avatar rather than over it.
  *
@@ -30,7 +34,10 @@ export const STATUS_BUBBLE_KINDS: {
  * nothing else occupies, so neither has to give way to the other.
  *
  * The tail is what makes the two shapes different, and it points back at the
- * avatar in both — a bubble whose tail points nowhere is just a pill.
+ * avatar in both — a bubble whose tail points nowhere is just a pill. It lives
+ * on the *outer* element rather than beside the text, because the text is
+ * truncated and `truncate` is `overflow: hidden`: a tail inside it is clipped
+ * off at the bubble's edge, which is exactly where a tail needs to be.
  */
 export function StatusBubble({
   text,
@@ -46,53 +53,57 @@ export function StatusBubble({
   className?: string;
 }) {
   const thought = kind === "thought";
-  const surface = "bg-accent/60 shadow-lg backdrop-blur-sm";
+  const Element = onClick ? "button" : "span";
 
-  const body = (
-    <>
-      {text}
+  return (
+    <Element
+      {...(onClick ? { type: "button" as const, title: "Change your status", onClick } : {})}
+      className={cn(
+        "relative inline-flex max-w-full items-center",
+        onClick && "cursor-pointer",
+        className
+      )}
+    >
       {thought ? (
-        // Two dots trailing back towards the avatar, smaller as they go and
-        // dropping a little as they do, the way a thought bubble is drawn
-        // everywhere.
+        // Two circles trailing back towards the avatar, smaller as they go and
+        // dropping as they do.
         <>
           <span
             aria-hidden
-            className={cn("absolute bottom-1 -left-2 size-2.5 rounded-full", surface)}
+            className={cn("absolute top-1/2 -left-3 size-2.5 rounded-full", SURFACE)}
           />
           <span
             aria-hidden
-            className={cn("absolute -bottom-0.5 -left-4 size-1.5 rounded-full", surface)}
+            className={cn("absolute top-[72%] -left-5 size-1.5 rounded-full", SURFACE)}
           />
         </>
       ) : (
-        // A square turned 45°: two of its sides make the tail, and the other
-        // two are hidden behind the bubble it is attached to.
+        // A left-pointing triangle, clipped out of a box rather than built from
+        // borders: a border triangle can't take the bubble's own background, so
+        // it would sit a shade off it.
         <span
           aria-hidden
           className={cn(
-            "absolute top-1/2 -left-1 size-2.5 -translate-y-1/2 rotate-45 rounded-[2px]",
-            surface
+            // Butted against the bubble with a pixel to spare, not over it:
+            // the surface is translucent, so any overlap would show as a
+            // darker patch where the two stack.
+            "absolute top-1/2 -left-[9px] size-2.5 -translate-y-1/2",
+            "[clip-path:polygon(100%_0,100%_100%,0_50%)]",
+            SURFACE
           )}
         />
       )}
-    </>
-  );
-
-  const shape = cn(
-    "relative max-w-full truncate px-3 py-1 text-sm font-medium text-white",
-    // A thought is rounder than a speech bubble; the difference is small but
-    // it's the same difference the tails make, and the two agree.
-    thought ? "rounded-full" : "rounded-2xl",
-    surface,
-    className
-  );
-
-  if (!onClick) return <span className={shape}>{body}</span>;
-
-  return (
-    <button type="button" title="Change your status" onClick={onClick} className={cn(shape, "cursor-pointer hover:bg-accent/80")}>
-      {body}
-    </button>
+      <span
+        className={cn(
+          "min-w-0 truncate px-3 py-1 text-sm font-medium text-white",
+          // A thought is rounder than a speech bubble; the difference is small
+          // but it's the same difference the tails make, and the two agree.
+          thought ? "rounded-full" : "rounded-2xl",
+          SURFACE
+        )}
+      >
+        {text}
+      </span>
+    </Element>
   );
 }
