@@ -129,6 +129,15 @@ export interface ScreenSource {
   thumbnail: string | null;
 }
 
+/** macOS Screen Recording authorisation, straight from Electron's
+ * `systemPreferences.getMediaAccessStatus("screen")`. */
+export type ScreenCapturePermission =
+  | "not-determined"
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "unknown";
+
 /**
  * A Rich Presence activity resolved by the main process — a detected game, an
  * activity pushed over the Discord-compatible IPC socket, or now-playing
@@ -156,7 +165,10 @@ export interface RichPresenceActivity {
    * `positionMs` is accurate as of. This is what viewers interpolate
    * against — see `useInterpolatedPosition`. */
   positionUpdatedAt?: number;
-  source?: "detectable" | "ipc" | "music";
+  /** Up to two link buttons under the card. Only custom activities set these
+   * — nothing we detect has anywhere to point. */
+  buttons?: { label: string; url: string }[];
+  source?: "detectable" | "ipc" | "music" | "custom";
 }
 
 /** Diagnostics for the Settings → Voice & Video panel. */
@@ -230,6 +242,13 @@ export interface DesktopAPI {
   screenShare?: {
     getSources(): Promise<ScreenSource[]>;
     setSource(id: string): Promise<boolean>;
+    /** macOS Screen Recording status. Always `"granted"` elsewhere — no other
+     * platform gates enumeration. Needed because a denied grant makes
+     * `getSources` return an empty list rather than throwing. */
+    permission(): Promise<ScreenCapturePermission>;
+    /** Open System Settings at Screen & System Audio Recording. There is no
+     * API to request this permission, so this is the most an app can do. */
+    openPermissionSettings(): Promise<boolean>;
   };
   richPresence?: {
     /** Everything currently detected, richest first. */

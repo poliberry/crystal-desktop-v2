@@ -15,6 +15,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
 import { DataPreloader } from "@/components/data-preloader";
 import { FileDropGuard } from "@/components/home/composer-attachments";
+import { SettingsDialogProvider } from "@/components/settings/settings-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const CLERK_PUBLISHABLE_KEY =
@@ -80,7 +81,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   <AuthCallbackHandler />
                   <DataPreloader />
                   <FileDropGuard />
-                  {children}
+                  {/* Inside Convex/Clerk: the settings shell it renders on the
+                      web queries the current user and their presence. */}
+                  <SettingsDialogProvider>{children}</SettingsDialogProvider>
                 </ConvexProviderWithClerk>
               </ClerkProvider>
             </TooltipProvider>

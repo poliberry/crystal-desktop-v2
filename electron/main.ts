@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -123,6 +123,29 @@ function appIconPath(): string | undefined {
     ? path.join(__dirname, "..", "build", channel.icon)
     : path.join(process.resourcesPath, "icon.png");
   return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+/**
+ * The app icon sized for a tray/menu-bar slot.
+ *
+ * `new Tray(path)` uses the image at its natural size, and our icons ship at
+ * 512px+ for the installer — which on macOS is drawn into the menu bar as-is,
+ * swallowing the bar. macOS wants roughly an 18pt image, so it's drawn at 2x
+ * and the buffer tagged as a Retina representation: the logical size stays
+ * 18pt while the pixels stay sharp on a Retina display. Windows and Linux
+ * both want 16px. Not a template image — templates are drawn from alpha
+ * alone, which would reduce a full-colour logo to a solid blob.
+ */
+function trayIconImage(): Electron.NativeImage {
+  const source = appIconPath();
+  if (!source) return nativeImage.createEmpty();
+  const image = nativeImage.createFromPath(source);
+  if (image.isEmpty()) return nativeImage.createEmpty();
+  if (process.platform === "darwin") {
+    const retina = image.resize({ width: 36, height: 36, quality: "best" });
+    return nativeImage.createFromBuffer(retina.toPNG(), { scaleFactor: 2 });
+  }
+  return image.resize({ width: 16, height: 16, quality: "best" });
 }
 
 /**
@@ -563,6 +586,41 @@ app.whenReady().then(async () => {
     }));
   });
 
+  /**
+   * Whether macOS will actually let us enumerate screens.
+   *
+   * Without Screen Recording permission `getSources` doesn't fail — it returns
+   * an empty array, which is indistinguishable from a machine with nothing to
+   * share, so the picker used to sit there reading "No shareable screens or
+   * windows found". This is what lets it say something true instead.
+   *
+   * Worth knowing that macOS ties the grant to the app's code signature, not
+   * just its bundle id: re-signing Crystal with a different identity silently
+   * invalidates an existing grant, and the stale entry can still appear ticked
+   * in System Settings while capture returns nothing.
+   *
+   * Only macOS gates this — everywhere else the answer is always yes.
+   */
+  ipcMain.handle("screen-share:permission", () => {
+    if (process.platform !== "darwin") return "granted";
+    return systemPreferences.getMediaAccessStatus("screen");
+  });
+
+  /** Open System Settings straight to Screen & System Audio Recording. macOS
+   * offers no API to *request* this permission, so pointing the user at the
+   * right pane is as far as an app can go. */
+  ipcMain.handle("screen-share:open-permission-settings", async () => {
+    if (process.platform !== "darwin") return false;
+    try {
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   ipcMain.handle("app:info", () => ({
     platform: process.platform,
     channel: channel.id,
@@ -629,8 +687,11 @@ app.whenReady().then(async () => {
   // Tray icon: lets the app keep running (and keep watching for
   // notifications) after the window is closed, per the `close` handler in
   // createWindow() above.
-  const tray = new Tray(appIconPath() ?? nativeImage.createEmpty());
+  const tray = new Tray(trayIconImage());
   tray.setToolTip(channel.productName);
+  // Without this macOS swallows the first click of a double-click and delays
+  // the menu; the tray has no double-click behaviour to preserve.
+  if (process.platform === "darwin") tray.setIgnoreDoubleClickEvents(true);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Open ${channel.productName}`, click: () => createOrFocusMainWindow() },

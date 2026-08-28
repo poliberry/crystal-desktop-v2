@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef } from "react";
 
+import { attachSmoothScroll } from "@/hooks/use-smooth-scroll";
+
 /**
  * How far from the bottom still counts as "reading the end of the
  * conversation". Generous enough to survive sub-pixel layout and a scroll that
@@ -210,6 +212,9 @@ export function useStickToBottom({
     };
   }, []);
 
+  /** Detach for the smooth-scroll listeners on the current container. */
+  const detachSmoothRef = useRef<(() => void) | null>(null);
+
   const setContainerRef = useCallback(
     (node: HTMLDivElement | null) => {
       const previous = containerRef.current;
@@ -217,10 +222,20 @@ export function useStickToBottom({
         previous?.removeEventListener(event, markGesture);
         node?.addEventListener(event, markGesture, { passive: true });
       }
+      // Attached here rather than by the list, so the wheel animation and the
+      // pin share one scroller and one lifetime. The two cooperate: the
+      // animation is shorter than the gesture window above, so a fling that
+      // ends at the bottom is still measured as the reader arriving there —
+      // and any `scrollTop` this hook assigns interrupts the animation rather
+      // than being overwritten by it.
+      detachSmoothRef.current?.();
+      detachSmoothRef.current = node ? attachSmoothScroll(node) : null;
       observe(containerRef, node);
     },
     [observe, markGesture]
   );
+
+  useEffect(() => () => detachSmoothRef.current?.(), []);
 
   const setContentRef = useCallback(
     (node: HTMLDivElement | null) => {

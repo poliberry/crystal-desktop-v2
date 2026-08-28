@@ -24,11 +24,11 @@ import { useCall } from "@/components/call/call-provider";
 import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
-import { PresenceDot } from "@/components/presence-dot";
+import { PresenceBadge } from "@/components/presence-dot";
 import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import {
   Avatar,
-  AvatarBadge,
+  AvatarDecoration,
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
@@ -49,10 +49,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
+import { decorationSrc, ownDecorationState } from "@/lib/avatar-decorations";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
-import { getDesktopAPI } from "@/lib/desktop";
+import { useOpenSettings } from "@/components/settings/settings-dialog";
 import {
-  STATUS_DOT_CLASS,
   STATUS_LABEL,
   type FriendStatus,
   type ManualStatus,
@@ -83,17 +83,29 @@ export function UserCard() {
   const { muted, deafened, toggleMuted, toggleDeafened } =
     useAudioPreferences();
   const [statusOpen, setStatusOpen] = useState(false);
+  const openSettings = useOpenSettings();
   const title = useCallTitle(activeCall);
   const { communityNavStyle } = useUiPreferences();
   const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
+  // Resolved here rather than by a query: this card reads the raw user
+  // document, so the birthday-overrides-your-choice rule has to be applied
+  // locally — see ownDecorationState.
+  const { decoration, isBirthday } = ownDecorationState(me);
 
   if (!me) return null;
 
   const { cameraEnabled, screenSharing, toggleCamera, toggleScreenShare } =
     controller;
 
-  const subtitle = me.customStatus
-    ? `${me.customStatus}`
+  // Your own card reads the raw profile, so the deadline has to be applied
+  // here — everyone else sees it through a query that already has.
+  const customStatus =
+    me.customStatusExpiresAt && me.customStatusExpiresAt <= Date.now()
+      ? undefined
+      : me.customStatus;
+
+  const subtitle = customStatus
+    ? `${customStatus}`
     : activeCall
       ? "In voice"
       : STATUS_LABEL[status];
@@ -197,7 +209,7 @@ export function UserCard() {
               variant="ghost"
               size="icon"
               className="size-7 shrink-0 hover:bg-black/10"
-              onClick={() => void getDesktopAPI()?.settings.open()}
+              onClick={openSettings}
             >
               <Settings className="size-4" />
             </Button>
@@ -390,24 +402,23 @@ export function UserCard() {
             <img
               src={me.nameplateUrl}
               alt=""
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-              style={{
-                WebkitMaskImage:
-                  "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                maskImage:
-                  "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-              }}
+              className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
             />
           )}
           <div className={cn("flex min-w-0 items-center gap-2", !compact && "flex-1")}>
             <Popover>
               <PopoverTrigger asChild>
-                <Avatar size="sm" className="shrink-0 cursor-pointer">
-                  <AvatarImage src={me.imageUrl} alt={me.name} />
+                <Avatar size="default" className="shrink-0 cursor-pointer">
+                  <AvatarImage src={me.imageUrl} alt={me.name} className="rounded-md" />
                   <AvatarFallback>
                     {me.name.slice(0, 2).toUpperCase()}
                   </AvatarFallback>
-                  <AvatarBadge className={STATUS_DOT_CLASS[status]} />
+                  <AvatarDecoration src={decorationSrc(decoration)} />
+                  <PresenceBadge
+                    status={status}
+                    isBirthday={isBirthday}
+                    decorated={!!decoration}
+                  />
                 </Avatar>
               </PopoverTrigger>
               <PopoverContent
@@ -422,8 +433,10 @@ export function UserCard() {
                     username: me.username,
                     imageUrl: me.imageUrl,
                     bio: me.bio,
-                    customStatus: me.customStatus,
+                    customStatus,
                     bannerUrl: me.bannerUrl,
+                    avatarDecoration: decoration,
+                    isBirthday,
                     borderGradientStart: me.borderGradientStart,
                     borderGradientEnd: me.borderGradientEnd,
                     // "invisible" appears as offline to others; show the same for self

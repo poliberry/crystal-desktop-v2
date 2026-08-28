@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Plus } from "lucide-react";
+import { Cake, Plus } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../convex/_generated/api";
@@ -9,6 +9,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
 import { GlobalSearch } from "@/components/home/global-search";
+import { useBirthday } from "@/components/home/birthday-provider";
 import { NotificationInbox } from "@/components/home/notification-inbox";
 import { useNavigation } from "@/components/home/navigation-context";
 import { TabBar } from "@/components/home/tab-bar";
@@ -26,6 +27,38 @@ import {
 } from "@/components/ui/tooltip";
 import { UpdateIndicator } from "@/components/update-indicator";
 import { WindowControls } from "@/components/window-controls";
+
+/**
+ * Replays the birthday celebration.
+ *
+ * Only on screen during the birthday's own window, so it isn't a permanent
+ * button that does nothing for 362 days of the year.
+ */
+function BirthdayButton() {
+  const { inWindow, isToday, celebrate } = useBirthday();
+  if (!inWindow) return null;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={celebrate}
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+            className="pointer-events-auto relative flex size-6 shrink-0 items-center justify-center rounded-md text-amber-300 opacity-80 transition-opacity hover:bg-accent/60 hover:opacity-100"
+            aria-label="Replay your birthday celebration"
+          >
+            <Cake className="size-4" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {isToday ? "Happy birthday!" : "Replay your birthday"}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 function CommunitiesPopover() {
   const [open, setOpen] = useState(false);
@@ -172,6 +205,8 @@ export function TopNav() {
       {tabsEnabled ? <TabBar /> : <div className="flex-1" />}
 
       <UpdateIndicator />
+
+      <BirthdayButton />
 
       <NotificationInbox />
 

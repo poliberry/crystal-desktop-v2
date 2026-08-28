@@ -265,7 +265,7 @@ export function RichPresenceCard({
           : undefined
       }
       className={cn(
-        "rounded-md border border-border/40 bg-muted/30 px-3 py-2.5",
+        "min-w-0 overflow-hidden rounded-md border border-border/40 bg-muted/30 px-3 py-2.5",
         onClick && "cursor-pointer transition-colors hover:bg-muted/50",
         className
       )}
@@ -284,6 +284,38 @@ export function RichPresenceCard({
       ) : (
         <GameBody activity={activity} />
       )}
+      <ActivityButtons activity={activity} />
+    </div>
+  );
+}
+
+/**
+ * The link buttons under a custom activity.
+ *
+ * Anchors rather than buttons so the desktop shell's window-open handler
+ * sends them to the system browser (see electron/main.ts) and the web build
+ * gets the same behaviour for free. The click is stopped from bubbling
+ * because the card itself is often a button that fans the activity deck open.
+ */
+function ActivityButtons({ activity }: { activity: RichPresenceActivity }) {
+  const buttons = activity.buttons?.slice(0, 2) ?? [];
+  if (buttons.length === 0) return null;
+
+  return (
+    <div className="mt-2.5 flex gap-1.5">
+      {buttons.map((button, index) => (
+        <a
+          key={`${button.url}-${index}`}
+          href={button.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          onClick={(event) => event.stopPropagation()}
+          title={button.url}
+          className="min-w-0 flex-1 truncate rounded border border-border/60 bg-background/60 px-2 py-1 text-center text-xs font-medium transition-colors hover:bg-accent"
+        >
+          {button.label}
+        </a>
+      ))}
     </div>
   );
 }
@@ -313,7 +345,7 @@ export function RichPresenceCards({
   const showFlat = !stack || expanded || activities.length === 1;
   if (showFlat) {
     return (
-      <div className={cn("flex flex-col gap-2", className)}>
+      <div className={cn("flex min-w-0 flex-col gap-2", className)}>
         {activities.map((activity, index) => (
           <RichPresenceCard
             key={`${activity.type}-${activity.name}-${index}`}
@@ -329,11 +361,14 @@ export function RichPresenceCards({
   const sheets = Math.min(rest.length, MAX_STACK_SHEETS);
 
   return (
-    <div className={cn("relative", className)} style={{ paddingBottom: sheets * STACK_PEEK }}>
+    <div className={cn("relative min-w-0", className)} style={{ paddingBottom: sheets * STACK_PEEK }}>
       {/* A grid with every child in the same cell makes the sheets exactly the
           front card's size without having to measure it — they're then nudged
           down and narrowed so only their bottom edge shows, like a deck. */}
-      <div className="grid">
+      {/* `min-w-0`: an auto grid track is at least min-content, and a card with
+          a stream still in it would otherwise widen the track to the picture's
+          own dimensions. */}
+      <div className="grid min-w-0">
         {Array.from({ length: sheets }, (_, index) => {
           const depth = sheets - index;
           return (
@@ -350,7 +385,7 @@ export function RichPresenceCards({
         })}
         <RichPresenceCard
           activity={front}
-          className="col-start-1 row-start-1 z-10"
+          className="col-start-1 row-start-1 z-10 min-w-0"
           onClick={() => setExpanded(true)}
         />
       </div>

@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText } from "./lib/mentions";
 import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
@@ -94,12 +95,18 @@ export const list = query({
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
+          /** Set when the message came from the "wish them a happy birthday"
+           * prompt: the cakes fall for everyone in the conversation when one
+           * of these arrives. */
+          birthdayWish: message.birthdayWish === true,
           author: author
             ? {
                 id: author._id,
                 name: author.name,
                 username: author.username,
                 imageUrl: author.imageUrl,
+                avatarDecoration: effectiveDecoration(author),
+                isBirthday: isBirthdayNow(author),
                 status: authorPresence?.effective,
               }
             : null,
@@ -127,8 +134,13 @@ export const send = mutation({
         }),
       ),
     ),
+    /** Sent from the birthday prompt above the composer. Only honoured when
+     * somebody in the conversation is actually having a birthday — the flag is
+     * what makes cakes rain down other people's windows, so it can't be
+     * something a client just asserts. */
+    birthdayWish: v.optional(v.boolean()),
   },
-  handler: async (ctx, { conversationId, text, attachments }) => {
+  handler: async (ctx, { conversationId, text, attachments, birthdayWish }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const membership = await requireMembership(ctx, conversationId, me._id);
 
@@ -148,10 +160,26 @@ export const send = mutation({
       );
     }
 
+    const otherMembers = (
+      await ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation", (q) =>
+          q.eq("conversationId", conversationId),
+        )
+        .collect()
+    ).filter((m) => m.userId !== me._id);
+
+    let isWish = false;
+    if (birthdayWish) {
+      const others = await Promise.all(otherMembers.map((m) => ctx.db.get(m.userId)));
+      isWish = others.some((other) => isBirthdayNow(other));
+    }
+
     const messageId = await ctx.db.insert("messages", {
       conversationId,
       authorId: me._id,
       text: trimmed || undefined,
+      birthdayWish: isWish || undefined,
     });
 
     for (const attachment of attachments ?? []) {
@@ -161,12 +189,6 @@ export const send = mutation({
     // I've obviously "read" up to the message I just sent.
     await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
 
-    const otherMembers = await ctx.db
-      .query("conversationMembers")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", conversationId),
-      )
-      .collect();
     await notifyUsers(ctx, {
       userIds: otherMembers.map((m) => m.userId),
       actorId: me._id,
@@ -178,6 +200,41 @@ export const send = mutation({
     });
 
     return messageId;
+  },
+});
+
+/**
+ * The newest birthday wish in this conversation, if one is near the top of it.
+ *
+ * A query of its own rather than something the message list reports, because
+ * both people have to see the cakes fall and only one of them sent the
+ * message: subscribing to "the latest wish" means the recipient's client is
+ * told about it by the same mechanism as the sender's, with no notion of who
+ * did what. The client decides whether it's fresh enough to play (see
+ * ChatView) — a wish from last year shouldn't rain cakes on someone opening
+ * the conversation.
+ *
+ * Only the last few messages are searched. `birthdayWish` has no index, and a
+ * wish that just landed is by definition at the end; scanning a whole
+ * conversation to find out that the last one was in March would cost far more
+ * than the feature is worth.
+ */
+const WISH_SEARCH_DEPTH = 20;
+
+export const latestBirthdayWish = query({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMembership(ctx, conversationId, me._id);
+
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+      .order("desc")
+      .take(WISH_SEARCH_DEPTH);
+    const wish = recent.find((message) => message.birthdayWish === true);
+    if (!wish) return null;
+    return { id: wish._id, createdAt: wish._creationTime, authorId: wish.authorId };
   },
 });
 

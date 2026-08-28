@@ -90,15 +90,10 @@ export function useUserActivities(userId: Id<"users"> | undefined): RichPresence
   // something the app knows about itself rather than something it detected.
   const stream = useQuery(api.presence.streamOf, userId ? { userId } : "skip");
 
-  const reported = !presence
-    ? []
-    : (() => {
-        // `activity` is the pre-list field, still present on older rows.
-        const list = (presence.activities ?? []) as RichPresenceActivity[];
-        if (list.length > 0) return list;
-        const legacy = presence.activity as RichPresenceActivity | undefined;
-        return legacy ? [legacy] : [];
-      })();
+  // Already resolved by the query: the user's own custom activity folded in
+  // ahead of anything detected, the pre-list `activity` field folded in for
+  // older rows, and nothing at all for somebody offline.
+  const reported = (presence?.activities ?? []) as RichPresenceActivity[];
 
   if (!stream) return reported;
   // First: a live stream is the most immediate thing anyone is doing, and it's

@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import type { ServerEmoji } from "@/lib/custom-emoji";
 import { SYSTEM_EMOJI_GROUPS, filterSystemEmoji, type SystemEmoji } from "@/lib/system-emoji";
+import { useSmoothScroll } from "@/hooks/use-smooth-scroll";
 import { cn } from "@/lib/utils";
 
 /** Icon per Unicode emoji group, for the left rail. Keys are the group names
@@ -145,6 +146,7 @@ export function ReactionPickerContent({
   // children in a `display: table` element, which shrink-wraps to content and
   // gives the grid a spurious horizontal scrollbar.
   const scrollRef = useRef<HTMLDivElement>(null);
+  useSmoothScroll(scrollRef);
 
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();

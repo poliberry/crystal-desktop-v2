@@ -10,7 +10,8 @@ import {
   requireAbove,
   requireCommunityPermission,
 } from "./permissions";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities, visibleCustomStatus } from "./lib/activities";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -494,15 +495,23 @@ export const listMembers = query({
           username: user?.username ?? "unknown",
           imageUrl: serverProfile?.imageUrl ?? user?.imageUrl,
           bio: serverProfile?.bio ?? user?.bio,
-          customStatus: serverProfile?.customStatus ?? user?.customStatus,
+          customStatus: visibleCustomStatus(
+            user,
+            presence?.effective ?? "offline",
+            serverProfile?.customStatus
+          ),
           nameplateUrl: serverProfile?.nameplateUrl ?? user?.nameplateUrl,
+          // Not merged with the server profile: a decoration and a birthday
+          // belong to the account, not to one server identity.
+          avatarDecoration: effectiveDecoration(user),
+          isBirthday: isBirthdayNow(user),
           bannerUrl: serverProfile?.bannerUrl ?? user?.bannerUrl,
           borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
           borderGradientEnd: serverProfile?.borderGradientEnd ?? user?.borderGradientEnd,
           isOwner: community.ownerId === member.userId,
           timeoutUntil: member.timeoutUntil,
           status: presence?.effective ?? "offline",
-          activities: activitiesOf(presence),
+          activities: visibleActivities(presence, user),
           roles: roleIds
             .map((id) => roleById.get(id))
             .filter((r): r is Doc<"roles"> => !!r)

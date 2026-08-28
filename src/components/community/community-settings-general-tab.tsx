@@ -179,8 +179,8 @@ export function CommunitySettingsGeneralTab({
             )}
           </div>
           <CardContent className="p-4">
-            <div className="flex flex-row gap-2">
-              <div className="group relative -mt-14">
+            <div className="flex flex-col gap-2">
+              <div className="group relative -mt-18">
                 <Avatar className="size-18">
                   <AvatarImage
                     src={community.imageUrl}
@@ -197,7 +197,7 @@ export function CommunitySettingsGeneralTab({
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
                     aria-label="Change icon"
-                    className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-100"
+                    className="absolute inset-0 size-18 flex items-center justify-center rounded-lg bg-black/50 opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-100"
                   >
                     {uploading ? (
                       <Loader2 className="size-5 animate-spin text-white" />
@@ -207,7 +207,7 @@ export function CommunitySettingsGeneralTab({
                   </button>
                 )}
               </div>
-              <div className="-mt-8">
+              <div>
                 <h1 className="font-bold">{name}</h1>
                 <p className="text-muted-foreground text-sm">
                   {communityMembers?.length} members

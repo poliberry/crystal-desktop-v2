@@ -9,6 +9,7 @@ import { GroupAvatar } from "@/components/home/group-avatar";
 import { useNavigation } from "@/components/home/navigation-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 import { Input } from "@/components/ui/input";
 import {
   Tooltip,
@@ -20,6 +21,7 @@ import {
 /** Quick-switcher dialog: search your DMs/group chats and communities by
  * name, jump straight to one. Opened from a search icon in the top bar. */
 export function GlobalSearch() {
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const conversations = useQuery(api.conversations.listMine) ?? [];
@@ -90,7 +92,7 @@ export function GlobalSearch() {
             />
           </div>
 
-          <div className="max-h-80 overflow-y-auto p-1">
+          <div ref={smoothRef} className="max-h-80 overflow-y-auto p-1">
             {needle.length === 0 && (
               <p className="px-2 py-8 text-center text-sm text-muted-foreground">
                 Search direct messages and communities.

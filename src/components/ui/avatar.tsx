@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Avatar as AvatarPrimitive } from "radix-ui"
 
+import { useStaticFrame } from "@/hooks/use-static-frame"
 import { cn } from "@/lib/utils"
 
 function Avatar({
@@ -59,6 +60,88 @@ function AvatarFallback({
   )
 }
 
+/**
+ * The frame drawn around an avatar — see src/lib/avatar-decorations.ts.
+ *
+ * A sibling of AvatarImage rather than a wrapper, so it costs a render site one
+ * line and nothing when there's no decoration to draw. It overflows the
+ * avatar's box on every side (which is the point) and so has to be a child of
+ * the root, whose `rounded-full` deliberately doesn't clip.
+ *
+ * Sized as a percentage of the avatar and centred on it, rather than by four
+ * negative insets. An `<img>` is a replaced element: given `inset` on every
+ * side but no width, it falls back to the picture's *intrinsic* size and
+ * honours only `left`/`top` — so the SVG presets (which have no intrinsic size)
+ * fitted the box while an uploaded PNG rendered at its own pixel dimensions,
+ * a thousand pixels of decoration across the window.
+ *
+ * The ratio is the one the built-in presets are laid out for: the avatar
+ * occupies the centred 76-unit square of their 100-unit viewBox. Custom uploads
+ * drawn to the same convention (which is Discord's) therefore line up without
+ * being told anything.
+ *
+ * Under the badge (`z-10`) rather than over it: a decoration is jewellery and
+ * a presence dot is information.
+ */
+function AvatarDecoration({
+  src,
+  animate = "hover",
+  className,
+  ...props
+}: React.ComponentProps<"img"> & {
+  src: string | undefined;
+  /**
+   * When an animated decoration is allowed to play. `"hover"` — the default —
+   * holds it on its first frame until the avatar is pointed at, because a
+   * member list is fifty avatars and fifty looping animations is a room full
+   * of moving parts nobody asked to look at. `true` is for the places that are
+   * *about* one person, where the decoration is worth seeing in full.
+   */
+  animate?: boolean | "hover";
+}) {
+  const ref = React.useRef<HTMLImageElement>(null);
+  const [hovered, setHovered] = React.useState(false);
+  const frozen = animate !== true && !hovered;
+  const poster = useStaticFrame(src, frozen);
+
+  // The hover target is the avatar, not this: the decoration is
+  // `pointer-events-none` (it overhangs the avatar on every side, and a frame
+  // that swallowed clicks would break whatever the avatar is a button for), so
+  // it can't be told about its own hover. Its parent is the `Avatar` root by
+  // construction — this has to be a child of one to be positioned at all.
+  React.useEffect(() => {
+    const parent = ref.current?.parentElement;
+    if (!parent || animate === true) return;
+    const enter = () => setHovered(true);
+    const leave = () => setHovered(false);
+    parent.addEventListener("pointerenter", enter);
+    parent.addEventListener("pointerleave", leave);
+    return () => {
+      parent.removeEventListener("pointerenter", enter);
+      parent.removeEventListener("pointerleave", leave);
+    };
+  }, [animate]);
+
+  if (!src) return null;
+  return (
+    <img
+      ref={ref}
+      data-slot="avatar-decoration"
+      // The poster is a still of this same file, so a decoration that isn't
+      // animated in the first place is bit-for-bit what it always was.
+      src={poster ?? src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn(
+        "pointer-events-none absolute top-1/2 left-1/2 z-1 h-[126%] w-[126%] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain",
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
 function AvatarBadge({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
@@ -108,6 +191,7 @@ export {
   Avatar,
   AvatarImage,
   AvatarFallback,
+  AvatarDecoration,
   AvatarBadge,
   AvatarGroup,
   AvatarGroupCount,

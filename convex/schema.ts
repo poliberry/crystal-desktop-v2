@@ -34,8 +34,13 @@ const activityValidator = v.object({
    * interpolate the seek bar against one authoritative clock instead of the
    * broadcaster's — which may be minutes off. */
   positionUpdatedAt: v.optional(v.number()),
+  /** Up to two link buttons under the card, the same shape Discord's Rich
+   * Presence uses. Only custom activities set these today — nothing we detect
+   * has anywhere to point. */
+  buttons: v.optional(v.array(v.object({ label: v.string(), url: v.string() }))),
   /** Where this came from: "detectable" (process scan), "ipc" (a game
-   * connected to our Discord-compatible RPC socket), or "music". */
+   * connected to our Discord-compatible RPC socket), "music", or "custom"
+   * (written by the user themselves). */
   source: v.optional(v.string()),
 });
 
@@ -45,6 +50,7 @@ export default defineSchema({
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
+    dob: v.optional(v.string()),
     bio: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
     /** Dominant colour of the avatar, sampled on the client (see
@@ -69,8 +75,49 @@ export default defineSchema({
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
     customStatus: v.optional(v.string()),
+    /** How the custom status is drawn beside this user's avatar on their
+     * profile card: said, or thought. Cosmetic and chosen by the person whose
+     * status it is, so it travels with the status rather than being a viewer's
+     * setting. Absent means "speech", which is what everyone had before the
+     * choice existed. */
+    statusBubble: v.optional(v.union(v.literal("speech"), v.literal("thought"))),
+    /** When the custom status stops being shown, for the "clear after…"
+     * presets. Absent means it stays until cleared by hand. Enforced on read
+     * as well as by the sweep, so an expired status is never shown even if
+     * nothing has run to delete it yet. */
+    customStatusExpiresAt: v.optional(v.number()),
+    /**
+     * A Rich Presence activity the user wrote themselves, shown ahead of
+     * anything detected.
+     *
+     * Lives on the profile rather than on `presence` because it outlives a
+     * session: detected activities are cleared when the last desktop client
+     * disconnects (see `reconcile`), whereas "I'm at work until 5" should
+     * survive closing the app and be visible from a phone.
+     */
+    customActivity: v.optional(activityValidator),
+    /** When `customActivity` stops being shown. Same rules as
+     * `customStatusExpiresAt`. */
+    customActivityExpiresAt: v.optional(v.number()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    /** The frame drawn around this user's avatar: a `builtin:<key>` preset or
+     * the storage URL of a picture they uploaded. One field rather than a key
+     * and a URL, so the queries that carry it to every avatar on screen carry
+     * one thing — see src/lib/avatar-decorations.ts, which draws it. */
+    avatarDecoration: v.optional(v.string()),
+    avatarDecorationStorageId: v.optional(v.id("_storage")),
+    /** The decoration generated as a birthday present, and when it stops being
+     * worn. Kept separate from `avatarDecoration` so the user's own choice is
+     * still there underneath and comes back by itself the next day.
+     *
+     * `birthdayUntil` is local midnight as reported by the user's own client
+     * (see `claimBirthday`), because the server has no timezone and a birthday
+     * is a local date. It's also what tells everyone *else* it's this person's
+     * birthday — the cake in place of a presence dot, the prompt above a
+     * friend's composer. See convex/lib/birthday.ts. */
+    birthdayDecoration: v.optional(v.string()),
+    birthdayUntil: v.optional(v.number()),
     /** Clip played to everyone else when this user joins a call. Either a
      * `builtin:<name>` id or a `communitySounds` document id — see
      * src/lib/soundboard.ts. A per-server override lives on
@@ -81,14 +128,58 @@ export default defineSchema({
     .index("by_username", ["username"]),
 
   /**
+   * What each badge looks like and means — the catalogue the ids in
+   * `userBadges` point at.
+   *
+   * Data rather than code, so a new badge is a row instead of a release: the
+   * definition used to live in the client bundle, which meant granting one to
+   * somebody on an older build showed them nothing at all.
+   *
+   * A badge is drawn as *either* an icon or a picture. `icon` is the export
+   * name of a react-icons glyph ("BsFillPersonBadgeFill"), which the client
+   * resolves at render time — see src/lib/react-icons.ts for which packs it
+   * knows how to reach and what a name has to look like. `imageUrl` is for the
+   * ones a glyph can't be: a logo, an event badge, anything with more than one
+   * colour in it. Set both and the picture wins.
+   */
+  badges: defineTable({
+    /** Stable key. What `userBadges.badgeId` holds, and what a grant names. */
+    badgeId: v.string(),
+    label: v.string(),
+    /** Shown on hover — the reason someone has it. */
+    description: v.string(),
+    /** A react-icons export name, e.g. "BsBugFill". */
+    icon: v.optional(v.string()),
+    /** Or a picture, for badges a single-colour glyph can't carry. */
+    imageUrl: v.optional(v.string()),
+    /** Tailwind classes for the glyph's colour. Each badge gets its own so a
+     * row of them reads as distinct things rather than one thing repeated.
+     * Ignored for `imageUrl` badges, which bring their own colours. */
+    className: v.optional(v.string()),
+    /**
+     * Badges that are tiers of one thing — Bug Hunter bronze through diamond —
+     * share a `group`, and only the highest `tier` a user holds is drawn. Five
+     * identical bug glyphs say less than one diamond one.
+     *
+     * A group rather than a level field on `userBadges`, because a promotion
+     * stays "revoke tier N, grant tier N+1" with no new machinery, and the
+     * grant history keeps the date each tier was reached.
+     */
+    group: v.optional(v.string()),
+    tier: v.optional(v.number()),
+    /** Where it sits in a row of badges. Ties fall back to when it was
+     * granted, so an unordered catalogue still renders consistently. */
+    position: v.optional(v.number()),
+  }).index("by_badge_id", ["badgeId"]),
+
+  /**
    * Badges earned by a user — "Early Supporter" and whatever comes after.
    *
    * A row per (user, badge) rather than a field on `users`, so granting one
    * doesn't rewrite the user document and `grantedAt` is recorded per badge
-   * ("Early Supporter since March"). `badgeId` is a key into the catalogue in
-   * src/lib/badges.ts rather than a foreign key: what a badge *means* is
-   * presentation, and an id nobody recognises is skipped rather than breaking
-   * the card.
+   * ("Early Supporter since March"). `badgeId` names a row in `badges` above;
+   * an id with no definition is skipped on read rather than breaking the card,
+   * so deleting a definition is safe.
    */
   userBadges: defineTable({
     userId: v.id("users"),
@@ -227,6 +318,11 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
+    /** This message was sent from the "wish them a happy birthday" prompt.
+     * Recorded on the message rather than announced some other way because
+     * both people need to see the cakes fall and both are already subscribed
+     * to this conversation — the message arriving *is* the signal. */
+    birthdayWish: v.optional(v.boolean()),
   })
     .index("by_conversation", ["conversationId"])
     // Scoped search — see convex/search.ts. The filter field is what lets a

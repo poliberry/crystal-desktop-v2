@@ -80,6 +80,7 @@ const NAVIGATION = [
     label: "General",
     children: [
       { value: "profile", label: "Profile", icon: User },
+      { value: "account", label: "Account", icon: KeyRound },
       { value: "updates", label: "Updates", icon: Download },
     ],
   },
@@ -100,7 +101,16 @@ const NAVIGATION = [
   },
 ];
 
-export function SettingsShell() {
+/**
+ * @param onRequestClose How to dismiss whatever is hosting this. Omitted when
+ *   the host is a window of its own (the Electron Settings window), where
+ *   closing the window is the same thing as closing the browser tab.
+ */
+export function SettingsShell({
+  onRequestClose,
+}: {
+  onRequestClose?: () => void;
+}) {
   const me = useQuery(api.users.getCurrentUser);
   const { status, manualStatus, activities } = useMyPresence();
   const [section, setSection] = useState("profile");
@@ -135,13 +145,7 @@ export function SettingsShell() {
                           <img
                             src={me.nameplateUrl}
                             alt=""
-                            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-                            style={{
-                              WebkitMaskImage:
-                                "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                              maskImage:
-                                "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                            }}
+                            className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
                           />
                         )}
                         <Avatar size="sm" className="shrink-0 cursor-pointer">
@@ -176,7 +180,12 @@ export function SettingsShell() {
                     <SignOutButton>
                       <DropdownMenuItem
                         className="text-destructive"
-                        onClick={() => window.close()}
+                        // Signing out should leave Settings behind either way;
+                        // `window.close()` only does that when this owns the
+                        // window, and is a no-op in a browser tab.
+                        onClick={() =>
+                          onRequestClose ? onRequestClose() : window.close()
+                        }
                       >
                         <LogOut />
                         <span>Log out</span>

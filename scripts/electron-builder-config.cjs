@@ -29,6 +29,58 @@ const channel = CHANNELS[channelId];
 
 const base = yaml.load(fs.readFileSync(path.join(repoRoot, "electron-builder.yml"), "utf8"));
 
+/**
+ * Whether a real Developer ID certificate has been handed to this build.
+ *
+ * These are the two variables electron-builder itself reads to find a
+ * certificate (a base64/path to a .p12, or a name in the keychain), so asking
+ * about them is the same question electron-builder is about to ask.
+ *
+ * CI sets CSC_NAME, not CSC_LINK: it imports the certificate into a keychain
+ * itself, because electron-builder's own import passes the certificate
+ * password where `security set-key-partition-list` wants the keychain
+ * password and dies. See the signing step in .github/workflows/release.yml.
+ */
+const hasSigningCertificate = !!(process.env.CSC_LINK || process.env.CSC_NAME);
+
+/**
+ * How to sign the macOS app.
+ *
+ * With `identity` left unset and no certificate in the keychain,
+ * electron-builder *skips signing entirely* — there is no ad-hoc fallback
+ * (see the `identity` docs in app-builder-lib's scheme.json). That isn't
+ * merely "unsigned": electron-builder has already renamed the Electron binary
+ * and rebuilt the bundle around it, so what ships is the prebuilt binary's
+ * inherited linker-signed signature attached to a bundle it doesn't seal —
+ * `codesign --verify` fails with "code has no resources but signature
+ * indicates they must be present", and Gatekeeper reports that as
+ * "Crystal.app is damaged and cannot be opened".
+ *
+ * So: a real Developer ID when one is configured (hardened runtime and
+ * notarization come with it), and an explicit ad-hoc signature otherwise.
+ * Ad-hoc still isn't *trusted* — a downloaded copy has to be allowed through
+ * Gatekeeper by hand — but it is valid, which is the difference between an app
+ * macOS calls damaged and one it merely can't vouch for.
+ */
+const macSigning = hasSigningCertificate
+  ? {
+      // Left to electron-builder's keychain discovery, which is what CSC_LINK
+      // populates. Hardened runtime is a prerequisite for notarization.
+      hardenedRuntime: true,
+    }
+  : {
+      identity: "-",
+      // Hardened runtime turns on library validation, which rejects the
+      // pre-signed Electron frameworks precisely because an ad-hoc signature
+      // carries no Team ID for them to match. It's only required in order to
+      // notarize, which an ad-hoc build can't do anyway.
+      hardenedRuntime: false,
+      // Belt and braces: @electron/notarize only engages when the Apple
+      // credentials are in the environment, but there is nothing to notarize
+      // without a Developer ID and a failure here would fail the build.
+      notarize: false,
+    };
+
 module.exports = {
   ...base,
   appId: channel.appId,
@@ -41,6 +93,18 @@ module.exports = {
   // `icon.png` at runtime whichever channel it is, so each channel ships its
   // own icon under that one name.
   extraResources: [{ from: `build/${channel.icon}`, to: "icon.png" }],
+  mac: {
+    ...base.mac,
+    ...macSigning,
+    // A platform block *replaces* the shared `extraResources` rather than
+    // adding to it, so the mac entry (the system-audio helper) would otherwise
+    // leave the packaged app without the `icon.png` the main process looks up
+    // at runtime — which is what the tray falls back to. Both, explicitly.
+    extraResources: [
+      ...(base.mac?.extraResources ?? []),
+      { from: `build/${channel.icon}`, to: "icon.png" },
+    ],
+  },
   // A product name with a space in it ("Crystal Canary") is exactly the
   // filename mismatch the `nsis` comment in electron-builder.yml describes:
   // electron-builder writes dashes into latest.yml while GitHub's asset upload

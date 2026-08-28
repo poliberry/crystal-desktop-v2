@@ -1,11 +1,13 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Check } from "lucide-react";
+import { Check, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
+import { CustomActivityDialog } from "@/components/custom-activity-dialog";
 import { PresenceDot } from "@/components/presence-dot";
+import { ACTIVITY_VERB } from "@/components/rich-presence-card";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,7 +19,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
+import { DURATION_OPTIONS, formatRemaining } from "@/lib/presence-duration";
 import { STATUS_LABEL, type ManualStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
@@ -51,10 +61,12 @@ export function StatusDialog({
 }) {
   const { manualStatus } = useMyPresence();
   const setStatus = useSetPresenceStatus();
-  const updateProfileExtended = useMutation(api.users.updateProfileExtended);
+  const setCustomStatus = useMutation(api.users.setCustomStatus);
 
   const [draft, setDraft] = useState("");
+  const [durationKey, setDurationKey] = useState("never");
   const [saving, setSaving] = useState(false);
+  const [editingActivity, setEditingActivity] = useState(false);
 
   // Seed from the server each time it opens rather than once at mount — the
   // dialog stays mounted between openings, so a status changed elsewhere (or
@@ -62,7 +74,11 @@ export function StatusDialog({
   const me = useQuery(api.users.getCurrentUser);
   const currentCustomStatus = me?.customStatus;
   useEffect(() => {
-    if (open) setDraft(currentCustomStatus ?? "");
+    if (!open) return;
+    setDraft(currentCustomStatus ?? "");
+    // Reset to "until I clear it" rather than guessing which preset a stored
+    // deadline came from — the remaining time is shown as a hint instead.
+    setDurationKey("never");
   }, [open, currentCustomStatus]);
 
   /**
@@ -75,14 +91,21 @@ export function StatusDialog({
   const save = async (value: string) => {
     setSaving(true);
     try {
-      await updateProfileExtended({ customStatus: value });
+      await setCustomStatus({
+        text: value,
+        durationMs: DURATION_OPTIONS.find((o) => o.key === durationKey)?.ms,
+      });
       onOpenChange(false);
     } finally {
       setSaving(false);
     }
   };
 
+  const expiresAt = me?.customStatusExpiresAt;
+  const remaining = expiresAt ? formatRemaining(expiresAt) : null;
+
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -107,6 +130,44 @@ export function StatusDialog({
               }
             }}
           />
+          <Select value={durationKey} onValueChange={setDurationKey}>
+            <SelectTrigger className="w-full" aria-label="Clear status after">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DURATION_OPTIONS.map((option) => (
+                <SelectItem key={option.key} value={option.key}>
+                  {option.key === "never" ? option.label : `Clear after ${option.label}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {remaining && (
+            <p className="text-xs text-muted-foreground">
+              Your current status clears in {remaining}. Saving replaces that with the choice
+              above.
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Hidden while you&apos;re offline or invisible, and back when you return.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Custom activity</Label>
+          <Button
+            variant="secondary"
+            className="w-full justify-start font-normal"
+            onClick={() => {
+              onOpenChange(false);
+              setEditingActivity(true);
+            }}
+          >
+            <Sparkles className="size-4" />
+            {me?.customActivity
+              ? `${ACTIVITY_VERB[me.customActivity.type]} ${me.customActivity.name}`
+              : "Set a custom activity…"}
+          </Button>
         </div>
 
         <div className="space-y-1.5">
@@ -147,6 +208,11 @@ export function StatusDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* A sibling, not a child: two open Radix dialogs fight over the focus
+        trap, so opening this one closes the status dialog behind it. */}
+    <CustomActivityDialog open={editingActivity} onOpenChange={setEditingActivity} />
+    </>
   );
 }
 

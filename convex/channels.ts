@@ -16,7 +16,7 @@ import {
   requireAbove,
   requireCommunityPermission,
 } from "./permissions";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities } from "./lib/activities";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function requireChannel(ctx: { db: { get: (id: Id<"channels">) => Promise<Doc<"channels"> | null> } }, channelId: Id<"channels">) {
@@ -315,7 +315,7 @@ export const listVoiceParticipants = query({
           serverDeafened: row.serverDeafened ?? false,
           /** Only meaningful while `streaming` — see the schema. */
           streamThumbnailUrl: row.streamThumbnailUrl,
-          activities: activitiesOf(presence),
+          activities: visibleActivities(presence, user),
         };
       })
     );

@@ -5,6 +5,7 @@ import { ArrowRight, MessageSquare, PhoneCall, Volume2 } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 import { useNavigation } from "@/components/home/navigation-context";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { StreamPreviewCard } from "@/components/call/stream-preview-card";
@@ -32,6 +33,7 @@ import type { RichPresenceActivity } from "@/types/desktop-api";
  * server playing games is noise rather than a feed.
  */
 export function ActivityFeed() {
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
   const nav = useNavigation();
   const { joinChannelCall, joinDmCall } = useCall();
   const getOrCreateDirect = useMutation(api.conversations.getOrCreateDirect);
@@ -65,7 +67,7 @@ export function ActivityFeed() {
            Radix wraps its viewport's children in a `display: table` div, which
            sizes to its content instead of the column — the stream stills and
            media cards inside pushed straight out past the edge. */
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={smoothRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex min-w-0 flex-col gap-2 pr-1">
             {calls.map((call) => (
               <div key={call.key} className="rounded-lg bg-accent/30 p-3">

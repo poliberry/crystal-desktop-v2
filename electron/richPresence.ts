@@ -148,7 +148,66 @@ const EXECUTABLE_DENYLIST = new Set([
   "zsh",
   "crystal-desktop",
   "crystal",
+  // Generic names the catalog does map to a specific title — `update.exe` is
+  // filed under one game, `quest.exe` under another — but which any number of
+  // unrelated programs also ship. A match on one of these says nothing.
+  "update",
+  "updater",
+  "updatemanager",
+  "updater_downloader",
+  "launcher",
+  "launcher_updater",
+  "helper",
+  "crashpad_handler",
+  "quest",
 ]);
+
+/**
+ * Executables and catalog entries we never want to publish, by pattern.
+ *
+ * Two families, for the same reason: neither is the user *doing* something.
+ *
+ *  - Anything Discord. Its client, its channel builds, its Chromium helpers,
+ *    and the third-party quest tools the catalog carries as real entries
+ *    ("Discord Quest Helper", "Discord Bot Maker"). Having Discord — or
+ *    something farming its quests — open in the background isn't an activity,
+ *    and announcing it in Crystal is worse than saying nothing.
+ *  - Chromium/Electron helper processes generally, which every app of that
+ *    shape spawns several of and which occasionally collide with a catalog
+ *    entry's generic executable name.
+ */
+const DENIED_EXECUTABLE_PATTERNS: RegExp[] = [
+  /discord/,
+  /(^|[\s._-])helper([\s._-]|$)/,
+  /crashpad/,
+];
+
+/** Catalog entries suppressed by title, whatever they're running as. */
+const DENIED_DETECTABLE_NAME_PATTERNS: RegExp[] = [/discord/i, /\bquests?\s+(helper|farmer|sniper|spoofer|bot)\b/i];
+
+function isDeniedExecutable(key: string): boolean {
+  return EXECUTABLE_DENYLIST.has(key) || DENIED_EXECUTABLE_PATTERNS.some((re) => re.test(key));
+}
+
+function isDeniedDetectable(name: string): boolean {
+  return DENIED_DETECTABLE_NAME_PATTERNS.some((re) => re.test(name));
+}
+
+/**
+ * Our own executable and product names, so Crystal never detects itself.
+ *
+ * The static denylist can't cover this on its own: each release channel
+ * installs under its own product name ("Crystal Canary", "Crystal
+ * Development"), and a dev run is whatever Electron's binary is called.
+ */
+function selfExecutableKeys(): Set<string> {
+  const keys = new Set<string>();
+  for (const name of [app.getName(), app.getPath("exe"), process.execPath]) {
+    const key = normalizeExecutable(name);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
 
 class RichPresence {
   // Only the executable index is retained: the raw catalog is ~10 MB of JSON
@@ -317,8 +376,10 @@ class RichPresence {
     this.detectableCount = entries.length;
     const osKey = detectableOsKey();
     const index: ExecutableIndex = new Map();
+    const self = selfExecutableKeys();
     for (const entry of entries) {
       if (!entry?.name || !Array.isArray(entry.executables)) continue;
+      if (isDeniedDetectable(entry.name)) continue;
       for (const exe of entry.executables) {
         // Launchers ("Steam", "Epic Games Launcher") are flagged in the
         // catalog so clients can skip them — having one open isn't playing
@@ -326,7 +387,7 @@ class RichPresence {
         if (!exe?.name || exe.is_launcher) continue;
         if (exe.os && exe.os !== osKey) continue;
         const key = normalizeExecutable(exe.name);
-        if (!key || key.length < 3 || EXECUTABLE_DENYLIST.has(key)) continue;
+        if (!key || key.length < 3 || isDeniedExecutable(key) || self.has(key)) continue;
         // First catalog entry wins, and `games.json` is loaded before
         // `non-games.json`, so a real game beats an app sharing its name.
         if (!index.has(key)) index.set(key, entry);
@@ -487,7 +548,11 @@ class RichPresence {
           const id = clientId ?? "unknown";
           const args = (message.args ?? {}) as Record<string, unknown>;
           const activity = parseIpcActivity(args.activity);
-          if (activity) this.ipcActivities.set(id, activity);
+          // Same suppression as the process scan, applied to what a client
+          // *claims* to be: quest-farming tools push their activity over this
+          // socket, and taking their word for it is how "Discord Quest
+          // Helper" ends up on someone's profile.
+          if (activity && !isDeniedDetectable(activity.name)) this.ipcActivities.set(id, activity);
           else this.ipcActivities.delete(id);
           this.resolve();
           send(OP_FRAME, {
