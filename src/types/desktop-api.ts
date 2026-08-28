@@ -197,9 +197,6 @@ export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
   appInfo(): Promise<AppInfo>;
-  settings: {
-    open(): Promise<void>;
-  };
   window: {
     minimize(): Promise<void>;
     toggleMaximize(): Promise<void>;

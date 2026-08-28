@@ -6,9 +6,6 @@ const api = {
   isElectron: true,
   platform: process.platform,
   appInfo: () => ipcRenderer.invoke("app:info"),
-  settings: {
-    open: () => ipcRenderer.invoke("settings:open"),
-  },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize"),
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),

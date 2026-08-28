@@ -394,53 +394,6 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
   pipWindow = win;
 }
 
-let settingsWindow: BrowserWindow | null = null;
-
-/** Opens the Settings window, or focuses it if it's already open (singleton). */
-function createOrFocusSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus();
-    return;
-  }
-
-  const win = new BrowserWindow({
-    width: 840,
-    height: 600,
-    minWidth: 720,
-    minHeight: 480,
-    autoHideMenuBar: true,
-    title: `${channel.productName} Settings`,
-    icon: appIconPath(),
-    ...FRAMELESS_WINDOW_OPTIONS,
-    webPreferences: {
-      preload: PRELOAD,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  if (isDev) {
-    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/settings`);
-  } else {
-    void win.loadURL("http://crystal.localhost/settings/");
-  }
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https:") || url.startsWith("http:")) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
-
-  win.on("closed", () => {
-    settingsWindow = null;
-  });
-
-  wireWindowStateEvents(win);
-  settingsWindow = win;
-}
-
 app.whenReady().then(async () => {
   // Production: intercept http://crystal.localhost and serve the static
   // Next.js export from the out/ directory. This gives Clerk a stable,
@@ -632,10 +585,6 @@ app.whenReady().then(async () => {
       node: process.versions.node,
     },
   }));
-
-  ipcMain.handle("settings:open", () => {
-    createOrFocusSettingsWindow();
-  });
 
   ipcMain.handle("pip:open", (_event, options?: { width?: number; height?: number; title?: string }) => {
     createOrFocusPipWindow(options);

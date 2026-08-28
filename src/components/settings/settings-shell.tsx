@@ -225,10 +225,17 @@ export function SettingsShell({
           </SidebarContent>
           <SidebarFooter />
         </Sidebar>
+        {/* Profile is full-bleed: it draws its own three-pane layout and needs
+            the panel's whole height, whereas every other tab is a column of
+            cards in a padded, scrolling box. */}
+        {section === "profile" ? (
+          <main className="min-h-0 w-full pt-9">
+            <ProfileTab />
+          </main>
+        ) : (
         <main className="w-full pt-9">
           <ScrollArea className="min-h-0 h-full flex-1">
             <div className="mx-auto w-full px-6 py-6">
-              {section === "profile" && <ProfileTab />}
               {section === "appearance" && <AppearanceTab />}
               {section === "accessibility" && <AccessibilityTab />}
               {section === "servers" && <ServerProfilesTab />}
@@ -240,6 +247,7 @@ export function SettingsShell({
             </div>
           </ScrollArea>
         </main>
+        )}
       </SidebarProvider>
 
       <Tabs defaultValue="profile" className="h-full min-h-0 gap-0">

@@ -28,6 +28,11 @@ import { BadgeIcon } from "@/components/badge-icon";
 import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
 import {
+  ProfileEffectLayer,
+  ProfileFrameLayer,
+} from "@/components/profile/profile-card-cosmetics";
+import { displayNameStyleClass } from "@/lib/profile-cosmetics";
+import {
   StatusBubble,
   type StatusBubbleKind,
 } from "@/components/profile/status-bubble";
@@ -49,6 +54,14 @@ export interface MemberProfileMember {
   isBirthday?: boolean;
   borderGradientStart?: string;
   borderGradientEnd?: string;
+  /** How their display name is drawn — a key from src/lib/profile-cosmetics.ts. */
+  displayNameStyle?: string;
+  /** Artwork played over the whole card, and the frame drawn around it. Both
+   * are storage URLs; `profileFrameMode` says whether the frame wraps the card
+   * or lies on top of it. */
+  profileEffect?: string;
+  profileFrame?: string;
+  profileFrameMode?: string;
   status: FriendStatus;
   /** Community-only — omitted for DM member profiles. */
   isOwner?: boolean;
@@ -183,13 +196,25 @@ export function MemberProfileCard({
   const avatarDecoration = profile?.avatarDecoration ?? member.avatarDecoration;
   const isBirthday = profile?.isBirthday ?? member.isBirthday;
 
+  /** The card's own cosmetics, on the same footing as the decoration above:
+   * whatever opened the card may not have carried them, and the query is the
+   * authority once it lands. */
+  const profileEffect = profile?.profileEffect ?? member.profileEffect;
+  const profileFrame = profile?.profileFrame ?? member.profileFrame;
+  const profileFrameMode = profile?.profileFrameMode ?? member.profileFrameMode;
+  const nameStyle = displayNameStyleClass(
+    profile?.displayNameStyle ?? member.displayNameStyle,
+  );
+
   /** Said or thought — see StatusBubble. The card is the only place a status
    * gets a shape rather than a line of text. */
   const statusBubble = (profile?.statusBubble ?? "speech") as StatusBubbleKind;
 
   return (
     <div
-      className={cn("flex min-h-full flex-col rounded-md p-0.5", className)}
+      // `relative`: the effect and frame layers below are positioned against
+      // this box rather than against the inner one, which clips.
+      className={cn("relative flex min-h-full flex-col rounded-md p-0.5", className)}
       style={
         hasGradient
           ? {
@@ -312,6 +337,10 @@ export function MemberProfileCard({
                 className={cn(
                   "truncate font-bold leading-tight",
                   expanded ? "text-xl" : "text-base",
+                  // A gradient style paints the text with `bg-clip-text`, which
+                  // needs the element to be the one carrying the background —
+                  // so the style lands here rather than on a wrapper.
+                  nameStyle,
                 )}
               >
                 {member.name}
@@ -431,6 +460,11 @@ export function MemberProfileCard({
         </div>
       </div>
       {/* end inner overlay */}
+
+      {/* Drawn outside the clipping box, so a wrapping frame keeps the part
+          that hangs past the card's edges. */}
+      <ProfileEffectLayer src={profileEffect} rounded="rounded-md" />
+      <ProfileFrameLayer src={profileFrame} mode={profileFrameMode} />
     </div>
   );
 }
@@ -481,6 +515,10 @@ export function UserProfileContent({
         isBirthday: profile?.isBirthday,
         borderGradientStart: profile?.borderGradientStart,
         borderGradientEnd: profile?.borderGradientEnd,
+        displayNameStyle: profile?.displayNameStyle,
+        profileEffect: profile?.profileEffect,
+        profileFrame: profile?.profileFrame,
+        profileFrameMode: profile?.profileFrameMode,
       }}
     />
   );

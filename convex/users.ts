@@ -13,6 +13,11 @@ import {
   MAX_BIRTHDAY_WINDOW_MS,
 } from "./lib/birthday";
 import { badgeByIdMap, badgeView } from "./badges";
+import {
+  dropProfileAsset,
+  FRAME_MODES,
+  resolveProfileAsset,
+} from "./lib/profileCosmetics";
 import { MAX_DECORATION_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import {
   internalMutation,
@@ -383,6 +388,105 @@ export const removeAvatarDecoration = mutation({
   },
 });
 
+// --- Card cosmetics: display name style, effect, frame ---------------------
+
+/**
+ * How the display name is drawn — see src/lib/profile-cosmetics.ts.
+ *
+ * The key isn't validated against a catalogue here, only bounded, for the same
+ * reason `setAvatarDecoration` doesn't own the list of presets: which styles
+ * exist is presentation, and the renderer already falls back to the plain name
+ * for a key it doesn't recognise. Validating here would mean a style couldn't
+ * ship without a backend deploy.
+ */
+export const setDisplayNameStyle = mutation({
+  args: { style: v.string() },
+  handler: async (ctx, { style }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = style.trim().slice(0, 32);
+    await ctx.db.patch(me._id, {
+      // "default" is the absence of a style, not a style — stored as nothing so
+      // a card doesn't carry a field that means what its absence already does.
+      displayNameStyle: !trimmed || trimmed === "default" ? undefined : trimmed,
+    });
+  },
+});
+
+export const setProfileEffect = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile effects");
+    const previous = me.profileEffectStorageId;
+    await ctx.db.patch(me._id, {
+      profileEffect: url,
+      profileEffectStorageId: storageId,
+    });
+    await dropProfileAsset(ctx, previous, storageId);
+    return url;
+  },
+});
+
+export const removeProfileEffect = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.profileEffectStorageId;
+    await ctx.db.patch(me._id, {
+      profileEffect: undefined,
+      profileEffectStorageId: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
+/** A frame of your own, plus how it's meant to be drawn. The mode travels with
+ * the upload because the person who just picked the file is the only one who
+ * knows which kind it is — nothing in the pixels says. */
+export const setProfileFrame = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    mode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+  },
+  handler: async (ctx, { storageId, mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile frames");
+    const previous = me.profileFrameStorageId;
+    await ctx.db.patch(me._id, {
+      profileFrame: url,
+      profileFrameStorageId: storageId,
+      profileFrameMode: mode ?? me.profileFrameMode ?? "wrap",
+    });
+    await dropProfileAsset(ctx, previous, storageId);
+    return url;
+  },
+});
+
+/** Switch an already-uploaded frame between wrapping the card and lying on
+ * top of it, without re-uploading. */
+export const setProfileFrameMode = mutation({
+  args: { mode: v.union(v.literal("wrap"), v.literal("overlay")) },
+  handler: async (ctx, { mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!FRAME_MODES.includes(mode)) throw new Error("Unknown frame mode.");
+    await ctx.db.patch(me._id, { profileFrameMode: mode });
+  },
+});
+
+export const removeProfileFrame = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.profileFrameStorageId;
+    await ctx.db.patch(me._id, {
+      profileFrame: undefined,
+      profileFrameStorageId: undefined,
+      profileFrameMode: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
 /**
  * "It's my birthday, and my day ends at `expiresAt`."
  *
@@ -639,6 +743,28 @@ export const getProfile = query({
       isBirthday: isBirthdayNow(user),
       borderGradientStart: serverProfile?.borderGradientStart ?? user.borderGradientStart,
       borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
+      /**
+       * Card cosmetics, merged field by field like the banner above them
+       * rather than account-only like the decoration.
+       *
+       * The split is about what the thing dresses: a decoration is worn by the
+       * *person* and follows them into every server, whereas an effect and a
+       * frame dress this *card* — and a card in a community is that community's
+       * view of them, which is exactly what a server profile is for.
+       */
+      displayNameStyle: serverProfile?.displayNameStyle ?? user.displayNameStyle,
+      profileEffect: serverProfile?.profileEffect ?? user.profileEffect,
+      /** Taken from whichever profile supplied the frame — a server frame with
+       * the account's mode would be drawn the wrong way round. */
+      ...(serverProfile?.profileFrame
+        ? {
+            profileFrame: serverProfile.profileFrame,
+            profileFrameMode: serverProfile.profileFrameMode,
+          }
+        : {
+            profileFrame: user.profileFrame,
+            profileFrameMode: user.profileFrameMode,
+          }),
       status: presence?.effective ?? "offline",
       activities: visibleActivities(presence, user),
       roles,

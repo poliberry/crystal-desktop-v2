@@ -44,6 +44,51 @@ const activityValidator = v.object({
   source: v.optional(v.string()),
 });
 
+/**
+ * The cosmetics a profile card is dressed in, shared verbatim by `users` and
+ * `serverProfiles`.
+ *
+ * Spread into both rather than written twice because a server profile is
+ * meant to be able to override every one of them — the profile editor picks a
+ * scope from a dropdown and then edits the same set of things either way, and
+ * a field that existed on only one side would be a section that silently did
+ * nothing for servers.
+ *
+ * The effect and the frame are stored as URL + storage id, the pairing the
+ * rest of this table uses for uploads: the id is what a later replacement
+ * deletes, and the URL is what every reader renders without another lookup.
+ * Unlike `avatarDecoration` there are no built-in presets to encode, so a
+ * plain URL is the whole value.
+ */
+const profileCosmetics = {
+  /** How the display name is drawn on a profile card — a key from
+   * src/lib/profile-cosmetics.ts. Absent means the plain one everybody had
+   * before the choice existed. */
+  displayNameStyle: v.optional(v.string()),
+  /** An image played *over* the whole profile card: sparkles, rain, a sweep of
+   * light. Purely decorative and never hit-tested, so it can cover the card's
+   * buttons without swallowing them. */
+  profileEffect: v.optional(v.string()),
+  profileEffectStorageId: v.optional(v.id("_storage")),
+  /** An image drawn around (or on) the whole card — the avatar decoration
+   * idea at card scale. See `profileFrameMode`. */
+  profileFrame: v.optional(v.string()),
+  profileFrameStorageId: v.optional(v.id("_storage")),
+  /**
+   * Which of the two things an uploaded frame is.
+   *
+   * `wrap` scales the image out past the card's edges, for a frame with its
+   * own border thickness drawn around the outside — the way an avatar
+   * decoration overhangs its avatar. `overlay` lays it over the card at
+   * exactly the card's size, for artwork meant to sit on top.
+   *
+   * A stored choice rather than something inferred from the file: both kinds
+   * are transparent PNGs of similar proportions, and nothing in the pixels
+   * says which one the artist meant. Absent means `wrap`.
+   */
+  profileFrameMode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+};
+
 export default defineSchema({
   users: defineTable({
     clerkId: v.string(),
@@ -107,6 +152,7 @@ export default defineSchema({
      * one thing — see src/lib/avatar-decorations.ts, which draws it. */
     avatarDecoration: v.optional(v.string()),
     avatarDecorationStorageId: v.optional(v.id("_storage")),
+    ...profileCosmetics,
     /** The decoration generated as a birthday present, and when it stops being
      * worn. Kept separate from `avatarDecoration` so the user's own choice is
      * still there underneath and comes back by itself the next day.
@@ -660,11 +706,69 @@ export default defineSchema({
     profileBg: v.optional(v.string()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    ...profileCosmetics,
     /** Overrides `users.joinSoundId` in this community. */
     joinSoundId: v.optional(v.string()),
   })
     .index("by_user_community", ["userId", "communityId"])
     .index("by_community", ["communityId"]),
+
+  /**
+   * The cards on someone's profile Board — a favourite game, an about-me, what
+   * they're playing this month.
+   *
+   * A row per widget rather than an array on the profile, because a widget
+   * carries an uploaded image and its own fields: putting them in one document
+   * would mean rewriting every widget to reorder two of them, and would put a
+   * hard ceiling on the board at Convex's document size.
+   *
+   * `communityId` is what makes a board per-server. Absent is the account's
+   * own board, which is what a DM or a friends-list profile shows; set means
+   * "this is the board people in that community see instead". The index is on
+   * the pair so both reads are one lookup, with the account board stored under
+   * an undefined community rather than in a second table.
+   */
+  profileWidgets: defineTable({
+    userId: v.id("users"),
+    communityId: v.optional(v.id("communities")),
+    /** Sort key within the board. Sparse and rewritten wholesale on reorder —
+     * a board is a handful of cards, so there's nothing to be gained from
+     * fractional indices here. */
+    position: v.number(),
+    title: v.optional(v.string()),
+    subtitle: v.optional(v.string()),
+    description: v.optional(v.string()),
+    /** Cover image across the top of the card. */
+    imageUrl: v.optional(v.string()),
+    imageStorageId: v.optional(v.id("_storage")),
+    /**
+     * Label/value rows under the description.
+     *
+     * A text field's `value` is what it says; an image field's is the storage
+     * URL of a picture, with `storageId` alongside so replacing or deleting the
+     * widget can clean the file up. One array of a tagged union rather than two
+     * arrays, so the order the user arranged them in survives.
+     */
+    fields: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          kind: v.union(v.literal("text"), v.literal("image")),
+          label: v.string(),
+          value: v.string(),
+          storageId: v.optional(v.id("_storage")),
+        })
+      )
+    ),
+    /** Link buttons along the bottom. Capped by the mutation, not here. */
+    buttons: v.optional(
+      v.array(v.object({ id: v.string(), label: v.string(), url: v.string() }))
+    ),
+    /** Hex tint for the card's border and header wash. */
+    accent: v.optional(v.string()),
+  })
+    .index("by_user_community", ["userId", "communityId"])
+    .index("by_user", ["userId"]),
 
   typing: defineTable({
     userId: v.id("users"),
