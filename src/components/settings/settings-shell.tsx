@@ -267,10 +267,10 @@ export function SettingsShell({
             last card runs off the bottom of the dialog with nothing left to
             scroll. */}
         <main className="h-full min-h-0 w-full overflow-hidden pt-9">
-          <ScrollArea className="h-full min-h-0 flex-1">
+          <ScrollArea className="h-[75%] min-h-0 flex-1 pb-20">
             {/* Extra padding under the last card, so it clears the dialog's
                 own rounded corner rather than ending flush against it. */}
-            <div className="mx-auto w-full px-6 pt-6 pb-10">
+            <div className="mx-auto w-full px-6 pt-6 pb-30">
               {section === "appearance" && <AppearanceTab />}
               {section === "accessibility" && <AccessibilityTab />}
               {section === "servers" && <ServerProfilesTab />}
@@ -283,37 +283,6 @@ export function SettingsShell({
           </ScrollArea>
         </main>
       </SidebarProvider>
-
-      <Tabs defaultValue="profile" className="h-full min-h-0 gap-0">
-        <div className="flex flex-row gap-8 w-full min-h-0 h-full">
-          <div className="flex flex-col justify-center border-b bg-background/60">
-            <TabsList
-              variant="line"
-              className="min-h-full flex flex-col justify-start rounded-none gap-4"
-            >
-              {TABS.map(({ value, label, icon: Icon }) => (
-                <TabsTrigger
-                  key={value}
-                  value={value}
-                  className="flex-row gap-1 justify-start px-3 py-2 max-h-fit w-full text-xs"
-                >
-                  <Icon className="size-4" />
-                  {label}
-                </TabsTrigger>
-              ))}
-              <SignOutButton>
-                <Button
-                  variant="ghost"
-                  className="flex-row gap-1 w-full text-xs"
-                >
-                  <LogOut className="size-4" />
-                  Sign out
-                </Button>
-              </SignOutButton>
-            </TabsList>
-          </div>
-        </div>
-      </Tabs>
     </div>
   );
 }

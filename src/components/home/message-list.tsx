@@ -10,10 +10,8 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
-import {
-  PROFILE_POPOVER_CLASS,
-  UserProfileContent,
-} from "@/components/community/member-profile-card";
+import { UserProfileContent } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import {
   AttachmentView,
@@ -27,7 +25,7 @@ import {
 } from "@/components/ui/avatar";
 import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EMPTY_EMOJI_MAP } from "@/lib/custom-emoji";
@@ -111,7 +109,10 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
       )}
     >
       <div className="w-9 shrink-0">
-        {startsGroup && (
+        {/* Guarded on the author here rather than inside the popover: the
+            popover now needs their id to work out how much room their frame
+            wants, and an avatar with nobody behind it opens nothing useful. */}
+        {startsGroup && message.author && (
           <Popover>
             <PopoverTrigger asChild>
               <Avatar size="default" className="cursor-pointer">
@@ -120,11 +121,7 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
                 <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
               </Avatar>
             </PopoverTrigger>
-            <PopoverContent
-              side="top"
-              align="start"
-              className={PROFILE_POPOVER_CLASS}
-            >
+            <ProfilePopoverContent userId={message.author.id} side="top">
               {message.author && (
                 <UserProfileContent
                   userId={message.author.id}
@@ -133,7 +130,7 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
                   imageUrl={message.author.imageUrl}
                 />
               )}
-            </PopoverContent>
+            </ProfilePopoverContent>
           </Popover>
         )}
       </div>

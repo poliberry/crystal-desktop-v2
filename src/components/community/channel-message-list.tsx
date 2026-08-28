@@ -27,8 +27,9 @@ import {
   useCachedFirstPage,
 } from "@/lib/message-cache";
 import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { PROFILE_POPOVER_CLASS, UserProfileContent } from "./member-profile-card";
+import { Popover, PopoverTrigger } from "../ui/popover";
+import { UserProfileContent } from "./member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import {
   AttachmentView,
@@ -150,7 +151,9 @@ function MessageRow({
       )}
     >
       <div className="w-9 mt-1 shrink-0">
-        {startsGroup && (
+        {/* See the twin in message-list.tsx: the popover needs the author's id
+            to size itself around their frame. */}
+        {startsGroup && message.author && (
           <Popover>
             <PopoverTrigger asChild>
               <Avatar size="default" className="cursor-pointer">
@@ -159,10 +162,10 @@ function MessageRow({
                 <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
               </Avatar>
             </PopoverTrigger>
-            <PopoverContent
+            <ProfilePopoverContent
+              userId={message.author.id}
+              communityId={communityId}
               side="top"
-              align="start"
-              className={PROFILE_POPOVER_CLASS}
             >
               {message.author && (
                 <UserProfileContent
@@ -173,7 +176,7 @@ function MessageRow({
                   imageUrl={message.author.imageUrl}
                 />
               )}
-            </PopoverContent>
+            </ProfilePopoverContent>
           </Popover>
         )}
       </div>

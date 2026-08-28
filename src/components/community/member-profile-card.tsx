@@ -48,20 +48,6 @@ import {
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
-/**
- * What a `PopoverContent` hosting a profile card should look like: nothing.
- *
- * The card brings its own surface — a border, a background, a gradient frame,
- * and now artwork drawn *outside* its edges. A popover chrome under all that
- * is a second box behind the first, visible as a rectangle sticking out from
- * under the frame, and it clips nothing useful. So the popover becomes a
- * positioner and stops being a panel.
- *
- * `w-72` stays: the card has no width of its own and takes the popover's.
- */
-export const PROFILE_POPOVER_CLASS =
-  "w-72 border-0 bg-transparent p-0 shadow-none";
-
 export interface MemberProfileMember {
   userId: Id<"users">;
   name: string;

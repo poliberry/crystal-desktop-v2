@@ -7,10 +7,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberContextMenu } from "@/components/community/member-context-menu";
 import { Nameplate } from "@/components/profile/nameplate";
-import {
-  MemberProfileCard,
-  PROFILE_POPOVER_CLASS,
-} from "@/components/community/member-profile-card";
+import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import {
   ActivityStatusIcon,
   activitySummary,
@@ -25,7 +23,7 @@ import {
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
@@ -218,10 +216,10 @@ export function MemberList({ communityId }: MemberListProps) {
                           </button>
                         </PopoverTrigger>
                         </MemberContextMenu>
-                        <PopoverContent
+                        <ProfilePopoverContent
+                          userId={member.userId}
+                          communityId={communityId}
                           side="left"
-                          align="start"
-                          className={PROFILE_POPOVER_CLASS}
                         >
                           <MemberProfileCard
                             reserveFrameRoom={false}
@@ -229,7 +227,7 @@ export function MemberList({ communityId }: MemberListProps) {
                             communityId={communityId}
                             communityName={community?.name}
                           />
-                        </PopoverContent>
+                        </ProfilePopoverContent>
                       </Popover>
                     );
                   })}

@@ -4,10 +4,8 @@ import { useQuery } from "convex/react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import {
-  MemberProfileCard,
-  PROFILE_POPOVER_CLASS,
-} from "@/components/community/member-profile-card";
+import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
   ActivityStatusIcon,
@@ -23,7 +21,7 @@ import {
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type FriendStatus } from "@/lib/presence";
 
@@ -107,13 +105,9 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 <Nameplate url={member.nameplateUrl} className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10" />
               </button>
             </PopoverTrigger>
-            <PopoverContent
-              side="left"
-              align="start"
-              className={PROFILE_POPOVER_CLASS}
-            >
+            <ProfilePopoverContent userId={member.userId} side="left">
               <MemberProfileCard member={member} reserveFrameRoom={false} />
-            </PopoverContent>
+            </ProfilePopoverContent>
           </Popover>
         ))}
       </div>
