@@ -24,10 +24,15 @@ import { cn } from "@/lib/utils";
 export function FriendActionButton({
   userId,
   username,
+  hideMessage = false,
   className,
 }: {
   userId: Id<"users">;
   username: string;
+  /** Drop the **Message** case, for a card shown inside the very DM that
+   * button opens. The other three still mean something there, so only that
+   * one goes. */
+  hideMessage?: boolean;
   className?: string;
 }) {
   const relationship = useQuery(api.friends.relationshipWith, { userId });
@@ -94,6 +99,10 @@ export function FriendActionButton({
       onClick: () => run(() => sendRequest({ username })),
     },
   }[relationship.kind];
+
+  // After the config, not before: `relationship.kind` is the only thing that
+  // says whether this would have been the Message button at all.
+  if (hideMessage && relationship.kind === "friends") return null;
 
   const Icon = config.icon;
 

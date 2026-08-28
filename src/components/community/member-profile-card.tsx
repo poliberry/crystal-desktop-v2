@@ -114,6 +114,8 @@ export function MemberProfileCard({
   expandable = true,
   expanded = false,
   showActivity = true,
+  hideMessageAction = false,
+  className,
 }: {
   member: MemberProfileMember;
   communityId?: Id<"communities">;
@@ -126,6 +128,13 @@ export function MemberProfileCard({
   /** False in the dialog, where the activity list has its own column and
    * repeating it here would just be the same card twice. */
   showActivity?: boolean;
+  /** True where the card is already *in* the conversation its Message button
+   * would open — the DM panel. The other relationship actions (add, accept,
+   * withdraw) still make sense there and are left alone. */
+  hideMessageAction?: boolean;
+  /** For a caller that owns the card's box — the DM panel stretches it down
+   * the full height of the column. */
+  className?: string;
 }) {
   const me = useQuery(api.users.getCurrentUser);
   /**
@@ -180,7 +189,7 @@ export function MemberProfileCard({
 
   return (
     <div
-      className="rounded-md min-h-full p-0.5"
+      className={cn("flex min-h-full flex-col rounded-md p-0.5", className)}
       style={
         hasGradient
           ? {
@@ -193,7 +202,13 @@ export function MemberProfileCard({
     >
       {/* Inner overlay — 3px inset, clips content and carries the border */}
       <div
-        className={`overflow-hidden rounded-[5px] border border-border/20 ${hasGradient ? " bg-background/70" : " bg-accent"}`}
+        // `relative`: the actions in the corner are positioned against the
+        // card. Without it they anchor to whatever positioned ancestor happens
+        // to be up the tree — the popover, or the page.
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-border/20",
+          hasGradient ? "bg-background/70" : "bg-accent",
+        )}
       >
         {/* Banner — always shown if set; if no banner but gradient, just top padding */}
         {member.bannerUrl ? (
@@ -315,6 +330,7 @@ export function MemberProfileCard({
             <FriendActionButton
               userId={member.userId}
               username={member.username}
+              hideMessage={hideMessageAction}
             />
           )}
 
@@ -361,7 +377,7 @@ export function MemberProfileCard({
             </div>
           )}
 
-          <div className="absolute top-1 right-1 flex gap-0">
+          <div className="absolute top-2 right-2 flex items-center gap-0.5">
             {expandable && (
               <>
                 <Button
