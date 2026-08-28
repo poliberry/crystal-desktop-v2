@@ -21,6 +21,7 @@ import type * as crons from "../crons.js";
 import type * as friends from "../friends.js";
 import type * as http from "../http.js";
 import type * as lib_activities from "../lib/activities.js";
+import type * as lib_birthday from "../lib/birthday.js";
 import type * as lib_callReconciliation from "../lib/callReconciliation.js";
 import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_liveKitAdmin from "../lib/liveKitAdmin.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   friends: typeof friends;
   http: typeof http;
   "lib/activities": typeof lib_activities;
+  "lib/birthday": typeof lib_birthday;
   "lib/callReconciliation": typeof lib_callReconciliation;
   "lib/gameHistory": typeof lib_gameHistory;
   "lib/liveKitAdmin": typeof lib_liveKitAdmin;

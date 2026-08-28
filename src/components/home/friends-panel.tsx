@@ -92,6 +92,8 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
                   customStatus={friend.customStatus}
                   activities={friend.activities as RichPresenceActivity[]}
                   nameplateUrl={friend.nameplateUrl}
+                  avatarDecoration={friend.avatarDecoration}
+                  isBirthday={friend.isBirthday}
                   actions={
                     <>
                       <Button
@@ -205,6 +207,8 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
                   customStatus={friend.customStatus}
                   activities={friend.activities as RichPresenceActivity[]}
                   nameplateUrl={friend.nameplateUrl}
+                  avatarDecoration={friend.avatarDecoration}
+                  isBirthday={friend.isBirthday}
                   actions={
                     <>
                       <Button

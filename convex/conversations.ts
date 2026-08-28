@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
@@ -27,6 +28,8 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     username: user.username,
     imageUrl: user.imageUrl,
     nameplateUrl: user.nameplateUrl,
+    avatarDecoration: effectiveDecoration(user),
+    isBirthday: isBirthdayNow(user),
     status,
     customStatus: visibleCustomStatus(user, status),
     activities: visibleActivities(presence, user),
@@ -206,6 +209,8 @@ export const listMembersWithPresence = query({
           imageUrl: user?.imageUrl,
           bio: user?.bio,
           nameplateUrl: user?.nameplateUrl,
+          avatarDecoration: effectiveDecoration(user),
+          isBirthday: isBirthdayNow(user),
           bannerUrl: user?.bannerUrl,
           borderGradientStart: user?.borderGradientStart,
           borderGradientEnd: user?.borderGradientEnd,

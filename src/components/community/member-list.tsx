@@ -13,12 +13,19 @@ import {
   topActivity,
 } from "@/components/rich-presence-card";
 import type { RichPresenceActivity } from "@/types/desktop-api";
-import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
+import { PresenceBadge } from "@/components/presence-dot";
+import { decorationSrc } from "@/lib/avatar-decorations";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
-import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
+import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
 interface MemberListProps {
@@ -41,6 +48,8 @@ interface Member {
   bio?: string;
   customStatus?: string;
   nameplateUrl?: string;
+  avatarDecoration?: string;
+  isBirthday?: boolean;
   bannerUrl?: string;
   borderGradientStart?: string;
   borderGradientEnd?: string;
@@ -174,7 +183,11 @@ export function MemberList({ communityId }: MemberListProps) {
                             <Avatar size="default">
                               <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-md" />
                               <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                              <AvatarBadge className={STATUS_DOT_CLASS[member.status]} />
+                              <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
+                              <PresenceBadge
+                                status={member.status}
+                                isBirthday={member.isBirthday}
+                              />
                             </Avatar>
                             <div className="min-w-0 flex-1">
                               <p

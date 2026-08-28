@@ -5,6 +5,7 @@ import { mutation, query, type QueryCtx } from "./_generated/server";
 import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 
 async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
   return ctx.db
@@ -24,6 +25,8 @@ function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
      * rather than only whether they're reachable. */
     customStatus: visibleCustomStatus(user, status),
     nameplateUrl: user.nameplateUrl,
+    avatarDecoration: effectiveDecoration(user),
+    isBirthday: isBirthdayNow(user),
     status,
     activities: visibleActivities(presence, user),
   };

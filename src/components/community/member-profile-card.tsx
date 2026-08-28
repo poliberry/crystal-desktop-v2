@@ -12,7 +12,7 @@ import { ProfileDialog } from "@/components/profile-dialog";
 import { UserRichPresenceCard } from "@/components/rich-presence-card";
 import {
   Avatar,
-  AvatarBadge,
+  AvatarDecoration,
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
@@ -25,7 +25,9 @@ import {
 } from "@/components/ui/tooltip";
 import { useOpenSettings } from "@/components/settings/settings-dialog";
 import { badgeDefinition, visibleBadgeIds } from "@/lib/badges";
-import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
+import { PresenceBadge } from "@/components/presence-dot";
+import { decorationSrc } from "@/lib/avatar-decorations";
+import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { ServerProfileDialog } from "./server-profile-dialog";
 
@@ -37,6 +39,10 @@ export interface MemberProfileMember {
   bio?: string;
   customStatus?: string;
   bannerUrl?: string;
+  /** The frame around their avatar, as stored — see `decorationSrc`. */
+  avatarDecoration?: string;
+  /** Their birthday is today. */
+  isBirthday?: boolean;
   borderGradientStart?: string;
   borderGradientEnd?: string;
   status: FriendStatus;
@@ -118,12 +124,20 @@ export function MemberProfileCard({
   showActivity?: boolean;
 }) {
   const me = useQuery(api.users.getCurrentUser);
-  // Only the expanded card shows "Member since", so the extra read is scoped
-  // to the dialog rather than every popover.
-  const profile = useQuery(
-    api.users.getProfile,
-    expanded ? { userId: member.userId, communityId } : "skip",
-  );
+  /**
+   * The card's own read of this person.
+   *
+   * Needed by every card, not just the expanded one, for the status pill: the
+   * `member` prop comes from whatever list opened the card, and a list hides an
+   * offline person's custom status because a row is about reachability. On the
+   * card the status is the reason you opened it, so it comes from here instead,
+   * where it isn't filtered by presence. (It also carries "Member since", which
+   * only the dialog shows.)
+   */
+  const profile = useQuery(api.users.getProfile, {
+    userId: member.userId,
+    communityId,
+  });
   const isSelf = !!me && me._id === member.userId;
   const badges = useVisibleBadges(member.userId);
   const [serverProfileOpen, setServerProfileOpen] = useState(false);
@@ -135,22 +149,49 @@ export function MemberProfileCard({
     member.borderGradientStart && member.borderGradientEnd
   );
 
+  /**
+   * Whoever's card this is, whatever their presence — a status somebody set is
+   * shown here for as long as they've set it, including while they're offline,
+   * which is the whole point of "Back Monday".
+   *
+   * The list's value is the fallback rather than the source, so the pill is
+   * there on the first frame instead of appearing when the query lands.
+   */
+  const customStatus = profile?.customStatus ?? member.customStatus;
+
+  /**
+   * Cosmetics that the card's own read is the authority on.
+   *
+   * The `member` prop is whatever the thing that opened the card had to hand —
+   * a message author, a friend row, a call tile — and not all of those carry a
+   * decoration. Taking it from the profile query means the card looks the same
+   * wherever it was opened from, and the prop only fills the first frame.
+   */
+  const avatarDecoration = profile?.avatarDecoration ?? member.avatarDecoration;
+  const isBirthday = profile?.isBirthday ?? member.isBirthday;
+
   /** Rendered in one of two places depending on whether there's a badge row
-   * to push the avatar down — `position` is what differs between them. */
-  const statusPill = (position: string) =>
-    member.customStatus && isSelf ? (
+   * to push the avatar down — `position` is what differs between them. Only
+   * your own is a button: it's the shortcut to changing it. */
+  const statusPill = (position: string) => {
+    if (!customStatus) return null;
+    const className = cn(
+      "absolute z-10 max-w-40 truncate rounded-full bg-accent/60 px-3 py-1 text-sm font-medium text-white shadow-lg backdrop-blur-sm",
+      position,
+    );
+    return isSelf ? (
       <button
         type="button"
         title="Change your status"
         onClick={() => setStatusOpen(true)}
-        className={cn(
-          "cursor-pointer absolute z-10 max-w-40 shadow-lg truncate rounded-full bg-accent/60 hover:bg-accent/80 px-3 py-1 text-sm font-medium text-white backdrop-blur-sm",
-          position,
-        )}
+        className={cn(className, "cursor-pointer hover:bg-accent/80")}
       >
-        {member.customStatus}
+        {customStatus}
       </button>
-    ) : null;
+    ) : (
+      <span className={className}>{customStatus}</span>
+    );
+  };
 
   return (
     <div
@@ -214,10 +255,13 @@ export function MemberProfileCard({
                 <AvatarFallback className="text-lg">
                   {member.name.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
-                {/* Larger dot with thicker ring for the profile card */}
-                <AvatarBadge
+                <AvatarDecoration src={decorationSrc(avatarDecoration)} />
+                {/* Larger dot with thicker ring for the profile card — and a
+                    cake sized to match on the day. */}
+                <PresenceBadge
+                  status={member.status}
+                  isBirthday={isBirthday}
                   className={cn(
-                    STATUS_DOT_CLASS[member.status],
                     "min-w-4 min-h-4 ring-4",
                     hasGradient ? "ring-background/70" : "ring-accent",
                   )}
@@ -414,6 +458,8 @@ export function UserProfileContent({
         bio: profile?.bio,
         bannerUrl: profile?.bannerUrl,
         customStatus: profile?.customStatus,
+        avatarDecoration: profile?.avatarDecoration,
+        isBirthday: profile?.isBirthday,
         borderGradientStart: profile?.borderGradientStart,
         borderGradientEnd: profile?.borderGradientEnd,
       }}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence } from "framer-motion";
 import {
   createContext,
@@ -13,6 +13,9 @@ import {
 
 import { api } from "../../../convex/_generated/api";
 import { BirthdayCelebration } from "@/components/home/birthday-gift-dialog";
+
+/** No birthday today, or none stored. */
+const NO_BIRTHDAY = { inWindow: false, isToday: false, endsAt: undefined };
 
 /** How long after midnight on the day the celebration stays replayable. */
 const WINDOW_HOURS = 72;
@@ -53,17 +56,17 @@ export function useBirthday(): BirthdayContextValue {
  * which is `Date`'s own rollover rather than a decision made here.
  */
 function birthdayWindow(dob: string | undefined, now: Date) {
-  if (!dob) return { inWindow: false, isToday: false };
+  if (!dob) return NO_BIRTHDAY;
 
   const [, month, day] = dob.split("-");
   // A stored value in some other shape would compare as "NaN" forever, so
   // treat it as no birthday rather than as one that never arrives.
-  if (!month || !day) return { inWindow: false, isToday: false };
+  if (!month || !day) return NO_BIRTHDAY;
 
   const monthIndex = Number(month) - 1;
   const dayOfMonth = Number(day);
   if (Number.isNaN(monthIndex) || Number.isNaN(dayOfMonth)) {
-    return { inWindow: false, isToday: false };
+    return NO_BIRTHDAY;
   }
 
   const year = now.getFullYear();
@@ -73,11 +76,17 @@ function birthdayWindow(dob: string | undefined, now: Date) {
     const start = new Date(candidateYear, monthIndex, dayOfMonth);
     const elapsedHours = (now.getTime() - start.getTime()) / 3_600_000;
     if (elapsedHours >= 0 && elapsedHours < WINDOW_HOURS) {
-      return { inWindow: true, isToday: elapsedHours < 24 };
+      return {
+        inWindow: true,
+        isToday: elapsedHours < 24,
+        // Local midnight at the end of the birthday, which is the one piece
+        // of this the server cannot work out for itself — see claimBirthday.
+        endsAt: start.getTime() + 24 * 3_600_000,
+      };
     }
   }
 
-  return { inWindow: false, isToday: false };
+  return NO_BIRTHDAY;
 }
 
 /**
@@ -99,10 +108,25 @@ export function BirthdayProvider({ children }: { children: React.ReactNode }) {
   // Evaluated once per change of birthday rather than on a timer. Someone who
   // leaves the app open across midnight gets the greeting on their next
   // navigation, which is a fair trade for not running a clock all year.
-  const { inWindow, isToday } = useMemo(
+  const { inWindow, isToday, endsAt } = useMemo(
     () => birthdayWindow(dob, new Date()),
     [dob]
   );
+
+  /**
+   * Tell the server it is this user's birthday, and until when.
+   *
+   * Their timezone lives here and nowhere else, so this is what everything
+   * else keys off: the cake in place of their presence dot, the decoration
+   * around their avatar, and the prompt a friend gets above the composer. The
+   * mutation mints the decoration and is a no-op once the day is claimed, so
+   * running it again on a reload costs a round trip and changes nothing.
+   */
+  const claimBirthday = useMutation(api.users.claimBirthday);
+  useEffect(() => {
+    if (!isToday || endsAt === undefined) return;
+    void claimBirthday({ expiresAt: endsAt });
+  }, [isToday, endsAt, claimBirthday]);
 
   const celebrate = useCallback(() => {
     setRun((n) => n + 1);

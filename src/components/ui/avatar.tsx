@@ -59,6 +59,44 @@ function AvatarFallback({
   )
 }
 
+/**
+ * The frame drawn around an avatar — see src/lib/avatar-decorations.ts.
+ *
+ * A sibling of AvatarImage rather than a wrapper, so it costs a render site one
+ * line and nothing when there's no decoration to draw. It overflows the
+ * avatar's box on every side (which is the point) and so has to be a child of
+ * the root, whose `rounded-full` deliberately doesn't clip.
+ *
+ * 132% is the ratio Discord's decorations are drawn at, and the one the
+ * built-in presets are laid out for: the avatar occupies the centred circle of
+ * radius 38 in a 100-unit square. Custom uploads from elsewhere therefore line
+ * up without being told anything.
+ *
+ * Under the badge (`z-10`) rather than over it: a decoration is jewellery and
+ * a presence dot is information.
+ */
+function AvatarDecoration({
+  src,
+  className,
+  ...props
+}: React.ComponentProps<"img"> & { src: string | undefined }) {
+  if (!src) return null;
+  return (
+    <img
+      data-slot="avatar-decoration"
+      src={src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn(
+        "pointer-events-none absolute -inset-[16%] z-1 max-w-none select-none object-contain",
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
 function AvatarBadge({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
@@ -108,6 +146,7 @@ export {
   Avatar,
   AvatarImage,
   AvatarFallback,
+  AvatarDecoration,
   AvatarBadge,
   AvatarGroup,
   AvatarGroupCount,

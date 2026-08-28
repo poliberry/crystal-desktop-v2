@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { requireMember } from "./communities";
 
@@ -35,6 +36,10 @@ export async function getMergedProfile(
     borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
     profileBg: serverProfile?.profileBg ?? user.profileBg,
     nameplateUrl: serverProfile?.nameplateUrl ?? user.nameplateUrl,
+    // Account-level rather than merged: a decoration is worn by the person,
+    // and a birthday isn't a per-server fact.
+    avatarDecoration: effectiveDecoration(user),
+    isBirthday: isBirthdayNow(user),
   };
 }
 

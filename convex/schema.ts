@@ -95,6 +95,23 @@ export default defineSchema({
     customActivityExpiresAt: v.optional(v.number()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    /** The frame drawn around this user's avatar: a `builtin:<key>` preset or
+     * the storage URL of a picture they uploaded. One field rather than a key
+     * and a URL, so the queries that carry it to every avatar on screen carry
+     * one thing — see src/lib/avatar-decorations.ts, which draws it. */
+    avatarDecoration: v.optional(v.string()),
+    avatarDecorationStorageId: v.optional(v.id("_storage")),
+    /** The decoration generated as a birthday present, and when it stops being
+     * worn. Kept separate from `avatarDecoration` so the user's own choice is
+     * still there underneath and comes back by itself the next day.
+     *
+     * `birthdayUntil` is local midnight as reported by the user's own client
+     * (see `claimBirthday`), because the server has no timezone and a birthday
+     * is a local date. It's also what tells everyone *else* it's this person's
+     * birthday — the cake in place of a presence dot, the prompt above a
+     * friend's composer. See convex/lib/birthday.ts. */
+    birthdayDecoration: v.optional(v.string()),
+    birthdayUntil: v.optional(v.number()),
     /** Clip played to everyone else when this user joins a call. Either a
      * `builtin:<name>` id or a `communitySounds` document id — see
      * src/lib/soundboard.ts. A per-server override lives on
@@ -251,6 +268,11 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
+    /** This message was sent from the "wish them a happy birthday" prompt.
+     * Recorded on the message rather than announced some other way because
+     * both people need to see the cakes fall and both are already subscribed
+     * to this conversation — the message arriving *is* the signal. */
+    birthdayWish: v.optional(v.boolean()),
   })
     .index("by_conversation", ["conversationId"])
     // Scoped search — see convex/search.ts. The filter field is what lets a

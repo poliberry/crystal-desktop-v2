@@ -11,6 +11,7 @@ import {
   requireCommunityPermission,
 } from "./permissions";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -500,6 +501,10 @@ export const listMembers = query({
             serverProfile?.customStatus
           ),
           nameplateUrl: serverProfile?.nameplateUrl ?? user?.nameplateUrl,
+          // Not merged with the server profile: a decoration and a birthday
+          // belong to the account, not to one server identity.
+          avatarDecoration: effectiveDecoration(user),
+          isBirthday: isBirthdayNow(user),
           bannerUrl: serverProfile?.bannerUrl ?? user?.bannerUrl,
           borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
           borderGradientEnd: serverProfile?.borderGradientEnd ?? user?.borderGradientEnd,
