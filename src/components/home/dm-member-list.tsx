@@ -112,7 +112,7 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
               align="start"
               className={PROFILE_POPOVER_CLASS}
             >
-              <MemberProfileCard member={member} />
+              <MemberProfileCard member={member} reserveFrameRoom={false} />
             </PopoverContent>
           </Popover>
         ))}

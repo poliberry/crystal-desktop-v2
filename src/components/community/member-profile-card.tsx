@@ -156,6 +156,7 @@ export function MemberProfileCard({
   showActivity = true,
   hideMessageAction = false,
   frameHandledByHost = false,
+  reserveFrameRoom = true,
   className,
 }: {
   member: MemberProfileMember;
@@ -182,6 +183,17 @@ export function MemberProfileCard({
    * else the card is the whole of the profile and draws its own.
    */
   frameHandledByHost?: boolean;
+  /**
+   * Whether to hold the card away from its container to make room for the
+   * frame.
+   *
+   * True for anything that clips — the profile page's column, the editor's
+   * preview — where the artwork would otherwise be cut off. False in a
+   * popover, which clips nothing and is *positioned against something*: there,
+   * reserving room pushes the card down away from the row it was opened from,
+   * and the frame is better left to overflow.
+   */
+  reserveFrameRoom?: boolean;
   /** For a caller that owns the card's box — the DM panel stretches it down
    * the full height of the column. */
   className?: string;
@@ -288,8 +300,8 @@ export function MemberProfileCard({
           // asking each of those to know about it was how three of them ended
           // up clipping it. A margin here pushes every host's box outwards
           // instead, which is the same thing said once.
-          marginTop: frameRoom.paddingTop,
-          marginBottom: frameRoom.paddingBottom,
+          marginTop: reserveFrameRoom ? frameRoom.paddingTop : 0,
+          marginBottom: reserveFrameRoom ? frameRoom.paddingBottom : 0,
           ...(hasGradient
             ? {
                 background: `linear-gradient(to bottom, rgba(0,0,0,0.4), rgba(0,0,0,0.4)), linear-gradient(to bottom, ${member.borderGradientStart}, ${member.borderGradientEnd})`,
@@ -579,6 +591,9 @@ export function UserProfileContent({
   return (
     <MemberProfileCard
       communityId={communityId}
+      // A popover is positioned against a row and clips nothing, so the card
+      // lines up with that row and the frame hangs outside the popover.
+      reserveFrameRoom={false}
       member={{
         userId,
         name: profile?.name ?? name,

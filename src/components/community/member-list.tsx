@@ -224,6 +224,7 @@ export function MemberList({ communityId }: MemberListProps) {
                           className={PROFILE_POPOVER_CLASS}
                         >
                           <MemberProfileCard
+                            reserveFrameRoom={false}
                             member={member}
                             communityId={communityId}
                             communityName={community?.name}
