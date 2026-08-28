@@ -241,6 +241,9 @@ export function MemberProfileCard({
           profileFrameOffsetY: member.profileFrameOffsetY,
         },
   );
+  /** How far the card holds itself away from its container, so the frame it
+   * draws outside its edges has somewhere to be. */
+  const frameRoom = frameHeadroom(profileFrameLayout, !!profileFrame);
   const nameStyle = displayNameStyleClass(
     profile?.displayNameStyle ?? member.displayNameStyle,
   );
@@ -264,13 +267,23 @@ export function MemberProfileCard({
       {...profileCssAttributes(profileCss, member.userId)}
       className={cn("relative flex min-h-full flex-col rounded-md p-0.5", className)}
       style={
-        hasGradient
-          ? {
-              background: `linear-gradient(to bottom, rgba(0,0,0,0.4), rgba(0,0,0,0.4)), linear-gradient(to bottom, ${member.borderGradientStart}, ${member.borderGradientEnd})`,
-              backgroundPosition: "center",
-              backgroundSize: "contain",
-            }
-          : undefined
+        {
+          // Room for the frame, reserved by the card rather than by whatever
+          // is hosting it. A frame is drawn outside these edges, and the card
+          // turns up in a popover, a page, a DM panel and an editor preview —
+          // asking each of those to know about it was how three of them ended
+          // up clipping it. A margin here pushes every host's box outwards
+          // instead, which is the same thing said once.
+          marginTop: frameRoom.paddingTop,
+          marginBottom: frameRoom.paddingBottom,
+          ...(hasGradient
+            ? {
+                background: `linear-gradient(to bottom, rgba(0,0,0,0.4), rgba(0,0,0,0.4)), linear-gradient(to bottom, ${member.borderGradientStart}, ${member.borderGradientEnd})`,
+                backgroundPosition: "center",
+                backgroundSize: "contain",
+              }
+            : {}),
+        } as React.CSSProperties
       }
     >
       {/* Inner overlay — 3px inset, clips content and carries the border */}
@@ -549,26 +562,7 @@ export function UserProfileContent({
 }) {
   const profile = useQuery(api.users.getProfile, { userId, communityId });
 
-  /**
-   * Room for the frame, inside the popover.
-   *
-   * A frame is drawn outside the card, and a popover is sized to its content —
-   * so without this the artwork hangs over whatever the popover was opened
-   * next to, and gets clipped against the top of the window when the popover
-   * is already near it. Padding the content pushes the card down and makes the
-   * popover itself big enough to hold the whole thing.
-   */
-  const room = frameHeadroom(frameLayout(profile ?? {}), !!profile?.profileFrame);
-
   return (
-    <div
-      style={{
-        paddingTop: room.paddingTop,
-        paddingBottom: room.paddingBottom,
-        paddingLeft: `${room.paddingInline}%`,
-        paddingRight: `${room.paddingInline}%`,
-      }}
-    >
     <MemberProfileCard
       communityId={communityId}
       member={{
@@ -599,6 +593,5 @@ export function UserProfileContent({
         profileCss: profile?.profileCss,
       }}
     />
-    </div>
   );
 }

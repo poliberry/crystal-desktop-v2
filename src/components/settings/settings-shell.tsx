@@ -146,7 +146,12 @@ export function SettingsShell({
           Settings
         </span>
       </div>
-      <SidebarProvider>
+      {/* `min-h-0 h-full` overrides the provider's own `min-h-svh`. That
+          default is right for a sidebar filling a page and wrong for one
+          inside a dialog: it forces this subtree to be at least a viewport
+          tall, so in a dialog capped at 90vh the last card sat below the
+          bottom edge with nothing left to scroll. */}
+      <SidebarProvider className="h-full min-h-0">
         <Sidebar>
           <SidebarHeader className="pt-9">
             <SidebarMenu>

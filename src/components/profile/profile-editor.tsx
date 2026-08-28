@@ -47,11 +47,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useMyPresence } from "@/hooks/use-presence";
 import { useProfileScope, type ProfileScope } from "@/hooks/use-profile-scope";
 import { decorationSrc } from "@/lib/avatar-decorations";
-import {
-  displayNameStyleClass,
-  frameHeadroom,
-  frameLayout,
-} from "@/lib/profile-cosmetics";
+import { displayNameStyleClass } from "@/lib/profile-cosmetics";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
@@ -326,19 +322,6 @@ export function ProfileEditor({
     );
   }
 
-  /** Room for the frame — see `frameHeadroom`. Recomputed as the placement
-   * sliders move, so the card slides down under your finger. */
-  const headroom = frameHeadroom(
-    frameLayout(values),
-    !!values.profileFrame,
-  );
-  const previewPadding: React.CSSProperties = {
-    paddingTop: headroom.paddingTop,
-    paddingBottom: headroom.paddingBottom,
-    paddingLeft: `${headroom.paddingInline}%`,
-    paddingRight: `${headroom.paddingInline}%`,
-  };
-
   const saveCrop = async (crop: Blob) => {
     const target = cropping;
     if (!target) return;
@@ -592,10 +575,9 @@ export function ProfileEditor({
       {/* ---------------------------------------------------------------- */}
       <div className="min-h-0 shrink-0 p-4">
         <ScrollArea className="h-full">
-          {/* The card moves down (and in) by however much room the frame's
-              current placement needs, rather than the frame being clipped by
-              the ScrollArea outside this. See `frameHeadroom`. */}
-          <div className="w-[360px]" style={previewPadding}>
+          {/* The card reserves its own room for the frame — see
+              MemberProfileCard. This only has to be wide enough. */}
+          <div className="w-[360px] px-4">
             <MemberProfileCard
               expandable={false}
               expanded

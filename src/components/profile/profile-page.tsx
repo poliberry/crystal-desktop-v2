@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useUserActivities } from "@/hooks/use-rich-presence";
 import { type FriendStatus } from "@/lib/presence";
-import { frameHeadroom, frameLayout } from "@/lib/profile-cosmetics";
 import { cn } from "@/lib/utils";
 
 /**
@@ -126,25 +125,6 @@ function ProfilePageBody({
   const recentGames =
     useQuery(api.presence.recentGames, { userId: member.userId, limit: 10 }) ?? [];
 
-  /**
-   * The frame this page's card is wearing, read here only to work out how much
-   * room to leave for it. The card renders it; this just gets out of its way.
-   */
-  const profile = useQuery(api.users.getProfile, {
-    userId: member.userId,
-    communityId,
-  });
-  const frameRoom = frameHeadroom(
-    frameLayout(profile ?? {}),
-    !!(profile?.profileFrame ?? member.profileFrame),
-  );
-  const cardPadding: React.CSSProperties = {
-    paddingTop: frameRoom.paddingTop,
-    paddingBottom: frameRoom.paddingBottom + 16,
-    paddingLeft: `${frameRoom.paddingInline}%`,
-    paddingRight: `${frameRoom.paddingInline}%`,
-  };
-
   // Escape closes it, the way the dialog it replaced did. A page without this
   // is a page you can only leave by finding the right button.
   useEffect(() => {
@@ -192,10 +172,9 @@ function ProfilePageBody({
       <div className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[380px_1fr]">
         <div className="min-h-0">
           <ScrollArea className="h-full">
-            {/* Padded by however much the frame's placement needs, so the
-                card moves down rather than the artwork being clipped by this
-                ScrollArea. */}
-            <div style={cardPadding}>
+            {/* The card reserves its own room for the frame — see
+                MemberProfileCard. */}
+            <div className="px-3 pb-6">
               {/* `expandable={false}`: this *is* the expanded view. */}
               <MemberProfileCard
                 member={member}
