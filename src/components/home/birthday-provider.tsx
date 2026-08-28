@@ -128,6 +128,27 @@ export function BirthdayProvider({ children }: { children: React.ReactNode }) {
     void claimBirthday({ expiresAt: endsAt });
   }, [isToday, endsAt, claimBirthday]);
 
+  /**
+   * And put it away again afterwards.
+   *
+   * The stamp lapsing is not by itself an event anything can see: a query
+   * re-runs when data changes, not when the clock moves, so without a write at
+   * some point after the day ends everyone else's client goes on drawing the
+   * birthday decoration until something unrelated invalidates it. This is that
+   * write, and the server checks the day really is over before making it.
+   *
+   * Runs whenever the birthday isn't today — including the ordinary case of a
+   * user who has one stored and it's July — but only when there's something to
+   * clear, so it's one mutation the morning after and nothing on any other
+   * day.
+   */
+  const releaseBirthday = useMutation(api.users.releaseBirthday);
+  const hasClaim = me?.birthdayUntil !== undefined || me?.birthdayDecoration !== undefined;
+  useEffect(() => {
+    if (isToday || !hasClaim) return;
+    void releaseBirthday();
+  }, [isToday, hasClaim, releaseBirthday]);
+
   const celebrate = useCallback(() => {
     setRun((n) => n + 1);
     setOpen(true);

@@ -40,12 +40,24 @@ function monthDay(dob: string | undefined): [number, number] | null {
   return [m, d];
 }
 
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
 /** Whether `dob`'s day and month are today's, by the UTC clock. */
 function isBirthdayInUtc(dob: string | undefined, now: number): boolean {
   const parsed = monthDay(dob);
   if (!parsed) return false;
   const today = new Date(now);
-  return parsed[0] === today.getUTCMonth() + 1 && parsed[1] === today.getUTCDate();
+  let [month, day] = parsed;
+  // A 29 February birthday falls on 1 March in common years — the same
+  // rollover the client's `new Date(year, 1, 29)` does, so the two agree about
+  // which day it is rather than the server deciding it never comes round.
+  if (month === 2 && day === 29 && !isLeapYear(today.getUTCFullYear())) {
+    month = 3;
+    day = 1;
+  }
+  return month === today.getUTCMonth() + 1 && day === today.getUTCDate();
 }
 
 /** The subset of a user this module needs, so callers can pass a full document
@@ -63,7 +75,17 @@ export function isBirthdayNow(
   now: number = Date.now()
 ): boolean {
   if (!user) return false;
-  if (user.birthdayUntil !== undefined && user.birthdayUntil > now) return true;
+  // A live claim, but only while the stored date of birth still agrees with
+  // it. The claim is a *timestamp*, so on its own it would outlive the fact it
+  // was made about: clearing the date of birth, or moving it, would leave the
+  // cake and the decoration in place until the stamp happened to lapse.
+  if (
+    user.birthdayUntil !== undefined &&
+    user.birthdayUntil > now &&
+    isPlausibleBirthdayClaim(user.dob, now)
+  ) {
+    return true;
+  }
   return isBirthdayInUtc(user.dob, now);
 }
 

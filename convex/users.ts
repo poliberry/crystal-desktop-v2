@@ -217,6 +217,12 @@ export const updateProfileExtended = mutation({
         throw new Error("Date of birth must be in YYYY-MM-DD form.");
       }
       patch.dob = dob || undefined;
+      // A birthday already claimed was claimed about the *old* date, so it
+      // goes with it: the decoration and the cake come back within a moment
+      // (the client re-claims — see BirthdayProvider) if the new date is still
+      // today, and stop immediately if it isn't.
+      patch.birthdayUntil = undefined;
+      patch.birthdayDecoration = undefined;
     }
     if (args.customStatus !== undefined) {
       patch.customStatus = args.customStatus.trim().slice(0, 128) || undefined;
@@ -519,6 +525,33 @@ export const removeAvatar = mutation({
     if (previous && !(await isReferencedByAttachment(ctx, previous))) {
       await ctx.storage.delete(previous);
     }
+  },
+});
+
+/**
+ * Put the birthday decoration away once the day is over.
+ *
+ * Needed because "is it still their birthday" is a question about the clock,
+ * and a Convex query only re-runs when *data* changes: at midnight nothing is
+ * written, so every subscriber would go on being told about a birthday that
+ * ended — until something unrelated happened to invalidate the query, or they
+ * restarted the app. Clearing the fields is that write, and it puts everyone
+ * back on the user's own decoration at once.
+ *
+ * Called by the birthday-haver's own client, which is the one that knows when
+ * their day ends. Refuses to run while the day is still going, so a client
+ * with a wrong clock can't cut its user's birthday short for everybody else.
+ */
+export const releaseBirthday = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (me.birthdayUntil === undefined && me.birthdayDecoration === undefined) return;
+    if (isBirthdayNow(me)) return;
+    await ctx.db.patch(me._id, {
+      birthdayUntil: undefined,
+      birthdayDecoration: undefined,
+    });
   },
 });
 

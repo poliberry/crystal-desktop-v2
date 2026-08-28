@@ -260,6 +260,7 @@ export function decorationSrc(value: string | null | undefined): string | undefi
 export function ownDecorationState(
   me:
     | {
+        dob?: string;
         avatarDecoration?: string;
         birthdayDecoration?: string;
         birthdayUntil?: number;
@@ -268,11 +269,37 @@ export function ownDecorationState(
     | undefined
 ): { decoration: string | undefined; isBirthday: boolean } {
   if (!me) return { decoration: undefined, isBirthday: false };
-  const isBirthday = me.birthdayUntil !== undefined && me.birthdayUntil > Date.now();
+  // Decided from the date of birth rather than from `birthdayUntil`, even
+  // though the claim is what everyone *else* goes by. The stamp is a claim
+  // about a date, and a date that has since been edited or cleared leaves it
+  // pointing at nothing; asking the date directly can't drift from it. It also
+  // means your own cake is there the moment the day starts rather than one
+  // round trip later.
+  const isBirthday = isBirthdayToday(me.dob);
   return {
     decoration: (isBirthday ? me.birthdayDecoration : undefined) ?? me.avatarDecoration,
     isBirthday,
   };
+}
+
+/**
+ * Whether a `YYYY-MM-DD` date of birth falls on today's *local* date.
+ *
+ * Local, because a birthday belongs to the day the person having it is
+ * living in. A 29 February birthday lands on 1 March in a common year, which
+ * is `Date`'s own rollover rather than a decision made here — and is what
+ * BirthdayProvider and convex/lib/birthday.ts both do too.
+ */
+function isBirthdayToday(dob: string | undefined, now: Date = new Date()): boolean {
+  if (!dob) return false;
+  const [, month, day] = dob.split("-");
+  const monthIndex = Number(month) - 1;
+  const dayOfMonth = Number(day);
+  if (Number.isNaN(monthIndex) || Number.isNaN(dayOfMonth)) return false;
+  const occurrence = new Date(now.getFullYear(), monthIndex, dayOfMonth);
+  return (
+    occurrence.getMonth() === now.getMonth() && occurrence.getDate() === now.getDate()
+  );
 }
 
 /** Whether a stored value is the user's own upload rather than a preset. */
