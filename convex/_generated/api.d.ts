@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as badges from "../badges.js";
 import type * as callTokens from "../callTokens.js";
 import type * as calls from "../calls.js";
 import type * as channelCalls from "../channelCalls.js";
@@ -51,6 +52,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  badges: typeof badges;
   callTokens: typeof callTokens;
   calls: typeof calls;
   channelCalls: typeof channelCalls;

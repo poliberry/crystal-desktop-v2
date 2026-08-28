@@ -12,6 +12,7 @@ import {
   isPlausibleBirthdayClaim,
   MAX_BIRTHDAY_WINDOW_MS,
 } from "./lib/birthday";
+import { badgeByIdMap, badgeView } from "./badges";
 import { MAX_DECORATION_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import {
   internalMutation,
@@ -718,25 +719,53 @@ export const getCurrentUserIdInternal = internalQuery({
 // --- Badges ----------------------------------------------------------------
 
 /**
- * A user's badges, oldest first.
+ * A user's badges, resolved and ready to draw.
  *
  * Fetched by the profile card itself rather than joined into every query that
  * returns a member: the card is opened one at a time, and the alternative is
  * threading a `badges` field through half a dozen unrelated queries so that
  * one popover can render a row of pills.
+ *
+ * Resolved *here* rather than in the client, because the catalogue is a table
+ * now (see convex/badges.ts): an id with no definition is dropped, and where a
+ * badge is one tier of something — Bug Hunter bronze through diamond — only
+ * the highest tier held survives, since five identical bug glyphs say less
+ * than one diamond one.
  */
 export const badgesOf = query({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    const rows = await ctx.db
-      .query("userBadges")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-    return rows
-      .sort((a, b) => a.grantedAt - b.grantedAt)
-      .map((row) => ({ badgeId: row.badgeId, grantedAt: row.grantedAt }));
+    const [rows, definitions] = await Promise.all([
+      ctx.db
+        .query("userBadges")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+      badgeByIdMap(ctx),
+    ]);
+
+    const held = rows
+      .map((row) => ({ row, badge: definitions.get(row.badgeId) }))
+      .filter((entry): entry is { row: typeof entry.row; badge: Doc<"badges"> } => !!entry.badge);
+
+    // Highest tier per group, decided across everything held before anything
+    // is dropped — the tiers may have been granted in any order.
+    const bestTier = new Map<string, number>();
+    for (const { badge } of held) {
+      if (!badge.group) continue;
+      const tier = badge.tier ?? 0;
+      if (tier > (bestTier.get(badge.group) ?? -Infinity)) bestTier.set(badge.group, tier);
+    }
+
+    return held
+      .filter(({ badge }) => !badge.group || (badge.tier ?? 0) === bestTier.get(badge.group))
+      .sort(
+        (a, b) =>
+          (a.badge.position ?? 0) - (b.badge.position ?? 0) ||
+          a.row.grantedAt - b.row.grantedAt
+      )
+      .map(({ row, badge }) => ({ ...badgeView(badge), grantedAt: row.grantedAt }));
   },
 });
 

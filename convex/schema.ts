@@ -128,14 +128,58 @@ export default defineSchema({
     .index("by_username", ["username"]),
 
   /**
+   * What each badge looks like and means — the catalogue the ids in
+   * `userBadges` point at.
+   *
+   * Data rather than code, so a new badge is a row instead of a release: the
+   * definition used to live in the client bundle, which meant granting one to
+   * somebody on an older build showed them nothing at all.
+   *
+   * A badge is drawn as *either* an icon or a picture. `icon` is the export
+   * name of a react-icons glyph ("BsFillPersonBadgeFill"), which the client
+   * resolves at render time — see src/lib/react-icons.ts for which packs it
+   * knows how to reach and what a name has to look like. `imageUrl` is for the
+   * ones a glyph can't be: a logo, an event badge, anything with more than one
+   * colour in it. Set both and the picture wins.
+   */
+  badges: defineTable({
+    /** Stable key. What `userBadges.badgeId` holds, and what a grant names. */
+    badgeId: v.string(),
+    label: v.string(),
+    /** Shown on hover — the reason someone has it. */
+    description: v.string(),
+    /** A react-icons export name, e.g. "BsBugFill". */
+    icon: v.optional(v.string()),
+    /** Or a picture, for badges a single-colour glyph can't carry. */
+    imageUrl: v.optional(v.string()),
+    /** Tailwind classes for the glyph's colour. Each badge gets its own so a
+     * row of them reads as distinct things rather than one thing repeated.
+     * Ignored for `imageUrl` badges, which bring their own colours. */
+    className: v.optional(v.string()),
+    /**
+     * Badges that are tiers of one thing — Bug Hunter bronze through diamond —
+     * share a `group`, and only the highest `tier` a user holds is drawn. Five
+     * identical bug glyphs say less than one diamond one.
+     *
+     * A group rather than a level field on `userBadges`, because a promotion
+     * stays "revoke tier N, grant tier N+1" with no new machinery, and the
+     * grant history keeps the date each tier was reached.
+     */
+    group: v.optional(v.string()),
+    tier: v.optional(v.number()),
+    /** Where it sits in a row of badges. Ties fall back to when it was
+     * granted, so an unordered catalogue still renders consistently. */
+    position: v.optional(v.number()),
+  }).index("by_badge_id", ["badgeId"]),
+
+  /**
    * Badges earned by a user — "Early Supporter" and whatever comes after.
    *
    * A row per (user, badge) rather than a field on `users`, so granting one
    * doesn't rewrite the user document and `grantedAt` is recorded per badge
-   * ("Early Supporter since March"). `badgeId` is a key into the catalogue in
-   * src/lib/badges.ts rather than a foreign key: what a badge *means* is
-   * presentation, and an id nobody recognises is skipped rather than breaking
-   * the card.
+   * ("Early Supporter since March"). `badgeId` names a row in `badges` above;
+   * an id with no definition is skipped on read rather than breaking the card,
+   * so deleting a definition is safe.
    */
   userBadges: defineTable({
     userId: v.id("users"),

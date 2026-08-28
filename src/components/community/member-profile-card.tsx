@@ -24,7 +24,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useOpenSettings } from "@/components/settings/settings-dialog";
-import { badgeDefinition, visibleBadgeIds } from "@/lib/badges";
+import { BadgeIcon } from "@/components/badge-icon";
 import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
 import {
@@ -55,54 +55,50 @@ export interface MemberProfileMember {
   roles?: { id: Id<"roles">; name: string; color?: string }[];
 }
 
-/**
- * Which of a user's badges this build will actually draw.
- *
- * Queried by the card rather than by `ProfileBadges` itself, even though only
- * that row renders them: whether there are any badges also decides where the
- * custom-status pill sits, because the badge row is what pushes the avatar
- * down. One consumer of the answer would have been fine self-fetching; two
- * would mean the same query twice, one of them purely for a layout decision.
- */
-function useVisibleBadges(userId: Id<"users">) {
-  const badges = useQuery(api.users.badgesOf, { userId }) ?? [];
-  // Collapses the Bug Hunter tiers down to the highest one held — see
-  // src/lib/badges.ts.
-  const shown = new Set(visibleBadgeIds(badges.map((b) => b.badgeId)));
-  return badges.filter(
-    (badge) => shown.has(badge.badgeId) && !!badgeDefinition(badge.badgeId),
-  );
-}
+/** One resolved badge, as `users.badgesOf` hands it over. */
+type ProfileBadge = {
+  badgeId: string;
+  label: string;
+  description: string;
+  icon?: string;
+  imageUrl?: string;
+  className?: string;
+};
 
 /**
- * The badges a user has earned, as a row of glyphs — the name and reason live
- * on hover rather than taking up a line of the card.
+ * The badges a user has earned, as a row of glyphs — the name and the reason
+ * live on hover rather than taking up a line of the card.
+ *
+ * Everything about which badges these are and how each is drawn is settled by
+ * the query (see `users.badgesOf`): unknown ids dropped, tiers collapsed to the
+ * highest one held, order applied. The catalogue is a table now, so a build
+ * that has never heard of a badge still renders it.
  */
-function ProfileBadges({ badges }: { badges: { badgeId: string }[] }) {
+function ProfileBadges({ badges }: { badges: ProfileBadge[] }) {
   if (badges.length === 0) return null;
 
   return (
     <div className="mt-1 flex flex-wrap items-center bg-background/50 w-fit p-1 rounded-md gap-1.5">
-      {badges.map((badge) => {
-        const definition = badgeDefinition(badge.badgeId);
-        // An id this build doesn't know about is skipped rather than drawn as
-        // a mystery glyph — see src/lib/badges.ts.
-        if (!definition) return null;
-        const Icon = definition.icon;
-        return (
-          <Tooltip key={badge.badgeId}>
-            <TooltipTrigger asChild>
-              <Icon
-                aria-label={definition.label}
-                className={cn("size-4 shrink-0", definition.className)}
+      {badges.map((badge) => (
+        <Tooltip key={badge.badgeId}>
+          <TooltipTrigger asChild>
+            {/* A span, because the glyph resolves asynchronously and can be
+                nothing for a beat — the trigger has to stay mountable. */}
+            <span className="flex">
+              <BadgeIcon
+                icon={badge.icon}
+                imageUrl={badge.imageUrl}
+                label={badge.label}
+                className={badge.className}
               />
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p className="font-medium">{definition.label}</p>
-            </TooltipContent>
-          </Tooltip>
-        );
-      })}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p className="font-medium">{badge.label}</p>
+            <p className="text-xs text-muted-foreground">{badge.description}</p>
+          </TooltipContent>
+        </Tooltip>
+      ))}
     </div>
   );
 }
@@ -152,7 +148,11 @@ export function MemberProfileCard({
     communityId,
   });
   const isSelf = !!me && me._id === member.userId;
-  const badges = useVisibleBadges(member.userId);
+  // Queried by the card rather than by `ProfileBadges`, even though only that
+  // row draws them: whether there are any badges also decides where the status
+  // bubble sits, because the badge row is what pushes the avatar down.
+  const badges = (useQuery(api.users.badgesOf, { userId: member.userId }) ??
+    []) as ProfileBadge[];
   const [serverProfileOpen, setServerProfileOpen] = useState(false);
   const [expandedOpen, setExpandedOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -325,7 +325,7 @@ export function MemberProfileCard({
         </div>
 
         {/* Content */}
-        <div className={cn("space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}>
+        <div className={cn("min-w-0 space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}>
           {!isSelf && (
             <FriendActionButton
               userId={member.userId}
