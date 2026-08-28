@@ -7,7 +7,10 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { getAvatarColor } from "@/lib/avatar-color";
 import { uploadToStorage } from "@/lib/storage-upload";
-import type { ProfileFrameMode } from "@/lib/profile-cosmetics";
+import type {
+  ProfileFrameLayout,
+  ProfileFrameMode,
+} from "@/lib/profile-cosmetics";
 
 /**
  * One profile being edited — the account's, or the caller's identity in one
@@ -39,6 +42,12 @@ export interface ProfileScopeValues {
   profileEffect?: string;
   profileFrame?: string;
   profileFrameMode?: string;
+  profileFrameFit?: string;
+  profileFrameAnchor?: string;
+  profileFrameScale?: number;
+  profileFrameOffsetY?: number;
+  /** The owner's own stylesheet for this card. */
+  profileCss?: string;
   /** Account-level and not overridable per server — a decoration is worn by
    * the person. Carried here so the rail can still show it in a server scope,
    * where it's read-only. */
@@ -64,7 +73,12 @@ export interface ProfileScope {
   removeEffect: () => Promise<void>;
   setFrame: (file: File, mode: ProfileFrameMode) => Promise<void>;
   setFrameMode: (mode: ProfileFrameMode) => Promise<void>;
+  /** Where the frame sits — see `ProfileFrameLayout`. Partial, so a slider
+   * can send only what it changed. */
+  setFrameLayout: (layout: Partial<ProfileFrameLayout>) => Promise<void>;
   removeFrame: () => Promise<void>;
+  /** The card's own stylesheet, confined to the card when it's rendered. */
+  setCss: (css: string) => Promise<void>;
   /** Name, bio and status together — the three that live behind a Save button
    * rather than applying on click like the cosmetics do. */
   saveText: (text: { name: string; bio: string; customStatus: string }) => Promise<void>;
@@ -98,6 +112,8 @@ export function useProfileScope(
   const setProfileFrameM = useMutation(api.users.setProfileFrame);
   const setProfileFrameModeM = useMutation(api.users.setProfileFrameMode);
   const removeProfileFrameM = useMutation(api.users.removeProfileFrame);
+  const setProfileFrameLayoutM = useMutation(api.users.setProfileFrameLayout);
+  const setProfileCssM = useMutation(api.users.setProfileCss);
 
   // --- Server-profile mutations ---
   const generateServerAvatarUploadUrl = useMutation(
@@ -131,6 +147,10 @@ export function useProfileScope(
   const removeServerProfileFrame = useMutation(
     api.serverProfiles.removeServerProfileFrame
   );
+  const setServerProfileFrameLayout = useMutation(
+    api.serverProfiles.setServerProfileFrameLayout
+  );
+  const setServerProfileCss = useMutation(api.serverProfiles.setServerProfileCss);
 
   /**
    * What the editor shows.
@@ -159,6 +179,11 @@ export function useProfileScope(
         profileEffect: me.profileEffect,
         profileFrame: me.profileFrame,
         profileFrameMode: me.profileFrameMode,
+        profileFrameFit: me.profileFrameFit,
+        profileFrameAnchor: me.profileFrameAnchor,
+        profileFrameScale: me.profileFrameScale,
+        profileFrameOffsetY: me.profileFrameOffsetY,
+        profileCss: me.profileCss,
         avatarDecoration: me.avatarDecoration,
       };
     }
@@ -181,6 +206,18 @@ export function useProfileScope(
       profileEffect: sp?.profileEffect ?? me.profileEffect,
       profileFrame: sp?.profileFrame ?? me.profileFrame,
       profileFrameMode: sp?.profileFrame ? sp.profileFrameMode : me.profileFrameMode,
+      // Placement travels with whichever profile supplied the frame.
+      profileFrameFit: sp?.profileFrame ? sp.profileFrameFit : me.profileFrameFit,
+      profileFrameAnchor: sp?.profileFrame
+        ? sp.profileFrameAnchor
+        : me.profileFrameAnchor,
+      profileFrameScale: sp?.profileFrame
+        ? sp.profileFrameScale
+        : me.profileFrameScale,
+      profileFrameOffsetY: sp?.profileFrame
+        ? sp.profileFrameOffsetY
+        : me.profileFrameOffsetY,
+      profileCss: sp?.profileCss ?? me.profileCss,
       avatarDecoration: me.avatarDecoration,
     };
   }, [me, serverProfile, isAccount]);
@@ -310,9 +347,18 @@ export function useProfileScope(
         if (isAccount) await setProfileFrameModeM({ mode });
         else await setServerProfileFrameMode({ communityId: cid, mode });
       },
+      setFrameLayout: async (layout) => {
+        if (isAccount) await setProfileFrameLayoutM(layout);
+        else await setServerProfileFrameLayout({ communityId: cid, ...layout });
+      },
       removeFrame: async () => {
         if (isAccount) await removeProfileFrameM();
         else await removeServerProfileFrame({ communityId: cid });
+      },
+
+      setCss: async (css) => {
+        if (isAccount) await setProfileCssM({ css });
+        else await setServerProfileCss({ communityId: cid, css });
       },
 
       saveText: async ({ name, bio, customStatus }) => {
@@ -362,6 +408,10 @@ export function useProfileScope(
       setProfileFrameM,
       setProfileFrameModeM,
       removeProfileFrameM,
+      setProfileFrameLayoutM,
+      setProfileCssM,
+      setServerProfileFrameLayout,
+      setServerProfileCss,
       setServerProfileFrame,
       setServerProfileFrameMode,
       removeServerProfileFrame,

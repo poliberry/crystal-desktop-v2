@@ -18,12 +18,12 @@ import {
   type MemberProfileMember,
 } from "@/components/community/member-profile-card";
 import { ProfileBoard } from "@/components/profile/profile-board";
-import { ProfileFrameLayer } from "@/components/profile/profile-card-cosmetics";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useUserActivities } from "@/hooks/use-rich-presence";
 import { type FriendStatus } from "@/lib/presence";
+import { frameHeadroom, frameLayout } from "@/lib/profile-cosmetics";
 import { cn } from "@/lib/utils";
 
 /**
@@ -125,21 +125,24 @@ function ProfilePageBody({
   const activities = useUserActivities(member.userId);
   const recentGames =
     useQuery(api.presence.recentGames, { userId: member.userId, limit: 10 }) ?? [];
+
   /**
-   * The frame this page wears.
-   *
-   * Read here rather than taken from `member`, for the same reason the card
-   * reads its own cosmetics: whatever opened this page may only have had a
-   * name and an avatar to hand. The prop fills the first frame and the query
-   * is the authority once it lands.
+   * The frame this page's card is wearing, read here only to work out how much
+   * room to leave for it. The card renders it; this just gets out of its way.
    */
   const profile = useQuery(api.users.getProfile, {
     userId: member.userId,
     communityId,
   });
-  const frame = {
-    profileFrame: profile?.profileFrame ?? member.profileFrame,
-    profileFrameMode: profile?.profileFrameMode ?? member.profileFrameMode,
+  const frameRoom = frameHeadroom(
+    frameLayout(profile ?? {}),
+    !!(profile?.profileFrame ?? member.profileFrame),
+  );
+  const cardPadding: React.CSSProperties = {
+    paddingTop: frameRoom.paddingTop,
+    paddingBottom: frameRoom.paddingBottom + 16,
+    paddingLeft: `${frameRoom.paddingInline}%`,
+    paddingRight: `${frameRoom.paddingInline}%`,
   };
 
   // Escape closes it, the way the dialog it replaced did. A page without this
@@ -189,7 +192,10 @@ function ProfilePageBody({
       <div className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[380px_1fr]">
         <div className="min-h-0">
           <ScrollArea className="h-full">
-            <div className="pr-2 pb-4">
+            {/* Padded by however much the frame's placement needs, so the
+                card moves down rather than the artwork being clipped by this
+                ScrollArea. */}
+            <div style={cardPadding}>
               {/* `expandable={false}`: this *is* the expanded view. */}
               <MemberProfileCard
                 member={member}
@@ -198,9 +204,6 @@ function ProfilePageBody({
                 expandable={false}
                 expanded
                 showActivity={false}
-                // The frame belongs to the page here, not to the card: what's
-                // being framed is the whole thing you opened.
-                frameHandledByHost
               />
             </div>
           </ScrollArea>
@@ -272,13 +275,6 @@ function ProfilePageBody({
           </ScrollArea>
         </div>
 
-        {/* The frame, around the whole of what was opened rather than around
-            the card in the corner of it. Drawn last so it sits over both
-            columns; it never takes a click. */}
-        <ProfileFrameLayer
-          src={frame?.profileFrame}
-          mode={frame?.profileFrameMode}
-        />
       </div>
     </div>
   );

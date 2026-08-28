@@ -303,3 +303,253 @@ export const CSS_SNIPPET_GROUPS: CssSnippetGroup[] = [
 export const ALL_CSS_SNIPPETS: CssSnippet[] = CSS_SNIPPET_GROUPS.flatMap(
   (group) => group.snippets,
 );
+
+/* -------------------------------------------------------------------------- */
+/* The index of names                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One targetable part of the interface.
+ *
+ * The snippets above are for somebody who knows what they want the app to look
+ * like and not how to say it. This is the other half: an index for somebody who
+ * knows CSS perfectly well and only needs to be told what this app calls its
+ * parts. It exists because inspecting an element isn't always possible — the
+ * thing you want to restyle may only appear on hover, or live inside a menu
+ * that closes the moment the inspector opens.
+ */
+export interface CssSelectorEntry {
+  selector: string;
+  label: string;
+  description: string;
+}
+
+export interface CssSelectorGroup {
+  label: string;
+  selectors: CssSelectorEntry[];
+}
+
+/** Every selector the app-wide stylesheet can rely on. */
+export const CSS_SELECTOR_GROUPS: CssSelectorGroup[] = [
+  {
+    label: "Theme variables",
+    selectors: [
+      {
+        selector: ":root",
+        label: "Colour variables",
+        description:
+          "--background, --foreground, --card, --popover, --primary, --secondary, --muted, --accent, --destructive, --border, --input, --ring and --sidebar, each with a -foreground pair, plus --radius and --font-sans.",
+      },
+    ],
+  },
+  {
+    label: "Surfaces",
+    selectors: [
+      { selector: '[data-slot="card"]', label: "Card", description: "Any card: settings panels, widgets, profile cards." },
+      { selector: '[data-slot="card-header"]', label: "Card header", description: "The title row at the top of a card." },
+      { selector: '[data-slot="card-title"]', label: "Card title", description: "A card's heading text." },
+      { selector: '[data-slot="card-description"]', label: "Card description", description: "The line under a card's heading." },
+      { selector: '[data-slot="card-content"]', label: "Card content", description: "Everything below a card's header." },
+      { selector: '[data-slot="dialog-content"]', label: "Dialog", description: "Every modal box — settings, the profile editor, confirmations." },
+      { selector: '[data-slot="dialog-overlay"]', label: "Dialog backdrop", description: "The dimmed layer behind an open dialog." },
+      { selector: '[data-slot="dialog-title"]', label: "Dialog title", description: "A dialog's heading." },
+      { selector: '[data-slot="popover-content"]', label: "Popover", description: "Profile popovers and anything else anchored to a control." },
+      { selector: '[data-slot="hover-card-content"]', label: "Hover card", description: "The card shown when hovering a server or a name." },
+      { selector: '[data-slot="tooltip-content"]', label: "Tooltip", description: "The small labels on hover." },
+      { selector: '[data-slot="sheet-content"]', label: "Sheet", description: "Panels that slide in from an edge." },
+    ],
+  },
+  {
+    label: "Menus",
+    selectors: [
+      { selector: '[data-slot="dropdown-menu-content"]', label: "Dropdown menu", description: "The box of a dropdown." },
+      { selector: '[data-slot="dropdown-menu-item"]', label: "Dropdown item", description: "One row in a dropdown." },
+      { selector: '[data-slot="context-menu-content"]', label: "Right-click menu", description: "The box of a context menu." },
+      { selector: '[data-slot="context-menu-item"]', label: "Right-click item", description: "One row in a context menu." },
+      { selector: '[data-slot="context-menu-separator"]', label: "Menu separator", description: "The dividing line between menu groups." },
+    ],
+  },
+  {
+    label: "Navigation",
+    selectors: [
+      { selector: '[data-slot="sidebar-inner"]', label: "Sidebar", description: "The settings sidebar's panel." },
+      { selector: '[data-slot="sidebar-menu-button"]', label: "Sidebar row", description: 'One navigation row. Add [data-active="true"] for the selected one.' },
+      { selector: '[data-slot="sidebar-group-label"]', label: "Sidebar group label", description: "The small heading over a group of rows." },
+      { selector: '[data-slot="tabs-list"]', label: "Tab bar", description: "The row a set of tabs sits in." },
+      { selector: '[data-slot="tabs-trigger"]', label: "Tab", description: 'One tab. Add [data-state="active"] for the selected one.' },
+    ],
+  },
+  {
+    label: "Chat",
+    selectors: [
+      { selector: '[data-slot="message-row"]', label: "Message row", description: "One message in a channel or a DM, avatar and all." },
+      { selector: '[data-slot="textarea"]', label: "Message box", description: "Where you type — and every other multi-line field." },
+      { selector: '[data-slot="scroll-area-thumb"]', label: "Scrollbar", description: "The draggable bar in any scrolling panel." },
+    ],
+  },
+  {
+    label: "People",
+    selectors: [
+      { selector: '[data-slot="avatar"]', label: "Avatar", description: "The box around anybody's picture, anywhere." },
+      { selector: '[data-slot="avatar-image"]', label: "Avatar picture", description: "The picture itself." },
+      { selector: '[data-slot="avatar-fallback"]', label: "Avatar initials", description: "Shown when there is no picture." },
+      { selector: '[data-slot="avatar-decoration"]', label: "Avatar decoration", description: "The frame drawn around an avatar." },
+      { selector: '[data-slot="avatar-badge"]', label: "Presence dot", description: "The online/away/busy dot on an avatar." },
+      { selector: '[data-slot="profile-card"]', label: "Profile card", description: "Somebody's profile card, wherever it appears." },
+    ],
+  },
+  {
+    label: "Controls",
+    selectors: [
+      { selector: '[data-slot="button"]', label: "Button", description: "Every button. Combine with .bg-primary for the accented ones." },
+      { selector: '[data-slot="input"]', label: "Text field", description: "Single-line inputs." },
+      { selector: '[data-slot="checkbox"]', label: "Checkbox", description: 'Add [data-state="checked"] for the ticked state.' },
+      { selector: '[data-slot="switch"]', label: "Switch", description: 'Add [data-state="checked"] for the on state.' },
+      { selector: '[data-slot="slider-range"]', label: "Slider fill", description: "The filled part of a slider's track." },
+      { selector: '[data-slot="slider-thumb"]', label: "Slider handle", description: "The draggable knob." },
+      { selector: '[data-slot="badge"]', label: "Badge", description: "Small pills — role tags, counts." },
+      { selector: '[data-slot="separator"]', label: "Separator", description: "A dividing line." },
+    ],
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/* Profile cards                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a profile stylesheet can reach.
+ *
+ * A much shorter list than the one above, deliberately: profile CSS is confined
+ * to the card it belongs to (see src/lib/scoped-css.ts), so a selector for the
+ * sidebar would simply never match. Offering one would be inviting somebody to
+ * write a rule and then wonder why nothing happened.
+ *
+ * The `:root` entry is worth reading twice — inside a scoped sheet the root
+ * *is* the card, so setting --card or --primary there restyles everything on it
+ * at once, and is almost always the right first move.
+ */
+export const PROFILE_CSS_SELECTOR_GROUPS: CssSelectorGroup[] = [
+  {
+    label: "The card",
+    selectors: [
+      {
+        selector: ":root",
+        label: "Variables, for this card only",
+        description:
+          "Inside your profile's stylesheet the root is the card. Set --card, --primary, --border, --muted-foreground or --radius here to restyle everything on it at once.",
+      },
+      { selector: '[data-slot="profile-card"]', label: "The whole card", description: "The outer box, including the gradient border." },
+      { selector: '[data-slot="profile-card-inner"]', label: "Card body", description: "Everything inside the border — this is what carries the background." },
+      { selector: '[data-slot="profile-banner"]', label: "Banner", description: "The picture across the top." },
+    ],
+  },
+  {
+    label: "Identity",
+    selectors: [
+      { selector: '[data-slot="profile-identity"]', label: "Name block", description: "The name, handle and badges together." },
+      { selector: '[data-slot="profile-name"]', label: "Display name", description: "Your name. A gradient here needs background-clip: text." },
+      { selector: '[data-slot="profile-username"]', label: "Username", description: "The @handle under your name." },
+      { selector: '[data-slot="profile-badges"]', label: "Badge row", description: "The strip of earned badges." },
+      { selector: '[data-slot="avatar"]', label: "Avatar", description: "Your picture on this card." },
+      { selector: '[data-slot="avatar-decoration"]', label: "Avatar decoration", description: "The frame around it." },
+      { selector: '[data-slot="avatar-badge"]', label: "Presence dot", description: "The status dot on the avatar." },
+    ],
+  },
+  {
+    label: "Content",
+    selectors: [
+      { selector: '[data-slot="profile-body"]', label: "Body", description: "Everything under the name — bio, roles, dates." },
+      { selector: '[data-slot="profile-bio"]', label: "Bio", description: "Your bio text." },
+      { selector: '[data-slot="profile-member-since"]', label: "Member since", description: "The join-date block." },
+      { selector: '[data-slot="badge"]', label: "Role tags", description: "The pills listing your roles in a server." },
+      { selector: '[data-slot="profile-actions"]', label: "Corner buttons", description: "Expand, edit and settings, top right." },
+      { selector: '[data-slot="button"]', label: "Buttons", description: "Message, add friend, and the rest." },
+    ],
+  },
+];
+
+/** Starting points for a profile's own stylesheet. Short, because a card is a
+ * small thing and most of what people want from one is a colour and a corner. */
+export const PROFILE_CSS_SNIPPET_GROUPS: CssSnippetGroup[] = [
+  {
+    label: "Whole card",
+    snippets: [
+      {
+        key: "profile-colours",
+        label: "Recolour everything",
+        hint: "Sets the variables the card resolves through. Start here.",
+        code: `/* The root is your card — these reach everything on it. */
+:root {
+  --card: oklch(0.18 0.03 300);
+  --primary: oklch(0.78 0.16 330);
+  --border: oklch(1 0 0 / 15%);
+  --muted-foreground: oklch(0.75 0.02 300);
+  --radius: 1rem;
+}`,
+      },
+      {
+        key: "profile-glass",
+        label: "Glassy",
+        hint: "A translucent card with a blur behind it.",
+        code: `[data-slot="profile-card-inner"] {
+  background-color: color-mix(in oklab, var(--card) 55%, transparent);
+  backdrop-filter: blur(12px);
+}`,
+      },
+      {
+        key: "profile-glow",
+        label: "Outer glow",
+        hint: "A soft coloured halo around the card.",
+        code: `[data-slot="profile-card"] {
+  box-shadow: 0 0 32px color-mix(in oklab, var(--primary) 45%, transparent);
+}`,
+      },
+    ],
+  },
+  {
+    label: "Details",
+    snippets: [
+      {
+        key: "profile-name-gradient",
+        label: "Gradient name",
+        hint: "Paints your display name with a gradient.",
+        code: `[data-slot="profile-name"] {
+  background-image: linear-gradient(90deg, #f0abfc, #7dd3fc);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}`,
+      },
+      {
+        key: "profile-banner",
+        label: "Taller banner",
+        hint: "More of the picture, less of the card.",
+        code: `[data-slot="profile-banner"] {
+  height: 12rem;
+  opacity: 1;
+}`,
+      },
+      {
+        key: "profile-avatar",
+        label: "Round avatar",
+        hint: "A circle instead of a squircle.",
+        code: `[data-slot="avatar"],
+[data-slot="avatar-image"],
+[data-slot="avatar-fallback"] {
+  border-radius: 9999px;
+}`,
+      },
+      {
+        key: "profile-bio",
+        label: "Quoted bio",
+        hint: "Sets your bio off with a rule down its side.",
+        code: `[data-slot="profile-bio"] {
+  border-left: 2px solid var(--primary);
+  padding-left: 0.75rem;
+  font-style: italic;
+}`,
+      },
+    ],
+  },
+];

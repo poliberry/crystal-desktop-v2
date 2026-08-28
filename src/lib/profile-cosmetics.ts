@@ -15,6 +15,139 @@
 /** How an uploaded frame relates to the card it's drawn against. */
 export type ProfileFrameMode = "wrap" | "overlay";
 
+export type ProfileFrameFit = "stretch" | "aspect";
+export type ProfileFrameAnchor = "top" | "center" | "bottom";
+
+/**
+ * Where a frame is drawn.
+ *
+ * Placement is per-upload rather than inferred, because frames are user
+ * artwork of unknown shape: a border drawn to a card's proportions and a tall
+ * piece meant to grow out of the card's top want opposite treatment, and
+ * nothing in the file says which one you've got.
+ */
+export interface ProfileFrameLayout {
+  fit: ProfileFrameFit;
+  anchor: ProfileFrameAnchor;
+  /** Width, as a percentage of the card. */
+  scale: number;
+  /** Pixels to shift it; negative is up. */
+  offsetY: number;
+}
+
+/**
+ * What a frame does when nobody has placed it.
+ *
+ * Matched to how Discord's profile decorations read: a little wider than the
+ * card, keeping their own proportions, pinned to the top and lifted so the
+ * artwork rises above the card's edge rather than starting at it.
+ */
+export const DEFAULT_FRAME_LAYOUT: ProfileFrameLayout = {
+  fit: "aspect",
+  anchor: "top",
+  scale: 112,
+  offsetY: -28,
+};
+
+export const FRAME_SCALE_RANGE = { min: 60, max: 220 } as const;
+export const FRAME_OFFSET_RANGE = { min: -240, max: 240 } as const;
+
+export const FRAME_FITS: { fit: ProfileFrameFit; label: string; hint: string }[] = [
+  {
+    fit: "aspect",
+    label: "Keep shape",
+    hint: "The artwork's own proportions. What most decorations want.",
+    },
+  {
+    fit: "stretch",
+    label: "Stretch",
+    hint: "Pulled to the card's shape — for a border drawn to fit one.",
+  },
+];
+
+export const FRAME_ANCHORS: {
+  anchor: ProfileFrameAnchor;
+  label: string;
+}[] = [
+  { anchor: "top", label: "Top" },
+  { anchor: "center", label: "Centre" },
+  { anchor: "bottom", label: "Bottom" },
+];
+
+/**
+ * The room a card needs around it for its frame.
+ *
+ * A frame is drawn outside the card by design, and the boxes a card sits in —
+ * the editor's preview column, the profile page's left column — are scroll
+ * containers that clip. Rather than each of them guessing, they ask for the
+ * padding the current placement actually needs and the card moves down (or
+ * over) by that much.
+ *
+ * The vertical figure can only be approximate when the artwork keeps its own
+ * proportions, because its height isn't known until it loads. What *is* known
+ * is the offset, which is the part somebody drags until it looks right — so
+ * that's what this follows, plus a margin so the last few pixels aren't shaved
+ * off.
+ */
+export function frameHeadroom(
+  layout: ProfileFrameLayout,
+  hasFrame: boolean,
+): { paddingTop: number; paddingBottom: number; paddingInline: number } {
+  if (!hasFrame) return { paddingTop: 8, paddingBottom: 8, paddingInline: 8 };
+
+  const MARGIN = 24;
+  const lift = Math.max(0, -layout.offsetY);
+  const drop = Math.max(0, layout.offsetY);
+  // Half the extra width goes to each side.
+  const sideways = Math.max(0, (layout.scale - 100) / 2);
+
+  if (layout.anchor === "bottom") {
+    return { paddingTop: MARGIN, paddingBottom: lift + MARGIN, paddingInline: sideways + 8 };
+  }
+  if (layout.anchor === "center") {
+    return {
+      paddingTop: lift + MARGIN,
+      paddingBottom: drop + MARGIN,
+      paddingInline: sideways + 8,
+    };
+  }
+  return { paddingTop: lift + MARGIN, paddingBottom: MARGIN, paddingInline: sideways + 8 };
+}
+
+/** Read a stored layout, filling in the defaults for anything unset — every
+ * frame uploaded before placement existed lands on the Discord-ish default
+ * rather than in the corner. */
+export function frameLayout(stored: {
+  profileFrameFit?: string;
+  profileFrameAnchor?: string;
+  profileFrameScale?: number;
+  profileFrameOffsetY?: number;
+}): ProfileFrameLayout {
+  const clamp = (n: number, lo: number, hi: number) =>
+    Math.min(hi, Math.max(lo, n));
+  return {
+    fit: stored.profileFrameFit === "stretch" ? "stretch" : "aspect",
+    anchor:
+      stored.profileFrameAnchor === "center"
+        ? "center"
+        : stored.profileFrameAnchor === "bottom"
+          ? "bottom"
+          : "top",
+    scale:
+      typeof stored.profileFrameScale === "number"
+        ? clamp(stored.profileFrameScale, FRAME_SCALE_RANGE.min, FRAME_SCALE_RANGE.max)
+        : DEFAULT_FRAME_LAYOUT.scale,
+    offsetY:
+      typeof stored.profileFrameOffsetY === "number"
+        ? clamp(
+            stored.profileFrameOffsetY,
+            FRAME_OFFSET_RANGE.min,
+            FRAME_OFFSET_RANGE.max,
+          )
+        : DEFAULT_FRAME_LAYOUT.offsetY,
+  };
+}
+
 /**
  * How far a `wrap` frame hangs past each edge of the card, in pixels.
  *
@@ -29,7 +162,15 @@ export type ProfileFrameMode = "wrap" | "overlay";
  * given only insets is a replaced element and falls back to its intrinsic pixel
  * size, so an uploaded PNG would render at whatever it was exported at.
  */
-export const FRAME_WRAP_OVERHANG_PX = 14;
+export const FRAME_WRAP_OVERHANG_PX = 22;
+
+/**
+ * How far an `overlay` frame sits outside the card.
+ *
+ * Small: this is the mode for artwork that hugs the card, sitting just off its
+ * edges the way an avatar decoration sits just off an avatar's.
+ */
+export const FRAME_OVERLAY_INSET_PX = 10;
 
 export const FRAME_MODES: {
   mode: ProfileFrameMode;
@@ -39,12 +180,12 @@ export const FRAME_MODES: {
   {
     mode: "overlay",
     label: "Sit on top",
-    hint: "Drawn at exactly the size of the card — or of the dialog, when the profile is opened into one.",
+    hint: "Hugs the card, sitting just off every edge.",
   },
   {
     mode: "wrap",
     label: "Wrap around",
-    hint: "Drawn a little larger, so a border of its own sits outside the edges.",
+    hint: "Further out again, for artwork with a thick border of its own.",
   },
 ];
 

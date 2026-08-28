@@ -42,6 +42,7 @@ export async function getMergedProfile(
     // supplied the frame itself.
     displayNameStyle: serverProfile?.displayNameStyle ?? user.displayNameStyle,
     profileEffect: serverProfile?.profileEffect ?? user.profileEffect,
+    profileCss: serverProfile?.profileCss ?? user.profileCss,
     profileFrame: serverProfile?.profileFrame ?? user.profileFrame,
     profileFrameMode: serverProfile?.profileFrame
       ? serverProfile.profileFrameMode
@@ -488,5 +489,66 @@ export const removeServerProfileFrame = mutation({
       profileFrameMode: undefined,
     });
     await dropProfileAsset(ctx, previous);
+  },
+});
+
+/** The per-server twin of `users.setProfileCss`, with the same reasoning:
+ * stored raw, confined to the card by whoever renders it. */
+export const setServerProfileCss = mutation({
+  args: { communityId: v.id("communities"), css: v.string() },
+  handler: async (ctx, { communityId, css }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const trimmed = css.trim();
+    if (trimmed.length > 8000) {
+      throw new Error("Profile CSS must be under 8000 characters.");
+    }
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { profileCss: trimmed || undefined });
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        profileCss: trimmed || undefined,
+      });
+    }
+  },
+});
+
+/** The per-server twin of `users.setProfileFrameLayout`. */
+export const setServerProfileFrameLayout = mutation({
+  args: {
+    communityId: v.id("communities"),
+    fit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+    anchor: v.optional(
+      v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+    ),
+    scale: v.optional(v.number()),
+    offsetY: v.optional(v.number()),
+  },
+  handler: async (ctx, { communityId, fit, anchor, scale, offsetY }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const patch = {
+      ...(fit !== undefined ? { profileFrameFit: fit } : {}),
+      ...(anchor !== undefined ? { profileFrameAnchor: anchor } : {}),
+      ...(scale !== undefined
+        ? { profileFrameScale: Math.min(220, Math.max(60, scale)) }
+        : {}),
+      ...(offsetY !== undefined
+        ? { profileFrameOffsetY: Math.min(240, Math.max(-240, offsetY)) }
+        : {}),
+    };
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        ...patch,
+      });
+    }
   },
 });

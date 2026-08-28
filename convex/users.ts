@@ -491,6 +491,66 @@ export const setProfileFrameMode = mutation({
   },
 });
 
+/**
+ * Where the frame sits.
+ *
+ * Placed by the person who uploaded it rather than inferred from the file —
+ * see the note on `profileFrameFit` in the schema. Clamped rather than
+ * rejected: the sliders can only produce sane numbers, and a call from
+ * anywhere else shouldn't be able to park somebody's artwork three screens
+ * away from their card.
+ */
+export const setProfileFrameLayout = mutation({
+  args: {
+    fit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+    anchor: v.optional(
+      v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+    ),
+    scale: v.optional(v.number()),
+    offsetY: v.optional(v.number()),
+  },
+  handler: async (ctx, { fit, anchor, scale, offsetY }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await ctx.db.patch(me._id, {
+      ...(fit !== undefined ? { profileFrameFit: fit } : {}),
+      ...(anchor !== undefined ? { profileFrameAnchor: anchor } : {}),
+      ...(scale !== undefined
+        ? { profileFrameScale: Math.min(220, Math.max(60, scale)) }
+        : {}),
+      ...(offsetY !== undefined
+        ? { profileFrameOffsetY: Math.min(240, Math.max(-240, offsetY)) }
+        : {}),
+    });
+  },
+});
+
+/** How long a profile stylesheet may be. Mirrored in
+ * src/lib/scoped-css.ts, which also truncates on read — this is the copy that
+ * binds. */
+const MAX_PROFILE_CSS_LENGTH = 8_000;
+
+/**
+ * Your own stylesheet for your own profile card.
+ *
+ * Stored as written and confined to the card by the client that renders it —
+ * see `scopeCss`. Nothing is validated beyond the length: CSS that doesn't
+ * parse simply doesn't apply, and the scoping (not any check here) is what
+ * stops a rule reaching past the card it belongs to.
+ */
+export const setProfileCss = mutation({
+  args: { css: v.string() },
+  handler: async (ctx, { css }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = css.trim();
+    if (trimmed.length > MAX_PROFILE_CSS_LENGTH) {
+      throw new Error(
+        `Profile CSS must be under ${MAX_PROFILE_CSS_LENGTH} characters.`
+      );
+    }
+    await ctx.db.patch(me._id, { profileCss: trimmed || undefined });
+  },
+});
+
 export const removeProfileFrame = mutation({
   args: {},
   handler: async (ctx) => {
@@ -772,16 +832,29 @@ export const getProfile = query({
        */
       displayNameStyle: serverProfile?.displayNameStyle ?? user.displayNameStyle,
       profileEffect: serverProfile?.profileEffect ?? user.profileEffect,
+      /** Raw, as written. The client that renders the card is what confines it
+       * to that card — see `scopeCss`. */
+      profileCss: serverProfile?.profileCss ?? user.profileCss,
       /** Taken from whichever profile supplied the frame — a server frame with
        * the account's mode would be drawn the wrong way round. */
+      // Placement travels with whichever profile supplied the frame — a server
+      // frame positioned by the account's numbers would land anywhere.
       ...(serverProfile?.profileFrame
         ? {
             profileFrame: serverProfile.profileFrame,
             profileFrameMode: serverProfile.profileFrameMode,
+            profileFrameFit: serverProfile.profileFrameFit,
+            profileFrameAnchor: serverProfile.profileFrameAnchor,
+            profileFrameScale: serverProfile.profileFrameScale,
+            profileFrameOffsetY: serverProfile.profileFrameOffsetY,
           }
         : {
             profileFrame: user.profileFrame,
             profileFrameMode: user.profileFrameMode,
+            profileFrameFit: user.profileFrameFit,
+            profileFrameAnchor: user.profileFrameAnchor,
+            profileFrameScale: user.profileFrameScale,
+            profileFrameOffsetY: user.profileFrameOffsetY,
           }),
       status: presence?.effective ?? "offline",
       activities: visibleActivities(presence, user),

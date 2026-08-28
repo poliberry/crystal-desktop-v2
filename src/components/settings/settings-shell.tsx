@@ -256,9 +256,16 @@ export function SettingsShell({
           </SidebarContent>
           <SidebarFooter />
         </Sidebar>
-        <main className="w-full pt-9">
-          <ScrollArea className="min-h-0 h-full flex-1">
-            <div className="mx-auto w-full px-6 py-6">
+        {/* `h-full min-h-0 overflow-hidden`: without a height and a
+            min-height of zero, this flex child sizes to its content, the
+            ScrollArea inside it never becomes shorter than the page, and the
+            last card runs off the bottom of the dialog with nothing left to
+            scroll. */}
+        <main className="h-full min-h-0 w-full overflow-hidden pt-9">
+          <ScrollArea className="h-full min-h-0 flex-1">
+            {/* Extra padding under the last card, so it clears the dialog's
+                own rounded corner rather than ending flush against it. */}
+            <div className="mx-auto w-full px-6 pt-6 pb-10">
               {section === "appearance" && <AppearanceTab />}
               {section === "accessibility" && <AccessibilityTab />}
               {section === "servers" && <ServerProfilesTab />}

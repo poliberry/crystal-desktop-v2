@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
+  Code2,
   Loader2,
   Plus,
   Sparkles,
@@ -15,6 +16,7 @@ import {
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { BoardEditor } from "@/components/profile/board-editor";
+import { ProfileCssDialog } from "@/components/profile/profile-css-dialog";
 import {
   DecorationDialog,
   DisplayNameStyleDialog,
@@ -29,7 +31,6 @@ import {
   ImageCropDialog,
 } from "@/components/profile/image-crop-dialog";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
-import { ProfileFrameHost } from "@/components/profile/profile-card-cosmetics";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { Avatar, AvatarDecoration, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useMyPresence } from "@/hooks/use-presence";
 import { useProfileScope, type ProfileScope } from "@/hooks/use-profile-scope";
 import { decorationSrc } from "@/lib/avatar-decorations";
-import { displayNameStyleClass } from "@/lib/profile-cosmetics";
+import {
+  displayNameStyleClass,
+  frameHeadroom,
+  frameLayout,
+} from "@/lib/profile-cosmetics";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
@@ -297,7 +302,14 @@ export function ProfileEditor({
   const [wide, setWide] = useState(false);
   const [tab, setTab] = useState<"board" | "activity">("board");
   const [dialog, setDialog] = useState<
-    null | "nameplate" | "decoration" | "nameStyle" | "theme" | "effect" | "frame"
+    | null
+    | "nameplate"
+    | "decoration"
+    | "nameStyle"
+    | "theme"
+    | "effect"
+    | "frame"
+    | "css"
   >(null);
   /** The crop editor is owned here rather than by the theme dialog, so a crop
    * never opens on top of another dialog. */
@@ -313,6 +325,19 @@ export function ProfileEditor({
       </div>
     );
   }
+
+  /** Room for the frame — see `frameHeadroom`. Recomputed as the placement
+   * sliders move, so the card slides down under your finger. */
+  const headroom = frameHeadroom(
+    frameLayout(values),
+    !!values.profileFrame,
+  );
+  const previewPadding: React.CSSProperties = {
+    paddingTop: headroom.paddingTop,
+    paddingBottom: headroom.paddingBottom,
+    paddingLeft: `${headroom.paddingInline}%`,
+    paddingRight: `${headroom.paddingInline}%`,
+  };
 
   const saveCrop = async (crop: Blob) => {
     const target = cropping;
@@ -519,6 +544,26 @@ export function ProfileEditor({
               </div>
             </RailSection>
 
+            <RailSection label="Profile CSS" badge={<NewBadge />}>
+              <button
+                type="button"
+                onClick={() => setDialog("css")}
+                className="flex w-full items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-left transition-colors hover:border-primary/60"
+              >
+                <Code2 className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-medium">
+                    {values.profileCss ? "Edit your styles" : "Style this card"}
+                  </span>
+                  <span className="block text-[11px] leading-snug text-muted-foreground">
+                    {values.profileCss
+                      ? `${values.profileCss.length} characters`
+                      : "CSS that applies to your card only."}
+                  </span>
+                </span>
+              </button>
+            </RailSection>
+
             {/* Only in the wide rail: the cosmetics above are the point of
                 this panel, and pushing them up out of sight behind three text
                 fields would be the wrong trade at 260 pixels. */}
@@ -545,21 +590,16 @@ export function ProfileEditor({
       {/* ---------------------------------------------------------------- */}
       {/* Live card                                                         */}
       {/* ---------------------------------------------------------------- */}
-      {/* `p-6` rather than `p-4`: a wrapping frame is drawn past the card's
-          edges, and the padding is the room it needs — the ScrollArea outside
-          it clips. */}
-      <div className="min-h-0 shrink-0 p-6">
+      <div className="min-h-0 shrink-0 p-4">
         <ScrollArea className="h-full">
-          <ProfileFrameHost
-            src={values.profileFrame}
-            mode={values.profileFrameMode}
-            className="w-[360px]"
-          >
+          {/* The card moves down (and in) by however much room the frame's
+              current placement needs, rather than the frame being clipped by
+              the ScrollArea outside this. See `frameHeadroom`. */}
+          <div className="w-[360px]" style={previewPadding}>
             <MemberProfileCard
               expandable={false}
               expanded
               showActivity={false}
-              frameHandledByHost
               communityId={scopeId}
               communityName={scopeName}
               member={{
@@ -577,18 +617,26 @@ export function ProfileEditor({
                 profileEffect: values.profileEffect,
                 profileFrame: values.profileFrame,
                 profileFrameMode: values.profileFrameMode,
+                profileFrameFit: values.profileFrameFit,
+                profileFrameAnchor: values.profileFrameAnchor,
+                profileFrameScale: values.profileFrameScale,
+                profileFrameOffsetY: values.profileFrameOffsetY,
+                profileCss: values.profileCss,
                 status: status as FriendStatus,
               }}
             />
-          </ProfileFrameHost>
+          </div>
         </ScrollArea>
       </div>
 
       {/* ---------------------------------------------------------------- */}
       {/* Board / Activity                                                  */}
       {/* ---------------------------------------------------------------- */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col p-4 pt-4">
-        <div className="mb-3 flex items-center gap-4 border-b border-border/40">
+      {/* `relative z-10`: a frame or effect on the preview card hangs outside
+          it by design, and this pane must stay clickable underneath none of
+          it. */}
+      <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col p-4 pt-4">
+        <div className="relative mb-3 flex items-center gap-4 border-b border-border/40">
           {(["board", "activity"] as const).map((value) => (
             <button
               key={value}
@@ -678,6 +726,11 @@ export function ProfileEditor({
       <ProfileFrameDialog
         open={dialog === "frame"}
         onOpenChange={(o) => setDialog(o ? "frame" : null)}
+        scope={scope}
+      />
+      <ProfileCssDialog
+        open={dialog === "css"}
+        onOpenChange={(o) => setDialog(o ? "css" : null)}
         scope={scope}
       />
 

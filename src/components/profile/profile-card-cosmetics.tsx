@@ -3,9 +3,8 @@
 import { useLoopedPlayback } from "@/hooks/use-looped-playback";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import {
-  FRAME_WRAP_OVERHANG_PX,
-  frameMode,
-  type ProfileFrameMode,
+  DEFAULT_FRAME_LAYOUT,
+  type ProfileFrameLayout,
 } from "@/lib/profile-cosmetics";
 import { cn } from "@/lib/utils";
 
@@ -90,82 +89,69 @@ export function ProfileEffectLayer({
 }
 
 /**
- * The frame, drawn over whatever is hosting the profile.
+ * The frame — artwork that hangs off the card rather than being printed on it.
  *
- * The host is the profile card in most places, and the *whole dialog* when the
- * profile has been opened into one — a frame is meant to surround the thing
- * you are looking at, and in the dialog the thing you are looking at is the
- * dialog. Which of those it is isn't decided here: this fills its positioned
- * parent, and the parent is whichever box should be framed.
+ * Where exactly is the owner's decision, not this file's: frames are uploaded
+ * art of unknown shape, and a border drawn to a card's proportions and a tall
+ * piece meant to grow out of the card's top need opposite treatment. The four
+ * numbers in `ProfileFrameLayout` are what places it; the defaults land where
+ * Discord's decorations do, a little wider than the card and lifted above its
+ * top edge.
  *
- * `overlay` — the default — lies over that box at exactly its size, which is
- * what artwork drawn for a card expects. `wrap` scales it out past the edges
- * instead, for a frame with a border thickness of its own.
+ * Whatever the placement, every ancestor between here and the window has to
+ * leave the overhang alone — hence the padding around the card in the profile
+ * editor and on the profile page, both of which sit inside scroll containers
+ * that would otherwise clip exactly the part that makes this work.
  */
 export function ProfileFrameLayer({
   src,
-  mode,
+  layout,
   animate = true,
 }: {
   src?: string;
-  mode?: ProfileFrameMode | string;
+  /** Where to draw it. Absent uses the defaults, which is what every frame
+   * uploaded before placement existed gets. */
+  layout?: Partial<ProfileFrameLayout>;
   animate?: boolean;
 }) {
   if (!src) return null;
-  const wrap = frameMode(mode) === "wrap";
+
+  const { fit, anchor, scale, offsetY } = { ...DEFAULT_FRAME_LAYOUT, ...layout };
+
+  // Horizontal placement is always centred — a frame off to one side is not
+  // something anybody has ever wanted, and leaving it out keeps the controls
+  // to four.
+  const style: React.CSSProperties = {
+    width: `${scale}%`,
+    // `auto` is what preserves the artwork's proportions: an `<img>` with a
+    // width and no height takes its intrinsic ratio.
+    height: fit === "stretch" ? `${scale}%` : "auto",
+  };
+
+  if (anchor === "center") {
+    style.top = "50%";
+    style.transform = `translate(-50%, calc(-50% + ${offsetY}px))`;
+  } else if (anchor === "bottom") {
+    style.bottom = `${-offsetY}px`;
+    style.transform = "translateX(-50%)";
+  } else {
+    style.top = `${offsetY}px`;
+    style.transform = "translateX(-50%)";
+  }
 
   return (
     <CosmeticLayer
       src={src}
       animate={animate}
-      // Above the effect: a frame is the outermost thing here, and an effect
-      // drawn over its border would look like the effect had leaked.
-      className="top-1/2 left-1/2 z-30 max-w-none -translate-x-1/2 -translate-y-1/2"
-      style={
-        wrap
-          ? {
-              // A fixed overhang rather than a percentage, so the border is the
-              // same thickness on all four edges of a tall box — see
-              // FRAME_WRAP_OVERHANG_PX.
-              width: `calc(100% + ${FRAME_WRAP_OVERHANG_PX * 2}px)`,
-              height: `calc(100% + ${FRAME_WRAP_OVERHANG_PX * 2}px)`,
-            }
-          : { width: "100%", height: "100%" }
-      }
+      // Above the effect — a frame is the outermost decoration, and an effect
+      // drawn over its border would look like the effect had leaked. Below the
+      // card's own buttons, which are `z-40`: jewellery must never cover a
+      // control.
+      className={cn(
+        "left-1/2 z-30 max-w-none",
+        fit === "stretch" ? "object-fill" : "object-contain",
+      )}
+      style={style}
     />
-  );
-}
-
-/**
- * A box that wears somebody's frame around itself.
- *
- * The frame belongs to the thing you are looking at, and what that thing is
- * depends on where the profile turned up: a popover *is* the profile, a dialog
- * *is* the profile, and only in a list is the card a component of something
- * else. Wrapping the container in this rather than letting the card draw its
- * own is what makes the frame surround the popover instead of the card sitting
- * inside it — the two are usually the same size, but the popover has a border
- * and a radius of its own that the card knows nothing about.
- *
- * `overflow-visible` matters: a wrapping frame is drawn past these edges, and
- * a scroll container or a rounded box would cut off exactly the part that
- * makes it a frame.
- */
-export function ProfileFrameHost({
-  src,
-  mode,
-  className,
-  children,
-}: {
-  src?: string;
-  mode?: ProfileFrameMode | string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={cn("relative overflow-visible", className)}>
-      {children}
-      <ProfileFrameLayer src={src} mode={mode} />
-    </div>
   );
 }

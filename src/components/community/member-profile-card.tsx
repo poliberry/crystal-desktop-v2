@@ -30,10 +30,17 @@ import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
 import {
   ProfileEffectLayer,
-  ProfileFrameHost,
   ProfileFrameLayer,
 } from "@/components/profile/profile-card-cosmetics";
-import { displayNameStyleClass } from "@/lib/profile-cosmetics";
+import {
+  ProfileCssLayer,
+  profileCssAttributes,
+} from "@/components/profile/profile-css";
+import {
+  displayNameStyleClass,
+  frameHeadroom,
+  frameLayout,
+} from "@/lib/profile-cosmetics";
 import {
   StatusBubble,
   type StatusBubbleKind,
@@ -58,11 +65,17 @@ export interface MemberProfileMember {
   /** How their display name is drawn — a key from src/lib/profile-cosmetics.ts. */
   displayNameStyle?: string;
   /** Artwork played over the whole card, and the frame drawn around it. Both
-   * are storage URLs; `profileFrameMode` says whether the frame wraps the card
-   * or lies on top of it. */
+   * are storage URLs; the `profileFrame*` fields say where the frame is
+   * drawn — see `ProfileFrameLayout`. */
   profileEffect?: string;
   profileFrame?: string;
   profileFrameMode?: string;
+  profileFrameFit?: string;
+  profileFrameAnchor?: string;
+  profileFrameScale?: number;
+  profileFrameOffsetY?: number;
+  /** The owner's own stylesheet for this card — see `ProfileCssLayer`. */
+  profileCss?: string;
   status: FriendStatus;
   /** Community-only — omitted for DM member profiles. */
   isOwner?: boolean;
@@ -92,7 +105,10 @@ function ProfileBadges({ badges }: { badges: ProfileBadge[] }) {
   if (badges.length === 0) return null;
 
   return (
-    <div className="mt-1 flex flex-wrap items-center bg-background/50 w-fit p-1 rounded-md gap-1.5">
+    <div
+      data-slot="profile-badges"
+      className="mt-1 flex flex-wrap items-center bg-background/50 w-fit p-1 rounded-md gap-1.5"
+    >
       {badges.map((badge) => (
         <Tooltip key={badge.badgeId}>
           <TooltipTrigger asChild>
@@ -211,8 +227,20 @@ export function MemberProfileCard({
    * whatever opened the card may not have carried them, and the query is the
    * authority once it lands. */
   const profileEffect = profile?.profileEffect ?? member.profileEffect;
+  const profileCss = profile?.profileCss ?? member.profileCss;
   const profileFrame = profile?.profileFrame ?? member.profileFrame;
-  const profileFrameMode = profile?.profileFrameMode ?? member.profileFrameMode;
+  /** Where that frame sits. Read as a group so a half-loaded query can't mix
+   * the account's scale with a server's anchor. */
+  const profileFrameLayout = frameLayout(
+    profile?.profileFrame
+      ? profile
+      : {
+          profileFrameFit: member.profileFrameFit,
+          profileFrameAnchor: member.profileFrameAnchor,
+          profileFrameScale: member.profileFrameScale,
+          profileFrameOffsetY: member.profileFrameOffsetY,
+        },
+  );
   const nameStyle = displayNameStyleClass(
     profile?.displayNameStyle ?? member.displayNameStyle,
   );
@@ -225,6 +253,15 @@ export function MemberProfileCard({
     <div
       // `relative`: the effect and frame layers below are positioned against
       // this box rather than against the inner one, which clips.
+      // Stable hooks for custom CSS, on every part of the card somebody might
+      // reasonably want to restyle. Utility classes get rewritten whenever this
+      // file is edited; a slot name is something a stylesheet can rely on. See
+      // src/lib/css-snippets.ts.
+      data-slot="profile-card"
+      // Marks the subtree this person's own stylesheet is allowed to reach.
+      // Only set when they have one, so the attribute never appears for the
+      // vast majority of cards.
+      {...profileCssAttributes(profileCss, member.userId)}
       className={cn("relative flex min-h-full flex-col rounded-md p-0.5", className)}
       style={
         hasGradient
@@ -241,6 +278,7 @@ export function MemberProfileCard({
         // `relative`: the actions in the corner are positioned against the
         // card. Without it they anchor to whatever positioned ancestor happens
         // to be up the tree — the popover, or the page.
+        data-slot="profile-card-inner"
         className={cn(
           "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-border/20",
           hasGradient ? "bg-background/70" : "bg-accent",
@@ -250,6 +288,7 @@ export function MemberProfileCard({
         {member.bannerUrl ? (
           <>
             <div
+              data-slot="profile-banner"
               className={cn(
                 "w-full bg-cover bg-center opacity-80",
                 expanded ? "h-40" : "h-24",
@@ -342,9 +381,10 @@ export function MemberProfileCard({
             <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />
           )}
 
-          <div className={cn("ml-4 pt-1")}>
+          <div data-slot="profile-identity" className={cn("ml-4 pt-1")}>
             <div className="flex items-center gap-1.5">
               <p
+                data-slot="profile-name"
                 className={cn(
                   "truncate font-bold leading-tight",
                   expanded ? "text-xl" : "text-base",
@@ -357,7 +397,7 @@ export function MemberProfileCard({
                 {member.name}
               </p>
             </div>
-            <p className="truncate text-sm text-muted-foreground">
+            <p data-slot="profile-username" className="truncate text-sm text-muted-foreground">
               @{member.username}
             </p>
             <ProfileBadges badges={badges} />
@@ -365,7 +405,10 @@ export function MemberProfileCard({
         </div>
 
         {/* Content */}
-        <div className={cn("min-w-0 space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}>
+        <div
+          data-slot="profile-body"
+          className={cn("min-w-0 space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}
+        >
           {!isSelf && (
             <FriendActionButton
               userId={member.userId}
@@ -375,7 +418,7 @@ export function MemberProfileCard({
           )}
 
           {member.bio ? (
-            <p className="text-sm whitespace-pre-wrap">{member.bio}</p>
+            <p data-slot="profile-bio" className="text-sm whitespace-pre-wrap">{member.bio}</p>
           ) : (
             <p className="text-sm italic text-muted-foreground">No bio yet.</p>
           )}
@@ -403,7 +446,7 @@ export function MemberProfileCard({
           )}
 
           {expanded && profile?.createdAt && (
-            <div className="border-t border-border/40 pt-3">
+            <div data-slot="profile-member-since" className="border-t border-border/40 pt-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Member since
               </p>
@@ -417,7 +460,12 @@ export function MemberProfileCard({
             </div>
           )}
 
-          <div className="absolute top-2 right-2 flex items-center gap-0.5">
+          <div
+            data-slot="profile-actions"
+            // `z-40`: above the frame (z-30) and the effect (z-20). Decoration
+            // that covered these would make the card unusable.
+            className="absolute top-2 right-2 z-40 flex items-center gap-0.5"
+          >
             {expandable && (
               <Button
                 variant="ghost"
@@ -465,9 +513,10 @@ export function MemberProfileCard({
 
       {/* Drawn outside the clipping box, so a wrapping frame keeps the part
           that hangs past the card's edges. */}
+      <ProfileCssLayer css={profileCss} scopeId={member.userId} />
       <ProfileEffectLayer src={profileEffect} rounded="rounded-md" />
       {!frameHandledByHost && (
-        <ProfileFrameLayer src={profileFrame} mode={profileFrameMode} />
+        <ProfileFrameLayer src={profileFrame} layout={profileFrameLayout} />
       )}
     </div>
   );
@@ -499,16 +548,29 @@ export function UserProfileContent({
   imageUrl?: string;
 }) {
   const profile = useQuery(api.users.getProfile, { userId, communityId });
+
+  /**
+   * Room for the frame, inside the popover.
+   *
+   * A frame is drawn outside the card, and a popover is sized to its content —
+   * so without this the artwork hangs over whatever the popover was opened
+   * next to, and gets clipped against the top of the window when the popover
+   * is already near it. Padding the content pushes the card down and makes the
+   * popover itself big enough to hold the whole thing.
+   */
+  const room = frameHeadroom(frameLayout(profile ?? {}), !!profile?.profileFrame);
+
   return (
-    // The frame goes around the popover, which is what this component fills —
-    // not around the card sitting inside it. See `ProfileFrameHost`.
-    <ProfileFrameHost
-      src={profile?.profileFrame}
-      mode={profile?.profileFrameMode}
+    <div
+      style={{
+        paddingTop: room.paddingTop,
+        paddingBottom: room.paddingBottom,
+        paddingLeft: `${room.paddingInline}%`,
+        paddingRight: `${room.paddingInline}%`,
+      }}
     >
     <MemberProfileCard
       communityId={communityId}
-      frameHandledByHost
       member={{
         userId,
         name: profile?.name ?? name,
@@ -530,8 +592,13 @@ export function UserProfileContent({
         profileEffect: profile?.profileEffect,
         profileFrame: profile?.profileFrame,
         profileFrameMode: profile?.profileFrameMode,
+        profileFrameFit: profile?.profileFrameFit,
+        profileFrameAnchor: profile?.profileFrameAnchor,
+        profileFrameScale: profile?.profileFrameScale,
+        profileFrameOffsetY: profile?.profileFrameOffsetY,
+        profileCss: profile?.profileCss,
       }}
     />
-    </ProfileFrameHost>
+    </div>
   );
 }

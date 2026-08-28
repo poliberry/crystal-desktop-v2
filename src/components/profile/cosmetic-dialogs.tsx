@@ -7,6 +7,7 @@ import { Loader2, Upload } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GradientPicker } from "@/components/profile/gradient-picker";
+import { ProfileFrameLayer } from "@/components/profile/profile-card-cosmetics";
 import { Nameplate, NAMEPLATE_ACCEPT } from "@/components/profile/nameplate";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,12 +19,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { DECORATION_PRESETS, isCustomDecoration } from "@/lib/avatar-decorations";
 import {
+  DEFAULT_FRAME_LAYOUT,
   DISPLAY_NAME_STYLES,
-  FRAME_MODES,
-  frameMode,
-  type ProfileFrameMode,
+  FRAME_ANCHORS,
+  FRAME_FITS,
+  FRAME_OFFSET_RANGE,
+  FRAME_SCALE_RANGE,
+  frameHeadroom,
+  frameLayout,
+  type ProfileFrameLayout,
 } from "@/lib/profile-cosmetics";
 import { uploadToStorage } from "@/lib/storage-upload";
 import {
@@ -457,6 +464,93 @@ export function ProfileEffectDialog({
 
 /* -------------------------------------------------------------------------- */
 
+
+/**
+ * A card, at a size that fits in a dialog, for positioning a frame against.
+ *
+ * A stand-in rather than the real `MemberProfileCard`: the real one is 360
+ * pixels wide and queries four things, neither of which belongs in a dialog
+ * that is already sitting on top of a live copy of it. What matters here is
+ * only the *shape* — a rectangle of the right proportions with a banner band
+ * and an avatar where the real ones are — because that's what tells you
+ * whether your artwork is going to cover somebody's face.
+ *
+ * The frame itself is the real `ProfileFrameLayer`, so the geometry being
+ * previewed is the geometry that will ship.
+ */
+function FramePlacementPreview({
+  src,
+  layout,
+  avatarUrl,
+  bannerUrl,
+}: {
+  src?: string;
+  layout: ProfileFrameLayout;
+  avatarUrl?: string;
+  bannerUrl?: string;
+}) {
+  const room = frameHeadroom(layout, !!src);
+
+  return (
+    <div className="flex h-56 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]">
+      {/* Scaled down as a whole, so the frame's pixel offsets stay in
+          proportion to the card they're measured against. */}
+      <div
+        className="origin-center"
+        style={{ transform: "scale(0.62)" }}
+      >
+        <div
+          style={{
+            paddingTop: room.paddingTop,
+            paddingBottom: room.paddingBottom,
+            paddingLeft: `${room.paddingInline}%`,
+            paddingRight: `${room.paddingInline}%`,
+          }}
+        >
+          <div className="relative h-[260px] w-[200px] rounded-md bg-accent p-0.5 shadow-lg">
+            <div className="flex h-full flex-col overflow-hidden rounded-[5px] border border-border/20 bg-background/70">
+              <div
+                className="h-16 w-full bg-cover bg-center bg-muted"
+                style={
+                  bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined
+                }
+              />
+              <div className="-mt-6 px-3">
+                <div className="size-12 overflow-hidden rounded-xl bg-muted ring-4 ring-background/70">
+                  {avatarUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatarUrl} alt="" className="size-full object-cover" />
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1.5 px-3 pt-2">
+                <div className="h-3 w-2/3 rounded bg-foreground/25" />
+                <div className="h-2 w-1/2 rounded bg-foreground/15" />
+                <div className="mt-3 h-2 w-full rounded bg-foreground/10" />
+                <div className="h-2 w-4/5 rounded bg-foreground/10" />
+              </div>
+            </div>
+            <ProfileFrameLayer src={src} layout={layout} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Uploading a frame, and — the part that actually matters — placing it.
+ *
+ * Frames are artwork of unknown shape. A border drawn to a card's proportions
+ * and a tall piece meant to grow out of the card's top want opposite treatment,
+ * and nothing in a PNG says which one you've got. So rather than this file
+ * guessing, the person who just picked the file positions it against a live
+ * card, and the four numbers they land on are stored with it.
+ *
+ * The preview is the real card from the editor behind this dialog, seen
+ * through the dialog's own translucency — so there's no second implementation
+ * of the geometry to drift. What's here is only the controls.
+ */
 export function ProfileFrameDialog({
   open,
   onOpenChange,
@@ -467,24 +561,37 @@ export function ProfileFrameDialog({
   scope: ProfileScope;
 }) {
   const current = scope.values?.profileFrame;
-  const mode = frameMode(scope.values?.profileFrameMode);
-  // Remembered so an upload can carry the mode the user picked *before*
-  // choosing a file, which is the order the two controls read in.
-  const [pending, setPending] = useState<ProfileFrameMode>(mode);
+  const stored = frameLayout(scope.values ?? {});
+  // Local while dragging: a slider fires per frame and each one would be a
+  // write. Committed when the drag ends.
+  const [draft, setDraft] = useState<ProfileFrameLayout>(stored);
+  const [seeded, setSeeded] = useState(false);
+  if (open && !seeded) {
+    setSeeded(true);
+    setDraft(stored);
+  }
+  if (!open && seeded) setSeeded(false);
+
+  /** Applied straight away for the toggles, which are one click and want to be
+   * seen on the card immediately. */
+  const commit = (next: Partial<ProfileFrameLayout>) => {
+    setDraft((prev) => ({ ...prev, ...next }));
+    void scope.setFrameLayout(next);
+  };
 
   return (
     <CosmeticDialog
       open={open}
       onOpenChange={onOpenChange}
       title="Profile frame"
-      description="A border drawn around your whole profile card — the avatar decoration idea, at card size."
+      description="Artwork drawn around your card. Position it against the card below."
       footer={
         <>
           <UploadButton
             label={current ? "Replace" : "Upload a frame"}
             maxBytes={MAX_PROFILE_ASSET_BYTES}
             maxLabel={MAX_PROFILE_ASSET_LABEL}
-            onPick={(file) => scope.setFrame(file, pending)}
+            onPick={(file) => scope.setFrame(file, "overlay")}
           />
           {current && (
             <Button
@@ -498,42 +605,132 @@ export function ProfileFrameDialog({
         </>
       }
     >
-      <div className="space-y-3">
-        <div className="flex h-40 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]">
-          {current ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={current} alt="" className="h-full w-full object-contain" />
-          ) : (
-            <p className="text-sm text-muted-foreground">Nothing uploaded yet</p>
-          )}
-        </div>
+      <div className="space-y-4">
+{current ? (
+          <FramePlacementPreview
+            src={current}
+            layout={draft}
+            avatarUrl={scope.values?.imageUrl}
+            bannerUrl={scope.values?.bannerUrl}
+          />
+        ) : (
+          <div className="flex h-32 items-center justify-center rounded-md border-2 border-dashed border-border/50 text-sm text-muted-foreground">
+            Nothing uploaded yet
+          </div>
+        )}
 
-        <div className="space-y-2">
-          <Label>How it&apos;s drawn</Label>
-          {FRAME_MODES.map((option) => {
-            const selected = (current ? mode : pending) === option.mode;
-            return (
-              <button
-                key={option.mode}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => {
-                  setPending(option.mode);
-                  // Only meaningful once there's a frame to redraw; before
-                  // that it's just the choice the next upload will carry.
-                  if (current) void scope.setFrameMode(option.mode);
-                }}
-                className={cn(
-                  "flex w-full flex-col items-start rounded-md border p-2.5 text-left transition-colors",
-                  selected ? "border-primary bg-accent/60" : "border-border hover:bg-accent/40",
-                )}
-              >
-                <span className="text-sm font-medium">{option.label}</span>
-                <span className="text-xs text-muted-foreground">{option.hint}</span>
-              </button>
-            );
-          })}
-        </div>
+        {current && (
+          <>
+            <div className="space-y-1.5">
+              <Label>Shape</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {FRAME_FITS.map((option) => (
+                  <button
+                    key={option.fit}
+                    type="button"
+                    aria-pressed={draft.fit === option.fit}
+                    onClick={() => commit({ fit: option.fit })}
+                    className={cn(
+                      "rounded-md border p-2 text-left transition-colors",
+                      draft.fit === option.fit
+                        ? "border-primary bg-accent/60"
+                        : "border-border hover:bg-accent/40",
+                    )}
+                  >
+                    <span className="block text-sm font-medium">{option.label}</span>
+                    <span className="block text-[11px] leading-snug text-muted-foreground">
+                      {option.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Anchor</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {FRAME_ANCHORS.map((option) => (
+                  <button
+                    key={option.anchor}
+                    type="button"
+                    aria-pressed={draft.anchor === option.anchor}
+                    onClick={() => commit({ anchor: option.anchor })}
+                    className={cn(
+                      "rounded-md border py-1.5 text-center text-sm transition-colors",
+                      draft.anchor === option.anchor
+                        ? "border-primary bg-accent/60"
+                        : "border-border hover:bg-accent/40",
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Which edge of the card the artwork is pinned to.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Size</Label>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {Math.round(draft.scale)}%
+                </span>
+              </div>
+              <Slider
+                value={[draft.scale]}
+                min={FRAME_SCALE_RANGE.min}
+                max={FRAME_SCALE_RANGE.max}
+                step={1}
+                onValueChange={([value]) =>
+                  setDraft((prev) => ({ ...prev, scale: value ?? prev.scale }))
+                }
+                onValueCommit={([value]) =>
+                  void scope.setFrameLayout({ scale: value ?? draft.scale })
+                }
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Width, as a percentage of the card.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Offset</Label>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {Math.round(draft.offsetY)}px
+                </span>
+              </div>
+              <Slider
+                value={[draft.offsetY]}
+                min={FRAME_OFFSET_RANGE.min}
+                max={FRAME_OFFSET_RANGE.max}
+                step={1}
+                onValueChange={([value]) =>
+                  setDraft((prev) => ({ ...prev, offsetY: value ?? prev.offsetY }))
+                }
+                onValueCommit={([value]) =>
+                  void scope.setFrameLayout({ offsetY: value ?? draft.offsetY })
+                }
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Negative moves it up, past the card's edge.
+              </p>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDraft(DEFAULT_FRAME_LAYOUT);
+                void scope.setFrameLayout(DEFAULT_FRAME_LAYOUT);
+              }}
+            >
+              Reset placement
+            </Button>
+          </>
+        )}
 
         <p className="text-xs text-muted-foreground">
           A transparent PNG, GIF or WebP. Up to {MAX_PROFILE_ASSET_LABEL}.

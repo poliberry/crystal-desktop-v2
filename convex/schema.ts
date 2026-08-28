@@ -87,6 +87,41 @@ const profileCosmetics = {
    * says which one the artist meant. Absent means `wrap`.
    */
   profileFrameMode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+  /**
+   * Where the frame is drawn, chosen per upload.
+   *
+   * Frames are user artwork of unknown shape: some are a border drawn to a
+   * card's proportions, some are a tall piece meant to grow out of the card's
+   * top with most of the file transparent. Nothing in the pixels says which,
+   * and every rule we guessed was wrong for half of them — so the person who
+   * just picked the file places it, and these four numbers are what they place
+   * it with.
+   *
+   * `fit`     whether to stretch to the box or keep the artwork's own aspect.
+   * `anchor`  which edge of the card the artwork is pinned to.
+   * `scale`   width as a percentage of the card.
+   * `offsetY` pixels to shift it, negative being up.
+   */
+  profileFrameFit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+  profileFrameAnchor: v.optional(
+    v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+  ),
+  profileFrameScale: v.optional(v.number()),
+  profileFrameOffsetY: v.optional(v.number()),
+  /**
+   * A stylesheet the owner writes for their own profile card.
+   *
+   * Stored raw and scoped on the client at render time (see
+   * src/lib/scoped-css.ts), not scoped here: the scope selector contains an id
+   * that only exists on the client, and rewriting on write would mean every
+   * stored sheet had to be migrated the day that changes. Length is capped by
+   * the mutation, which is the part that has to be enforced.
+   *
+   * Unlike the app-wide custom CSS, this one is rendered in *other people's*
+   * clients — which is the whole reason it's confined to the card rather than
+   * injected as-is.
+   */
+  profileCss: v.optional(v.string()),
 };
 
 export default defineSchema({
