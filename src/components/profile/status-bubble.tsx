@@ -71,11 +71,11 @@ export function StatusBubble({
         <>
           <span
             aria-hidden
-            className={cn("absolute top-1 -left-3 size-2.5 rounded-full", SURFACE)}
+            className={cn("absolute top-2.5 -left-1 size-4 rounded-full", SURFACE)}
           />
           <span
             aria-hidden
-            className={cn("absolute -top-1.5 -left-5 size-1.5 rounded-full", SURFACE)}
+            className={cn("absolute -top-0.5 -left-4 size-3 rounded-full", SURFACE)}
           />
         </>
       ) : (
@@ -89,7 +89,7 @@ export function StatusBubble({
             // Butted against the bubble with a pixel to spare rather than over
             // it: the surface is translucent, so any overlap would show as a
             // darker patch where the two stack.
-            "absolute top-1.5 -left-[9px] size-2.5",
+            "absolute top-2 -left-[16px] rotate-55 size-4",
             "[clip-path:polygon(100%_0,100%_100%,0_50%)]",
             SURFACE
           )}
@@ -97,7 +97,7 @@ export function StatusBubble({
       )}
       <span
         className={cn(
-          "min-w-0 truncate px-3 py-1 text-sm font-medium text-white",
+          "min-w-0 truncate px-3 py-1 mt-4 -ml-3 text-sm font-medium text-white",
           // A thought is rounder than a speech bubble; the difference is small
           // but it's the same difference the tails make, and the two agree.
           thought ? "rounded-full" : "rounded-2xl",

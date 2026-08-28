@@ -67,10 +67,17 @@ function AvatarFallback({
  * avatar's box on every side (which is the point) and so has to be a child of
  * the root, whose `rounded-full` deliberately doesn't clip.
  *
- * 132% is the ratio Discord's decorations are drawn at, and the one the
- * built-in presets are laid out for: the avatar occupies the centred circle of
- * radius 38 in a 100-unit square. Custom uploads from elsewhere therefore line
- * up without being told anything.
+ * Sized as a percentage of the avatar and centred on it, rather than by four
+ * negative insets. An `<img>` is a replaced element: given `inset` on every
+ * side but no width, it falls back to the picture's *intrinsic* size and
+ * honours only `left`/`top` — so the SVG presets (which have no intrinsic size)
+ * fitted the box while an uploaded PNG rendered at its own pixel dimensions,
+ * a thousand pixels of decoration across the window.
+ *
+ * The ratio is the one the built-in presets are laid out for: the avatar
+ * occupies the centred 76-unit square of their 100-unit viewBox. Custom uploads
+ * drawn to the same convention (which is Discord's) therefore line up without
+ * being told anything.
  *
  * Under the badge (`z-10`) rather than over it: a decoration is jewellery and
  * a presence dot is information.
@@ -89,7 +96,7 @@ function AvatarDecoration({
       aria-hidden
       draggable={false}
       className={cn(
-        "pointer-events-none absolute inset-[-13%] z-1 max-w-none select-none object-contain",
+        "pointer-events-none absolute top-1/2 left-1/2 z-1 h-[126%] w-[126%] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain",
         className
       )}
       {...props}

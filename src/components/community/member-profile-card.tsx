@@ -277,7 +277,7 @@ export function MemberProfileCard({
                 // the bubble's left edge and has to land in that gap rather
                 // than on the avatar.
                 className={cn(
-                  "mt-1 ml-3 min-w-0 self-start",
+                  "mt-1 ml-2 min-w-0 self-start",
                   expanded ? "max-w-64" : "max-w-40",
                 )}
               />

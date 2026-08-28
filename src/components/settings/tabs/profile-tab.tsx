@@ -38,8 +38,10 @@ const BIO_MAX = 300;
  * One choice in the decoration picker: the user's own avatar wearing it, since
  * what a decoration looks like depends entirely on the picture inside it.
  *
- * The 132% overlay ratio is the one `AvatarDecoration` uses — this is a
- * standalone preview rather than an `Avatar`, so it carries its own copy.
+ * The overlay geometry is the one `AvatarDecoration` uses, down to sizing the
+ * image as a percentage of the avatar rather than by insets — an `<img>` given
+ * insets alone falls back to its own pixel size. This is a standalone preview
+ * rather than an `Avatar`, so it carries its own copy of both.
  */
 function DecorationSwatch({
   label,
@@ -78,7 +80,7 @@ function DecorationSwatch({
           <img
             src={decorationSrc}
             alt=""
-            className="pointer-events-none absolute -inset-[16%] max-w-none object-contain"
+            className="pointer-events-none absolute top-1/2 left-1/2 h-[126%] w-[126%] max-w-none -translate-x-1/2 -translate-y-1/2 object-contain"
           />
         )}
       </span>
