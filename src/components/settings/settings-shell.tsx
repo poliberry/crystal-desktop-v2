@@ -64,7 +64,7 @@ import {
 } from "@/lib/presence";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "../ui/avatar";
 import { useMyPresence } from "@/hooks/use-presence";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 const TABS = [
   { value: "appearance", label: "Appearance", icon: Palette },
@@ -113,6 +113,61 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
     ],
   },
 ];
+
+/**
+ * One section's scrolling panel.
+ *
+ * A scroller per section rather than one shared by all of them. Sharing one
+ * meant sharing a scroll offset: leaving Voice & Video halfway down and
+ * opening About put you halfway down a page with three lines on it, and coming
+ * back landed you somewhere arbitrary. Each section now has its own, and
+ * remembers where it was left.
+ *
+ * `key={section}` is what makes them separate: React tears the old one down
+ * and builds a new one, so nothing carries over implicitly. What *is* carried
+ * over is carried on purpose — the offset, through the map below, which
+ * outlives the elements because it lives in a ref rather than in the tree.
+ */
+function SettingsSection({
+  section,
+  children,
+}: {
+  section: string;
+  children: React.ReactNode;
+}) {
+  const offsets = useRef(new Map<string, number>());
+
+  /**
+   * Restore this section's offset, and keep it up to date.
+   *
+   * A native listener on the viewport rather than React's `onScroll`, and on
+   * the viewport rather than the root, because Radix's root doesn't scroll —
+   * the viewport inside it does — and React doesn't delegate scroll events, so
+   * an `onScroll` on the root would never fire.
+   *
+   * Done in a ref callback so the restore happens after layout and before the
+   * browser paints, which is what keeps it from being visible as a jump. The
+   * returned cleanup is React 19's; it runs when the section changes and this
+   * element is torn down.
+   */
+  const attach = (root: HTMLDivElement | null) => {
+    const viewport = root?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    if (!viewport) return;
+
+    viewport.scrollTop = offsets.current.get(section) ?? 0;
+    const remember = () => offsets.current.set(section, viewport.scrollTop);
+    viewport.addEventListener("scroll", remember, { passive: true });
+    return () => viewport.removeEventListener("scroll", remember);
+  };
+
+  return (
+    <ScrollArea key={section} ref={attach} className="h-full min-h-0 p-4">
+      {children}
+    </ScrollArea>
+  );
+}
 
 /**
  * @param onRequestClose How to dismiss whatever is hosting this. Omitted when
@@ -267,20 +322,18 @@ export function SettingsShell({
             last card runs off the bottom of the dialog with nothing left to
             scroll. */}
         <main className="h-full min-h-0 w-full overflow-hidden pt-9">
-          <ScrollArea className="h-[75%] min-h-0 flex-1 pb-20">
-            {/* Extra padding under the last card, so it clears the dialog's
-                own rounded corner rather than ending flush against it. */}
-            <div className="mx-auto w-full px-6 pt-6 pb-30">
-              {section === "appearance" && <AppearanceTab />}
-              {section === "accessibility" && <AccessibilityTab />}
-              {section === "servers" && <ServerProfilesTab />}
-              {section === "account" && <AccountTab />}
-              {section === "voice" && <VoiceVideoTab />}
-              {section === "notifications" && <NotificationsTab />}
-              {section === "updates" && <UpdatesTab />}
-              {section === "about" && <AboutTab />}
-            </div>
-          </ScrollArea>
+          {/* A scroller per section rather than one around all of them: see
+              `SettingsSection`. */}
+          <SettingsSection section={section}>
+            {section === "appearance" && <AppearanceTab />}
+            {section === "accessibility" && <AccessibilityTab />}
+            {section === "servers" && <ServerProfilesTab />}
+            {section === "account" && <AccountTab />}
+            {section === "voice" && <VoiceVideoTab />}
+            {section === "notifications" && <NotificationsTab />}
+            {section === "updates" && <UpdatesTab />}
+            {section === "about" && <AboutTab />}
+          </SettingsSection>
         </main>
       </SidebarProvider>
     </div>
