@@ -64,7 +64,7 @@ import {
 } from "@/lib/presence";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "../ui/avatar";
 import { useMyPresence } from "@/hooks/use-presence";
-import { useCallback, useRef, useState } from "react";
+import { useState } from "react";
 
 const TABS = [
   { value: "appearance", label: "Appearance", icon: Palette },
@@ -120,13 +120,8 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
  * A scroller per section rather than one shared by all of them. Sharing one
  * meant sharing a scroll offset: leaving Voice & Video halfway down and
  * opening About put you halfway down a page with three lines on it, and coming
- * back landed you somewhere arbitrary. Each section now has its own, and
- * remembers where it was left.
- *
- * `key={section}` is what makes them separate: React tears the old one down
- * and builds a new one, so nothing carries over implicitly. What *is* carried
- * over is carried on purpose — the offset, through the map below, which
- * outlives the elements because it lives in a ref rather than in the tree.
+ * back landed you somewhere arbitrary. Each section now has its own, and opens
+ * at the top.
  */
 function SettingsSection({
   section,
@@ -135,45 +130,15 @@ function SettingsSection({
   section: string;
   children: React.ReactNode;
 }) {
-  const offsets = useRef(new Map<string, number>());
-
-  /**
-   * Restore this section's offset, and keep it up to date.
-   *
-   * A native listener on the viewport rather than React's `onScroll`, and on
-   * the viewport rather than the root, because Radix's root doesn't scroll —
-   * the viewport inside it does — and React doesn't delegate scroll events, so
-   * an `onScroll` on the root would never fire.
-   *
-   * The restore happens in a ref callback, after layout and before the browser
-   * paints, so it isn't visible as a jump. The returned cleanup is React 19's.
-   *
-   * `useCallback` is load-bearing rather than an optimisation. A ref callback
-   * that changes identity is torn down and re-run on *every* render, and this
-   * panel re-renders whenever presence ticks — so the restore would fire
-   * constantly, and each one would slam `scrollTop` back to the last committed
-   * value mid-gesture, cancelling the wheel animation in `useSmoothScroll`.
-   * The symptom is a page that refuses to scroll at all. Keyed on the section,
-   * it runs once per section instead.
-   */
-  const attach = useCallback(
-    (root: HTMLDivElement | null) => {
-      const viewport = root?.querySelector<HTMLElement>(
-        '[data-slot="scroll-area-viewport"]',
-      );
-      if (!viewport) return;
-
-      const saved = offsets.current.get(section) ?? 0;
-      if (saved) viewport.scrollTop = saved;
-      const remember = () => offsets.current.set(section, viewport.scrollTop);
-      viewport.addEventListener("scroll", remember, { passive: true });
-      return () => viewport.removeEventListener("scroll", remember);
-    },
-    [section],
-  );
-
   return (
-    <ScrollArea key={section} ref={attach} className="h-full min-h-0 p-4">
+    // `key`: a new scroller per section, so one never inherits another's
+    // offset. `min-h-0 flex-1` inside a flex column is what gives it a
+    // definite height to overflow against — the pattern used by every other
+    // scrolling panel in the app. A percentage height here does not work:
+    // Radix's viewport is `height: 100%` of this root, and if this root's own
+    // height resolves to `auto` the viewport grows with the content instead
+    // of scrolling it, and `main`'s `overflow-hidden` quietly clips the rest.
+    <ScrollArea key={section} className="min-h-0 flex-1 p-4">
       {children}
     </ScrollArea>
   );
@@ -326,12 +291,12 @@ export function SettingsShell({
           </SidebarContent>
           <SidebarFooter />
         </Sidebar>
-        {/* `h-full min-h-0 overflow-hidden`: without a height and a
-            min-height of zero, this flex child sizes to its content, the
-            ScrollArea inside it never becomes shorter than the page, and the
-            last card runs off the bottom of the dialog with nothing left to
-            scroll. */}
-        <main className="h-full min-h-0 w-full overflow-hidden pt-9">
+        {/* A flex column with a definite height, so the scroller inside can
+            take `flex-1` and become shorter than its contents. Without the
+            column — or without `min-h-0`, which lets a flex child shrink below
+            its content — the panel grows to fit and `overflow-hidden` clips
+            the overflow with no way to reach it. */}
+        <main className="flex h-full min-h-0 w-full flex-col overflow-hidden pt-9">
           {/* A scroller per section rather than one around all of them: see
               `SettingsSection`. */}
           <SettingsSection section={section}>
