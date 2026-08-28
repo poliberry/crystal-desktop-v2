@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { FolderOpen, Loader2, RotateCcw } from "lucide-react";
+import { FolderOpen, Loader2, Plus, RotateCcw } from "lucide-react";
 
 import { useCustomCss } from "@/components/custom-css-provider";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { CSS_SNIPPET_GROUPS } from "@/lib/css-snippets";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -163,12 +166,23 @@ function tokenise(source: string): Token[] {
 const EDITOR_TYPE =
   "font-mono text-[13px] leading-[1.6] tracking-normal whitespace-pre-wrap break-words";
 
+/** What a snippet insertion needs to know about the editor. */
+export interface EditorHandle {
+  /** Insert text at the caret (or replace the selection), and put the caret
+   * after it. */
+  insert: (text: string) => void;
+}
+
 function CssEditor({
   value,
   onChange,
+  handleRef,
 }: {
   value: string;
   onChange: (next: string) => void;
+  /** Filled in with an `insert` function, so the snippet list next door can
+   * put text at the caret rather than appending blindly to the end. */
+  handleRef?: React.MutableRefObject<EditorHandle | null>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
@@ -193,6 +207,36 @@ function CssEditor({
 
   const lineCount = useMemo(() => value.split("\n").length, [value]);
   const tokens = useMemo(() => tokenise(value), [value]);
+
+  /**
+   * Insertion, exposed to the snippet list.
+   *
+   * At the caret rather than at the end, and padded with blank lines only
+   * where there isn't one already — pasting a rule into the middle of another
+   * rule's braces is the one thing that would make the snippets worse than
+   * useless.
+   */
+  useEffect(() => {
+    if (!handleRef) return;
+    handleRef.current = {
+      insert: (text) => {
+        const el = textareaRef.current;
+        const at = el ? el.selectionStart : value.length;
+        const end = el ? el.selectionEnd : value.length;
+        const before = value.slice(0, at);
+        const after = value.slice(end);
+        const lead = !before || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+        const trail = !after || after.startsWith("\n") ? "\n" : "\n\n";
+        const next = before + lead + text + trail + after;
+        onChange(next);
+        const caret = (before + lead + text).length;
+        requestAnimationFrame(() => {
+          el?.focus();
+          if (el) el.selectionStart = el.selectionEnd = caret;
+        });
+      },
+    };
+  }, [handleRef, value, onChange]);
 
   /**
    * Tab indents instead of leaving the field, and Enter after `{` indents the
@@ -304,6 +348,84 @@ function CssEditor({
 
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The templates panel.
+ *
+ * The hard part of writing CSS for somebody else's app is not the CSS, it's
+ * finding out what the thing you can see is called. Each row here names a part
+ * of the interface and inserts a rule that already targets it correctly — the
+ * first edit is then a value rather than a guess. See src/lib/css-snippets.ts,
+ * where the selectors live.
+ */
+function SnippetList({ onInsert }: { onInsert: (code: string) => void }) {
+  const [query, setQuery] = useState("");
+
+  const groups = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return CSS_SNIPPET_GROUPS;
+    return CSS_SNIPPET_GROUPS.map((group) => ({
+      ...group,
+      snippets: group.snippets.filter(
+        (snippet) =>
+          snippet.label.toLowerCase().includes(needle) ||
+          snippet.hint.toLowerCase().includes(needle) ||
+          // The selector itself is searchable, for anyone who already knows
+          // what they're looking for and just wants it typed out.
+          snippet.code.toLowerCase().includes(needle),
+      ),
+    })).filter((group) => group.snippets.length > 0);
+  }, [query]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div>
+        <p className="text-xs font-medium">Templates</p>
+        <p className="text-[11px] text-muted-foreground">
+          Click one to drop it in at the cursor.
+        </p>
+      </div>
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search parts…"
+        className="h-8"
+      />
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-3 pr-2">
+          {groups.length === 0 && (
+            <p className="py-6 text-center text-xs text-muted-foreground">
+              Nothing matches that.
+            </p>
+          )}
+          {groups.map((group) => (
+            <div key={group.label} className="space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {group.label}
+              </p>
+              {group.snippets.map((snippet) => (
+                <button
+                  key={snippet.key}
+                  type="button"
+                  onClick={() => onInsert(snippet.code)}
+                  className="w-full rounded-md border border-border/50 px-2 py-1.5 text-left transition-colors hover:border-primary/60 hover:bg-accent/40"
+                >
+                  <span className="flex items-center gap-1 text-xs font-medium">
+                    <Plus className="size-3" />
+                    {snippet.label}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+                    {snippet.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 const STARTER = `/* Crystal — custom styles
  *
  * These rules are applied last, so they win ties against the app's own.
@@ -322,6 +444,7 @@ function CustomCssBody({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState(css);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const editorRef = useRef<EditorHandle | null>(null);
 
   // Seeded once per open. The provider's `css` also changes as we preview, so
   // following it here would fight the user's typing.
@@ -396,8 +519,25 @@ function CustomCssBody({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1">
-          <CssEditor value={draft} onChange={(next) => { setDraft(next); setSaved(false); }} />
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_240px] gap-3">
+          <CssEditor
+            value={draft}
+            handleRef={editorRef}
+            onChange={(next) => {
+              setDraft(next);
+              setSaved(false);
+            }}
+          />
+          <div className="min-h-0 border-l border-border/40 pl-3">
+            <SnippetList
+              onInsert={(code) => {
+                setSaved(false);
+                // Through the editor's handle rather than by appending, so a
+                // snippet lands where the cursor is.
+                editorRef.current?.insert(code);
+              }}
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-2">

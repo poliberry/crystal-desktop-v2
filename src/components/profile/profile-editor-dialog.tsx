@@ -38,6 +38,7 @@ export function ProfileEditorProvider({ children }: { children: React.ReactNode 
           // The rail's first control would otherwise be focused and outlined
           // on open, which reads as having clicked it.
           onOpenAutoFocus={(e) => e.preventDefault()}
+          showCloseButton={false}
         >
           <DialogTitle className="sr-only">Edit profile</DialogTitle>
           <DialogDescription className="sr-only">

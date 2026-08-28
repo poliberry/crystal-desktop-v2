@@ -136,7 +136,7 @@ function ProfilePageBody({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+    <div className="fixed inset-0 z-50 flex flex-col bg-background mt-9">
       {/* The banner bleeds a tint across the whole page, as it did across the
           dialog — at this size it's what stops a wide layout reading as an
           empty grey sheet. */}
@@ -152,7 +152,7 @@ function ProfilePageBody({
         // The titlebar row stays draggable on the desktop, so a full-screen
         // page doesn't cost the user the ability to move the window.
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-        className="relative flex h-11 shrink-0 items-center justify-between px-4"
+        className="relative flex h-11 shrink-0 items-center justify-between px-4 mt-2"
       >
         <span className="text-sm font-medium text-muted-foreground">
           {member.name}

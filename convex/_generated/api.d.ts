@@ -17,6 +17,7 @@ import type * as channelMessages from "../channelMessages.js";
 import type * as channels from "../channels.js";
 import type * as communities from "../communities.js";
 import type * as communityEmojis from "../communityEmojis.js";
+import type * as communityWidgets from "../communityWidgets.js";
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as friends from "../friends.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   channels: typeof channels;
   communities: typeof communities;
   communityEmojis: typeof communityEmojis;
+  communityWidgets: typeof communityWidgets;
   conversations: typeof conversations;
   crons: typeof crons;
   friends: typeof friends;

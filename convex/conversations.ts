@@ -5,6 +5,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
   const row = await ctx.db
@@ -162,6 +163,10 @@ export const get = query({
       type: conversation.type,
       name: conversation.name,
       imageUrl: conversation.imageUrl,
+      // Carried by the read the chat view already does, so the wallpaper is
+      // there on the first frame rather than fading in a beat later.
+      backgroundUrl: conversation.backgroundUrl,
+      backgroundOpacity: conversation.backgroundOpacity,
       members: await otherMembers(ctx, conversationId, me._id),
       /** Live, so the open chat can catch a message that arrives while
        * you're sitting in it rather than leaving the rail lit behind you. */
@@ -461,5 +466,94 @@ export const markRead = mutation({
     const lastMessage = await lastMessageOf(ctx, conversationId);
     if (!lastMessage || lastMessage._creationTime <= membership.lastReadAt) return;
     await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
+  },
+});
+
+// --- Conversation background ------------------------------------------------
+
+/**
+ * The picture behind a DM or group's messages.
+ *
+ * Any member can set it, unlike a channel background, which needs Manage
+ * Channels: a conversation has no roles, and two people sharing a room can
+ * share its wallpaper. The same fields and the same component as a channel's
+ * — see `channels.setBackground`, whose comments explain why `opacity` travels
+ * with the image.
+ */
+export const setConversationBackground = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    storageId: v.optional(v.id("_storage")),
+    opacity: v.optional(v.number()),
+    clear: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { conversationId, storageId, opacity, clear }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("You're not in that conversation.");
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) throw new Error("Conversation not found.");
+
+    if (clear) {
+      const previous = conversation.backgroundStorageId;
+      await ctx.db.patch(conversationId, {
+        backgroundUrl: undefined,
+        backgroundStorageId: undefined,
+        backgroundOpacity: undefined,
+      });
+      if (previous) await ctx.storage.delete(previous).catch(() => {});
+      return;
+    }
+
+    const patch: {
+      backgroundUrl?: string;
+      backgroundStorageId?: Id<"_storage">;
+      backgroundOpacity?: number;
+    } = {};
+
+    if (storageId) {
+      await requireWithinUploadLimit(
+        ctx,
+        storageId,
+        MAX_PROFILE_ASSET_BYTES,
+        "Chat backgrounds"
+      );
+      const url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Background upload failed.");
+      patch.backgroundUrl = url;
+      patch.backgroundStorageId = storageId;
+    }
+    if (opacity !== undefined) {
+      patch.backgroundOpacity = Math.min(1, Math.max(0, opacity));
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    const previous = conversation.backgroundStorageId;
+    await ctx.db.patch(conversationId, patch);
+    if (storageId && previous && previous !== storageId) {
+      await ctx.storage.delete(previous).catch(() => {});
+    }
+  },
+});
+
+/** Upload URL for a conversation background. Membership is the only gate — see
+ * `setConversationBackground`. */
+export const generateConversationAssetUploadUrl = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("You're not in that conversation.");
+    return ctx.storage.generateUploadUrl();
   },
 });

@@ -346,6 +346,12 @@ export default defineSchema({
      * first two members' avatars overlapping when unset. */
     imageUrl: v.optional(v.string()),
     iconStorageId: v.optional(v.id("_storage")),
+    /** A picture behind this conversation's messages. Set by any member —
+     * a DM has no roles, and two people sharing a room can share its
+     * wallpaper. Same fields as `channels`, and drawn by the same component. */
+    backgroundUrl: v.optional(v.string()),
+    backgroundStorageId: v.optional(v.id("_storage")),
+    backgroundOpacity: v.optional(v.number()),
   }).index("by_dm_key", ["dmKey"]),
 
   conversationMembers: defineTable({
@@ -553,6 +559,30 @@ export default defineSchema({
      * "newest message" query per channel every time anyone says anything
      * anywhere. */
     lastMessageAt: v.optional(v.number()),
+    /**
+     * A picture behind the message list.
+     *
+     * A property of the channel rather than of the viewer: it's set by whoever
+     * can manage the channel and everybody in it sees the same room. `opacity`
+     * is stored alongside because the only way to make an arbitrary photograph
+     * work behind text is to be able to turn it down.
+     */
+    backgroundUrl: v.optional(v.string()),
+    backgroundStorageId: v.optional(v.id("_storage")),
+    backgroundOpacity: v.optional(v.number()),
+    /**
+     * The banner strip under the channel header: a faded picture with a title
+     * and a line of description over it.
+     *
+     * Its own title rather than reusing `name`, and its own text rather than
+     * reusing `topic`, because a banner is an announcement — "Read the rules
+     * before posting" — and a topic is a label. Either may be absent; a banner
+     * with only a picture is a picture.
+     */
+    bannerUrl: v.optional(v.string()),
+    bannerStorageId: v.optional(v.id("_storage")),
+    bannerTitle: v.optional(v.string()),
+    bannerDescription: v.optional(v.string()),
   })
     .index("by_community", ["communityId"])
     .index("by_community_position", ["communityId", "position"]),
@@ -769,6 +799,58 @@ export default defineSchema({
   })
     .index("by_user_community", ["userId", "communityId"])
     .index("by_user", ["userId"]),
+
+  /**
+   * The cards on a server's Overview — its front page.
+   *
+   * Typed, unlike `profileWidgets`, which is deliberately shapeless. The
+   * difference is who resolves the contents: a profile widget is words and
+   * pictures its owner typed, so one free-form shape covers everything, whereas
+   * "recent messages in #general" and "these five channels" have to be looked
+   * up on the server at read time. A `kind` is what tells the query which
+   * lookup to do.
+   *
+   * The per-kind configuration is a union rather than a bag of optional
+   * fields, so a widget cannot be half a channel list and half a banner.
+   */
+  communityWidgets: defineTable({
+    communityId: v.id("communities"),
+    position: v.number(),
+    /** Shown above the card. Optional — a banner is usually its own title. */
+    title: v.optional(v.string()),
+    /** How much of the row it takes. The overview is a two-column grid. */
+    width: v.optional(v.union(v.literal("half"), v.literal("full"))),
+    config: v.union(
+      /** A short list of channels worth reading first. */
+      v.object({
+        kind: v.literal("channels"),
+        channelIds: v.array(v.id("channels")),
+        description: v.optional(v.string()),
+      }),
+      /** The last few messages from one channel, as a preview. */
+      v.object({
+        kind: v.literal("recentMessages"),
+        channelId: v.id("channels"),
+        limit: v.optional(v.number()),
+      }),
+      /** Free text. The one escape hatch, so a server can say anything the
+       * other kinds don't cover without waiting for a release. */
+      v.object({
+        kind: v.literal("markdown"),
+        body: v.string(),
+      }),
+      /** A picture with words over it. */
+      v.object({
+        kind: v.literal("banner"),
+        imageUrl: v.optional(v.string()),
+        imageStorageId: v.optional(v.id("_storage")),
+        heading: v.optional(v.string()),
+        subheading: v.optional(v.string()),
+        linkUrl: v.optional(v.string()),
+        linkLabel: v.optional(v.string()),
+      }),
+    ),
+  }).index("by_community", ["communityId"]),
 
   typing: defineTable({
     userId: v.id("users"),

@@ -98,6 +98,10 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
 
   const content = (
     <div
+      // A stable hook for custom CSS — utility classes get rewritten as this
+      // component is edited, whereas a slot name is something a user's
+      // stylesheet can rely on. See src/lib/css-snippets.ts.
+      data-slot="message-row"
       className={cn(
         "group relative flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
         startsGroup && "mt-3"

@@ -142,6 +142,8 @@ function MessageRow({
 
   const content = (
     <div
+      // See the twin in message-list.tsx: a stable hook for custom CSS.
+      data-slot="message-row"
       className={cn(
         "group relative flex gap-1 rounded px-2 py-0.5 hover:bg-accent/30",
         startsGroup && "mt-3"

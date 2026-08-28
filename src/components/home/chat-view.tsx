@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { PanelRightClose, PanelRightOpen, PhoneCall } from "lucide-react";
+import { Image as ImageIcon, PanelRightClose, PanelRightOpen, PhoneCall } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -23,6 +23,15 @@ import {
 import type { FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { TypingIndicator } from "@/components/typing-indicator";
+import { ChatBackground } from "@/components/chat-decoration";
+import { ChatDecorationEditor } from "@/components/chat-decoration-editor";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import {
   Avatar,
@@ -60,6 +69,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const isActiveCall = activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
   const [showMembers, setShowMembers] = useState(true);
   const [editingGroup, setEditingGroup] = useState(false);
+  const [editingBackground, setEditingBackground] = useState(false);
   /**
    * A birthday wish landing in this conversation — for either person, sender
    * or recipient — sets the cakes off.
@@ -122,7 +132,13 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* The conversation's wallpaper — set by any member, since a DM has no
+            roles and two people sharing a room can share it. */}
+        <ChatBackground
+          url={conversation?.backgroundUrl}
+          opacity={conversation?.backgroundOpacity}
+        />
         <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
           {/* For a group the whole identity block is the way into its
               settings — the icon and name are what you'd click to change
@@ -173,6 +189,25 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
           )}
 
           <div className="flex items-center gap-1.5">
+            {/* A group reaches this through its settings dialog, where the
+                icon and name already live. A one-to-one DM has no such dialog,
+                so the wallpaper gets its own button. */}
+            {!isGroup && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditingBackground(true)}
+                    >
+                      <ImageIcon className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Chat background</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             <Button
               size="sm"
               variant={isActiveCall || callParticipants.length > 0 ? "default" : "secondary"}
@@ -223,6 +258,24 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
             <DmProfilePanel conversationId={conversationId} userId={avatarUser.id} />
           )
         ))}
+
+      {/* The wallpaper editor for a one-to-one DM. A group reaches the same
+          component through its settings dialog. */}
+      <Dialog open={editingBackground} onOpenChange={setEditingBackground}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Chat background</DialogTitle>
+            <DialogDescription>
+              A picture behind your messages. Both of you see it.
+            </DialogDescription>
+          </DialogHeader>
+          <ChatDecorationEditor
+            target={{ kind: "conversation", conversationId }}
+            backgroundUrl={conversation.backgroundUrl}
+            backgroundOpacity={conversation.backgroundOpacity}
+          />
+        </DialogContent>
+      </Dialog>
 
       {isGroup && (
         <GroupSettingsDialog

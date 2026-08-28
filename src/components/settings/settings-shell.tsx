@@ -145,7 +145,6 @@ export function SettingsShell({
         <span className="text-xs font-medium text-muted-foreground">
           Settings
         </span>
-        <WindowControls className="border-none" />
       </div>
       <SidebarProvider>
         <Sidebar>
