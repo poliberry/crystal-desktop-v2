@@ -19,6 +19,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MAX_GROUP_MEMBERS } from "@/lib/group-limits";
 
 interface NewDmDialogProps {
   onCreated: (conversationId: Id<"conversations">) => void;
@@ -34,11 +35,15 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A group holds MAX_GROUP_MEMBERS including you, so the picker stops one
+  // short of it. Enforced again in the mutation — see createGroup.
+  const atLimit = selected.size + 1 >= MAX_GROUP_MEMBERS;
+
   const toggle = (id: Id<"users">) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
-      else next.add(id);
+      else if (!atLimit) next.add(id);
       return next;
     });
   };
@@ -85,7 +90,8 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
         <DialogHeader>
           <DialogTitle>New message</DialogTitle>
           <DialogDescription>
-            Pick a friend for a direct message, or a few for a group DM.
+            Pick a friend for a direct message, or a few for a group DM — up to{" "}
+            {MAX_GROUP_MEMBERS} people including you.
           </DialogDescription>
         </DialogHeader>
 
@@ -101,7 +107,11 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
                 key={friend.id}
                 className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-accent/60"
               >
-                <Checkbox checked={selected.has(friend.id)} onCheckedChange={() => toggle(friend.id)} />
+                <Checkbox
+                  checked={selected.has(friend.id)}
+                  disabled={atLimit && !selected.has(friend.id)}
+                  onCheckedChange={() => toggle(friend.id)}
+                />
                 <Avatar size="sm">
                   <AvatarImage src={friend.imageUrl} alt={friend.name} />
                   <AvatarFallback>{friend.name.slice(0, 2).toUpperCase()}</AvatarFallback>

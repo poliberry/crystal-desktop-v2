@@ -274,6 +274,12 @@ export interface DesktopAPI {
   auth?: {
     onCallback(cb: (url: string) => void): () => void;
   };
+  /** `crystal://invite/<code>` deep links, handed over by the web page that
+   * an `https://…/invite/<code>` link lands on. Optional so an older preload
+   * simply never delivers one. */
+  invites?: {
+    onOpen(cb: (code: string) => void): () => void;
+  };
   /**
    * "Pop out" a video tile into a real, separate always-on-top
    * `BrowserWindow` — not Document Picture-in-Picture, which Electron's

@@ -98,6 +98,14 @@ const api = {
       return () => ipcRenderer.removeListener("auth:callback", handler);
     },
   },
+  invites: {
+    /** Fires when the OS hands us a `crystal://invite/<code>` link. */
+    onOpen: (cb: (code: string) => void) => {
+      const handler = (_e: IpcRendererEvent, code: string) => cb(code);
+      ipcRenderer.on("invite:open", handler);
+      return () => ipcRenderer.removeListener("invite:open", handler);
+    },
+  },
   pip: {
     open: (options?: { width?: number; height?: number; title?: string }) =>
       ipcRenderer.invoke("pip:open", options),

@@ -237,15 +237,28 @@ if (!isDev) {
   }
 }
 
+/**
+ * Route a `crystal://` URL to the renderer.
+ *
+ * Two kinds now. `crystal://auth/callback?...` completes an OAuth handshake;
+ * `crystal://invite/<code>` is an invitation, handed over by the web page an
+ * `https://…/invite/<code>` link lands on. The web link is the one that gets
+ * shared, because it means something in a browser, on a phone, and in every
+ * other chat app — this scheme is only ever the last hop.
+ */
 function handleCrystalUrl(url: string): void {
-  if (!url.startsWith("crystal://auth/callback")) return;
+  const isAuth = url.startsWith("crystal://auth/callback");
+  const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(url);
+  if (!isAuth && !invite) return;
+
   createOrFocusMainWindow();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("auth:callback", url);
-  } else {
-    // Window not yet ready — store and deliver on did-finish-load
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    // Window not yet ready — stored and delivered on did-finish-load.
     pendingProtocolUrl = url;
+    return;
   }
+  if (invite) mainWindow.webContents.send("invite:open", invite[1]);
+  else mainWindow.webContents.send("auth:callback", url);
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +321,9 @@ function createWindow(): void {
     const pendingUrl = pendingProtocolUrl;
     pendingProtocolUrl = null;
     win.webContents.once("did-finish-load", () => {
-      win.webContents.send("auth:callback", pendingUrl);
+      const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(pendingUrl);
+      if (invite) win.webContents.send("invite:open", invite[1]);
+      else win.webContents.send("auth:callback", pendingUrl);
     });
   }
 

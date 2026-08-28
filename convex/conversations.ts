@@ -358,6 +358,17 @@ export const getOrCreateDirect = mutation({
   },
 });
 
+/**
+ * How many people a group DM holds, the creator included.
+ *
+ * A ceiling rather than a technical limit: past thirty a group stops behaving
+ * like a group — everyone is notified about everything, nobody can be removed,
+ * and it wants the roles and channels a server already has. Mirrored in
+ * src/lib/group-limits.ts, which is what the picker greys out at; this is
+ * where it binds.
+ */
+export const MAX_GROUP_MEMBERS = 30;
+
 export const createGroup = mutation({
   args: { memberIds: v.array(v.id("users")), name: v.optional(v.string()) },
   handler: async (ctx, { memberIds, name }) => {
@@ -365,6 +376,10 @@ export const createGroup = mutation({
     const uniqueMemberIds = Array.from(new Set(memberIds.filter((id) => id !== me._id)));
     if (uniqueMemberIds.length < 2) {
       throw new Error("Pick at least 2 friends to start a group DM.");
+    }
+    // `+ 1` for the creator, who is a member of the group they just made.
+    if (uniqueMemberIds.length + 1 > MAX_GROUP_MEMBERS) {
+      throw new Error(`A group DM can hold up to ${MAX_GROUP_MEMBERS} people.`);
     }
     for (const id of uniqueMemberIds) {
       if (!(await areFriends(ctx, me._id, id))) {
