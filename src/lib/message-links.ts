@@ -15,11 +15,6 @@ export function classifyUrl(url: string): UrlKind {
   return "link";
 }
 
-const INVITE_RE = /joincrystal:([a-zA-Z0-9]{4,32})/g;
-
-/** Pulls every `joincrystal:<code>` invite reference out of a message so it
- * can be rendered as a join-community embed instead of plain text. */
-export function extractInviteCodes(text: string): string[] {
-  const matches = Array.from(text.matchAll(INVITE_RE)).map((m) => m[1]);
-  return Array.from(new Set(matches));
-}
+// Invite parsing lives in src/lib/invites.ts now that a link has three
+// forms; re-exported here so the message renderer keeps one import.
+export { extractInviteCodes } from "@/lib/invites";

@@ -4,6 +4,7 @@ import {
   Accessibility,
   Bell,
   ChevronDown,
+  Code2,
   Download,
   Info,
   KeyRound,
@@ -14,6 +15,9 @@ import {
   User,
 } from "lucide-react";
 
+import { useOpenCustomCss } from "@/components/settings/custom-css-dialog";
+import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
+
 import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,7 +26,6 @@ import { AccessibilityTab } from "@/components/settings/tabs/accessibility-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
 import { NotificationsTab } from "@/components/settings/tabs/notifications-tab";
-import { ProfileTab } from "@/components/settings/tabs/profile-tab";
 import { ServerProfilesTab } from "@/components/settings/tabs/server-profiles-tab";
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
@@ -64,7 +67,6 @@ import { useMyPresence } from "@/hooks/use-presence";
 import { useState } from "react";
 
 const TABS = [
-  { value: "profile", label: "Profile", icon: User },
   { value: "appearance", label: "Appearance", icon: Palette },
   { value: "accessibility", label: "Accessibility", icon: Accessibility },
   { value: "servers", label: "Servers", icon: Server },
@@ -75,11 +77,22 @@ const TABS = [
   { value: "about", label: "About", icon: Info },
 ] as const;
 
-const NAVIGATION = [
+/** A row that opens something instead of switching the panel. The profile
+ * editor is three panes wide and belongs in its own dialog, but this is still
+ * where people come looking for it. */
+type NavChild = {
+  value: string;
+  label: string;
+  icon: typeof User;
+  opens?: "profile-editor" | "custom-css";
+};
+
+const NAVIGATION: { label: string; children: NavChild[] }[] = [
   {
     label: "General",
     children: [
-      { value: "profile", label: "Profile", icon: User },
+      { value: "profile", label: "Edit Profile", icon: User, opens: "profile-editor" },
+      { value: "account", label: "Account", icon: KeyRound },
       { value: "updates", label: "Updates", icon: Download },
     ],
   },
@@ -89,6 +102,7 @@ const NAVIGATION = [
       { value: "appearance", label: "Appearance", icon: Palette },
       { value: "accessibility", label: "Accessibility", icon: Accessibility },
       { value: "servers", label: "Server Profiles", icon: Server },
+      { value: "custom-css", label: "Custom CSS", icon: Code2, opens: "custom-css" },
     ],
   },
   {
@@ -100,10 +114,53 @@ const NAVIGATION = [
   },
 ];
 
-export function SettingsShell() {
+/**
+ * One section's scrolling panel.
+ *
+ * A scroller per section rather than one shared by all of them. Sharing one
+ * meant sharing a scroll offset: leaving Voice & Video halfway down and
+ * opening About put you halfway down a page with three lines on it, and coming
+ * back landed you somewhere arbitrary. Each section now has its own, and opens
+ * at the top.
+ */
+function SettingsSection({
+  section,
+  children,
+}: {
+  section: string;
+  children: React.ReactNode;
+}) {
+  return (
+    // `key`: a new scroller per section, so one never inherits another's
+    // offset. `min-h-0 flex-1` inside a flex column is what gives it a
+    // definite height to overflow against — the pattern used by every other
+    // scrolling panel in the app. A percentage height here does not work:
+    // Radix's viewport is `height: 100%` of this root, and if this root's own
+    // height resolves to `auto` the viewport grows with the content instead
+    // of scrolling it, and `main`'s `overflow-hidden` quietly clips the rest.
+    <ScrollArea key={section} className="min-h-0 flex-1 p-4">
+      {children}
+    </ScrollArea>
+  );
+}
+
+/**
+ * @param onRequestClose How to dismiss whatever is hosting this. Omitted when
+ *   the host is a window of its own (the Electron Settings window), where
+ *   closing the window is the same thing as closing the browser tab.
+ */
+export function SettingsShell({
+  onRequestClose,
+}: {
+  onRequestClose?: () => void;
+}) {
   const me = useQuery(api.users.getCurrentUser);
   const { status, manualStatus, activities } = useMyPresence();
-  const [section, setSection] = useState("profile");
+  const openProfileEditor = useOpenProfileEditor();
+  const openCustomCss = useOpenCustomCss();
+  // Account rather than profile: the profile editor is a dialog of its own
+  // now, so opening Settings can't land on it.
+  const [section, setSection] = useState("account");
 
   const subtitle = me?.customStatus
     ? `${me?.customStatus}`
@@ -118,9 +175,13 @@ export function SettingsShell() {
         <span className="text-xs font-medium text-muted-foreground">
           Settings
         </span>
-        <WindowControls className="border-none" />
       </div>
-      <SidebarProvider>
+      {/* `min-h-0 h-full` overrides the provider's own `min-h-svh`. That
+          default is right for a sidebar filling a page and wrong for one
+          inside a dialog: it forces this subtree to be at least a viewport
+          tall, so in a dialog capped at 90vh the last card sat below the
+          bottom edge with nothing left to scroll. */}
+      <SidebarProvider className="h-full min-h-0">
         <Sidebar>
           <SidebarHeader className="pt-9">
             <SidebarMenu>
@@ -135,13 +196,7 @@ export function SettingsShell() {
                           <img
                             src={me.nameplateUrl}
                             alt=""
-                            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-                            style={{
-                              WebkitMaskImage:
-                                "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                              maskImage:
-                                "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                            }}
+                            className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
                           />
                         )}
                         <Avatar size="sm" className="shrink-0 cursor-pointer">
@@ -176,7 +231,12 @@ export function SettingsShell() {
                     <SignOutButton>
                       <DropdownMenuItem
                         className="text-destructive"
-                        onClick={() => window.close()}
+                        // Signing out should leave Settings behind either way;
+                        // `window.close()` only does that when this owns the
+                        // window, and is a no-op in a browser tab.
+                        onClick={() =>
+                          onRequestClose ? onRequestClose() : window.close()
+                        }
                       >
                         <LogOut />
                         <span>Log out</span>
@@ -197,10 +257,25 @@ export function SettingsShell() {
                       (NAV_CHILD_ITEM, NAV_CHILD_ITEM_INDEX) => (
                         <SidebarMenuItem
                           key={NAV_CHILD_ITEM_INDEX}
-                          onClick={() => setSection(NAV_CHILD_ITEM.value)}
+                          onClick={() => {
+                            if (NAV_CHILD_ITEM.opens === "profile-editor") {
+                              openProfileEditor();
+                              return;
+                            }
+                            if (NAV_CHILD_ITEM.opens === "custom-css") {
+                              openCustomCss();
+                              return;
+                            }
+                            setSection(NAV_CHILD_ITEM.value);
+                          }}
                         >
                           <SidebarMenuButton
-                            isActive={section === NAV_CHILD_ITEM.value}
+                            // A row that opens a dialog is never the panel's
+                            // current section, so it never reads as selected.
+                            isActive={
+                              !NAV_CHILD_ITEM.opens &&
+                              section === NAV_CHILD_ITEM.value
+                            }
                             className="flex flex-row gap-2 items-center"
                           >
                             <NAV_CHILD_ITEM.icon />
@@ -216,53 +291,26 @@ export function SettingsShell() {
           </SidebarContent>
           <SidebarFooter />
         </Sidebar>
-        <main className="w-full pt-9">
-          <ScrollArea className="min-h-0 h-full flex-1">
-            <div className="mx-auto w-full px-6 py-6">
-              {section === "profile" && <ProfileTab />}
-              {section === "appearance" && <AppearanceTab />}
-              {section === "accessibility" && <AccessibilityTab />}
-              {section === "servers" && <ServerProfilesTab />}
-              {section === "account" && <AccountTab />}
-              {section === "voice" && <VoiceVideoTab />}
-              {section === "notifications" && <NotificationsTab />}
-              {section === "updates" && <UpdatesTab />}
-              {section === "about" && <AboutTab />}
-            </div>
-          </ScrollArea>
+        {/* A flex column with a definite height, so the scroller inside can
+            take `flex-1` and become shorter than its contents. Without the
+            column — or without `min-h-0`, which lets a flex child shrink below
+            its content — the panel grows to fit and `overflow-hidden` clips
+            the overflow with no way to reach it. */}
+        <main className="flex h-full min-h-0 w-full flex-col overflow-hidden pt-9">
+          {/* A scroller per section rather than one around all of them: see
+              `SettingsSection`. */}
+          <SettingsSection section={section}>
+            {section === "appearance" && <AppearanceTab />}
+            {section === "accessibility" && <AccessibilityTab />}
+            {section === "servers" && <ServerProfilesTab />}
+            {section === "account" && <AccountTab />}
+            {section === "voice" && <VoiceVideoTab />}
+            {section === "notifications" && <NotificationsTab />}
+            {section === "updates" && <UpdatesTab />}
+            {section === "about" && <AboutTab />}
+          </SettingsSection>
         </main>
       </SidebarProvider>
-
-      <Tabs defaultValue="profile" className="h-full min-h-0 gap-0">
-        <div className="flex flex-row gap-8 w-full min-h-0 h-full">
-          <div className="flex flex-col justify-center border-b bg-background/60">
-            <TabsList
-              variant="line"
-              className="min-h-full flex flex-col justify-start rounded-none gap-4"
-            >
-              {TABS.map(({ value, label, icon: Icon }) => (
-                <TabsTrigger
-                  key={value}
-                  value={value}
-                  className="flex-row gap-1 justify-start px-3 py-2 max-h-fit w-full text-xs"
-                >
-                  <Icon className="size-4" />
-                  {label}
-                </TabsTrigger>
-              ))}
-              <SignOutButton>
-                <Button
-                  variant="ghost"
-                  className="flex-row gap-1 w-full text-xs"
-                >
-                  <LogOut className="size-4" />
-                  Sign out
-                </Button>
-              </SignOutButton>
-            </TabsList>
-          </div>
-        </div>
-      </Tabs>
     </div>
   );
 }

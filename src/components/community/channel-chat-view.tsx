@@ -18,6 +18,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ChannelBanner, ChatBackground } from "@/components/chat-decoration";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 
@@ -82,6 +83,10 @@ export function ChannelChatView({
     void markRead({ channelId });
   };
 
+  // The channel's own read, for its decoration. Already cached by the sidebar
+  // in most cases, so this is usually free.
+  const channel = useQuery(api.channels.get, { channelId });
+
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
   const canManageMessages = hasPermission(
     myPermissions,
@@ -90,8 +95,14 @@ export function ChannelChatView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-accent/40 backdrop-blur-xl">
-        <div className="flex h-12 shrink-0 items-center gap-2 px-2">
+      <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-accent/40 backdrop-blur-xl">
+        {/* Behind everything in this column, and outside the scroller so it
+            stays put while the messages move. */}
+        <ChatBackground
+          url={channel?.backgroundUrl}
+          opacity={channel?.backgroundOpacity}
+        />
+        <div className="relative flex h-12 shrink-0 items-center gap-2 px-2">
           <Hash className="size-4 shrink-0 text-muted-foreground" />
           <p className="shrink-0 text-sm font-semibold">{name}</p>
           {topic && (
@@ -120,6 +131,12 @@ export function ChannelChatView({
             </Tooltip>
           </TooltipProvider>
         </div>
+
+        <ChannelBanner
+          imageUrl={channel?.bannerUrl}
+          title={channel?.bannerTitle}
+          description={channel?.bannerDescription}
+        />
 
         {/* What you missed, under the header where the header's own border
             would be — dismissible, because once you've read it the count is

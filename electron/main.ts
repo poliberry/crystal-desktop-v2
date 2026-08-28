@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -126,6 +126,40 @@ function appIconPath(): string | undefined {
 }
 
 /**
+ * Where the user's custom stylesheet lives.
+ *
+ * Under `userData`, which is per-channel (see `applyChannelIdentity`) — a
+ * stable release and a beta running side by side get their own, which is what
+ * you want when the point of the file is to be experimented with.
+ */
+function customCssPath(): string {
+  return path.join(app.getPath("userData"), "custom.css");
+}
+
+/**
+ * The app icon sized for a tray/menu-bar slot.
+ *
+ * `new Tray(path)` uses the image at its natural size, and our icons ship at
+ * 512px+ for the installer — which on macOS is drawn into the menu bar as-is,
+ * swallowing the bar. macOS wants roughly an 18pt image, so it's drawn at 2x
+ * and the buffer tagged as a Retina representation: the logical size stays
+ * 18pt while the pixels stay sharp on a Retina display. Windows and Linux
+ * both want 16px. Not a template image — templates are drawn from alpha
+ * alone, which would reduce a full-colour logo to a solid blob.
+ */
+function trayIconImage(): Electron.NativeImage {
+  const source = appIconPath();
+  if (!source) return nativeImage.createEmpty();
+  const image = nativeImage.createFromPath(source);
+  if (image.isEmpty()) return nativeImage.createEmpty();
+  if (process.platform === "darwin") {
+    const retina = image.resize({ width: 36, height: 36, quality: "best" });
+    return nativeImage.createFromBuffer(retina.toPNG(), { scaleFactor: 2 });
+  }
+  return image.resize({ width: 16, height: 16, quality: "best" });
+}
+
+/**
  * Both windows are frameless (no native titlebar/menu — the renderer draws
  * its own, see TopNav / SettingsShell's window-controls row) but NOT
  * transparent. `transparent: true` disables the OS drop shadow and (on
@@ -203,15 +237,28 @@ if (!isDev) {
   }
 }
 
+/**
+ * Route a `crystal://` URL to the renderer.
+ *
+ * Two kinds now. `crystal://auth/callback?...` completes an OAuth handshake;
+ * `crystal://invite/<code>` is an invitation, handed over by the web page an
+ * `https://…/invite/<code>` link lands on. The web link is the one that gets
+ * shared, because it means something in a browser, on a phone, and in every
+ * other chat app — this scheme is only ever the last hop.
+ */
 function handleCrystalUrl(url: string): void {
-  if (!url.startsWith("crystal://auth/callback")) return;
+  const isAuth = url.startsWith("crystal://auth/callback");
+  const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(url);
+  if (!isAuth && !invite) return;
+
   createOrFocusMainWindow();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("auth:callback", url);
-  } else {
-    // Window not yet ready — store and deliver on did-finish-load
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    // Window not yet ready — stored and delivered on did-finish-load.
     pendingProtocolUrl = url;
+    return;
   }
+  if (invite) mainWindow.webContents.send("invite:open", invite[1]);
+  else mainWindow.webContents.send("auth:callback", url);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +321,9 @@ function createWindow(): void {
     const pendingUrl = pendingProtocolUrl;
     pendingProtocolUrl = null;
     win.webContents.once("did-finish-load", () => {
-      win.webContents.send("auth:callback", pendingUrl);
+      const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(pendingUrl);
+      if (invite) win.webContents.send("invite:open", invite[1]);
+      else win.webContents.send("auth:callback", pendingUrl);
     });
   }
 
@@ -369,53 +418,6 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
   });
 
   pipWindow = win;
-}
-
-let settingsWindow: BrowserWindow | null = null;
-
-/** Opens the Settings window, or focuses it if it's already open (singleton). */
-function createOrFocusSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus();
-    return;
-  }
-
-  const win = new BrowserWindow({
-    width: 840,
-    height: 600,
-    minWidth: 720,
-    minHeight: 480,
-    autoHideMenuBar: true,
-    title: `${channel.productName} Settings`,
-    icon: appIconPath(),
-    ...FRAMELESS_WINDOW_OPTIONS,
-    webPreferences: {
-      preload: PRELOAD,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  if (isDev) {
-    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/settings`);
-  } else {
-    void win.loadURL("http://crystal.localhost/settings/");
-  }
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https:") || url.startsWith("http:")) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
-
-  win.on("closed", () => {
-    settingsWindow = null;
-  });
-
-  wireWindowStateEvents(win);
-  settingsWindow = win;
 }
 
 app.whenReady().then(async () => {
@@ -563,6 +565,41 @@ app.whenReady().then(async () => {
     }));
   });
 
+  /**
+   * Whether macOS will actually let us enumerate screens.
+   *
+   * Without Screen Recording permission `getSources` doesn't fail — it returns
+   * an empty array, which is indistinguishable from a machine with nothing to
+   * share, so the picker used to sit there reading "No shareable screens or
+   * windows found". This is what lets it say something true instead.
+   *
+   * Worth knowing that macOS ties the grant to the app's code signature, not
+   * just its bundle id: re-signing Crystal with a different identity silently
+   * invalidates an existing grant, and the stale entry can still appear ticked
+   * in System Settings while capture returns nothing.
+   *
+   * Only macOS gates this — everywhere else the answer is always yes.
+   */
+  ipcMain.handle("screen-share:permission", () => {
+    if (process.platform !== "darwin") return "granted";
+    return systemPreferences.getMediaAccessStatus("screen");
+  });
+
+  /** Open System Settings straight to Screen & System Audio Recording. macOS
+   * offers no API to *request* this permission, so pointing the user at the
+   * right pane is as far as an app can go. */
+  ipcMain.handle("screen-share:open-permission-settings", async () => {
+    if (process.platform !== "darwin") return false;
+    try {
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   ipcMain.handle("app:info", () => ({
     platform: process.platform,
     channel: channel.id,
@@ -575,8 +612,43 @@ app.whenReady().then(async () => {
     },
   }));
 
-  ipcMain.handle("settings:open", () => {
-    createOrFocusSettingsWindow();
+  /**
+   * The user's custom stylesheet, as a real file in the app's data directory.
+   *
+   * A file rather than a preference blob because that's what a stylesheet is:
+   * it can be opened in an editor, kept in version control, copied between
+   * machines, and — most usefully — fixed from outside the app when a rule in
+   * it has made the UI unusable. The renderer keeps a copy in `localStorage`
+   * so the web build has the same feature and so the first paint doesn't wait
+   * on IPC; this is the copy that survives a reinstall.
+   */
+  ipcMain.handle("custom-css:read", () => {
+    try {
+      return fs.readFileSync(customCssPath(), "utf8");
+    } catch {
+      // Not written yet, or unreadable. Either way the answer is "no styles".
+      return "";
+    }
+  });
+
+  ipcMain.handle("custom-css:write", (_event, css: string) => {
+    const file = customCssPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof css === "string" ? css : "", "utf8");
+    return file;
+  });
+
+  /** Where that file lives, so the UI can tell the user where to look. */
+  ipcMain.handle("custom-css:path", () => customCssPath());
+
+  ipcMain.handle("custom-css:reveal", async () => {
+    const file = customCssPath();
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "", "utf8");
+    }
+    shell.showItemInFolder(file);
+    return true;
   });
 
   ipcMain.handle("pip:open", (_event, options?: { width?: number; height?: number; title?: string }) => {
@@ -629,8 +701,11 @@ app.whenReady().then(async () => {
   // Tray icon: lets the app keep running (and keep watching for
   // notifications) after the window is closed, per the `close` handler in
   // createWindow() above.
-  const tray = new Tray(appIconPath() ?? nativeImage.createEmpty());
+  const tray = new Tray(trayIconImage());
   tray.setToolTip(channel.productName);
+  // Without this macOS swallows the first click of a double-click and delays
+  // the menu; the tray has no double-click behaviour to preserve.
+  if (process.platform === "darwin") tray.setIgnoreDoubleClickEvents(true);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Open ${channel.productName}`, click: () => createOrFocusMainWindow() },

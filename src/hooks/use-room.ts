@@ -6,6 +6,7 @@ import {
   RoomEvent,
   Track,
   createLocalScreenTracks,
+  type LocalTrack,
   type LocalVideoTrack,
   type Participant,
   type RemoteParticipant,
@@ -73,6 +74,56 @@ function toDeviceId(preferred: string): string {
   return preferred || "default";
 }
 
+/** `getUserMedia` rejects with this when an `exact` constraint names a device
+ * the browser can't produce — "Constraints could not be satisfied". Note it
+ * isn't an `Error` subclass in Chromium, so it has to be sniffed by name. */
+function isOverconstrained(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name;
+  return name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError";
+}
+
+/** Whether `deviceId` is a device the browser will actually hand us right
+ * now, so we know if it's safe to ask for it exactly. */
+async function deviceIsAvailable(kind: MediaDeviceKind, deviceId: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return false;
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  return devices.some((d) => d.kind === kind && d.deviceId === deviceId);
+}
+
+/**
+ * Point the room at the user's chosen input/output.
+ *
+ * `switchActiveDevice` constrains with `exact` by default, which is right for
+ * a device the user picked by hand but fatal for our `""` ("let the OS
+ * decide") default: `exact: "default"` only resolves in Chromium, so on the
+ * web every other browser answers the join with an `OverconstrainedError`. A
+ * saved id is just as brittle — Firefox and Safari mint fresh device ids per
+ * origin/session, so yesterday's choice names nothing today. So `exact` is
+ * only used for an id we can still see in `enumerateDevices`; anything else
+ * degrades to a hint the browser is free to ignore.
+ */
+async function applyDevice(room: Room, kind: MediaDeviceKind, preferred: string): Promise<void> {
+  const exact = preferred ? await deviceIsAvailable(kind, preferred) : false;
+  await room.switchActiveDevice(kind, toDeviceId(preferred), exact).catch(() => {});
+}
+
+/**
+ * Open the mic, and if the requested input turns out not to exist, open it on
+ * whatever the OS offers instead. Losing the exact device is a far better
+ * outcome than failing the join over it.
+ */
+async function enableMicrophone(room: Room, enabled: boolean): Promise<void> {
+  try {
+    await room.localParticipant.setMicrophoneEnabled(enabled);
+  } catch (err) {
+    if (!enabled || !isOverconstrained(err)) throw err;
+    // Passing `exact: false` replaces the stale constraint with a mere
+    // preference, which is what makes the retry able to succeed.
+    await room.switchActiveDevice("audioinput", "default", false).catch(() => {});
+    await room.localParticipant.setMicrophoneEnabled(enabled);
+  }
+}
+
 export function useRoom() {
   const [room] = useState(
     () =>
@@ -113,6 +164,10 @@ export function useRoom() {
   const screenSharingRef = useRef(false);
   const connectedRef = useRef(false);
   const screenShareSourceIdRef = useRef<string | null>(null);
+  /** The audio track a browser share came with, when the user ticked "share
+   * audio" in Chromium's picker. Held separately from the Electron
+   * system-audio pipeline, which captures independently of the video. */
+  const browserShareAudioRef = useRef<LocalTrack | null>(null);
 
   // Preferences are read inside stable callbacks and event handlers, where a
   // dependency on the live value would mean re-subscribing every change.
@@ -398,12 +453,8 @@ export function useRoom() {
         // Join with whatever devices and mute state the user has set globally
         // — the mute/deafen buttons in the user card apply outside a call
         // precisely so they decide how you enter the next one.
-        await room
-          .switchActiveDevice("audioinput", toDeviceId(inputDeviceId))
-          .catch(() => {});
-        await room
-          .switchActiveDevice("audiooutput", toDeviceId(outputDeviceId))
-          .catch(() => {});
+        await applyDevice(room, "audioinput", inputDeviceId);
+        await applyDevice(room, "audiooutput", outputDeviceId);
         applyDeafen();
         // Deafen is a purely local decision, so nothing about the published
         // tracks reveals it — participant attributes are how the rest of the
@@ -420,7 +471,7 @@ export function useRoom() {
         // it gives the track an AudioContext, and an audio processor without
         // one throws. Attaching after the track is published works instead —
         // that's what `syncNoiseFilter` does off `LocalTrackPublished`.
-        await room.localParticipant.setMicrophoneEnabled(!mutedRef.current);
+        await enableMicrophone(room, !mutedRef.current);
         syncLocalTracks();
       } catch (err) {
         setStatus("error");
@@ -445,12 +496,12 @@ export function useRoom() {
   // switching the speaker re-points every attached audio element.
   useEffect(() => {
     if (!connectedRef.current) return;
-    void room.switchActiveDevice("audioinput", toDeviceId(inputDeviceId)).catch(() => {});
+    void applyDevice(room, "audioinput", inputDeviceId);
   }, [room, inputDeviceId]);
 
   useEffect(() => {
     if (!connectedRef.current) return;
-    void room.switchActiveDevice("audiooutput", toDeviceId(outputDeviceId)).catch(() => {});
+    void applyDevice(room, "audiooutput", outputDeviceId);
   }, [room, outputDeviceId]);
 
   // Toggling this mid-call is instant: the filter stays attached and is
@@ -462,8 +513,7 @@ export function useRoom() {
 
   useEffect(() => {
     if (!connectedRef.current) return;
-    room.localParticipant
-      .setMicrophoneEnabled(!muted)
+    enableMicrophone(room, !muted)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(syncLocalTracks);
   }, [room, muted, syncLocalTracks]);
@@ -515,6 +565,16 @@ export function useRoom() {
     // share stops it too.
     if (isSystemAudioSharing()) {
       await stopSystemAudio(room);
+      setSystemAudioSharing(false);
+    }
+    // On the web the share's audio is a track from the same capture rather
+    // than anything the system-audio pipeline knows about, so it's torn down
+    // here instead.
+    const browserAudio = browserShareAudioRef.current;
+    if (browserAudio) {
+      await local.unpublishTrack(browserAudio).catch(() => {});
+      browserAudio.stop();
+      browserShareAudioRef.current = null;
       setSystemAudioSharing(false);
     }
     screenSharingRef.current = false;
@@ -625,6 +685,81 @@ export function useRoom() {
     },
     [publishScreenVideo, setScreenShareAudio, playCue]
   );
+
+  /**
+   * Start a share the way a browser does it: the user picks the screen, window
+   * or tab in Chromium's own dialog, and ticks "share audio" there if they
+   * want it.
+   *
+   * The desktop path can't be reused on the web and vice versa. On desktop we
+   * enumerate sources ourselves (for thumbnails and per-app audio) and hand
+   * the chosen id to the main process before capture; a browser has no such
+   * API — `getDisplayMedia` *is* the picker, and it's the only thing allowed
+   * to choose. Audio arrives on the same capture as a second track rather than
+   * through the system-audio pipeline, which is Electron-only.
+   *
+   * Returns false when the user dismissed the picker, so callers can tell
+   * "cancelled" from "failed" — a cancellation is not an error to report.
+   */
+  const startBrowserScreenShare = useCallback(async (): Promise<boolean> => {
+    const local = room.localParticipant;
+    try {
+      const tracks = await createLocalScreenTracks({
+        // Asks Chromium to offer the "share audio" checkbox. Whether it
+        // appears at all is the browser's call (tab audio: yes; whole screen:
+        // Windows and ChromeOS only), so the audio track is optional below.
+        audio: true,
+        resolution: resolveStreamResolution(qualityRef.current),
+      });
+
+      const videoTrack = tracks.find((t) => t.kind === Track.Kind.Video) as
+        | LocalVideoTrack
+        | undefined;
+      if (!videoTrack) throw new Error("The browser didn't return a screen to share.");
+
+      const existing = local.getTrackPublication(Track.Source.ScreenShare)?.track;
+      if (existing) {
+        await local.unpublishTrack(existing);
+        existing.stop();
+      }
+
+      await local.publishTrack(videoTrack, { source: Track.Source.ScreenShare });
+
+      const audioTrack = tracks.find((t) => t.kind === Track.Kind.Audio);
+      if (audioTrack) {
+        await local.publishTrack(audioTrack, { source: Track.Source.ScreenShareAudio });
+        browserShareAudioRef.current = audioTrack;
+        setSystemAudioSharing(true);
+        setScreenShareAudioState({ mode: "system" });
+      } else {
+        setScreenShareAudioState({ mode: "off" });
+      }
+
+      // Chromium's own "Stop sharing" bar ends the underlying track without
+      // going anywhere near our UI. Without this the app would keep believing
+      // it was sharing a stream that had already stopped.
+      videoTrack.mediaStreamTrack.addEventListener(
+        "ended",
+        () => {
+          void stopScreenShare();
+        },
+        { once: true }
+      );
+
+      // There's no source id to remember: only the browser knows what was
+      // picked, and re-picking means opening its dialog again.
+      screenShareSourceIdRef.current = null;
+      setScreenShareSourceId(null);
+      playCue("screenShareStart");
+      return true;
+    } catch (err) {
+      // Dismissing the browser picker rejects with NotAllowedError — the user
+      // changing their mind, not a failure worth surfacing.
+      if (err instanceof DOMException && err.name === "NotAllowedError") return false;
+      setError(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }, [room, playCue, stopScreenShare]);
 
   /** Swap which screen/window is being shared, keeping audio as-is. */
   const changeScreenShareSource = useCallback(
@@ -798,6 +933,7 @@ export function useRoom() {
     toggleMicrophone,
     toggleScreenShare,
     startScreenShare,
+    startBrowserScreenShare,
     changeScreenShareSource,
     setScreenShareAudio,
     playSoundboardClip,

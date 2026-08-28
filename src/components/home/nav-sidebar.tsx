@@ -6,9 +6,17 @@ import { SearchIcon, ShoppingBag, Sparkles, Users } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GroupAvatar } from "@/components/home/group-avatar";
+import { Nameplate } from "@/components/profile/nameplate";
 import { NewDmDialog } from "@/components/home/new-dm-dialog";
+import { SelectionPill } from "@/components/home/selection-pill";
 import { UserCard } from "@/components/home/user-card";
-import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
+import { decorationSrc } from "@/lib/avatar-decorations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -151,11 +159,15 @@ export function NavSidebar({
               // A conversation nobody has touched in a day is better described
               // by what the other person is up to than by a stale line of
               // chat. Their own words about it first, then whatever we can
-              // detect, then just whether they're reachable.
-              const presenceLine =
-                otherMember?.customStatus ||
-                activitySummary(activity) ||
-                (otherMember ? STATUS_LABEL[otherMember.status as FriendStatus] : null);
+              // detect, then just whether they're reachable. Someone offline
+              // gets no presence line at all — their status, like their
+              // activity, is a claim about right now, and being offline is
+              // already said by the dimmed row and the presence dot.
+              const presenceLine = isOffline
+                ? null
+                : otherMember?.customStatus ||
+                  activitySummary(activity) ||
+                  (otherMember ? STATUS_LABEL[otherMember.status as FriendStatus] : null);
               const lastMessageLine = conversation.lastMessageText
                 ? conversation.lastMessageMine
                   ? `Me: ${conversation.lastMessageText}`
@@ -171,43 +183,36 @@ export function NavSidebar({
                   key={conversation.id}
                   onClick={() => onSelectConversation(conversation.id)}
                   className={cn(
-                    "relative flex items-center gap-2.5 overflow-hidden rounded-none px-2 py-2 text-left hover:bg-accent/60",
+                    "group relative flex items-center gap-2.5 overflow-hidden rounded-none px-2 py-2 text-left hover:bg-accent/60",
                     active && "bg-accent",
                     isOffline && !active && "opacity-60 hover:opacity-90"
                   )}
                 >
+                  {/* Same left-edge pill as the community rail: a stub for
+                      unread, full row height for the DM you're reading. */}
+                  <SelectionPill
+                    state={active ? "active" : conversation.unread ? "unread" : "idle"}
+                  />
                   {/* Nameplate behind the row, faded out towards the name so
                       it decorates rather than competes with it. */}
-                  {otherMember?.nameplateUrl && (
-                    <img
-                      src={otherMember.nameplateUrl}
-                      alt=""
-                      className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-                      style={{
-                        WebkitMaskImage:
-                          "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                        maskImage:
-                          "linear-gradient(to left, black 0%, black 30%, transparent 100%)",
-                      }}
-                    />
-                  )}
+                  <Nameplate url={otherMember?.nameplateUrl} />
                   {isGroup ? (
-                    <GroupAvatar size="sm" imageUrl={conversation.imageUrl} members={conversation.members} />
+                    <GroupAvatar size="default" imageUrl={conversation.imageUrl} members={conversation.members} />
                   ) : (
-                    <Avatar size="sm" className="relative">
-                      <AvatarImage src={avatarUser?.imageUrl} alt={title} />
+                    <Avatar size="default" className="relative rounded-md">
+                      <AvatarImage src={avatarUser?.imageUrl} alt={title} className="rounded-md" />
                       <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
-                      {/* Unread wins the badge slot: which conversations want
-                          you is more urgent than who's online. */}
-                      {conversation.unread ? (
-                        <AvatarBadge className="bg-primary" />
-                      ) : (
-                        otherMember && (
-                          <PresenceDot
-                            status={otherMember.status as FriendStatus}
-                            className="absolute -right-0.5 -bottom-0.5 z-10"
-                          />
-                        )
+                      <AvatarDecoration src={decorationSrc(otherMember?.avatarDecoration)} />
+                      {/* The badge slot is presence's now — unread moved to
+                          the pill on the left edge, so the two no longer
+                          compete for the same corner of the avatar. */}
+                      {otherMember && (
+                        <PresenceDot
+                          status={otherMember.status as FriendStatus}
+                          isBirthday={otherMember.isBirthday}
+                          decorated={!!otherMember.avatarDecoration}
+                          className="absolute -right-0.5 -bottom-0.5 z-10"
+                        />
                       )}
                     </Avatar>
                   )}

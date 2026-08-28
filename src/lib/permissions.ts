@@ -51,6 +51,72 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   MENTION_EVERYONE: "Mention @everyone, @here and roles",
 } as const;
 
+export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
+  VIEW_CHANNELS: "Allows holders of this role to view channels in your community.",
+  SEND_MESSAGES: "Allows users to send messages in your community.",
+  MANAGE_MESSAGES: "Allows users to manage messages in your community, such as deleting or pinning them.",
+  CONNECT: "Allow users to join Voice and Lounge channels in your community.",
+  MANAGE_CHANNELS: "Allows users to manage channels in your community.",
+  MANAGE_ROLES: "Allows users to manage roles in your community.",
+  MANAGE_COMMUNITY:
+    "Allows users to change the community's name, icon, banner and other settings.",
+  KICK_MEMBERS:
+    "Allows users to remove members from the community. Kicked members can rejoin with a new invite.",
+  ADMINISTRATOR:
+    "Grants every permission and bypasses channel-specific permissions. This is a dangerous permission to give out.",
+  CREATE_INVITE: "Allows users to invite new people to this community.",
+  MANAGE_EMOJIS:
+    "Allows users to add and remove custom emojis and soundboard clips in this community.",
+  MUTE_MEMBERS: "Allows users to mute other members in voice channels for everyone.",
+  DEAFEN_MEMBERS: "Allows users to deafen other members in voice channels.",
+  MOVE_MEMBERS: "Allows users to disconnect other members from voice channels.",
+  BAN_MEMBERS:
+    "Allows users to permanently ban members from the community. Banned members can't rejoin.",
+  MODERATE_MEMBERS:
+    "Allows users to time members out, so they stay in the community but can't send messages or talk.",
+  MANAGE_NICKNAMES: "Allows users to change the nicknames of other members.",
+  MENTION_EVERYONE:
+    "Allows users to use @everyone and @here, and to mention any role in your community.",
+} as const;
+
+/**
+ * How the permission list is broken up in the role editor, in the order shown.
+ *
+ * A key belongs to exactly one group. Anything added to `PERMISSIONS` without
+ * a home here would silently vanish from the editor, so the tab collects
+ * whatever is left over into a trailing group rather than dropping it.
+ */
+export const PERMISSION_GROUPS: { title: string; keys: PermissionKey[] }[] = [
+  {
+    title: "General Server Permissions",
+    keys: [
+      "VIEW_CHANNELS",
+      "MANAGE_CHANNELS",
+      "MANAGE_ROLES",
+      "MANAGE_EMOJIS",
+      "MANAGE_COMMUNITY",
+      "CREATE_INVITE",
+      "MANAGE_NICKNAMES",
+    ],
+  },
+  {
+    title: "Membership Permissions",
+    keys: ["KICK_MEMBERS", "BAN_MEMBERS", "MODERATE_MEMBERS"],
+  },
+  {
+    title: "Text Channel Permissions",
+    keys: ["SEND_MESSAGES", "MANAGE_MESSAGES", "MENTION_EVERYONE"],
+  },
+  {
+    title: "Voice Channel Permissions",
+    keys: ["CONNECT", "MUTE_MEMBERS", "DEAFEN_MEMBERS", "MOVE_MEMBERS"],
+  },
+  {
+    title: "Advanced Permissions",
+    keys: ["ADMINISTRATOR"],
+  },
+];
+
 export function hasPermission(permissions: number, flag: number): boolean {
   return (permissions & PERMISSIONS.ADMINISTRATOR) !== 0 || (permissions & flag) !== 0;
 }

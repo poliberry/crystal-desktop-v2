@@ -34,10 +34,95 @@ const activityValidator = v.object({
    * interpolate the seek bar against one authoritative clock instead of the
    * broadcaster's — which may be minutes off. */
   positionUpdatedAt: v.optional(v.number()),
+  /** Up to two link buttons under the card, the same shape Discord's Rich
+   * Presence uses. Only custom activities set these today — nothing we detect
+   * has anywhere to point. */
+  buttons: v.optional(v.array(v.object({ label: v.string(), url: v.string() }))),
   /** Where this came from: "detectable" (process scan), "ipc" (a game
-   * connected to our Discord-compatible RPC socket), or "music". */
+   * connected to our Discord-compatible RPC socket), "music", or "custom"
+   * (written by the user themselves). */
   source: v.optional(v.string()),
 });
+
+/**
+ * The cosmetics a profile card is dressed in, shared verbatim by `users` and
+ * `serverProfiles`.
+ *
+ * Spread into both rather than written twice because a server profile is
+ * meant to be able to override every one of them — the profile editor picks a
+ * scope from a dropdown and then edits the same set of things either way, and
+ * a field that existed on only one side would be a section that silently did
+ * nothing for servers.
+ *
+ * The effect and the frame are stored as URL + storage id, the pairing the
+ * rest of this table uses for uploads: the id is what a later replacement
+ * deletes, and the URL is what every reader renders without another lookup.
+ * Unlike `avatarDecoration` there are no built-in presets to encode, so a
+ * plain URL is the whole value.
+ */
+const profileCosmetics = {
+  /** How the display name is drawn on a profile card — a key from
+   * src/lib/profile-cosmetics.ts. Absent means the plain one everybody had
+   * before the choice existed. */
+  displayNameStyle: v.optional(v.string()),
+  /** An image played *over* the whole profile card: sparkles, rain, a sweep of
+   * light. Purely decorative and never hit-tested, so it can cover the card's
+   * buttons without swallowing them. */
+  profileEffect: v.optional(v.string()),
+  profileEffectStorageId: v.optional(v.id("_storage")),
+  /** An image drawn around (or on) the whole card — the avatar decoration
+   * idea at card scale. See `profileFrameMode`. */
+  profileFrame: v.optional(v.string()),
+  profileFrameStorageId: v.optional(v.id("_storage")),
+  /**
+   * Which of the two things an uploaded frame is.
+   *
+   * `wrap` scales the image out past the card's edges, for a frame with its
+   * own border thickness drawn around the outside — the way an avatar
+   * decoration overhangs its avatar. `overlay` lays it over the card at
+   * exactly the card's size, for artwork meant to sit on top.
+   *
+   * A stored choice rather than something inferred from the file: both kinds
+   * are transparent PNGs of similar proportions, and nothing in the pixels
+   * says which one the artist meant. Absent means `wrap`.
+   */
+  profileFrameMode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+  /**
+   * Where the frame is drawn, chosen per upload.
+   *
+   * Frames are user artwork of unknown shape: some are a border drawn to a
+   * card's proportions, some are a tall piece meant to grow out of the card's
+   * top with most of the file transparent. Nothing in the pixels says which,
+   * and every rule we guessed was wrong for half of them — so the person who
+   * just picked the file places it, and these four numbers are what they place
+   * it with.
+   *
+   * `fit`     whether to stretch to the box or keep the artwork's own aspect.
+   * `anchor`  which edge of the card the artwork is pinned to.
+   * `scale`   width as a percentage of the card.
+   * `offsetY` pixels to shift it, negative being up.
+   */
+  profileFrameFit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+  profileFrameAnchor: v.optional(
+    v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+  ),
+  profileFrameScale: v.optional(v.number()),
+  profileFrameOffsetY: v.optional(v.number()),
+  /**
+   * A stylesheet the owner writes for their own profile card.
+   *
+   * Stored raw and scoped on the client at render time (see
+   * src/lib/scoped-css.ts), not scoped here: the scope selector contains an id
+   * that only exists on the client, and rewriting on write would mean every
+   * stored sheet had to be migrated the day that changes. Length is capped by
+   * the mutation, which is the part that has to be enforced.
+   *
+   * Unlike the app-wide custom CSS, this one is rendered in *other people's*
+   * clients — which is the whole reason it's confined to the card rather than
+   * injected as-is.
+   */
+  profileCss: v.optional(v.string()),
+};
 
 export default defineSchema({
   users: defineTable({
@@ -45,6 +130,7 @@ export default defineSchema({
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
+    dob: v.optional(v.string()),
     bio: v.optional(v.string()),
     avatarStorageId: v.optional(v.id("_storage")),
     /** Dominant colour of the avatar, sampled on the client (see
@@ -69,8 +155,50 @@ export default defineSchema({
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
     customStatus: v.optional(v.string()),
+    /** How the custom status is drawn beside this user's avatar on their
+     * profile card: said, or thought. Cosmetic and chosen by the person whose
+     * status it is, so it travels with the status rather than being a viewer's
+     * setting. Absent means "speech", which is what everyone had before the
+     * choice existed. */
+    statusBubble: v.optional(v.union(v.literal("speech"), v.literal("thought"))),
+    /** When the custom status stops being shown, for the "clear after…"
+     * presets. Absent means it stays until cleared by hand. Enforced on read
+     * as well as by the sweep, so an expired status is never shown even if
+     * nothing has run to delete it yet. */
+    customStatusExpiresAt: v.optional(v.number()),
+    /**
+     * A Rich Presence activity the user wrote themselves, shown ahead of
+     * anything detected.
+     *
+     * Lives on the profile rather than on `presence` because it outlives a
+     * session: detected activities are cleared when the last desktop client
+     * disconnects (see `reconcile`), whereas "I'm at work until 5" should
+     * survive closing the app and be visible from a phone.
+     */
+    customActivity: v.optional(activityValidator),
+    /** When `customActivity` stops being shown. Same rules as
+     * `customStatusExpiresAt`. */
+    customActivityExpiresAt: v.optional(v.number()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    /** The frame drawn around this user's avatar: a `builtin:<key>` preset or
+     * the storage URL of a picture they uploaded. One field rather than a key
+     * and a URL, so the queries that carry it to every avatar on screen carry
+     * one thing — see src/lib/avatar-decorations.ts, which draws it. */
+    avatarDecoration: v.optional(v.string()),
+    avatarDecorationStorageId: v.optional(v.id("_storage")),
+    ...profileCosmetics,
+    /** The decoration generated as a birthday present, and when it stops being
+     * worn. Kept separate from `avatarDecoration` so the user's own choice is
+     * still there underneath and comes back by itself the next day.
+     *
+     * `birthdayUntil` is local midnight as reported by the user's own client
+     * (see `claimBirthday`), because the server has no timezone and a birthday
+     * is a local date. It's also what tells everyone *else* it's this person's
+     * birthday — the cake in place of a presence dot, the prompt above a
+     * friend's composer. See convex/lib/birthday.ts. */
+    birthdayDecoration: v.optional(v.string()),
+    birthdayUntil: v.optional(v.number()),
     /** Clip played to everyone else when this user joins a call. Either a
      * `builtin:<name>` id or a `communitySounds` document id — see
      * src/lib/soundboard.ts. A per-server override lives on
@@ -81,14 +209,58 @@ export default defineSchema({
     .index("by_username", ["username"]),
 
   /**
+   * What each badge looks like and means — the catalogue the ids in
+   * `userBadges` point at.
+   *
+   * Data rather than code, so a new badge is a row instead of a release: the
+   * definition used to live in the client bundle, which meant granting one to
+   * somebody on an older build showed them nothing at all.
+   *
+   * A badge is drawn as *either* an icon or a picture. `icon` is the export
+   * name of a react-icons glyph ("BsFillPersonBadgeFill"), which the client
+   * resolves at render time — see src/lib/react-icons.ts for which packs it
+   * knows how to reach and what a name has to look like. `imageUrl` is for the
+   * ones a glyph can't be: a logo, an event badge, anything with more than one
+   * colour in it. Set both and the picture wins.
+   */
+  badges: defineTable({
+    /** Stable key. What `userBadges.badgeId` holds, and what a grant names. */
+    badgeId: v.string(),
+    label: v.string(),
+    /** Shown on hover — the reason someone has it. */
+    description: v.string(),
+    /** A react-icons export name, e.g. "BsBugFill". */
+    icon: v.optional(v.string()),
+    /** Or a picture, for badges a single-colour glyph can't carry. */
+    imageUrl: v.optional(v.string()),
+    /** Tailwind classes for the glyph's colour. Each badge gets its own so a
+     * row of them reads as distinct things rather than one thing repeated.
+     * Ignored for `imageUrl` badges, which bring their own colours. */
+    className: v.optional(v.string()),
+    /**
+     * Badges that are tiers of one thing — Bug Hunter bronze through diamond —
+     * share a `group`, and only the highest `tier` a user holds is drawn. Five
+     * identical bug glyphs say less than one diamond one.
+     *
+     * A group rather than a level field on `userBadges`, because a promotion
+     * stays "revoke tier N, grant tier N+1" with no new machinery, and the
+     * grant history keeps the date each tier was reached.
+     */
+    group: v.optional(v.string()),
+    tier: v.optional(v.number()),
+    /** Where it sits in a row of badges. Ties fall back to when it was
+     * granted, so an unordered catalogue still renders consistently. */
+    position: v.optional(v.number()),
+  }).index("by_badge_id", ["badgeId"]),
+
+  /**
    * Badges earned by a user — "Early Supporter" and whatever comes after.
    *
    * A row per (user, badge) rather than a field on `users`, so granting one
    * doesn't rewrite the user document and `grantedAt` is recorded per badge
-   * ("Early Supporter since March"). `badgeId` is a key into the catalogue in
-   * src/lib/badges.ts rather than a foreign key: what a badge *means* is
-   * presentation, and an id nobody recognises is skipped rather than breaking
-   * the card.
+   * ("Early Supporter since March"). `badgeId` names a row in `badges` above;
+   * an id with no definition is skipped on read rather than breaking the card,
+   * so deleting a definition is safe.
    */
   userBadges: defineTable({
     userId: v.id("users"),
@@ -209,6 +381,12 @@ export default defineSchema({
      * first two members' avatars overlapping when unset. */
     imageUrl: v.optional(v.string()),
     iconStorageId: v.optional(v.id("_storage")),
+    /** A picture behind this conversation's messages. Set by any member —
+     * a DM has no roles, and two people sharing a room can share its
+     * wallpaper. Same fields as `channels`, and drawn by the same component. */
+    backgroundUrl: v.optional(v.string()),
+    backgroundStorageId: v.optional(v.id("_storage")),
+    backgroundOpacity: v.optional(v.number()),
   }).index("by_dm_key", ["dmKey"]),
 
   conversationMembers: defineTable({
@@ -227,6 +405,11 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
+    /** This message was sent from the "wish them a happy birthday" prompt.
+     * Recorded on the message rather than announced some other way because
+     * both people need to see the cakes fall and both are already subscribed
+     * to this conversation — the message arriving *is* the signal. */
+    birthdayWish: v.optional(v.boolean()),
   })
     .index("by_conversation", ["conversationId"])
     // Scoped search — see convex/search.ts. The filter field is what lets a
@@ -411,6 +594,30 @@ export default defineSchema({
      * "newest message" query per channel every time anyone says anything
      * anywhere. */
     lastMessageAt: v.optional(v.number()),
+    /**
+     * A picture behind the message list.
+     *
+     * A property of the channel rather than of the viewer: it's set by whoever
+     * can manage the channel and everybody in it sees the same room. `opacity`
+     * is stored alongside because the only way to make an arbitrary photograph
+     * work behind text is to be able to turn it down.
+     */
+    backgroundUrl: v.optional(v.string()),
+    backgroundStorageId: v.optional(v.id("_storage")),
+    backgroundOpacity: v.optional(v.number()),
+    /**
+     * The banner strip under the channel header: a faded picture with a title
+     * and a line of description over it.
+     *
+     * Its own title rather than reusing `name`, and its own text rather than
+     * reusing `topic`, because a banner is an announcement — "Read the rules
+     * before posting" — and a topic is a label. Either may be absent; a banner
+     * with only a picture is a picture.
+     */
+    bannerUrl: v.optional(v.string()),
+    bannerStorageId: v.optional(v.id("_storage")),
+    bannerTitle: v.optional(v.string()),
+    bannerDescription: v.optional(v.string()),
   })
     .index("by_community", ["communityId"])
     .index("by_community_position", ["communityId", "position"]),
@@ -564,11 +771,121 @@ export default defineSchema({
     profileBg: v.optional(v.string()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    ...profileCosmetics,
     /** Overrides `users.joinSoundId` in this community. */
     joinSoundId: v.optional(v.string()),
   })
     .index("by_user_community", ["userId", "communityId"])
     .index("by_community", ["communityId"]),
+
+  /**
+   * The cards on someone's profile Board — a favourite game, an about-me, what
+   * they're playing this month.
+   *
+   * A row per widget rather than an array on the profile, because a widget
+   * carries an uploaded image and its own fields: putting them in one document
+   * would mean rewriting every widget to reorder two of them, and would put a
+   * hard ceiling on the board at Convex's document size.
+   *
+   * `communityId` is what makes a board per-server. Absent is the account's
+   * own board, which is what a DM or a friends-list profile shows; set means
+   * "this is the board people in that community see instead". The index is on
+   * the pair so both reads are one lookup, with the account board stored under
+   * an undefined community rather than in a second table.
+   */
+  profileWidgets: defineTable({
+    userId: v.id("users"),
+    communityId: v.optional(v.id("communities")),
+    /** Sort key within the board. Sparse and rewritten wholesale on reorder —
+     * a board is a handful of cards, so there's nothing to be gained from
+     * fractional indices here. */
+    position: v.number(),
+    title: v.optional(v.string()),
+    subtitle: v.optional(v.string()),
+    description: v.optional(v.string()),
+    /** Cover image across the top of the card. */
+    imageUrl: v.optional(v.string()),
+    imageStorageId: v.optional(v.id("_storage")),
+    /**
+     * Label/value rows under the description.
+     *
+     * A text field's `value` is what it says; an image field's is the storage
+     * URL of a picture, with `storageId` alongside so replacing or deleting the
+     * widget can clean the file up. One array of a tagged union rather than two
+     * arrays, so the order the user arranged them in survives.
+     */
+    fields: v.optional(
+      v.array(
+        v.object({
+          id: v.string(),
+          kind: v.union(v.literal("text"), v.literal("image")),
+          label: v.string(),
+          value: v.string(),
+          storageId: v.optional(v.id("_storage")),
+        })
+      )
+    ),
+    /** Link buttons along the bottom. Capped by the mutation, not here. */
+    buttons: v.optional(
+      v.array(v.object({ id: v.string(), label: v.string(), url: v.string() }))
+    ),
+    /** Hex tint for the card's border and header wash. */
+    accent: v.optional(v.string()),
+  })
+    .index("by_user_community", ["userId", "communityId"])
+    .index("by_user", ["userId"]),
+
+  /**
+   * The cards on a server's Overview — its front page.
+   *
+   * Typed, unlike `profileWidgets`, which is deliberately shapeless. The
+   * difference is who resolves the contents: a profile widget is words and
+   * pictures its owner typed, so one free-form shape covers everything, whereas
+   * "recent messages in #general" and "these five channels" have to be looked
+   * up on the server at read time. A `kind` is what tells the query which
+   * lookup to do.
+   *
+   * The per-kind configuration is a union rather than a bag of optional
+   * fields, so a widget cannot be half a channel list and half a banner.
+   */
+  communityWidgets: defineTable({
+    communityId: v.id("communities"),
+    position: v.number(),
+    /** Shown above the card. Optional — a banner is usually its own title. */
+    title: v.optional(v.string()),
+    /** How much of the row it takes. The overview is a two-column grid. */
+    width: v.optional(v.union(v.literal("half"), v.literal("full"))),
+    config: v.union(
+      /** A short list of channels worth reading first. */
+      v.object({
+        kind: v.literal("channels"),
+        channelIds: v.array(v.id("channels")),
+        description: v.optional(v.string()),
+      }),
+      /** The last few messages from one channel, as a preview. */
+      v.object({
+        kind: v.literal("recentMessages"),
+        channelId: v.id("channels"),
+        limit: v.optional(v.number()),
+      }),
+      /** Free text. The one escape hatch, so a server can say anything the
+       * other kinds don't cover without waiting for a release. */
+      v.object({
+        kind: v.literal("markdown"),
+        body: v.string(),
+      }),
+      /** A picture with words over it. */
+      v.object({
+        kind: v.literal("banner"),
+        imageUrl: v.optional(v.string()),
+        imageStorageId: v.optional(v.id("_storage")),
+        heading: v.optional(v.string()),
+        subheading: v.optional(v.string()),
+        linkUrl: v.optional(v.string()),
+        linkLabel: v.optional(v.string()),
+      }),
+    ),
+  }).index("by_community", ["communityId"]),
 
   typing: defineTable({
     userId: v.id("users"),

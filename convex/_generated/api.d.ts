@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as badges from "../badges.js";
 import type * as callTokens from "../callTokens.js";
 import type * as calls from "../calls.js";
 import type * as channelCalls from "../channelCalls.js";
@@ -16,17 +17,20 @@ import type * as channelMessages from "../channelMessages.js";
 import type * as channels from "../channels.js";
 import type * as communities from "../communities.js";
 import type * as communityEmojis from "../communityEmojis.js";
+import type * as communityWidgets from "../communityWidgets.js";
 import type * as conversations from "../conversations.js";
 import type * as crons from "../crons.js";
 import type * as friends from "../friends.js";
 import type * as http from "../http.js";
 import type * as lib_activities from "../lib/activities.js";
+import type * as lib_birthday from "../lib/birthday.js";
 import type * as lib_callReconciliation from "../lib/callReconciliation.js";
 import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_liveKitAdmin from "../lib/liveKitAdmin.js";
 import type * as lib_liveKitWebhook from "../lib/liveKitWebhook.js";
 import type * as lib_mentions from "../lib/mentions.js";
 import type * as lib_notificationPolicy from "../lib/notificationPolicy.js";
+import type * as lib_profileCosmetics from "../lib/profileCosmetics.js";
 import type * as lib_richEmbeds from "../lib/richEmbeds.js";
 import type * as linkPreviews from "../linkPreviews.js";
 import type * as messages from "../messages.js";
@@ -34,6 +38,7 @@ import type * as notificationSettings from "../notificationSettings.js";
 import type * as notifications from "../notifications.js";
 import type * as permissions from "../permissions.js";
 import type * as presence from "../presence.js";
+import type * as profileWidgets from "../profileWidgets.js";
 import type * as push from "../push.js";
 import type * as roles from "../roles.js";
 import type * as search from "../search.js";
@@ -50,6 +55,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  badges: typeof badges;
   callTokens: typeof callTokens;
   calls: typeof calls;
   channelCalls: typeof channelCalls;
@@ -58,17 +64,20 @@ declare const fullApi: ApiFromModules<{
   channels: typeof channels;
   communities: typeof communities;
   communityEmojis: typeof communityEmojis;
+  communityWidgets: typeof communityWidgets;
   conversations: typeof conversations;
   crons: typeof crons;
   friends: typeof friends;
   http: typeof http;
   "lib/activities": typeof lib_activities;
+  "lib/birthday": typeof lib_birthday;
   "lib/callReconciliation": typeof lib_callReconciliation;
   "lib/gameHistory": typeof lib_gameHistory;
   "lib/liveKitAdmin": typeof lib_liveKitAdmin;
   "lib/liveKitWebhook": typeof lib_liveKitWebhook;
   "lib/mentions": typeof lib_mentions;
   "lib/notificationPolicy": typeof lib_notificationPolicy;
+  "lib/profileCosmetics": typeof lib_profileCosmetics;
   "lib/richEmbeds": typeof lib_richEmbeds;
   linkPreviews: typeof linkPreviews;
   messages: typeof messages;
@@ -76,6 +85,7 @@ declare const fullApi: ApiFromModules<{
   notifications: typeof notifications;
   permissions: typeof permissions;
   presence: typeof presence;
+  profileWidgets: typeof profileWidgets;
   push: typeof push;
   roles: typeof roles;
   search: typeof search;

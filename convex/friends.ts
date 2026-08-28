@@ -4,7 +4,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities, visibleCustomStatus } from "./lib/activities";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 
 async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
   return ctx.db
@@ -14,6 +15,7 @@ async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
 }
 
 function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
+  const status = presence?.effective ?? "offline";
   return {
     id: user._id,
     name: user.name,
@@ -21,10 +23,12 @@ function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
     imageUrl: user.imageUrl,
     /** Cosmetics and activity, so a friend row can say what they're up to
      * rather than only whether they're reachable. */
-    customStatus: user.customStatus,
+    customStatus: visibleCustomStatus(user, status),
     nameplateUrl: user.nameplateUrl,
-    status: presence?.effective ?? "offline",
-    activities: activitiesOf(presence),
+    avatarDecoration: effectiveDecoration(user),
+    isBirthday: isBirthdayNow(user),
+    status,
+    activities: visibleActivities(presence, user),
   };
 }
 

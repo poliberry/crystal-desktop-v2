@@ -5,16 +5,25 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
+import { Nameplate } from "@/components/profile/nameplate";
 import {
   ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
 import type { RichPresenceActivity } from "@/types/desktop-api";
-import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
+import { PresenceBadge } from "@/components/presence-dot";
+import { decorationSrc } from "@/lib/avatar-decorations";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { STATUS_DOT_CLASS, type FriendStatus } from "@/lib/presence";
+import { type FriendStatus } from "@/lib/presence";
 
 interface DmMemberListProps {
   conversationId: Id<"conversations">;
@@ -28,6 +37,8 @@ interface DmMember {
   bio?: string;
   customStatus?: string;
   nameplateUrl?: string;
+  avatarDecoration?: string;
+  isBirthday?: boolean;
   bannerUrl?: string;
   borderGradientStart?: string;
   borderGradientEnd?: string;
@@ -72,7 +83,12 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 <Avatar size="sm">
                   <AvatarImage src={member.imageUrl} alt={member.name} />
                   <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                  <AvatarBadge className={STATUS_DOT_CLASS[member.status]} />
+                  <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
+                  <PresenceBadge
+                    status={member.status}
+                    isBirthday={member.isBirthday}
+                    decorated={!!member.avatarDecoration}
+                  />
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{member.name}</p>
@@ -86,18 +102,12 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                       </p>
                     )}
                 </div>
-                {member.nameplateUrl && (
-                  <img
-                    src={member.nameplateUrl}
-                    alt=""
-                    className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10"
-                  />
-                )}
+                <Nameplate url={member.nameplateUrl} className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10" />
               </button>
             </PopoverTrigger>
-            <PopoverContent side="left" align="start" className="w-72 p-0">
-              <MemberProfileCard member={member} />
-            </PopoverContent>
+            <ProfilePopoverContent userId={member.userId} side="left">
+              <MemberProfileCard member={member} reserveFrameRoom={false} />
+            </ProfilePopoverContent>
           </Popover>
         ))}
       </div>

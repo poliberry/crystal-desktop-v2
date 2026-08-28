@@ -15,10 +15,11 @@ import {
 import { useCall } from "@/components/call/call-provider";
 import { StreamPreviewCard } from "@/components/call/stream-preview-card";
 import { UserProfileContent } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 
@@ -191,7 +192,11 @@ function ParticipantRow({
       ) : (
         trigger
       )}
-      <PopoverContent side="right" align="start" className="w-72 p-0">
+      <ProfilePopoverContent
+        userId={participant.id}
+        communityId={communityId}
+        side="right"
+      >
         <UserProfileContent
           userId={participant.id}
           communityId={communityId}
@@ -199,7 +204,7 @@ function ParticipantRow({
           username={participant.username}
           imageUrl={participant.imageUrl}
         />
-      </PopoverContent>
+      </ProfilePopoverContent>
     </Popover>
   );
 }

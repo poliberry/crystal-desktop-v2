@@ -1,7 +1,28 @@
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { activitiesOf } from "./lib/activities";
+import {
+  unexpiredCustomStatus,
+  visibleActivities,
+} from "./lib/activities";
+import {
+  effectiveDecoration,
+  generateBirthdayDecoration,
+  isBirthdayNow,
+  isPlausibleBirthdayClaim,
+  MAX_BIRTHDAY_WINDOW_MS,
+} from "./lib/birthday";
+import { badgeByIdMap, badgeView } from "./badges";
+import {
+  dropProfileAsset,
+  FRAME_MODES,
+  resolveProfileAsset,
+} from "./lib/profileCosmetics";
+import {
+  MAX_DECORATION_BYTES,
+  MAX_PROFILE_ASSET_BYTES,
+  requireWithinUploadLimit,
+} from "./uploadLimits";
 import {
   internalMutation,
   internalQuery,
@@ -157,21 +178,76 @@ export const generateUploadUrl = mutation({
   },
 });
 
+/**
+ * Set (or clear) the custom status, with an optional deadline.
+ *
+ * Separate from `updateProfileExtended` because of the deadline: that mutation
+ * patches whichever cosmetic fields it was given, and "clear after 2 hours"
+ * has to write two fields together or not at all. An empty `text` clears both.
+ *
+ * The text itself is never deleted just because the user goes offline — that's
+ * a display rule applied on read (see `visibleCustomStatus`), so "Back Monday"
+ * is still there when they come back.
+ */
+export const setCustomStatus = mutation({
+  args: {
+    text: v.string(),
+    /** How long it should last. Omitted means "until I clear it". */
+    durationMs: v.optional(v.number()),
+  },
+  handler: async (ctx, { text, durationMs }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = text.trim().slice(0, 128);
+    await ctx.db.patch(me._id, {
+      customStatus: trimmed || undefined,
+      customStatusExpiresAt: trimmed && durationMs ? Date.now() + durationMs : undefined,
+    });
+  },
+});
+
 export const updateProfileExtended = mutation({
   args: {
     customStatus: v.optional(v.string()),
     borderGradientStart: v.optional(v.string()),
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
+    /** `YYYY-MM-DD`, or empty to clear it. */
+    dob: v.optional(v.string()),
+    /** How the custom status is drawn on the profile card. */
+    statusBubble: v.optional(v.union(v.literal("speech"), v.literal("thought"))),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const patch: Record<string, string | undefined> = {};
-    if (args.customStatus !== undefined)
+    const patch: Record<string, string | number | undefined> = {};
+    if (args.dob !== undefined) {
+      const dob = args.dob.trim();
+      // Anything that isn't `YYYY-MM-DD` is rejected rather than stored and
+      // silently ignored later: the birthday check splits on the dashes, so a
+      // malformed value would just never match and look like a bug in the
+      // greeting instead of in the field that set it.
+      if (dob && !/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+        throw new Error("Date of birth must be in YYYY-MM-DD form.");
+      }
+      patch.dob = dob || undefined;
+      // A birthday already claimed was claimed about the *old* date, so it
+      // goes with it: the decoration and the cake come back within a moment
+      // (the client re-claims — see BirthdayProvider) if the new date is still
+      // today, and stop immediately if it isn't.
+      patch.birthdayUntil = undefined;
+      patch.birthdayDecoration = undefined;
+    }
+    if (args.customStatus !== undefined) {
       patch.customStatus = args.customStatus.trim().slice(0, 128) || undefined;
+      // A status written without a deadline replaces one that had one, rather
+      // than inheriting its expiry and vanishing at someone else's schedule.
+      patch.customStatusExpiresAt = undefined;
+    }
     if (args.borderGradientStart !== undefined) patch.borderGradientStart = args.borderGradientStart || undefined;
     if (args.borderGradientEnd !== undefined) patch.borderGradientEnd = args.borderGradientEnd || undefined;
     if (args.profileBg !== undefined) patch.profileBg = args.profileBg || undefined;
+    // Stored even when it is the default, so "speech" can be chosen back after
+    // "thought" — the two are a pair of choices rather than a flag.
+    if (args.statusBubble !== undefined) patch.statusBubble = args.statusBubble;
     if (Object.keys(patch).length > 0) await ctx.db.patch(me._id, patch);
   },
 });
@@ -229,10 +305,24 @@ export const removeBanner = mutation({
   },
 });
 
+/**
+ * The strip behind this user's name in chat — a picture, or a short video.
+ *
+ * Size-checked now that a nameplate can be a video: an image of a few hundred
+ * kilobytes needed no ceiling, and an MP4 very much does. The renderer decides
+ * which of the two a file is from its extension — see
+ * src/components/profile/nameplate.tsx.
+ */
 export const setNameplate = mutation({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
+    await requireWithinUploadLimit(
+      ctx,
+      storageId,
+      MAX_PROFILE_ASSET_BYTES,
+      "Nameplates"
+    );
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Nameplate upload failed.");
     const previous = me.nameplateStorageId;
@@ -249,6 +339,266 @@ export const removeNameplate = mutation({
     const previous = me.nameplateStorageId;
     await ctx.db.patch(me._id, { nameplateUrl: undefined, nameplateStorageId: undefined });
     if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+// --- Avatar decorations ----------------------------------------------------
+
+/** The shape of a preset value, not the catalogue of them: which keys exist is
+ * presentation and lives in src/lib/avatar-decorations.ts, where an
+ * unrecognised one already renders as no decoration at all. Checked so the
+ * field can only ever hold a preset or a storage URL this file wrote. */
+const PRESET_RE = /^builtin:[a-z0-9-]{1,32}$/;
+
+/**
+ * Wear one of the built-in decorations, or none.
+ *
+ * Drops any custom upload it replaces: nothing else references it, so keeping
+ * it would be a billable file no code path can ever reach again.
+ */
+export const setAvatarDecoration = mutation({
+  args: { value: v.string() },
+  handler: async (ctx, { value }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = value.trim();
+    if (trimmed && !PRESET_RE.test(trimmed)) {
+      throw new Error("Not a built-in decoration.");
+    }
+    const previous = me.avatarDecorationStorageId;
+    await ctx.db.patch(me._id, {
+      avatarDecoration: trimmed || undefined,
+      avatarDecorationStorageId: undefined,
+    });
+    if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+/** Wear a decoration of your own. Unlike an avatar this isn't cropped: the
+ * frame is drawn at a fixed size around the picture, so what the file has to
+ * be is square and transparent, which cropping can't produce. */
+export const setCustomAvatarDecoration = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireWithinUploadLimit(ctx, storageId, MAX_DECORATION_BYTES, "Avatar decorations");
+    const url = await ctx.storage.getUrl(storageId);
+    if (!url) throw new Error("Decoration upload failed.");
+    const previous = me.avatarDecorationStorageId;
+    await ctx.db.patch(me._id, {
+      avatarDecoration: url,
+      avatarDecorationStorageId: storageId,
+    });
+    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    return url;
+  },
+});
+
+export const removeAvatarDecoration = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.avatarDecorationStorageId;
+    await ctx.db.patch(me._id, {
+      avatarDecoration: undefined,
+      avatarDecorationStorageId: undefined,
+    });
+    if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+// --- Card cosmetics: display name style, effect, frame ---------------------
+
+/**
+ * How the display name is drawn — see src/lib/profile-cosmetics.ts.
+ *
+ * The key isn't validated against a catalogue here, only bounded, for the same
+ * reason `setAvatarDecoration` doesn't own the list of presets: which styles
+ * exist is presentation, and the renderer already falls back to the plain name
+ * for a key it doesn't recognise. Validating here would mean a style couldn't
+ * ship without a backend deploy.
+ */
+export const setDisplayNameStyle = mutation({
+  args: { style: v.string() },
+  handler: async (ctx, { style }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = style.trim().slice(0, 32);
+    await ctx.db.patch(me._id, {
+      // "default" is the absence of a style, not a style — stored as nothing so
+      // a card doesn't carry a field that means what its absence already does.
+      displayNameStyle: !trimmed || trimmed === "default" ? undefined : trimmed,
+    });
+  },
+});
+
+export const setProfileEffect = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile effects");
+    const previous = me.profileEffectStorageId;
+    await ctx.db.patch(me._id, {
+      profileEffect: url,
+      profileEffectStorageId: storageId,
+    });
+    await dropProfileAsset(ctx, previous, storageId);
+    return url;
+  },
+});
+
+export const removeProfileEffect = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.profileEffectStorageId;
+    await ctx.db.patch(me._id, {
+      profileEffect: undefined,
+      profileEffectStorageId: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
+/** A frame of your own, plus how it's meant to be drawn. The mode travels with
+ * the upload because the person who just picked the file is the only one who
+ * knows which kind it is — nothing in the pixels says. */
+export const setProfileFrame = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    mode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+  },
+  handler: async (ctx, { storageId, mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile frames");
+    const previous = me.profileFrameStorageId;
+    await ctx.db.patch(me._id, {
+      profileFrame: url,
+      profileFrameStorageId: storageId,
+      profileFrameMode: mode ?? me.profileFrameMode ?? "wrap",
+    });
+    await dropProfileAsset(ctx, previous, storageId);
+    return url;
+  },
+});
+
+/** Switch an already-uploaded frame between wrapping the card and lying on
+ * top of it, without re-uploading. */
+export const setProfileFrameMode = mutation({
+  args: { mode: v.union(v.literal("wrap"), v.literal("overlay")) },
+  handler: async (ctx, { mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!FRAME_MODES.includes(mode)) throw new Error("Unknown frame mode.");
+    await ctx.db.patch(me._id, { profileFrameMode: mode });
+  },
+});
+
+/**
+ * Where the frame sits.
+ *
+ * Placed by the person who uploaded it rather than inferred from the file —
+ * see the note on `profileFrameFit` in the schema. Clamped rather than
+ * rejected: the sliders can only produce sane numbers, and a call from
+ * anywhere else shouldn't be able to park somebody's artwork three screens
+ * away from their card.
+ */
+export const setProfileFrameLayout = mutation({
+  args: {
+    fit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+    anchor: v.optional(
+      v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+    ),
+    scale: v.optional(v.number()),
+    offsetY: v.optional(v.number()),
+  },
+  handler: async (ctx, { fit, anchor, scale, offsetY }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await ctx.db.patch(me._id, {
+      ...(fit !== undefined ? { profileFrameFit: fit } : {}),
+      ...(anchor !== undefined ? { profileFrameAnchor: anchor } : {}),
+      ...(scale !== undefined
+        ? { profileFrameScale: Math.min(220, Math.max(60, scale)) }
+        : {}),
+      ...(offsetY !== undefined
+        ? { profileFrameOffsetY: Math.min(240, Math.max(-240, offsetY)) }
+        : {}),
+    });
+  },
+});
+
+/** How long a profile stylesheet may be. Mirrored in
+ * src/lib/scoped-css.ts, which also truncates on read — this is the copy that
+ * binds. */
+const MAX_PROFILE_CSS_LENGTH = 8_000;
+
+/**
+ * Your own stylesheet for your own profile card.
+ *
+ * Stored as written and confined to the card by the client that renders it —
+ * see `scopeCss`. Nothing is validated beyond the length: CSS that doesn't
+ * parse simply doesn't apply, and the scoping (not any check here) is what
+ * stops a rule reaching past the card it belongs to.
+ */
+export const setProfileCss = mutation({
+  args: { css: v.string() },
+  handler: async (ctx, { css }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = css.trim();
+    if (trimmed.length > MAX_PROFILE_CSS_LENGTH) {
+      throw new Error(
+        `Profile CSS must be under ${MAX_PROFILE_CSS_LENGTH} characters.`
+      );
+    }
+    await ctx.db.patch(me._id, { profileCss: trimmed || undefined });
+  },
+});
+
+export const removeProfileFrame = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.profileFrameStorageId;
+    await ctx.db.patch(me._id, {
+      profileFrame: undefined,
+      profileFrameStorageId: undefined,
+      profileFrameMode: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
+/**
+ * "It's my birthday, and my day ends at `expiresAt`."
+ *
+ * Called by the client on the day (see BirthdayProvider), because only it
+ * knows what timezone its user is in — the server has no idea when local
+ * midnight is, and a birthday is a local date. What it does know is roughly
+ * what date it is, so a claim more than a day away from the stored `dob` is
+ * refused, and the window is capped: the client picks the hour its user's day
+ * ends, not whether they get a birthday at all.
+ *
+ * Also mints the decoration, once. Re-running while the window is open is a
+ * no-op rather than a re-roll, so the frame doesn't change colour every time
+ * the app is reopened.
+ */
+export const claimBirthday = mutation({
+  args: { expiresAt: v.number() },
+  handler: async (ctx, { expiresAt }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+    if (!me.dob) return null;
+    if (!isPlausibleBirthdayClaim(me.dob, now)) return null;
+    if (expiresAt <= now || expiresAt > now + MAX_BIRTHDAY_WINDOW_MS) return null;
+
+    const alreadyRunning = me.birthdayUntil !== undefined && me.birthdayUntil > now;
+    if (alreadyRunning && me.birthdayDecoration) return me.birthdayDecoration;
+
+    const decoration = alreadyRunning
+      ? me.birthdayDecoration ?? generateBirthdayDecoration(me, now)
+      : generateBirthdayDecoration(me, now);
+    await ctx.db.patch(me._id, {
+      birthdayUntil: Math.max(expiresAt, me.birthdayUntil ?? 0),
+      birthdayDecoration: decoration,
+    });
+    return decoration;
   },
 });
 
@@ -366,6 +716,33 @@ export const removeAvatar = mutation({
   },
 });
 
+/**
+ * Put the birthday decoration away once the day is over.
+ *
+ * Needed because "is it still their birthday" is a question about the clock,
+ * and a Convex query only re-runs when *data* changes: at midnight nothing is
+ * written, so every subscriber would go on being told about a birthday that
+ * ended — until something unrelated happened to invalidate the query, or they
+ * restarted the app. Clearing the fields is that write, and it puts everyone
+ * back on the user's own decoration at once.
+ *
+ * Called by the birthday-haver's own client, which is the one that knows when
+ * their day ends. Refuses to run while the day is still going, so a client
+ * with a wrong clock can't cut its user's birthday short for everybody else.
+ */
+export const releaseBirthday = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (me.birthdayUntil === undefined && me.birthdayDecoration === undefined) return;
+    if (isBirthdayNow(me)) return;
+    await ctx.db.patch(me._id, {
+      birthdayUntil: undefined,
+      birthdayDecoration: undefined,
+    });
+  },
+});
+
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => getCurrentUserOrNull(ctx),
@@ -421,11 +798,66 @@ export const getProfile = query({
       imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
       bio: serverProfile?.bio ?? user.bio,
       bannerUrl: serverProfile?.bannerUrl ?? user.bannerUrl,
-      customStatus: serverProfile?.customStatus ?? user.customStatus,
+      /**
+       * Not filtered by presence, unlike the lists.
+       *
+       * A row in a member list hides an offline person's status because the
+       * row is about whether you can reach them, and "Back Monday" under a
+       * dimmed name reads as a claim about right now. Opening someone's
+       * profile is the opposite: their own words about what they're up to are
+       * the reason you opened it, and hiding them there loses the only place
+       * a status set for later can still be read. The deadline still applies —
+       * an expired status is gone everywhere.
+       */
+      customStatus: serverProfile?.customStatus ?? unexpiredCustomStatus(user),
+      /** Said or thought — the shape the card draws that status in. Always the
+       * account's own choice, even when the text came from a server profile:
+       * it's how this person likes their status to read. */
+      statusBubble: user.statusBubble ?? "speech",
+      // Account-level, both of them: a decoration is worn by the person rather
+      // than by one of their server identities, and a birthday isn't a
+      // per-server fact either.
+      avatarDecoration: effectiveDecoration(user),
+      isBirthday: isBirthdayNow(user),
       borderGradientStart: serverProfile?.borderGradientStart ?? user.borderGradientStart,
       borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
+      /**
+       * Card cosmetics, merged field by field like the banner above them
+       * rather than account-only like the decoration.
+       *
+       * The split is about what the thing dresses: a decoration is worn by the
+       * *person* and follows them into every server, whereas an effect and a
+       * frame dress this *card* — and a card in a community is that community's
+       * view of them, which is exactly what a server profile is for.
+       */
+      displayNameStyle: serverProfile?.displayNameStyle ?? user.displayNameStyle,
+      profileEffect: serverProfile?.profileEffect ?? user.profileEffect,
+      /** Raw, as written. The client that renders the card is what confines it
+       * to that card — see `scopeCss`. */
+      profileCss: serverProfile?.profileCss ?? user.profileCss,
+      /** Taken from whichever profile supplied the frame — a server frame with
+       * the account's mode would be drawn the wrong way round. */
+      // Placement travels with whichever profile supplied the frame — a server
+      // frame positioned by the account's numbers would land anywhere.
+      ...(serverProfile?.profileFrame
+        ? {
+            profileFrame: serverProfile.profileFrame,
+            profileFrameMode: serverProfile.profileFrameMode,
+            profileFrameFit: serverProfile.profileFrameFit,
+            profileFrameAnchor: serverProfile.profileFrameAnchor,
+            profileFrameScale: serverProfile.profileFrameScale,
+            profileFrameOffsetY: serverProfile.profileFrameOffsetY,
+          }
+        : {
+            profileFrame: user.profileFrame,
+            profileFrameMode: user.profileFrameMode,
+            profileFrameFit: user.profileFrameFit,
+            profileFrameAnchor: user.profileFrameAnchor,
+            profileFrameScale: user.profileFrameScale,
+            profileFrameOffsetY: user.profileFrameOffsetY,
+          }),
       status: presence?.effective ?? "offline",
-      activities: activitiesOf(presence),
+      activities: visibleActivities(presence, user),
       roles,
       isOwner,
     };
@@ -468,6 +900,8 @@ export const getUsersByIds = query({
             name: serverProfile?.displayName ?? u.name,
             imageUrl: serverProfile?.imageUrl ?? u.imageUrl,
             avatarAccent: usingServerAvatar ? serverProfile.avatarAccent : u.avatarAccent,
+            avatarDecoration: effectiveDecoration(u),
+            isBirthday: isBirthdayNow(u),
           };
         })
     );
@@ -502,25 +936,53 @@ export const getCurrentUserIdInternal = internalQuery({
 // --- Badges ----------------------------------------------------------------
 
 /**
- * A user's badges, oldest first.
+ * A user's badges, resolved and ready to draw.
  *
  * Fetched by the profile card itself rather than joined into every query that
  * returns a member: the card is opened one at a time, and the alternative is
  * threading a `badges` field through half a dozen unrelated queries so that
  * one popover can render a row of pills.
+ *
+ * Resolved *here* rather than in the client, because the catalogue is a table
+ * now (see convex/badges.ts): an id with no definition is dropped, and where a
+ * badge is one tier of something — Bug Hunter bronze through diamond — only
+ * the highest tier held survives, since five identical bug glyphs say less
+ * than one diamond one.
  */
 export const badgesOf = query({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    const rows = await ctx.db
-      .query("userBadges")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-    return rows
-      .sort((a, b) => a.grantedAt - b.grantedAt)
-      .map((row) => ({ badgeId: row.badgeId, grantedAt: row.grantedAt }));
+    const [rows, definitions] = await Promise.all([
+      ctx.db
+        .query("userBadges")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+      badgeByIdMap(ctx),
+    ]);
+
+    const held = rows
+      .map((row) => ({ row, badge: definitions.get(row.badgeId) }))
+      .filter((entry): entry is { row: typeof entry.row; badge: Doc<"badges"> } => !!entry.badge);
+
+    // Highest tier per group, decided across everything held before anything
+    // is dropped — the tiers may have been granted in any order.
+    const bestTier = new Map<string, number>();
+    for (const { badge } of held) {
+      if (!badge.group) continue;
+      const tier = badge.tier ?? 0;
+      if (tier > (bestTier.get(badge.group) ?? -Infinity)) bestTier.set(badge.group, tier);
+    }
+
+    return held
+      .filter(({ badge }) => !badge.group || (badge.tier ?? 0) === bestTier.get(badge.group))
+      .sort(
+        (a, b) =>
+          (a.badge.position ?? 0) - (b.badge.position ?? 0) ||
+          a.row.grantedAt - b.row.grantedAt
+      )
+      .map(({ row, badge }) => ({ ...badgeView(badge), grantedAt: row.grantedAt }));
   },
 });
 

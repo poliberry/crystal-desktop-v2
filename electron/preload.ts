@@ -6,8 +6,11 @@ const api = {
   isElectron: true,
   platform: process.platform,
   appInfo: () => ipcRenderer.invoke("app:info"),
-  settings: {
-    open: () => ipcRenderer.invoke("settings:open"),
+  customCss: {
+    read: () => ipcRenderer.invoke("custom-css:read"),
+    write: (css: string) => ipcRenderer.invoke("custom-css:write", css),
+    path: () => ipcRenderer.invoke("custom-css:path"),
+    reveal: () => ipcRenderer.invoke("custom-css:reveal"),
   },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize"),
@@ -64,6 +67,8 @@ const api = {
   screenShare: {
     getSources: () => ipcRenderer.invoke("screen-share:get-sources"),
     setSource: (id: string) => ipcRenderer.invoke("screen-share:set-source", id),
+    permission: () => ipcRenderer.invoke("screen-share:permission"),
+    openPermissionSettings: () => ipcRenderer.invoke("screen-share:open-permission-settings"),
   },
   richPresence: {
     get: () => ipcRenderer.invoke("rich-presence:get"),
@@ -91,6 +96,14 @@ const api = {
       const handler = (_e: IpcRendererEvent, url: string) => cb(url);
       ipcRenderer.on("auth:callback", handler);
       return () => ipcRenderer.removeListener("auth:callback", handler);
+    },
+  },
+  invites: {
+    /** Fires when the OS hands us a `crystal://invite/<code>` link. */
+    onOpen: (cb: (code: string) => void) => {
+      const handler = (_e: IpcRendererEvent, code: string) => cb(code);
+      ipcRenderer.on("invite:open", handler);
+      return () => ipcRenderer.removeListener("invite:open", handler);
     },
   },
   pip: {

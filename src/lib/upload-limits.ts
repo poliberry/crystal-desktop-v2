@@ -20,10 +20,26 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** Soundboard clips. Smaller on purpose: see above. */
 export const MAX_SOUND_BYTES = 10 * 1024 * 1024;
 
+/** Custom avatar decorations. Smaller again: one is fetched everywhere its
+ * owner appears, so its weight is paid many times over per screen. */
+export const MAX_DECORATION_BYTES = 2 * 1024 * 1024;
+
 /** `25 MB` — for copy and error messages. */
 export function formatUploadLimit(bytes: number): string {
   return `${bytes / 1024 / 1024} MB`;
 }
 
+/**
+ * Profile effects and frames, and the images inside board widgets.
+ *
+ * More generous than a decoration because these are card-sized artwork rather
+ * than a 96-pixel frame, and far rarer on screen: a decoration is fetched once
+ * per avatar in a fifty-row member list, while an effect is fetched when
+ * somebody opens one profile.
+ */
+export const MAX_PROFILE_ASSET_BYTES = 6 * 1024 * 1024;
+
 export const MAX_ATTACHMENT_LABEL = formatUploadLimit(MAX_ATTACHMENT_BYTES);
 export const MAX_SOUND_LABEL = formatUploadLimit(MAX_SOUND_BYTES);
+export const MAX_DECORATION_LABEL = formatUploadLimit(MAX_DECORATION_BYTES);
+export const MAX_PROFILE_ASSET_LABEL = formatUploadLimit(MAX_PROFILE_ASSET_BYTES);

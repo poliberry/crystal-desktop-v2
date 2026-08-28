@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ChatDecorationEditor } from "@/components/chat-decoration-editor";
 
 interface EditChannelDialogProps {
   channel: { id: Id<"channels">; name: string; topic?: string; type: "text" | "voice" } | null;
@@ -23,6 +25,12 @@ interface EditChannelDialogProps {
 }
 
 export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogProps) {
+  // The channel's own record, for the decoration editor below — the prop only
+  // carries what the sidebar had to hand.
+  const details = useQuery(
+    api.channels.get,
+    channel ? { channelId: channel.id } : "skip",
+  );
   const update = useMutation(api.channels.update);
   const remove = useMutation(api.channels.remove);
   const [name, setName] = useState("");
@@ -63,7 +71,10 @@ export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogPr
 
   return (
     <Dialog open={!!channel} onOpenChange={onOpenChange}>
-      <DialogContent>
+      {/* Taller and scrolling now that the decoration editor lives here —
+          two pictures and a banner don't fit in a dialog sized for two
+          fields. */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit {channel.type} channel</DialogTitle>
           <DialogDescription>Update this channel's details, or delete it entirely.</DialogDescription>
@@ -105,6 +116,22 @@ export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogPr
                     onChange={(e) => setTopic(e.target.value)}
                     placeholder="Optional"
                     maxLength={256}
+                  />
+                </div>
+              )}
+
+              {/* Decoration applies on its own rather than waiting for Save:
+                  each control is one field and an upload has already happened
+                  by the time it's picked. */}
+              {channel.type === "text" && (
+                <div className="border-t border-border/40 pt-3">
+                  <ChatDecorationEditor
+                    target={{ kind: "channel", channelId: channel.id }}
+                    backgroundUrl={details?.backgroundUrl}
+                    backgroundOpacity={details?.backgroundOpacity}
+                    bannerUrl={details?.bannerUrl}
+                    bannerTitle={details?.bannerTitle}
+                    bannerDescription={details?.bannerDescription}
                   />
                 </div>
               )}

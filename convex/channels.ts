@@ -16,7 +16,8 @@ import {
   requireAbove,
   requireCommunityPermission,
 } from "./permissions";
-import { activitiesOf } from "./lib/activities";
+import { visibleActivities } from "./lib/activities";
+import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function requireChannel(ctx: { db: { get: (id: Id<"channels">) => Promise<Doc<"channels"> | null> } }, channelId: Id<"channels">) {
@@ -84,6 +85,14 @@ export const get = query({
       name: channel.name,
       type: channel.type,
       topic: channel.topic,
+      // Decoration, carried by the same read the view already does rather
+      // than by a second query — the header and the message list both need it
+      // on the first frame, and a late arrival is a visible repaint.
+      backgroundUrl: channel.backgroundUrl,
+      backgroundOpacity: channel.backgroundOpacity,
+      bannerUrl: channel.bannerUrl,
+      bannerTitle: channel.bannerTitle,
+      bannerDescription: channel.bannerDescription,
     };
   },
 });
@@ -315,7 +324,7 @@ export const listVoiceParticipants = query({
           serverDeafened: row.serverDeafened ?? false,
           /** Only meaningful while `streaming` — see the schema. */
           streamThumbnailUrl: row.streamThumbnailUrl,
-          activities: activitiesOf(presence),
+          activities: visibleActivities(presence, user),
         };
       })
     );
@@ -633,5 +642,155 @@ export const generateStreamThumbnailUploadUrl = mutation({
   handler: async (ctx) => {
     await getCurrentUserOrThrow(ctx);
     return ctx.storage.generateUploadUrl();
+  },
+});
+
+// --- Channel decoration: background and banner ------------------------------
+//
+// Both are properties of the channel rather than of the viewer: whoever can
+// manage the channel sets them, and everyone in it sees the same room. The
+// per-person alternative would be a preference table keyed by user and channel,
+// which is a different feature — "how I like this channel to look" — and not
+// the one asked for.
+
+export const generateChannelAssetUploadUrl = mutation({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await requireChannel(ctx, channelId);
+    const community = await requireCommunity(ctx, channel.communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * Set (or clear) the picture behind this channel's messages.
+ *
+ * `opacity` travels with the image because the two are one decision: any
+ * photograph put behind running text needs turning down, and a background
+ * stored without one would be unreadable until somebody found the slider.
+ */
+export const setBackground = mutation({
+  args: {
+    channelId: v.id("channels"),
+    storageId: v.optional(v.id("_storage")),
+    opacity: v.optional(v.number()),
+    clear: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { channelId, storageId, opacity, clear }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await requireChannel(ctx, channelId);
+    const community = await requireCommunity(ctx, channel.communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
+
+    if (clear) {
+      const previous = channel.backgroundStorageId;
+      await ctx.db.patch(channelId, {
+        backgroundUrl: undefined,
+        backgroundStorageId: undefined,
+        backgroundOpacity: undefined,
+      });
+      if (previous) await ctx.storage.delete(previous).catch(() => {});
+      return;
+    }
+
+    const patch: {
+      backgroundUrl?: string;
+      backgroundStorageId?: Id<"_storage">;
+      backgroundOpacity?: number;
+    } = {};
+
+    if (storageId) {
+      await requireWithinUploadLimit(
+        ctx,
+        storageId,
+        MAX_PROFILE_ASSET_BYTES,
+        "Channel backgrounds"
+      );
+      const url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Background upload failed.");
+      patch.backgroundUrl = url;
+      patch.backgroundStorageId = storageId;
+    }
+    // Clamped rather than rejected: the slider can only produce a sane number,
+    // and a call from anywhere else shouldn't be able to make a channel
+    // unreadable.
+    if (opacity !== undefined) {
+      patch.backgroundOpacity = Math.min(1, Math.max(0, opacity));
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    const previous = channel.backgroundStorageId;
+    await ctx.db.patch(channelId, patch);
+    if (storageId && previous && previous !== storageId) {
+      await ctx.storage.delete(previous).catch(() => {});
+    }
+  },
+});
+
+/**
+ * The banner strip under the channel header.
+ *
+ * Title and description are sent as strings and cleared by sending empty ones,
+ * which is how the rest of this file treats optional text. `clear` removes the
+ * whole banner, picture included.
+ */
+export const setBanner = mutation({
+  args: {
+    channelId: v.id("channels"),
+    storageId: v.optional(v.id("_storage")),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    clear: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { channelId, storageId, title, description, clear }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await requireChannel(ctx, channelId);
+    const community = await requireCommunity(ctx, channel.communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
+
+    if (clear) {
+      const previous = channel.bannerStorageId;
+      await ctx.db.patch(channelId, {
+        bannerUrl: undefined,
+        bannerStorageId: undefined,
+        bannerTitle: undefined,
+        bannerDescription: undefined,
+      });
+      if (previous) await ctx.storage.delete(previous).catch(() => {});
+      return;
+    }
+
+    const patch: {
+      bannerUrl?: string;
+      bannerStorageId?: Id<"_storage">;
+      bannerTitle?: string;
+      bannerDescription?: string;
+    } = {};
+
+    if (storageId) {
+      await requireWithinUploadLimit(
+        ctx,
+        storageId,
+        MAX_PROFILE_ASSET_BYTES,
+        "Channel banners"
+      );
+      const url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Banner upload failed.");
+      patch.bannerUrl = url;
+      patch.bannerStorageId = storageId;
+    }
+    if (title !== undefined) patch.bannerTitle = title.trim().slice(0, 80) || undefined;
+    if (description !== undefined) {
+      patch.bannerDescription = description.trim().slice(0, 240) || undefined;
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    const previous = channel.bannerStorageId;
+    await ctx.db.patch(channelId, patch);
+    if (storageId && previous && previous !== storageId) {
+      await ctx.storage.delete(previous).catch(() => {});
+    }
   },
 });

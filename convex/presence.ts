@@ -1,13 +1,13 @@
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
   mutation,
   type MutationCtx,
   query,
 } from "./_generated/server";
-import { activitiesOf } from "./lib/activities";
+import { activitiesOf, visibleActivities } from "./lib/activities";
 import {
   HISTORY_WINDOW_MS,
   closeOpenSessions,
@@ -166,10 +166,23 @@ export const getUserPresence = query({
     userId: v.id("users")
   },
   handler: async (ctx, args) => {
-    return ctx.db
+    const presence = await ctx.db
       .query("presence")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
+    if (!presence) return null;
+    // The row on its own is only half the answer: a Rich Presence activity the
+    // user wrote themselves lives on their *user* document, because it outlives
+    // the session that set it (see `users.customActivity`). Reading the row raw
+    // is why a custom activity never showed up on a profile card or in the user
+    // card, while everything detected did.
+    const user = await ctx.db.get(args.userId);
+    // The deprecated single `activity` is dropped rather than passed on: it is
+    // already folded into the list above, and leaving it would let a client's
+    // fallback path show it for somebody who is offline — the one case the
+    // list is deliberately empty for.
+    const { activity: _legacy, ...row } = presence;
+    return { ...row, activities: visibleActivities(presence, user) };
   },
 });
 
@@ -235,7 +248,128 @@ export const heartbeat = mutation({
       return;
     }
     await ctx.db.patch(existing._id, { lastHeartbeat: now });
+    await clearExpiredCustomPresence(ctx, me, now);
     await reconcile(ctx, me._id);
+  },
+});
+
+/**
+ * Delete a custom status or activity whose "clear after…" deadline has passed.
+ *
+ * Reads already hide expired values (see `lib/activities.ts`), so this is
+ * tidying rather than enforcement — which is why it rides along on the user's
+ * own heartbeat instead of needing a cron: the client that set the thing is
+ * the one that eventually clears it, and no other user's row is ever touched.
+ */
+async function clearExpiredCustomPresence(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  now: number
+): Promise<void> {
+  const patch: Record<string, undefined> = {};
+  if (user.customStatusExpiresAt !== undefined && user.customStatusExpiresAt <= now) {
+    patch.customStatus = undefined;
+    patch.customStatusExpiresAt = undefined;
+  }
+  if (user.customActivityExpiresAt !== undefined && user.customActivityExpiresAt <= now) {
+    patch.customActivity = undefined;
+    patch.customActivityExpiresAt = undefined;
+  }
+  if (Object.keys(patch).length > 0) await ctx.db.patch(user._id, patch);
+}
+
+/** Room for a sentence, not a paragraph — these render on one line. */
+const MAX_ACTIVITY_TEXT = 128;
+/** Buttons sit side by side under the card; a third has nowhere to go. */
+const MAX_ACTIVITY_BUTTONS = 2;
+const MAX_BUTTON_LABEL = 32;
+
+/** Only web links, and only ones a browser will actually open. `javascript:`
+ * and `file:` URLs on someone else's profile card are not a thing we want to
+ * hand around. */
+function requireWebUrl(raw: string, what: string): string {
+  const trimmed = raw.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`${what} must be a full URL, starting with https://`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${what} must be an http or https link.`);
+  }
+  return trimmed;
+}
+
+/**
+ * Publish an activity the user wrote themselves.
+ *
+ * Stored on the profile, not on presence: unlike a detected game it should
+ * outlive the desktop session that set it, and be visible while they're
+ * reading from a phone. `durationMs` is the "clear after…" choice — omitted
+ * means it stays until they take it down.
+ */
+export const setCustomActivity = mutation({
+  args: {
+    type: v.union(
+      v.literal("playing"),
+      v.literal("listening"),
+      v.literal("watching"),
+      v.literal("streaming")
+    ),
+    name: v.string(),
+    details: v.optional(v.string()),
+    state: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
+    buttons: v.optional(v.array(v.object({ label: v.string(), url: v.string() }))),
+    durationMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+
+    const name = args.name.trim().slice(0, MAX_ACTIVITY_TEXT);
+    if (!name) throw new Error("Give your activity a name.");
+
+    const buttons = (args.buttons ?? [])
+      .map((button) => ({
+        label: button.label.trim().slice(0, MAX_BUTTON_LABEL),
+        url: requireWebUrl(button.url, `"${button.label.trim() || "Button"}"`),
+      }))
+      .filter((button) => button.label.length > 0);
+    if (buttons.length > MAX_ACTIVITY_BUTTONS) {
+      throw new Error(`An activity can have at most ${MAX_ACTIVITY_BUTTONS} buttons.`);
+    }
+
+    const trim = (value: string | undefined) => value?.trim().slice(0, MAX_ACTIVITY_TEXT) || undefined;
+
+    await ctx.db.patch(me._id, {
+      customActivity: {
+        type: args.type,
+        name,
+        details: trim(args.details),
+        state: trim(args.state),
+        imageUrl: args.imageUrl ? requireWebUrl(args.imageUrl, "The image") : undefined,
+        buttons: buttons.length > 0 ? buttons : undefined,
+        // Kept across an edit so the elapsed counter doesn't restart every
+        // time a word is changed.
+        startedAt: me.customActivity?.startedAt ?? now,
+        source: "custom",
+      },
+      customActivityExpiresAt: args.durationMs ? now + args.durationMs : undefined,
+    });
+  },
+});
+
+export const clearCustomActivity = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!me.customActivity) return;
+    await ctx.db.patch(me._id, {
+      customActivity: undefined,
+      customActivityExpiresAt: undefined,
+    });
   },
 });
 
@@ -566,10 +700,10 @@ export const activeNow = query({
           // Someone offline isn't doing anything, whatever their last
           // reported activity says.
           if (!presence || presence.effective === "offline") return null;
-          const list = activitiesOf(presence);
-          if (list.length === 0) return null;
           const friend = await ctx.db.get(friendship.friendId);
           if (!friend) return null;
+          const list = visibleActivities(presence, friend);
+          if (list.length === 0) return null;
           return {
             userId: friend._id,
             name: friend.name,

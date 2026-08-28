@@ -33,7 +33,7 @@ import {
   type SystemAudioChoice,
 } from "@/lib/audio-prefs";
 import { cn } from "@/lib/utils";
-import type { AudioApp, ScreenSource } from "@/types/desktop-api";
+import type { AudioApp, ScreenCapturePermission, ScreenSource } from "@/types/desktop-api";
 
 interface ScreenSharePickerProps {
   open: boolean;
@@ -82,6 +82,9 @@ export function ScreenSharePicker({
   const { quality, setQuality, shareAudio, setShareAudio } = useAudioPreferences();
 
   const [sources, setSources] = useState<ScreenSource[]>([]);
+  /** macOS only, and the reason an empty list can mean "not allowed" rather
+   * than "nothing to share". */
+  const [screenPermission, setScreenPermission] = useState<ScreenCapturePermission>("granted");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [audioChoice, setAudioChoiceState] = useState<SystemAudioChoice>({ mode: "off" });
   const [apps, setApps] = useState<AudioApp[]>([]);
@@ -118,7 +121,14 @@ export function ScreenSharePicker({
     setAudioChoiceState(seedAudio);
 
     try {
-      const [list, appList] = await Promise.all([api.screenShare.getSources(), loadApps()]);
+      const [list, appList, permission] = await Promise.all([
+        api.screenShare.getSources(),
+        loadApps(),
+        // Older builds' preload has no `permission` — treat its absence as
+        // "nothing to report" rather than letting the whole load reject.
+        api.screenShare.permission?.().catch(() => "unknown" as const) ?? "granted",
+      ]);
+      setScreenPermission(permission);
       const screens = list.filter((s) => s.type === "screen");
       const windows = list.filter((s) => s.type === "window");
       const ordered = [...screens, ...windows];
@@ -154,6 +164,16 @@ export function ScreenSharePicker({
 
   const selected = sources.find((s) => s.id === selectedId) ?? null;
 
+  /** macOS only ever prompts for Screen Recording once, and won't re-prompt
+   * after a refusal, so the settings pane is the only route back. Re-checks on
+   * return: the grant only takes effect on relaunch, but seeing the picker
+   * update is what tells the user it registered. */
+  const openScreenSettings = useCallback(async () => {
+    const api = getDesktopAPI();
+    await api?.screenShare?.openPermissionSettings?.();
+    void load();
+  }, [load]);
+
   const setAudioChoice = (choice: SystemAudioChoice) => {
     setAudioChoiceState(choice);
     setShareAudio(choice);
@@ -187,6 +207,22 @@ export function ScreenSharePicker({
         {loading ? (
           <div className="flex h-40 items-center justify-center text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
+          </div>
+        ) : sources.length === 0 && screenPermission !== "granted" ? (
+          // macOS returns an empty list rather than an error when Screen
+          // Recording is refused, so without this the dialog blames the
+          // machine for having nothing to share.
+          <div className="flex h-40 flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              macOS hasn&apos;t given Crystal permission to record the screen, so there&apos;s
+              nothing it can list here.
+            </p>
+            <Button variant="secondary" size="sm" onClick={openScreenSettings}>
+              Open System Settings
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Enable Crystal under Screen &amp; System Audio Recording, then quit and reopen it.
+            </p>
           </div>
         ) : sources.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">

@@ -25,6 +25,7 @@ import {
   ChevronDown,
   FolderPlus,
   Hash,
+  LayoutDashboard,
   Volume2,
 } from "lucide-react";
 import type { Room } from "livekit-client";
@@ -88,6 +89,12 @@ interface CommunitySidebarProps {
   communityId: Id<"communities">;
   selectedChannelId: Id<"channels"> | null;
   onSelectChannel: (channelId: Id<"channels">, type: "text" | "voice") => void;
+  /** Open the server's front page. Sits above the channel list, because
+   * that's what it's a front page *to*. */
+  onSelectOverview: () => void;
+  /** True while the overview is what's on screen, so the row can look
+   * selected the way a channel does. */
+  overviewSelected: boolean;
 }
 
 /**
@@ -149,6 +156,8 @@ export function CommunitySidebar({
   communityId,
   selectedChannelId,
   onSelectChannel,
+  onSelectOverview,
+  overviewSelected,
 }: CommunitySidebarProps) {
   const community = useQuery(api.communities.get, { communityId });
   const rawChannels = useCachedQuery(
@@ -285,6 +294,20 @@ export function CommunitySidebar({
           })}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <button
+        type="button"
+        onClick={onSelectOverview}
+        className={cn(
+          "mx-2 mb-1 flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+          overviewSelected
+            ? "bg-accent text-foreground"
+            : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+        )}
+      >
+        <LayoutDashboard className="size-4 shrink-0" />
+        Overview
+      </button>
 
       <ContextMenu>
         <ContextMenuTrigger asChild>

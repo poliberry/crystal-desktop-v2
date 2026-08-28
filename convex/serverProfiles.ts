@@ -2,6 +2,8 @@ import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
+import { dropProfileAsset, resolveProfileAsset } from "./lib/profileCosmetics";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { requireMember } from "./communities";
 
@@ -35,6 +37,20 @@ export async function getMergedProfile(
     borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
     profileBg: serverProfile?.profileBg ?? user.profileBg,
     nameplateUrl: serverProfile?.nameplateUrl ?? user.nameplateUrl,
+    // Card cosmetics follow the banner, not the decoration — see the note in
+    // `users.getProfile`. The frame's mode comes from whichever profile
+    // supplied the frame itself.
+    displayNameStyle: serverProfile?.displayNameStyle ?? user.displayNameStyle,
+    profileEffect: serverProfile?.profileEffect ?? user.profileEffect,
+    profileCss: serverProfile?.profileCss ?? user.profileCss,
+    profileFrame: serverProfile?.profileFrame ?? user.profileFrame,
+    profileFrameMode: serverProfile?.profileFrame
+      ? serverProfile.profileFrameMode
+      : user.profileFrameMode,
+    // Account-level rather than merged: a decoration is worn by the person,
+    // and a birthday isn't a per-server fact.
+    avatarDecoration: effectiveDecoration(user),
+    isBirthday: isBirthdayNow(user),
   };
 }
 
@@ -266,8 +282,9 @@ export const setServerNameplate = mutation({
   handler: async (ctx, { communityId, storageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireMember(ctx, communityId, me._id);
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Upload failed.");
+    // Size-checked for the same reason as `users.setNameplate`: a nameplate
+    // can be a video now.
+    const url = await resolveProfileAsset(ctx, storageId, "Nameplates");
 
     const existing = await lookupServerProfile(ctx, me._id, communityId);
     if (existing) {
@@ -332,5 +349,206 @@ export const setServerAvatarAccent = mutation({
     const existing = await lookupServerProfile(ctx, me._id, communityId);
     if (!existing || existing.imageUrl !== sourceUrl) return;
     await ctx.db.patch(existing._id, { avatarAccent: accent, avatarAccentUrl: sourceUrl });
+  },
+});
+
+// --- Card cosmetics, per server --------------------------------------------
+//
+// The account-level twins of these live in convex/users.ts. They exist twice
+// because a server profile is meant to be able to override every cosmetic the
+// account has (see the `profileCosmetics` spread in convex/schema.ts) — the
+// profile editor picks a scope from a dropdown and then edits the same set of
+// things either way.
+
+export const setServerDisplayNameStyle = mutation({
+  args: { communityId: v.id("communities"), style: v.string() },
+  handler: async (ctx, { communityId, style }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const trimmed = style.trim().slice(0, 32);
+    // "default" is stored as nothing — but here that means "fall back to the
+    // account's style", which is what a server profile does with every other
+    // field it hasn't been given.
+    const displayNameStyle =
+      !trimmed || trimmed === "default" ? undefined : trimmed;
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { displayNameStyle });
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        displayNameStyle,
+      });
+    }
+  },
+});
+
+export const setServerProfileEffect = mutation({
+  args: { communityId: v.id("communities"), storageId: v.id("_storage") },
+  handler: async (ctx, { communityId, storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile effects");
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      const previous = existing.profileEffectStorageId;
+      await ctx.db.patch(existing._id, {
+        profileEffect: url,
+        profileEffectStorageId: storageId,
+      });
+      await dropProfileAsset(ctx, previous, storageId);
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        profileEffect: url,
+        profileEffectStorageId: storageId,
+      });
+    }
+    return url;
+  },
+});
+
+export const removeServerProfileEffect = mutation({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, { communityId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (!existing) return;
+    const previous = existing.profileEffectStorageId;
+    await ctx.db.patch(existing._id, {
+      profileEffect: undefined,
+      profileEffectStorageId: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
+export const setServerProfileFrame = mutation({
+  args: {
+    communityId: v.id("communities"),
+    storageId: v.id("_storage"),
+    mode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+  },
+  handler: async (ctx, { communityId, storageId, mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile frames");
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      const previous = existing.profileFrameStorageId;
+      await ctx.db.patch(existing._id, {
+        profileFrame: url,
+        profileFrameStorageId: storageId,
+        profileFrameMode: mode ?? existing.profileFrameMode ?? "wrap",
+      });
+      await dropProfileAsset(ctx, previous, storageId);
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        profileFrame: url,
+        profileFrameStorageId: storageId,
+        profileFrameMode: mode ?? "wrap",
+      });
+    }
+    return url;
+  },
+});
+
+export const setServerProfileFrameMode = mutation({
+  args: {
+    communityId: v.id("communities"),
+    mode: v.union(v.literal("wrap"), v.literal("overlay")),
+  },
+  handler: async (ctx, { communityId, mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    // No frame here means the card is wearing the account's, whose mode is the
+    // account's to set — writing one onto an empty server profile would be a
+    // setting with nothing to apply to.
+    if (!existing?.profileFrame) return;
+    await ctx.db.patch(existing._id, { profileFrameMode: mode });
+  },
+});
+
+export const removeServerProfileFrame = mutation({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, { communityId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (!existing) return;
+    const previous = existing.profileFrameStorageId;
+    await ctx.db.patch(existing._id, {
+      profileFrame: undefined,
+      profileFrameStorageId: undefined,
+      profileFrameMode: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
+/** The per-server twin of `users.setProfileCss`, with the same reasoning:
+ * stored raw, confined to the card by whoever renders it. */
+export const setServerProfileCss = mutation({
+  args: { communityId: v.id("communities"), css: v.string() },
+  handler: async (ctx, { communityId, css }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const trimmed = css.trim();
+    if (trimmed.length > 8000) {
+      throw new Error("Profile CSS must be under 8000 characters.");
+    }
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { profileCss: trimmed || undefined });
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        profileCss: trimmed || undefined,
+      });
+    }
+  },
+});
+
+/** The per-server twin of `users.setProfileFrameLayout`. */
+export const setServerProfileFrameLayout = mutation({
+  args: {
+    communityId: v.id("communities"),
+    fit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+    anchor: v.optional(
+      v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+    ),
+    scale: v.optional(v.number()),
+    offsetY: v.optional(v.number()),
+  },
+  handler: async (ctx, { communityId, fit, anchor, scale, offsetY }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const patch = {
+      ...(fit !== undefined ? { profileFrameFit: fit } : {}),
+      ...(anchor !== undefined ? { profileFrameAnchor: anchor } : {}),
+      ...(scale !== undefined
+        ? { profileFrameScale: Math.min(220, Math.max(60, scale)) }
+        : {}),
+      ...(offsetY !== undefined
+        ? { profileFrameOffsetY: Math.min(240, Math.max(-240, offsetY)) }
+        : {}),
+    };
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        ...patch,
+      });
+    }
   },
 });
