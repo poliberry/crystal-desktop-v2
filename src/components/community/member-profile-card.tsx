@@ -27,6 +27,10 @@ import { useOpenSettings } from "@/components/settings/settings-dialog";
 import { badgeDefinition, visibleBadgeIds } from "@/lib/badges";
 import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
+import {
+  StatusBubble,
+  type StatusBubbleKind,
+} from "@/components/profile/status-bubble";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { ServerProfileDialog } from "./server-profile-dialog";
@@ -170,28 +174,9 @@ export function MemberProfileCard({
   const avatarDecoration = profile?.avatarDecoration ?? member.avatarDecoration;
   const isBirthday = profile?.isBirthday ?? member.isBirthday;
 
-  /** Rendered in one of two places depending on whether there's a badge row
-   * to push the avatar down — `position` is what differs between them. Only
-   * your own is a button: it's the shortcut to changing it. */
-  const statusPill = (position: string) => {
-    if (!customStatus) return null;
-    const className = cn(
-      "absolute z-10 max-w-40 truncate rounded-full bg-accent/60 px-3 py-1 text-sm font-medium text-white shadow-lg backdrop-blur-sm",
-      position,
-    );
-    return isSelf ? (
-      <button
-        type="button"
-        title="Change your status"
-        onClick={() => setStatusOpen(true)}
-        className={cn(className, "cursor-pointer hover:bg-accent/80")}
-      >
-        {customStatus}
-      </button>
-    ) : (
-      <span className={className}>{customStatus}</span>
-    );
-  };
+  /** Said or thought — see StatusBubble. The card is the only place a status
+   * gets a shape rather than a line of text. */
+  const statusBubble = (profile?.statusBubble ?? "speech") as StatusBubbleKind;
 
   return (
     <div
@@ -237,8 +222,9 @@ export function MemberProfileCard({
               expanded ? "-mt-12" : "-mt-8",
             )}
           >
-            {/* `relative` and shrink-wrapped to the avatar, so the pill inside
-                it can be placed against the avatar rather than the card. */}
+            {/* `relative` and shrink-wrapped to the avatar, so the presence
+                badge and the decoration are placed against the avatar rather
+                than against the card. */}
             <div className="relative shrink-0">
               <Avatar
                 className={cn(
@@ -273,21 +259,22 @@ export function MemberProfileCard({
                   )}
                 />
               </Avatar>
-
-              {/* With badges, the offsets above no longer land: the badge row
-                  makes the name column taller, the avatar is bottom-aligned in
-                  a row that stretches to match that column, so the avatar
-                  slides *down* while a pill pinned to the card doesn't — the
-                  gap in the screenshots. Anchored here instead, the pill sits
-                  4px over the avatar's top edge whatever the column does. */}
-              {badges.length > 0 &&
-                statusPill("bottom-[calc(100%-4px)] left-0")}
             </div>
 
-            {/* Without badges the pill keeps its existing offsets from the
-                top of the card, which are correct there and left untouched. */}
-            {badges.length === 0 &&
-              statusPill(cn("left-4", expanded ? "top-24" : "top-14"))}
+            {/* Beside the avatar, not over it: this row holds nothing else, and
+                a bubble pinned across the avatar's corner would cut a piece
+                out of any decoration worn there. */}
+            {customStatus && (
+              <StatusBubble
+                text={customStatus}
+                kind={statusBubble}
+                onClick={isSelf ? () => setStatusOpen(true) : undefined}
+                // `ml-3` on top of the row's own gap, because the tail hangs
+                // off the bubble's left edge and has to land in that gap
+                // rather than on the avatar.
+                className={cn("mb-1 ml-3 min-w-0", expanded ? "max-w-64" : "max-w-40")}
+              />
+            )}
           </div>
 
           {isSelf && (

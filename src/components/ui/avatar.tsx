@@ -89,7 +89,7 @@ function AvatarDecoration({
       aria-hidden
       draggable={false}
       className={cn(
-        "pointer-events-none absolute -inset-[16%] z-1 max-w-none select-none object-contain",
+        "pointer-events-none absolute inset-[-13%] z-1 max-w-none select-none object-contain",
         className
       )}
       {...props}

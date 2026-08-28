@@ -203,6 +203,8 @@ export const updateProfileExtended = mutation({
     profileBg: v.optional(v.string()),
     /** `YYYY-MM-DD`, or empty to clear it. */
     dob: v.optional(v.string()),
+    /** How the custom status is drawn on the profile card. */
+    statusBubble: v.optional(v.union(v.literal("speech"), v.literal("thought"))),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
@@ -233,6 +235,9 @@ export const updateProfileExtended = mutation({
     if (args.borderGradientStart !== undefined) patch.borderGradientStart = args.borderGradientStart || undefined;
     if (args.borderGradientEnd !== undefined) patch.borderGradientEnd = args.borderGradientEnd || undefined;
     if (args.profileBg !== undefined) patch.profileBg = args.profileBg || undefined;
+    // Stored even when it is the default, so "speech" can be chosen back after
+    // "thought" — the two are a pair of choices rather than a flag.
+    if (args.statusBubble !== undefined) patch.statusBubble = args.statusBubble;
     if (Object.keys(patch).length > 0) await ctx.db.patch(me._id, patch);
   },
 });
@@ -622,6 +627,10 @@ export const getProfile = query({
        * an expired status is gone everywhere.
        */
       customStatus: serverProfile?.customStatus ?? unexpiredCustomStatus(user),
+      /** Said or thought — the shape the card draws that status in. Always the
+       * account's own choice, even when the text came from a server profile:
+       * it's how this person likes their status to read. */
+      statusBubble: user.statusBubble ?? "speech",
       // Account-level, both of them: a decoration is worn by the person rather
       // than by one of their server identities, and a birthday isn't a
       // per-server fact either.

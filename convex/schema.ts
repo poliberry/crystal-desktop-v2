@@ -75,6 +75,12 @@ export default defineSchema({
     borderGradientEnd: v.optional(v.string()),
     profileBg: v.optional(v.string()),
     customStatus: v.optional(v.string()),
+    /** How the custom status is drawn beside this user's avatar on their
+     * profile card: said, or thought. Cosmetic and chosen by the person whose
+     * status it is, so it travels with the status rather than being a viewer's
+     * setting. Absent means "speech", which is what everyone had before the
+     * choice existed. */
+    statusBubble: v.optional(v.union(v.literal("speech"), v.literal("thought"))),
     /** When the custom status stops being shown, for the "clear after…"
      * presets. Absent means it stays until cleared by hand. Enforced on read
      * as well as by the sweep, so an expired status is never shown even if

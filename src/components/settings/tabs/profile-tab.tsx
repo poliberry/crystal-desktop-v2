@@ -25,6 +25,11 @@ import {
   isCustomDecoration,
 } from "@/lib/avatar-decorations";
 import { MAX_DECORATION_BYTES, MAX_DECORATION_LABEL } from "@/lib/upload-limits";
+import {
+  StatusBubble,
+  STATUS_BUBBLE_KINDS,
+  type StatusBubbleKind,
+} from "@/components/profile/status-bubble";
 import { cn } from "@/lib/utils";
 
 const BIO_MAX = 300;
@@ -105,6 +110,7 @@ export function ProfileTab() {
   const [bio, setBio] = useState("");
   const [customStatus, setCustomStatus] = useState("");
   const [dob, setDob] = useState("");
+  const [statusBubble, setStatusBubble] = useState<StatusBubbleKind>("speech");
   const [gradientStart, setGradientStart] = useState("");
   const [gradientEnd, setGradientEnd] = useState("");
   const [saving, setSaving] = useState(false);
@@ -133,6 +139,7 @@ export function ProfileTab() {
     setUsername(me.username);
     setBio(me.bio ?? "");
     setCustomStatus(me.customStatus ?? "");
+    setStatusBubble(me.statusBubble ?? "speech");
     setDob(me.dob ?? "");
     setGradientStart(me.borderGradientStart ?? "");
     setGradientEnd(me.borderGradientEnd ?? "");
@@ -152,6 +159,7 @@ export function ProfileTab() {
       username !== me.username ||
       bio !== (me.bio ?? "") ||
       customStatus !== (me.customStatus ?? "") ||
+      statusBubble !== (me.statusBubble ?? "speech") ||
       dob !== (me.dob ?? "") ||
       gradientStart !== (me.borderGradientStart ?? "") ||
       gradientEnd !== (me.borderGradientEnd ?? ""));
@@ -249,6 +257,7 @@ export function ProfileTab() {
       const result = await updateProfile({ name, username, bio });
       await updateProfileExtended({
         customStatus: trimmedStatus,
+        statusBubble,
         dob,
         borderGradientStart: gradientStart || undefined,
         borderGradientEnd: gradientEnd || undefined,
@@ -354,6 +363,44 @@ export function ProfileTab() {
         <div className="space-y-1.5">
           <Label htmlFor="profile-status">Custom status</Label>
           <Input id="profile-status" value={customStatus} onChange={(e) => setCustomStatus(e.target.value.slice(0, 128))} maxLength={128} placeholder="What are you up to?" />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Status bubble</Label>
+          <p className="text-xs text-muted-foreground">
+            The shape your status is drawn in beside your avatar, on your
+            profile card.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {STATUS_BUBBLE_KINDS.map((option) => (
+              <button
+                key={option.kind}
+                type="button"
+                aria-pressed={statusBubble === option.kind}
+                onClick={() => setStatusBubble(option.kind)}
+                className={cn(
+                  "flex flex-1 min-w-52 flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",
+                  statusBubble === option.kind
+                    ? "border-primary bg-accent/60"
+                    : "border-border hover:bg-accent/40",
+                )}
+              >
+                {/* Shown against an avatar-sized square, because the tail is
+                    the difference between the two and it only reads as one
+                    when there's something for it to point at. */}
+                <span className="flex items-center gap-3">
+                  <span className="size-8 shrink-0 rounded-md bg-muted" />
+                  <StatusBubble
+                    text={customStatus.trim() || "What are you up to?"}
+                    kind={option.kind}
+                    className="max-w-32"
+                  />
+                </span>
+                <span className="text-xs font-medium">{option.label}</span>
+                <span className="text-xs text-muted-foreground">{option.hint}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="space-y-1.5">

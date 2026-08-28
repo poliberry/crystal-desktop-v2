@@ -166,10 +166,23 @@ export const getUserPresence = query({
     userId: v.id("users")
   },
   handler: async (ctx, args) => {
-    return ctx.db
+    const presence = await ctx.db
       .query("presence")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
+    if (!presence) return null;
+    // The row on its own is only half the answer: a Rich Presence activity the
+    // user wrote themselves lives on their *user* document, because it outlives
+    // the session that set it (see `users.customActivity`). Reading the row raw
+    // is why a custom activity never showed up on a profile card or in the user
+    // card, while everything detected did.
+    const user = await ctx.db.get(args.userId);
+    // The deprecated single `activity` is dropped rather than passed on: it is
+    // already folded into the list above, and leaving it would let a client's
+    // fallback path show it for somebody who is offline — the one case the
+    // list is deliberately empty for.
+    const { activity: _legacy, ...row } = presence;
+    return { ...row, activities: visibleActivities(presence, user) };
   },
 });
 
