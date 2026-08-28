@@ -1,4 +1,5 @@
 import { PresenceDot } from "@/components/presence-dot";
+import { Nameplate } from "@/components/profile/nameplate";
 import {
   ActivityStatusIcon,
   activitySummary,
@@ -63,13 +64,7 @@ export function FriendRow({
     <div className="group relative flex items-center gap-3 overflow-hidden rounded-md px-2 py-2 mb-2 hover:bg-accent/60">
       {/* Nameplate behind the row, faded towards the name so it decorates
           rather than competes with it. */}
-      {nameplateUrl && (
-        <img
-          src={nameplateUrl}
-          alt=""
-          className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-        />
-      )}
+      <Nameplate url={nameplateUrl} />
       <Avatar className="relative">
         <AvatarImage src={imageUrl} alt={name} />
         <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>

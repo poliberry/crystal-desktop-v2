@@ -18,6 +18,7 @@ import {
   type MemberProfileMember,
 } from "@/components/community/member-profile-card";
 import { ProfileBoard } from "@/components/profile/profile-board";
+import { ProfileFrameLayer } from "@/components/profile/profile-card-cosmetics";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -124,6 +125,22 @@ function ProfilePageBody({
   const activities = useUserActivities(member.userId);
   const recentGames =
     useQuery(api.presence.recentGames, { userId: member.userId, limit: 10 }) ?? [];
+  /**
+   * The frame this page wears.
+   *
+   * Read here rather than taken from `member`, for the same reason the card
+   * reads its own cosmetics: whatever opened this page may only have had a
+   * name and an avatar to hand. The prop fills the first frame and the query
+   * is the authority once it lands.
+   */
+  const profile = useQuery(api.users.getProfile, {
+    userId: member.userId,
+    communityId,
+  });
+  const frame = {
+    profileFrame: profile?.profileFrame ?? member.profileFrame,
+    profileFrameMode: profile?.profileFrameMode ?? member.profileFrameMode,
+  };
 
   // Escape closes it, the way the dialog it replaced did. A page without this
   // is a page you can only leave by finding the right button.
@@ -181,6 +198,9 @@ function ProfilePageBody({
                 expandable={false}
                 expanded
                 showActivity={false}
+                // The frame belongs to the page here, not to the card: what's
+                // being framed is the whole thing you opened.
+                frameHandledByHost
               />
             </div>
           </ScrollArea>
@@ -251,6 +271,14 @@ function ProfilePageBody({
             </div>
           </ScrollArea>
         </div>
+
+        {/* The frame, around the whole of what was opened rather than around
+            the card in the corner of it. Drawn last so it sits over both
+            columns; it never takes a click. */}
+        <ProfileFrameLayer
+          src={frame?.profileFrame}
+          mode={frame?.profileFrameMode}
+        />
       </div>
     </div>
   );

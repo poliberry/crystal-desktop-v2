@@ -5,6 +5,7 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { Nameplate } from "@/components/profile/nameplate";
 import {
   ActivityStatusIcon,
   activitySummary,
@@ -100,13 +101,7 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                       </p>
                     )}
                 </div>
-                {member.nameplateUrl && (
-                  <img
-                    src={member.nameplateUrl}
-                    alt=""
-                    className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10"
-                  />
-                )}
+                <Nameplate url={member.nameplateUrl} className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10" />
               </button>
             </PopoverTrigger>
             <PopoverContent side="left" align="start" className="w-72 p-0">

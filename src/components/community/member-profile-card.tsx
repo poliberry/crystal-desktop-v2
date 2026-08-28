@@ -30,6 +30,7 @@ import { PresenceBadge } from "@/components/presence-dot";
 import { decorationSrc } from "@/lib/avatar-decorations";
 import {
   ProfileEffectLayer,
+  ProfileFrameHost,
   ProfileFrameLayer,
 } from "@/components/profile/profile-card-cosmetics";
 import { displayNameStyleClass } from "@/lib/profile-cosmetics";
@@ -124,6 +125,7 @@ export function MemberProfileCard({
   expanded = false,
   showActivity = true,
   hideMessageAction = false,
+  frameHandledByHost = false,
   className,
 }: {
   member: MemberProfileMember;
@@ -141,6 +143,15 @@ export function MemberProfileCard({
    * would open — the DM panel. The other relationship actions (add, accept,
    * withdraw) still make sense there and are left alone. */
   hideMessageAction?: boolean;
+  /**
+   * Leave the profile frame to the caller.
+   *
+   * A frame surrounds the thing you're looking at, and when a profile has been
+   * opened into a dialog that thing is the dialog rather than the card inside
+   * it. The page passes this and draws the frame around itself; everywhere
+   * else the card is the whole of the profile and draws its own.
+   */
+  frameHandledByHost?: boolean;
   /** For a caller that owns the card's box — the DM panel stretches it down
    * the full height of the column. */
   className?: string;
@@ -455,7 +466,9 @@ export function MemberProfileCard({
       {/* Drawn outside the clipping box, so a wrapping frame keeps the part
           that hangs past the card's edges. */}
       <ProfileEffectLayer src={profileEffect} rounded="rounded-md" />
-      <ProfileFrameLayer src={profileFrame} mode={profileFrameMode} />
+      {!frameHandledByHost && (
+        <ProfileFrameLayer src={profileFrame} mode={profileFrameMode} />
+      )}
     </div>
   );
 }
@@ -487,8 +500,15 @@ export function UserProfileContent({
 }) {
   const profile = useQuery(api.users.getProfile, { userId, communityId });
   return (
+    // The frame goes around the popover, which is what this component fills —
+    // not around the card sitting inside it. See `ProfileFrameHost`.
+    <ProfileFrameHost
+      src={profile?.profileFrame}
+      mode={profile?.profileFrameMode}
+    >
     <MemberProfileCard
       communityId={communityId}
+      frameHandledByHost
       member={{
         userId,
         name: profile?.name ?? name,
@@ -512,5 +532,6 @@ export function UserProfileContent({
         profileFrameMode: profile?.profileFrameMode,
       }}
     />
+    </ProfileFrameHost>
   );
 }

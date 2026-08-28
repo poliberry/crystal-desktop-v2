@@ -18,7 +18,11 @@ import {
   FRAME_MODES,
   resolveProfileAsset,
 } from "./lib/profileCosmetics";
-import { MAX_DECORATION_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import {
+  MAX_DECORATION_BYTES,
+  MAX_PROFILE_ASSET_BYTES,
+  requireWithinUploadLimit,
+} from "./uploadLimits";
 import {
   internalMutation,
   internalQuery,
@@ -301,10 +305,24 @@ export const removeBanner = mutation({
   },
 });
 
+/**
+ * The strip behind this user's name in chat — a picture, or a short video.
+ *
+ * Size-checked now that a nameplate can be a video: an image of a few hundred
+ * kilobytes needed no ceiling, and an MP4 very much does. The renderer decides
+ * which of the two a file is from its extension — see
+ * src/components/profile/nameplate.tsx.
+ */
 export const setNameplate = mutation({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
+    await requireWithinUploadLimit(
+      ctx,
+      storageId,
+      MAX_PROFILE_ASSET_BYTES,
+      "Nameplates"
+    );
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Nameplate upload failed.");
     const previous = me.nameplateStorageId;

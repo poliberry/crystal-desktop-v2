@@ -1,5 +1,6 @@
 "use client";
 
+import { useLoopedPlayback } from "@/hooks/use-looped-playback";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import {
   FRAME_WRAP_OVERHANG_PX,
@@ -49,6 +50,14 @@ function CosmeticLayer({
   );
 }
 
+/**
+ * The effect, played on a loop with a long pause between plays.
+ *
+ * An effect left to loop the way a GIF does is a card with something moving in
+ * it for as long as it's open, which stops being decoration and becomes a
+ * distraction. It plays once, holds still for twenty seconds, and plays again
+ * — see `useLoopedPlayback`, which also explains why the `key` has to change.
+ */
 export function ProfileEffectLayer({
   src,
   animate = true,
@@ -60,16 +69,39 @@ export function ProfileEffectLayer({
   animate?: boolean;
   rounded?: string;
 }) {
+  const playback = useLoopedPlayback(src, animate);
+
   if (!src) return null;
   return (
-    <CosmeticLayer
-      src={src}
-      animate={animate}
-      className={cn("inset-0 z-20 h-full w-full object-cover", rounded)}
+    <img
+      // A new element per play: an `<img>` cannot be rewound, but a fresh one
+      // starts its animation from the beginning even on a cached file.
+      key={playback.cycle}
+      src={playback.src}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className={cn(
+        "pointer-events-none absolute inset-0 z-20 h-full w-full select-none object-cover",
+        rounded,
+      )}
     />
   );
 }
 
+/**
+ * The frame, drawn over whatever is hosting the profile.
+ *
+ * The host is the profile card in most places, and the *whole dialog* when the
+ * profile has been opened into one — a frame is meant to surround the thing
+ * you are looking at, and in the dialog the thing you are looking at is the
+ * dialog. Which of those it is isn't decided here: this fills its positioned
+ * parent, and the parent is whichever box should be framed.
+ *
+ * `overlay` — the default — lies over that box at exactly its size, which is
+ * what artwork drawn for a card expects. `wrap` scales it out past the edges
+ * instead, for a frame with a border thickness of its own.
+ */
 export function ProfileFrameLayer({
   src,
   mode,
@@ -86,14 +118,14 @@ export function ProfileFrameLayer({
     <CosmeticLayer
       src={src}
       animate={animate}
-      // Above the effect: a frame is the outermost thing on the card, and an
-      // effect drawn over its border would look like the effect had leaked.
+      // Above the effect: a frame is the outermost thing here, and an effect
+      // drawn over its border would look like the effect had leaked.
       className="top-1/2 left-1/2 z-30 max-w-none -translate-x-1/2 -translate-y-1/2"
       style={
         wrap
           ? {
               // A fixed overhang rather than a percentage, so the border is the
-              // same thickness on all four edges of a tall card — see
+              // same thickness on all four edges of a tall box — see
               // FRAME_WRAP_OVERHANG_PX.
               width: `calc(100% + ${FRAME_WRAP_OVERHANG_PX * 2}px)`,
               height: `calc(100% + ${FRAME_WRAP_OVERHANG_PX * 2}px)`,
@@ -104,8 +136,36 @@ export function ProfileFrameLayer({
   );
 }
 
-/** True when a card is wearing anything from this file — the card uses it to
- * decide whether it needs its own stacking context. */
-export function hasCardCosmetics(effect?: string, frame?: string): boolean {
-  return !!effect || !!frame;
+/**
+ * A box that wears somebody's frame around itself.
+ *
+ * The frame belongs to the thing you are looking at, and what that thing is
+ * depends on where the profile turned up: a popover *is* the profile, a dialog
+ * *is* the profile, and only in a list is the card a component of something
+ * else. Wrapping the container in this rather than letting the card draw its
+ * own is what makes the frame surround the popover instead of the card sitting
+ * inside it — the two are usually the same size, but the popover has a border
+ * and a radius of its own that the card knows nothing about.
+ *
+ * `overflow-visible` matters: a wrapping frame is drawn past these edges, and
+ * a scroll container or a rounded box would cut off exactly the part that
+ * makes it a frame.
+ */
+export function ProfileFrameHost({
+  src,
+  mode,
+  className,
+  children,
+}: {
+  src?: string;
+  mode?: ProfileFrameMode | string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("relative overflow-visible", className)}>
+      {children}
+      <ProfileFrameLayer src={src} mode={mode} />
+    </div>
+  );
 }

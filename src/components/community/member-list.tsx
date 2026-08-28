@@ -6,6 +6,7 @@ import { Crown } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberContextMenu } from "@/components/community/member-context-menu";
+import { Nameplate } from "@/components/profile/nameplate";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import {
   ActivityStatusIcon,
@@ -210,13 +211,7 @@ export function MemberList({ communityId }: MemberListProps) {
                                 </p>
                               )}
                             </div>
-                            {member.nameplateUrl && (
-                              <img
-                                src={member.nameplateUrl}
-                                alt=""
-                                className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20"
-                              />
-                            )}
+                            <Nameplate url={member.nameplateUrl} className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20" />
                           </button>
                         </PopoverTrigger>
                         </MemberContextMenu>

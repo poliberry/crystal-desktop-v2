@@ -37,20 +37,27 @@ export const FRAME_MODES: {
   hint: string;
 }[] = [
   {
-    mode: "wrap",
-    label: "Wrap around",
-    hint: "Drawn a little larger than the card, so a border sits outside its edges.",
-  },
-  {
     mode: "overlay",
     label: "Sit on top",
-    hint: "Drawn at exactly the card's size, for artwork meant to lie over it.",
+    hint: "Drawn at exactly the size of the card — or of the dialog, when the profile is opened into one.",
+  },
+  {
+    mode: "wrap",
+    label: "Wrap around",
+    hint: "Drawn a little larger, so a border of its own sits outside the edges.",
   },
 ];
 
-/** `wrap` is what an absent mode means — see the schema. */
+/**
+ * `overlay` is what an absent mode means.
+ *
+ * Sitting on top is what almost every frame is: artwork drawn to the shape of
+ * the thing it decorates. Wrapping is the special case — a frame with a
+ * visible thickness that is supposed to hang past the edges — so it's the one
+ * you have to ask for.
+ */
 export function frameMode(value: string | null | undefined): ProfileFrameMode {
-  return value === "overlay" ? "overlay" : "wrap";
+  return value === "wrap" ? "wrap" : "overlay";
 }
 
 /**

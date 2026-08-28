@@ -6,6 +6,7 @@ import { SearchIcon, ShoppingBag, Sparkles, Users } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GroupAvatar } from "@/components/home/group-avatar";
+import { Nameplate } from "@/components/profile/nameplate";
 import { NewDmDialog } from "@/components/home/new-dm-dialog";
 import { SelectionPill } from "@/components/home/selection-pill";
 import { UserCard } from "@/components/home/user-card";
@@ -194,13 +195,7 @@ export function NavSidebar({
                   />
                   {/* Nameplate behind the row, faded out towards the name so
                       it decorates rather than competes with it. */}
-                  {otherMember?.nameplateUrl && (
-                    <img
-                      src={otherMember.nameplateUrl}
-                      alt=""
-                      className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-                    />
-                  )}
+                  <Nameplate url={otherMember?.nameplateUrl} />
                   {isGroup ? (
                     <GroupAvatar size="default" imageUrl={conversation.imageUrl} members={conversation.members} />
                   ) : (

@@ -19,6 +19,7 @@ import {
 
 import { api } from "../../../convex/_generated/api";
 import { AudioDeviceMenuItems } from "@/components/audio-device-menu";
+import { Nameplate } from "@/components/profile/nameplate";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { useCall } from "@/components/call/call-provider";
 import { SoundboardButton } from "@/components/call/soundboard";
@@ -398,13 +399,7 @@ export function UserCard() {
             compact ? "flex-col gap-1.5" : "items-center gap-2",
           )}
         >
-          {me.nameplateUrl && (
-            <img
-              src={me.nameplateUrl}
-              alt=""
-              className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-            />
-          )}
+          <Nameplate url={me.nameplateUrl} />
           <div className={cn("flex min-w-0 items-center gap-2", !compact && "flex-1")}>
             <Popover>
               <PopoverTrigger asChild>

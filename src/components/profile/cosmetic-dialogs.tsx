@@ -7,6 +7,7 @@ import { Loader2, Upload } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GradientPicker } from "@/components/profile/gradient-picker";
+import { Nameplate, NAMEPLATE_ACCEPT } from "@/components/profile/nameplate";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -414,7 +415,7 @@ export function ProfileEffectDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Profile effect"
-      description="Artwork played over the whole of your profile card, wherever it's shown."
+      description="Artwork played over the whole of your profile card, wherever it's shown. It plays once, then again every twenty seconds."
       footer={
         <>
           <UploadButton
@@ -559,13 +560,14 @@ export function NameplateDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Nameplate"
-      description="The strip behind your name in chat."
+      description="The strip behind your name in chat. A picture or a short video."
       footer={
         <>
           <UploadButton
             label={current ? "Replace" : "Upload a nameplate"}
             maxBytes={MAX_PROFILE_ASSET_BYTES}
             maxLabel={MAX_PROFILE_ASSET_LABEL}
+            accept={NAMEPLATE_ACCEPT}
             onPick={(file) => scope.setNameplate(file)}
           />
           {current && (
@@ -580,16 +582,23 @@ export function NameplateDialog({
         </>
       }
     >
-      <div className="h-24 overflow-hidden rounded-md border border-border/50">
+      {/* `relative`, because `Nameplate` positions itself against its host the
+          way it does behind a chat row — and at full opacity here, since this
+          is the one place the nameplate is the subject rather than the
+          backdrop. */}
+      <div className="relative h-24 overflow-hidden rounded-md border border-border/50">
         {current ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={current} alt="" className="h-full w-full object-cover" />
+          <Nameplate url={current} className="opacity-100 [mask-image:none]" />
         ) : (
           <div className="flex h-full items-center justify-center bg-muted/40 text-sm text-muted-foreground">
             No nameplate yet
           </div>
         )}
       </div>
+      <p className="text-xs text-muted-foreground">
+        A wide image, or a short muted video (WebM or MP4) — video plays on a
+        loop behind your name. Up to {MAX_PROFILE_ASSET_LABEL}.
+      </p>
     </CosmeticDialog>
   );
 }

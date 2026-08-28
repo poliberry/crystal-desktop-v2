@@ -29,6 +29,7 @@ import {
   ImageCropDialog,
 } from "@/components/profile/image-crop-dialog";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { ProfileFrameHost } from "@/components/profile/profile-card-cosmetics";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { Avatar, AvatarDecoration, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -544,13 +545,21 @@ export function ProfileEditor({
       {/* ---------------------------------------------------------------- */}
       {/* Live card                                                         */}
       {/* ---------------------------------------------------------------- */}
-      <div className="min-h-0 shrink-0 p-4">
+      {/* `p-6` rather than `p-4`: a wrapping frame is drawn past the card's
+          edges, and the padding is the room it needs — the ScrollArea outside
+          it clips. */}
+      <div className="min-h-0 shrink-0 p-6">
         <ScrollArea className="h-full">
-          <div className="w-[360px] pr-2">
+          <ProfileFrameHost
+            src={values.profileFrame}
+            mode={values.profileFrameMode}
+            className="w-[360px]"
+          >
             <MemberProfileCard
               expandable={false}
               expanded
               showActivity={false}
+              frameHandledByHost
               communityId={scopeId}
               communityName={scopeName}
               member={{
@@ -571,14 +580,14 @@ export function ProfileEditor({
                 status: status as FriendStatus,
               }}
             />
-          </div>
+          </ProfileFrameHost>
         </ScrollArea>
       </div>
 
       {/* ---------------------------------------------------------------- */}
       {/* Board / Activity                                                  */}
       {/* ---------------------------------------------------------------- */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col p-4 pt-3">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col p-4 pt-4">
         <div className="mb-3 flex items-center gap-4 border-b border-border/40">
           {(["board", "activity"] as const).map((value) => (
             <button

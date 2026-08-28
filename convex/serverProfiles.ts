@@ -281,8 +281,9 @@ export const setServerNameplate = mutation({
   handler: async (ctx, { communityId, storageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireMember(ctx, communityId, me._id);
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Upload failed.");
+    // Size-checked for the same reason as `users.setNameplate`: a nameplate
+    // can be a video now.
+    const url = await resolveProfileAsset(ctx, storageId, "Nameplates");
 
     const existing = await lookupServerProfile(ctx, me._id, communityId);
     if (existing) {
