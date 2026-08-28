@@ -83,6 +83,10 @@ export function VoiceVideoTab() {
     setQuality,
     shareAudio,
     setShareAudio,
+    participantVolume,
+    setParticipantVolume,
+    streamVolume,
+    setStreamVolume,
     soundboardVolume,
     setSoundboardVolume,
     uiSoundVolume,
@@ -350,6 +354,49 @@ export function VoiceVideoTab() {
                 <RefreshCw className="size-4" />
               </Button>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Default call volume</CardTitle>
+          <CardDescription>
+            Where everyone starts when you join a call. Turning someone up or down from their
+            tile still overrides this for the rest of that call — these are only the levels
+            nothing has been said about yet.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label className="font-normal">Participants</Label>
+            <div className="flex items-center gap-3">
+              <Slider
+                value={[Math.round(participantVolume * 100)]}
+                min={0}
+                max={100}
+                step={5}
+                onValueChange={([value]) => setParticipantVolume((value ?? 0) / 100)}
+              />
+              <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+                {Math.round(participantVolume * 100)}%
+              </span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="font-normal">Streams</Label>
+            <div className="flex items-center gap-3">
+              <Slider
+                value={[Math.round(streamVolume * 100)]}
+                min={0}
+                max={100}
+                step={5}
+                onValueChange={([value]) => setStreamVolume((value ?? 0) / 100)}
+              />
+              <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+                {Math.round(streamVolume * 100)}%
+              </span>
+            </div>
           </div>
         </CardContent>
       </Card>

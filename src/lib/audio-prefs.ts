@@ -54,6 +54,14 @@ export interface AudioPreferences {
   quality: StreamQuality;
   /** Default "share audio" choice for the next screen share. */
   shareAudio: SystemAudioChoice;
+  /** 0–1 multiplier every participant's microphone starts at. A per-person
+   * adjustment in the call's context menu overrides it for that call; this is
+   * where the slider sits when nobody has touched it, in every call. */
+  participantVolume: number;
+  /** 0–1 multiplier every screen share's audio starts at. Kept separate from
+   * `participantVolume` because a stream carries game or music sound, which
+   * usually wants a different level from someone's voice. */
+  streamVolume: number;
   /** 0–1 multiplier applied to soundboard playback. */
   soundboardVolume: number;
   /** 0–1 multiplier applied to the app's own effects (join, mute, ringing).
@@ -71,6 +79,8 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   noiseSuppression: true,
   quality: { resolution: "1080p", frameRate: 30 },
   shareAudio: { mode: "off" },
+  participantVolume: 1,
+  streamVolume: 1,
   soundboardVolume: 0.7,
   uiSoundVolume: 0.5,
   richPresenceEnabled: true,
@@ -142,6 +152,11 @@ export function readAudioPreferences(): AudioPreferences {
     noiseSuppression: stored.noiseSuppression !== false,
     quality: parseQuality(stored.quality) ?? DEFAULT_AUDIO_PREFERENCES.quality,
     shareAudio: shareAudio ?? DEFAULT_AUDIO_PREFERENCES.shareAudio,
+    participantVolume: clampVolume(
+      stored.participantVolume,
+      DEFAULT_AUDIO_PREFERENCES.participantVolume
+    ),
+    streamVolume: clampVolume(stored.streamVolume, DEFAULT_AUDIO_PREFERENCES.streamVolume),
     soundboardVolume: clampVolume(stored.soundboardVolume, DEFAULT_AUDIO_PREFERENCES.soundboardVolume),
     uiSoundVolume: clampVolume(stored.uiSoundVolume, DEFAULT_AUDIO_PREFERENCES.uiSoundVolume),
     richPresenceEnabled: stored.richPresenceEnabled !== false,
