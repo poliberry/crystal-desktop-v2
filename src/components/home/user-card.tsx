@@ -58,7 +58,8 @@ import {
   type FriendStatus,
   type ManualStatus,
 } from "@/lib/presence";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
+import { Popover, PopoverTrigger } from "../ui/popover";
 import { MemberProfileCard } from "../community/member-profile-card";
 import { useEffect, useRef, useState } from "react";
 import { useUiPreferences } from "../ui-preferences-provider";
@@ -416,12 +417,18 @@ export function UserCard() {
                   />
                 </Avatar>
               </PopoverTrigger>
-              <PopoverContent
+              {/* The same transparent host every other profile card gets: the
+                  card brings its own surface and its frame is drawn outside its
+                  edges, so a popover panel behind it shows up as a second box
+                  sticking out from under the artwork. */}
+              <ProfilePopoverContent
+                userId={me._id}
                 side="top"
                 align="start"
-                className="w-72 p-0 mb-5 -ml-4"
+                className="mb-5 -ml-4"
               >
                 <MemberProfileCard
+                  reserveFrameRoom={false}
                   member={{
                     userId: me._id,
                     name: me.name,
@@ -440,7 +447,7 @@ export function UserCard() {
                       : status) as FriendStatus,
                   }}
                 />
-              </PopoverContent>
+              </ProfilePopoverContent>
             </Popover>
 
             {/* The name is the second way into the status dialog — the first
