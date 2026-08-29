@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LAYER_LIMITS,
   layerHeight,
+  layerObjectFit,
   patchLayer,
   resolveLayer,
   type CosmeticLayer,
@@ -562,8 +563,8 @@ export function LayerCanvas({
                 src={resolveSrc(layer.url)}
                 alt=""
                 draggable={false}
-                className="pointer-events-none size-full select-none object-contain"
-                style={{ objectFit: layer.height !== undefined ? "fill" : "contain" }}
+                className="pointer-events-none size-full select-none"
+                style={{ objectFit: layerObjectFit(layer) }}
               />
 
               {isSelected && (

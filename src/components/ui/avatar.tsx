@@ -5,7 +5,11 @@ import { Avatar as AvatarPrimitive } from "radix-ui"
 
 import { useStaticFrame } from "@/hooks/use-static-frame"
 import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations"
-import { layerStyle, type CosmeticLayer } from "@/lib/cosmetic-layers"
+import {
+  layerObjectFit,
+  layerStyle,
+  type CosmeticLayer,
+} from "@/lib/cosmetic-layers"
 import { cn } from "@/lib/utils"
 
 function Avatar({
@@ -170,8 +174,8 @@ function CosmeticLayerImage({
       src={poster ?? src}
       alt=""
       draggable={false}
-      className="pointer-events-none max-w-none select-none object-contain"
-      style={layerStyle(layer)}
+      className="pointer-events-none max-w-none select-none"
+      style={{ ...layerStyle(layer), objectFit: layerObjectFit(layer) }}
     />
   );
 }

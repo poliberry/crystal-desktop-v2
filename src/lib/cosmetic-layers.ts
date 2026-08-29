@@ -360,6 +360,23 @@ export function layerStyle(layer: CosmeticLayer): React.CSSProperties {
 }
 
 /**
+ * How the artwork sits in the box the layer gives it.
+ *
+ * A layer with a height was given that height by somebody dragging a handle
+ * until the artwork was the shape they wanted, so the artwork fills it — the
+ * box *is* the intent. A layer without one is being drawn at its own
+ * proportions, where there is nothing to fill and nothing to letterbox.
+ *
+ * One rule in one place because it was two: the canvas filled a fixed box and
+ * the card contained it, so a border stretched to a card's height in the
+ * editor came out letterboxed into a pair of rails down the middle of the real
+ * thing.
+ */
+export function layerObjectFit(layer: CosmeticLayer): "fill" | "contain" {
+  return layer.height !== undefined || layer.stretchY ? "fill" : "contain";
+}
+
+/**
  * How tall a layer actually is, in the same percent-of-width unit as
  * everything else.
  *

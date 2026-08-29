@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   DEFAULT_VARIANT,
+  layerObjectFit,
   layerStyle,
   resolveLayer,
   variantForHeight,
@@ -162,8 +163,8 @@ export function ProfileFrameLayers({
             key={layer.id}
             src={placed.url}
             animate={animate}
-            className="max-w-none object-contain"
-            style={layerStyle(placed)}
+            className="max-w-none"
+            style={{ ...layerStyle(placed), objectFit: layerObjectFit(placed) }}
           />
         );
       })}
