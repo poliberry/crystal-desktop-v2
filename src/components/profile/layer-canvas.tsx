@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   LAYER_LIMITS,
   layerHeight,
+  patchLayer,
+  resolveLayer,
   type CosmeticLayer,
 } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
@@ -124,6 +126,7 @@ export function LayerCanvas({
   /** Ratios by url, so a layer that keeps its own proportions still gets
    * handles in the right place. Measured by the caller as images load. */
   ratios,
+  variant,
   zoom,
   onZoomChange,
   pan,
@@ -142,6 +145,9 @@ export function LayerCanvas({
    * is worth a round trip. */
   onCommit: (layers: CosmeticLayer[]) => void;
   ratios: Record<string, number>;
+  /** Which shape of card is on the canvas. Layers are drawn as that shape's
+   * placement, and edits are written back to it — see `patchLayer`. */
+  variant: string;
   zoom: number;
   onZoomChange: (zoom: number) => void;
   /** How far the whole scene has been shoved around, in screen pixels. Owned
@@ -191,10 +197,18 @@ export function LayerCanvas({
     [ratios, stageHeightPercent],
   );
 
+  /** What the layers look like on the shape of card currently underneath them.
+   * Everything on screen — boxes, handles, hit-testing — is this list; the
+   * stored one is only touched when writing an edit back. */
+  const placed = useMemo(
+    () => layers.map((layer) => resolveLayer(layer, variant)),
+    [layers, variant],
+  );
+
   const patch = useCallback(
     (id: string, next: Partial<CosmeticLayer>) =>
-      layers.map((layer) => (layer.id === id ? { ...layer, ...next } : layer)),
-    [layers],
+      layers.map((layer) => (layer.id === id ? patchLayer(layer, next, variant) : layer)),
+    [layers, variant],
   );
 
   // --- Dragging ------------------------------------------------------------
@@ -207,7 +221,9 @@ export function LayerCanvas({
     setDrag({
       handle,
       layerId: layer.id,
-      start: layer,
+      // The placement as drawn, so a drag starts from where the artwork
+      // actually is rather than from where the default shape would put it.
+      start: resolveLayer(layer, variant),
       startHeight: heightOf(layer),
       pointerX: event.clientX,
       pointerY: event.clientY,
@@ -357,7 +373,7 @@ export function LayerCanvas({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [drag, layers, onChange, onCommit, patch, scale, stage.width, stageHeightPercent, zoom]);
+  }, [drag, layers, onChange, onCommit, patch, scale, stage.width, stageHeightPercent, variant, zoom]);
 
   // --- Panning -------------------------------------------------------------
 
@@ -467,7 +483,7 @@ export function LayerCanvas({
       const delta = moves[event.key];
       if (!delta) return;
       event.preventDefault();
-      const layer = layers.find((l) => l.id === selectedId);
+      const layer = placed.find((l) => l.id === selectedId);
       if (!layer) return;
       const next = patch(selectedId, { x: layer.x + delta[0], y: layer.y + delta[1] });
       onChange(next);
@@ -475,11 +491,11 @@ export function LayerCanvas({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [layers, onChange, onCommit, patch, selectedId]);
+  }, [placed, onChange, onCommit, patch, selectedId]);
 
   // --- Render --------------------------------------------------------------
 
-  const selected = layers.find((layer) => layer.id === selectedId) ?? null;
+  const selected = placed.find((layer) => layer.id === selectedId) ?? null;
 
   return (
     <div
@@ -515,7 +531,7 @@ export function LayerCanvas({
           {children}
         </div>
 
-        {layers.map((layer) => {
+        {placed.map((layer) => {
           const height = heightOf(layer);
           const isSelected = layer.id === selectedId;
           const box = {

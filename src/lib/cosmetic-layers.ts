@@ -53,6 +53,159 @@ export interface CosmeticLayer {
   rotation?: number;
   /** 0–1. */
   opacity?: number;
+  /**
+   * Placement for one shape of card, overriding the numbers above.
+   *
+   * A card that has grown is not the same picture with more space in it: a
+   * badge that sat beside the bio on a short card is halfway up a tall one, and
+   * where somebody wants it is a different answer per shape. Anchoring solves
+   * the common case and this solves the rest — adjust a layer while a taller
+   * card is on the canvas and only that shape moves.
+   *
+   * Keyed by `CARD_VARIANTS`. Absent, or absent for a given shape, means the
+   * placement above is used — which is what every layer starts as, so nothing
+   * has to be arranged three times to be arranged once.
+   */
+  variants?: Record<string, LayerVariant>;
+}
+
+/** What one card shape may say differently. Geometry only: what a layer is
+ * pinned to, whether it stretches and how faded it is are decisions about the
+ * artwork rather than about the card it happens to be on. */
+export interface LayerVariant {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
+}
+
+/**
+ * The shapes a profile card comes in, tallest last.
+ *
+ * Named after their cause rather than their size, because that is how somebody
+ * picks one: the question is "what happens when I write a long bio", not "what
+ * happens at 156% of the width". The heights are proportions of the card's
+ * width for the same reason everything else here is — a card is drawn at
+ * several widths and only its shape is constant.
+ *
+ * Shared by the editor, which draws a card at each of these, and by the
+ * renderer, which measures the card it is actually on and picks the one it
+ * matches. Two lists would drift the first time anybody added a shape.
+ */
+export const CARD_VARIANTS: {
+  key: string;
+  label: string;
+  hint: string;
+  /** Card height as a percentage of its width. */
+  heightPercent: number;
+}[] = [
+  {
+    key: "plain",
+    label: "Plain",
+    hint: "A name and not much else.",
+    heightPercent: 127,
+  },
+  {
+    key: "bio",
+    label: "With a bio",
+    hint: "A few lines written about you.",
+    heightPercent: 157,
+  },
+  {
+    key: "activity",
+    label: "Playing something",
+    hint: "A rich presence card under the bio — the tallest a card usually gets.",
+    heightPercent: 200,
+  },
+];
+
+/** The first shape is the one everything falls back to: edits made against it
+ * are edits to the layer itself rather than to one card's worth of it. */
+export const DEFAULT_VARIANT = CARD_VARIANTS[0]!.key;
+
+/**
+ * Which shape a card of this height counts as.
+ *
+ * The tallest variant it has reached, so a card between two of them keeps the
+ * placement made for the shorter one until it actually grows into the next —
+ * artwork that jumps as somebody types would be worse than artwork slightly
+ * early.
+ */
+export function variantForHeight(heightPercent: number): string {
+  let match = DEFAULT_VARIANT;
+  for (const variant of CARD_VARIANTS) {
+    if (heightPercent >= variant.heightPercent - 1) match = variant.key;
+  }
+  return match;
+}
+
+/**
+ * A layer as it should be drawn on one shape of card: its own numbers, with
+ * that shape's overrides on top.
+ *
+ * Every reader goes through this — the renderer, the canvas, the inspector — so
+ * none of them has to know whether the placement it is looking at came from the
+ * layer or from a variant.
+ */
+export function resolveLayer(layer: CosmeticLayer, variant: string): CosmeticLayer {
+  const override = layer.variants?.[variant];
+  if (!override || variant === DEFAULT_VARIANT) return layer;
+  return { ...layer, ...stripUndefined(override) };
+}
+
+function stripUndefined(override: LayerVariant): Partial<CosmeticLayer> {
+  const out: Partial<CosmeticLayer> = {};
+  for (const [key, value] of Object.entries(override)) {
+    if (value !== undefined) (out as Record<string, unknown>)[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Apply an edit to a layer, to the right shape of card.
+ *
+ * On the default shape an edit is an edit to the layer. On any other, it is
+ * that shape's business only — which is the whole point of the feature, and
+ * also why the override carries the *whole* geometry rather than the one field
+ * that changed: a variant that inherited half its position would move whenever
+ * the default did, which is not what "I placed this here" means.
+ */
+export function patchLayer(
+  layer: CosmeticLayer,
+  patch: Partial<CosmeticLayer>,
+  variant: string,
+): CosmeticLayer {
+  if (variant === DEFAULT_VARIANT) return { ...layer, ...patch };
+  const resolved = { ...resolveLayer(layer, variant), ...patch };
+  return {
+    ...layer,
+    variants: {
+      ...layer.variants,
+      [variant]: {
+        x: resolved.x,
+        y: resolved.y,
+        width: resolved.width,
+        height: resolved.height,
+        rotation: resolved.rotation,
+      },
+    },
+    // The things a variant has no opinion about are still the layer's.
+    anchor: patch.anchor ?? layer.anchor,
+    stretchY: patch.stretchY !== undefined ? patch.stretchY : layer.stretchY,
+    opacity: patch.opacity !== undefined ? patch.opacity : layer.opacity,
+  };
+}
+
+/** Forget one shape's placement, putting it back to the layer's own. */
+export function clearVariant(layer: CosmeticLayer, variant: string): CosmeticLayer {
+  if (!layer.variants?.[variant]) return layer;
+  const variants = { ...layer.variants };
+  delete variants[variant];
+  return {
+    ...layer,
+    variants: Object.keys(variants).length > 0 ? variants : undefined,
+  };
 }
 
 /** What the editor will let a layer be. Wide enough to hang a frame well off
@@ -103,7 +256,49 @@ export function normalizeLayer(layer: CosmeticLayer): CosmeticLayer {
       layer.opacity === undefined || layer.opacity >= 1
         ? undefined
         : round(clamp(layer.opacity, 0, 1) * 100) / 100,
+    variants: normalizeVariants(layer.variants),
   };
+}
+
+/** The same clamping for a variant's numbers, and an empty set dropped rather
+ * than stored as `{}`. */
+function normalizeVariants(
+  variants: Record<string, LayerVariant> | undefined,
+): Record<string, LayerVariant> | undefined {
+  if (!variants) return undefined;
+  const out: Record<string, LayerVariant> = {};
+  for (const [key, variant] of Object.entries(variants)) {
+    // A key no build recognises is dropped: it can only have come from a
+    // shape of card that no longer exists, and keeping it would mean carrying
+    // it in every query for ever.
+    if (!CARD_VARIANTS.some((option) => option.key === key)) continue;
+    if (key === DEFAULT_VARIANT) continue;
+    out[key] = {
+      x:
+        variant.x === undefined
+          ? undefined
+          : round(clamp(variant.x, LAYER_LIMITS.position.min, LAYER_LIMITS.position.max)),
+      y:
+        variant.y === undefined
+          ? undefined
+          : round(clamp(variant.y, LAYER_LIMITS.position.min, LAYER_LIMITS.position.max)),
+      width:
+        variant.width === undefined
+          ? undefined
+          : round(clamp(variant.width, LAYER_LIMITS.size.min, LAYER_LIMITS.size.max)),
+      height:
+        variant.height === undefined
+          ? undefined
+          : round(clamp(variant.height, LAYER_LIMITS.size.min, LAYER_LIMITS.size.max)),
+      rotation:
+        variant.rotation === undefined
+          ? undefined
+          : round(
+              clamp(variant.rotation, LAYER_LIMITS.rotation.min, LAYER_LIMITS.rotation.max),
+            ),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function normalizeLayers(layers: CosmeticLayer[]): CosmeticLayer[] {
@@ -213,16 +408,21 @@ export function layersHeadroom(layers: CosmeticLayer[]): {
   let inline = 0;
 
   for (const layer of layers) {
-    const halfWidth = layer.width / 2;
-    inline = Math.max(inline, halfWidth - layer.x, layer.x + halfWidth - 100);
+    // Every shape this layer might be drawn in, not just the one on screen: the
+    // room is reserved by a margin on the card, and a card that grows into a
+    // shape with a taller frame cannot go back and ask for more.
+    for (const variant of [layer, ...CARD_VARIANTS.map((v) => resolveLayer(layer, v.key))]) {
+      const halfWidth = variant.width / 2;
+      inline = Math.max(inline, halfWidth - variant.x, variant.x + halfWidth - 100);
 
-    // Height is only known for a layer that was given one; for the rest, half
-    // its width is a fair guess at half its height and errs towards more room.
-    const halfHeight = (layer.height ?? layer.width) / 2;
-    if (layer.anchor === "top") {
-      top = Math.max(top, halfHeight - layer.y);
-    } else if (layer.anchor === "bottom") {
-      bottom = Math.max(bottom, halfHeight + layer.y);
+      // Height is only known for a layer that was given one; for the rest, half
+      // its width is a fair guess at half its height and errs towards more room.
+      const halfHeight = (variant.height ?? variant.width) / 2;
+      if (variant.anchor === "top") {
+        top = Math.max(top, halfHeight - variant.y);
+      } else if (variant.anchor === "bottom") {
+        bottom = Math.max(bottom, halfHeight + variant.y);
+      }
     }
   }
 

@@ -28,7 +28,7 @@ import {
   decorationLayers,
   decorationSrc,
 } from "@/lib/avatar-decorations";
-import { MAX_LAYERS } from "@/lib/cosmetic-layers";
+import { CARD_VARIANTS, DEFAULT_VARIANT, MAX_LAYERS } from "@/lib/cosmetic-layers";
 import {
   DEFAULT_FRAME_LAYOUT,
   DISPLAY_NAME_STYLES,
@@ -240,7 +240,10 @@ export function DecorationDialog({
         stageWidth={AVATAR_STAGE_PX}
         // One shape only: an avatar is a square at every size the app draws
         // one, so there is nothing to check a decoration against but itself.
-        heights={[{ key: "square", label: "Avatar", height: AVATAR_STAGE_PX }]}
+        // One shape, and it is the default one: an avatar is a square at every
+        // size the app draws one, so there is nothing to place a decoration
+        // against twice.
+        heights={[{ key: DEFAULT_VARIANT, label: "Avatar", height: AVATAR_STAGE_PX }]}
         upload={scope.uploadLayerImage}
         uploadHint={`Transparent PNG, GIF or WebP works best. Up to ${MAX_DECORATION_LABEL} each.`}
         presets={DECORATION_PRESETS.map((preset) => ({
@@ -603,22 +606,19 @@ export function ProfileFrameDialog({
 const CARD_STAGE_WIDTH_PX = 300;
 
 /**
- * The heights a card actually comes in, and what makes it that tall.
+ * The heights a card comes in, from the shapes themselves.
  *
- * Named after their cause rather than their size, because that is how somebody
- * picks one: the question in front of them is "what happens when I write a long
- * bio", not "what happens at 620 pixels".
+ * Derived rather than written out, because these keys are also what a
+ * per-shape placement is stored under and what the renderer matches a real
+ * card against — three lists of the same three things would drift the first
+ * time anybody added a fourth.
  */
-const CARD_HEIGHTS: StageHeightOption[] = [
-  { key: "plain", label: "Plain", height: 380, hint: "A name and not much else." },
-  { key: "bio", label: "With a bio", height: 470, hint: "A few lines written about you." },
-  {
-    key: "activity",
-    label: "Playing something",
-    height: 600,
-    hint: "A rich presence card under the bio — the tallest a card usually gets.",
-  },
-];
+const CARD_HEIGHTS: StageHeightOption[] = CARD_VARIANTS.map((variant) => ({
+  key: variant.key,
+  label: variant.label,
+  hint: variant.hint,
+  height: Math.round((CARD_STAGE_WIDTH_PX * variant.heightPercent) / 100),
+}));
 
 
 export function NameplateDialog({

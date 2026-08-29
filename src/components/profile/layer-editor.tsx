@@ -19,10 +19,14 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
+  clearVariant,
+  DEFAULT_VARIANT,
   LAYER_LIMITS,
   layerHeight,
   MAX_LAYERS,
   newLayerId,
+  patchLayer,
+  resolveLayer,
   type CosmeticLayer,
   type LayerAnchor,
 } from "@/lib/cosmetic-layers";
@@ -159,16 +163,25 @@ export function LayerEditor({
     [onSave],
   );
 
-  const selected = draft.find((layer) => layer.id === selectedId) ?? null;
+  const selectedStored = draft.find((layer) => layer.id === selectedId) ?? null;
+  /** The selected layer as it is drawn on the shape currently on the canvas. */
+  const selected = selectedStored ? resolveLayer(selectedStored, heightKey) : null;
 
-  /** A slider fires per pixel of travel, so the two are separate: the draft
-   * follows the drag, and only the release is worth a write. */
+  /**
+   * A slider fires per pixel of travel, so the two are separate: the draft
+   * follows the drag, and only the release is worth a write.
+   *
+   * Both go through `patchLayer`, which decides whether an edit belongs to the
+   * layer or to the shape of card currently on the canvas.
+   */
   const patchLive = (id: string, patch: Partial<CosmeticLayer>) =>
     setDraft((prev) =>
-      prev.map((layer) => (layer.id === id ? { ...layer, ...patch } : layer)),
+      prev.map((layer) => (layer.id === id ? patchLayer(layer, patch, heightKey) : layer)),
     );
   const patchSaved = (id: string, patch: Partial<CosmeticLayer>) =>
-    commit(draft.map((layer) => (layer.id === id ? { ...layer, ...patch } : layer)));
+    commit(
+      draft.map((layer) => (layer.id === id ? patchLayer(layer, patch, heightKey) : layer)),
+    );
 
   const addLayer = (url: string, storageId?: string) => {
     if (draft.length >= MAX_LAYERS) {
@@ -257,6 +270,7 @@ export function LayerEditor({
             onChange={setDraft}
             onCommit={commit}
             ratios={ratios}
+            variant={heightKey}
             zoom={zoom}
             onZoomChange={setZoom}
             pan={pan}
@@ -461,10 +475,32 @@ export function LayerEditor({
               // is a pixel of it — which is what makes "396px" mean the same
               // thing here as it does in the artwork somebody exported.
               pxPerPercent={stageWidth / 100}
+              variantLabel={
+                heightKey === DEFAULT_VARIANT
+                  ? undefined
+                  : (heights.find((option) => option.key === heightKey)?.label ??
+                    heightKey)
+              }
+              overridden={!!selectedStored?.variants?.[heightKey]}
+              onMatchDefault={() =>
+                selectedStored &&
+                commit(
+                  draft.map((layer) =>
+                    layer.id === selectedStored.id
+                      ? clearVariant(layer, heightKey)
+                      : layer,
+                  ),
+                )
+              }
               onChange={(patch) => patchLive(selected.id, patch)}
               onCommit={(patch) => patchSaved(selected.id, patch)}
               onDuplicate={() => {
-                const copy = { ...selected, id: newLayerId(), x: selected.x + 4, y: selected.y + 4 };
+                const copy = {
+                  ...(selectedStored ?? selected),
+                  id: newLayerId(),
+                  x: selected.x + 4,
+                  y: selected.y + 4,
+                };
                 commit([...draft, copy]);
                 setSelectedId(copy.id);
               }}
@@ -496,6 +532,9 @@ function LayerInspector({
   unit,
   onUnitChange,
   pxPerPercent,
+  variantLabel,
+  overridden,
+  onMatchDefault,
   onChange,
   onCommit,
   onDuplicate,
@@ -509,6 +548,13 @@ function LayerInspector({
   onUnitChange: (unit: SizeUnit) => void;
   /** Pixels per percent, for the unit that isn't stored. */
   pxPerPercent: number;
+  /** Set when the canvas is showing a shape of card other than the default, in
+   * which case the numbers below belong to that shape alone. */
+  variantLabel?: string;
+  /** Whether this layer has already been placed differently for that shape. */
+  overridden: boolean;
+  /** Throw that placement away and follow the default again. */
+  onMatchDefault: () => void;
   /** Live, for a slider mid-drag. */
   onChange: (patch: Partial<CosmeticLayer>) => void;
   /** Saved, for the release and for everything that is one click. */
@@ -524,6 +570,35 @@ function LayerInspector({
 
   return (
     <div className="space-y-3 border-t border-border/50 pt-3">
+      {/* What editing means right now. Without this the same sliders quietly do
+          two different things depending on which card is on the canvas, which
+          is the kind of surprise that ends with somebody's frame moved on a
+          shape they were not looking at. */}
+      {variantLabel && (
+        <div className="rounded-md border border-border/60 bg-muted/40 p-2">
+          <p className="text-[11px] leading-snug">
+            Placing this for <span className="font-medium">{variantLabel}</span>{" "}
+            cards only.
+          </p>
+          {overridden ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="mt-1 h-6 px-1.5 text-[11px]"
+              onClick={onMatchDefault}
+            >
+              <RotateCcw className="size-3" />
+              Match the default
+            </Button>
+          ) : (
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              Following the default placement until you move it.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="space-y-1.5">
         <Label className="text-xs">Pinned to</Label>
         <div className="grid grid-cols-3 gap-1">

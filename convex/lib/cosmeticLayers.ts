@@ -23,6 +23,15 @@ export const MAX_LAYERS = 8;
 const POSITION = { min: -150, max: 250 };
 const SIZE = { min: 2, max: 400 };
 
+/** One card shape's placement — geometry only; see the schema. */
+const variantArgValidator = v.object({
+  x: v.optional(v.number()),
+  y: v.optional(v.number()),
+  width: v.optional(v.number()),
+  height: v.optional(v.number()),
+  rotation: v.optional(v.number()),
+});
+
 export const layerArgValidator = v.object({
   id: v.string(),
   url: v.string(),
@@ -35,6 +44,7 @@ export const layerArgValidator = v.object({
   stretchY: v.optional(v.boolean()),
   rotation: v.optional(v.number()),
   opacity: v.optional(v.number()),
+  variants: v.optional(v.record(v.string(), variantArgValidator)),
 });
 
 export type LayerArg = {
@@ -49,6 +59,15 @@ export type LayerArg = {
   stretchY?: boolean;
   rotation?: number;
   opacity?: number;
+  variants?: Record<string, LayerVariantArg>;
+};
+
+type LayerVariantArg = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rotation?: number;
 };
 
 const clamp = (value: number, min: number, max: number) =>
@@ -78,7 +97,31 @@ export function normalizeLayers(layers: LayerArg[]): LayerArg[] {
       layer.opacity === undefined || layer.opacity >= 1
         ? undefined
         : round(clamp(layer.opacity, 0, 1) * 100) / 100,
+    variants: normalizeVariants(layer.variants),
   }));
+}
+
+/** A variant's numbers, clamped the same way, and an empty set dropped rather
+ * than stored. Which keys are meaningful is the client's business — a shape of
+ * card is presentation — so an unknown one is kept rather than second-guessed. */
+function normalizeVariants(
+  variants: Record<string, LayerVariantArg> | undefined
+): Record<string, LayerVariantArg> | undefined {
+  if (!variants) return undefined;
+  const out: Record<string, LayerVariantArg> = {};
+  for (const [key, variant] of Object.entries(variants)) {
+    out[key] = {
+      x: variant.x === undefined ? undefined : round(clamp(variant.x, POSITION.min, POSITION.max)),
+      y: variant.y === undefined ? undefined : round(clamp(variant.y, POSITION.min, POSITION.max)),
+      width:
+        variant.width === undefined ? undefined : round(clamp(variant.width, SIZE.min, SIZE.max)),
+      height:
+        variant.height === undefined ? undefined : round(clamp(variant.height, SIZE.min, SIZE.max)),
+      rotation:
+        variant.rotation === undefined ? undefined : round(clamp(variant.rotation, -180, 180)),
+    };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

@@ -104,6 +104,30 @@ const cosmeticLayerValidator = v.object({
   rotation: v.optional(v.number()),
   /** 0–1. Absent is fully opaque. */
   opacity: v.optional(v.number()),
+  /**
+   * Placement for one shape of card, overriding the numbers above.
+   *
+   * A card that has grown is not the same picture with more room in it: a badge
+   * beside the bio on a short card is halfway up a tall one, and where somebody
+   * wants it is a different answer per shape. Anchoring handles the common
+   * case; this handles the rest.
+   *
+   * Keyed by the card shapes in src/lib/cosmetic-layers.ts. Absent — which is
+   * what every layer starts as — means the placement above is used for all of
+   * them, so nothing has to be arranged three times to be arranged once.
+   */
+  variants: v.optional(
+    v.record(
+      v.string(),
+      v.object({
+        x: v.optional(v.number()),
+        y: v.optional(v.number()),
+        width: v.optional(v.number()),
+        height: v.optional(v.number()),
+        rotation: v.optional(v.number()),
+      })
+    )
+  ),
 });
 
 /**
