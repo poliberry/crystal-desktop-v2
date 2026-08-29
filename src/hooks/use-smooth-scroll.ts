@@ -32,7 +32,7 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
  * attached to the wheel. Also comfortably inside the 400ms window
  * `use-stick-to-bottom` treats as "the reader is scrolling", so a fling that
  * ends at the bottom still re-pins. */
-const DURATION_MS = 200;
+const DURATION_MS = 280;
 
 /** Firefox reports line deltas; this is what a line is worth in pixels. */
 const LINE_HEIGHT_PX = 16;

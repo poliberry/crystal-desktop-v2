@@ -15,6 +15,21 @@ const RELEASES_URL = `https://github.com/${REPO.owner}/${REPO.repo}/releases`;
 const isDev = !!process.env.ELECTRON_START_URL;
 
 /**
+ * Chromium's own wheel animation, asked for rather than assumed.
+ *
+ * Chrome enables it; Electron does not always, and without it every wheel
+ * notch is applied as an instant jump — which is what the whole app felt like
+ * on Windows. The renderer animates the scrollers it owns (see
+ * src/hooks/use-smooth-scroll.ts), but it can only do that where it has
+ * attached a listener, and this covers everything else including native
+ * scrollbars and keyboard scrolling.
+ *
+ * Must be set before the app is ready, which is why it is here rather than in
+ * `whenReady`.
+ */
+app.commandLine.appendSwitch("enable-smooth-scrolling");
+
+/**
  * Which build this is: Stable, PTB, Canary or Development (see
  * electron/channels.ts). Decides the window/tray icon, the name the app
  * excludes from its own system-audio capture, and — via electron/updater.ts —

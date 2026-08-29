@@ -12,6 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 
 import { LayerCanvas } from "@/components/profile/layer-canvas";
 import { Button } from "@/components/ui/button";
@@ -125,6 +126,7 @@ export function LayerEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   /**
    * The stored value as it was the last time the draft was seeded from it.
@@ -415,7 +417,10 @@ export function LayerEditor({
 
         {/* The panel: what's on the canvas, and the numbers behind whichever
             piece of it is selected. */}
-        <div className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto">
+        <div
+          ref={smoothRef}
+          className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto"
+        >
           <div className="space-y-1.5">
             <Label className="text-xs">Artwork</Label>
             {draft.length === 0 ? (

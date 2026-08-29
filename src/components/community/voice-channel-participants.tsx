@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 import { HeadphoneOff, MicOff } from "lucide-react";
 import { RoomEvent, type Room } from "livekit-client";
 import { useEffect, useState } from "react";
@@ -231,13 +232,19 @@ export function VoiceChannelHoverCard({
   const participants = (useQuery(api.channels.listVoiceParticipants, { channelId }) ??
     []) as VoiceParticipant[];
   const { joinChannelCall } = useCall();
+  // Above the early return: hooks cannot be called conditionally.
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   if (participants.length === 0) return <>{children}</>;
 
   return (
     <HoverCard>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent side="right" className="w-76 max-h-[70vh] overflow-y-auto">
+      <HoverCardContent
+        ref={smoothRef}
+        side="right"
+        className="w-76 max-h-[70vh] overflow-y-auto"
+      >
         <p className="mb-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           {channelName} — {participants.length}
         </p>

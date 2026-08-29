@@ -12,8 +12,9 @@ function ScrollArea({
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
   // Every ScrollArea in the app gets smooth wheel scrolling from here, which
-  // is most of them — the exceptions are the message lists, which own their
-  // own scroller (see `use-stick-to-bottom.ts`).
+  // is most of them. The message lists own their own scroller and attach the
+  // same thing themselves (see `use-stick-to-bottom.ts`); anything left is a
+  // plain `overflow-y-auto` div using `useSmoothScrollRef`.
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
   useSmoothScroll(viewportRef);
 
