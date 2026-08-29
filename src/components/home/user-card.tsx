@@ -26,7 +26,6 @@ import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
 import { PresenceBadge } from "@/components/presence-dot";
-import { ActivityStatusIcon } from "@/components/rich-presence-card";
 import {
   Avatar,
   AvatarDecoration,
@@ -38,8 +37,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -56,7 +53,6 @@ import { useOpenSettings } from "@/components/settings/settings-dialog";
 import {
   STATUS_LABEL,
   type FriendStatus,
-  type ManualStatus,
 } from "@/lib/presence";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { Popover, PopoverTrigger } from "../ui/popover";
@@ -64,8 +60,6 @@ import { MemberProfileCard } from "../community/member-profile-card";
 import { useEffect, useRef, useState } from "react";
 import { useUiPreferences } from "../ui-preferences-provider";
 import { cn } from "@/lib/utils";
-
-const MANUAL_STATUSES: ManualStatus[] = ["online", "idle", "dnd", "invisible"];
 
 export let USER_CARD_HEIGHT: number = 0;
 
@@ -412,6 +406,7 @@ export function UserCard() {
                   <AvatarDecoration value={decoration} />
                   <PresenceBadge
                     status={status}
+                    activities={activities}
                     isBirthday={isBirthday}
                     decorated={!!decoration}
                   />
@@ -462,11 +457,7 @@ export function UserCard() {
                 >
                   <p className="truncate text-sm font-semibold">{me.name}</p>
                   <div className="relative h-4 overflow-hidden">
-                    {/* The activity glyph rides along with the status line, so a
-                    glance at the user card says "playing / listening / watching"
-                    without opening the profile card. */}
                     <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
-                      <ActivityStatusIcon activities={activities} />
                       <span className="truncate">
                         {activities.length > 0 ? " • " : ""}
                         {subtitle}

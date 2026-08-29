@@ -16,7 +16,6 @@ import { DmProfilePanel } from "@/components/home/dm-profile-panel";
 import { MessageList } from "@/components/home/message-list";
 import { PresenceBadge } from "@/components/presence-dot";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -166,6 +165,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                 {avatarUser && (
                   <PresenceBadge
                     status={avatarUser.status as FriendStatus}
+                    activities={activities}
                     isBirthday={avatarUser.isBirthday}
                     decorated={!!avatarUser.avatarDecoration}
                   />
@@ -179,7 +179,6 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                     words would be the same fact twice. */}
                 {headerLine && (
                   <p className="flex items-center gap-1 truncate text-xs text-muted-foreground leading-tight">
-                    <ActivityStatusIcon activities={activities} />
                     <span className="truncate">{headerLine}</span>
                   </p>
                 )}

@@ -1,9 +1,25 @@
+import { PresenceGlyph, type PresenceGlyphKind } from "@/components/presence-glyph";
+import { topActivity } from "@/components/rich-presence-card";
 import { AvatarBadge } from "@/components/ui/avatar";
-import { STATUS_DOT_CLASS, type DisplayStatus, type FriendStatus } from "@/lib/presence";
+import { type DisplayStatus, type FriendStatus } from "@/lib/presence";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { cn } from "@/lib/utils";
 
 interface PresenceDotProps {
   status: DisplayStatus | FriendStatus;
+  /**
+   * What they are doing, if anything.
+   *
+   * A game, a song or a screen replaces the status glyph. The dot is the one
+   * place every list that shows a person already has room for, and it used to
+   * be a coloured circle saying "reachable" next to a separate little icon
+   * saying what they were up to — two marks for one person. Now it is one.
+   *
+   * Only while they are *active*: idle, away, busy and do-not-disturb are all
+   * answers to "should I talk to you", which outranks what happens to be
+   * playing. See `glyphFor`.
+   */
+  activities?: RichPresenceActivity[] | null;
   /** Their birthday is today: the dot becomes a cake. Reachability loses to it
    * for the day — you can find that out by looking at them, and the whole
    * point of the cake is that it's noticed. */
@@ -27,6 +43,25 @@ interface PresenceDotProps {
 const BIRTHDAY_LABEL = "It's their birthday";
 
 /**
+ * Which glyph this person gets: what they're doing, or what they are.
+ *
+ * The activity only wins for someone active. Not because a busy person isn't
+ * playing something, but because the dot answers one question — can I talk to
+ * you — and "yes, and here's what they're up to" is the only case where the
+ * answer has room for anything else.
+ */
+function glyphFor(
+  status: DisplayStatus | FriendStatus,
+  activities: RichPresenceActivity[] | null | undefined,
+): PresenceGlyphKind {
+  if (status === "online") {
+    const activity = topActivity(activities);
+    if (activity) return activity.type;
+  }
+  return status;
+}
+
+/**
  * The cake, drawn to fill whatever box it's put in.
  *
  * An SVG `<text>` rather than a plain glyph because the dot is sized half a
@@ -46,45 +81,42 @@ function CakeGlyph() {
 
 const DECORATED_OFFSET = "translate-x-[35%] translate-y-[35%]";
 
+/**
+ * The plate the glyph sits on.
+ *
+ * A glyph is not a solid disc — a moon, a controller and a half-filled circle
+ * all have holes in them, and an avatar showing through those is a mess. So the
+ * background colour goes behind it, and the ring that used to separate the dot
+ * from the picture becomes the plate's edge.
+ */
+const PLATE = "flex items-center justify-center rounded-full bg-background";
+
 export function PresenceDot({
   status,
+  activities,
   isBirthday,
   decorated,
   className,
 }: PresenceDotProps) {
-  if (isBirthday) {
-    return (
-      <span
-        role="img"
-        title={BIRTHDAY_LABEL}
-        aria-label={BIRTHDAY_LABEL}
-        className={cn(
-          // The dot's own box, borrowed whole: same size, same ring against
-          // the background, with a plate behind the cake instead of a status
-          // colour. Anything the caller sizes it with therefore lands the same
-          // way it would on the dot.
-          "flex size-4 items-center justify-center rounded-full border-3 border-background bg-muted select-none",
-          className,
-          decorated && DECORATED_OFFSET
-        )}
-      >
-        <CakeGlyph />
-      </span>
-    );
-  }
-
   return (
     <span
+      role={isBirthday ? "img" : undefined}
+      title={isBirthday ? BIRTHDAY_LABEL : undefined}
+      aria-label={isBirthday ? BIRTHDAY_LABEL : undefined}
       className={cn(
-        "block size-4 rounded-full border-3 border-background",
-        STATUS_DOT_CLASS[status],
-        status === "invisible" && "ring-1 ring-foreground/40",
+        // The dot's own box, unchanged from when it was a coloured circle:
+        // whatever a caller sizes it with lands the same way it always did.
+        "size-4 border-2 border-background select-none",
+        PLATE,
+        isBirthday && "bg-muted",
         className,
         // After `className`, which is where a caller puts the dot: a decoration
         // moves it from wherever that was rather than to a fixed corner.
-        decorated && DECORATED_OFFSET
+        decorated && DECORATED_OFFSET,
       )}
-    />
+    >
+      {isBirthday ? <CakeGlyph /> : <PresenceGlyph kind={glyphFor(status, activities)} />}
+    </span>
   );
 }
 
@@ -97,31 +129,32 @@ export function PresenceDot({
  */
 export function PresenceBadge({
   status,
+  activities,
   isBirthday,
   decorated,
   className,
 }: PresenceDotProps) {
-  if (isBirthday) {
-    return (
-      <AvatarBadge
-        role="img"
-        title={BIRTHDAY_LABEL}
-        aria-label={BIRTHDAY_LABEL}
-        className={cn("bg-muted", className, decorated && DECORATED_OFFSET)}
-      >
-        {/* Wrapped, because AvatarBadge sizes (and at `sm`, hides) a direct
-            `svg` child — those rules are for the icons it was built to hold,
-            and this one is the badge's whole content. */}
-        <span className="flex size-full items-center justify-center">
-          <CakeGlyph />
-        </span>
-      </AvatarBadge>
-    );
-  }
-
   return (
     <AvatarBadge
-      className={cn(STATUS_DOT_CLASS[status], className, decorated && DECORATED_OFFSET)}
-    />
+      role={isBirthday ? "img" : undefined}
+      title={isBirthday ? BIRTHDAY_LABEL : undefined}
+      aria-label={isBirthday ? BIRTHDAY_LABEL : undefined}
+      className={cn(
+        PLATE,
+        isBirthday && "bg-muted",
+        // Bigger than the badge's own sizes, which were drawn for a plain disc
+        // — a controller or a moon at eight pixels is a smudge.
+        "group-data-[size=sm]/avatar:size-3 group-data-[size=default]/avatar:size-3.5 group-data-[size=lg]/avatar:size-4",
+        className,
+        decorated && DECORATED_OFFSET,
+      )}
+    >
+      {/* Wrapped, because AvatarBadge sizes (and at `sm`, hides) a direct `svg`
+          child — those rules are for the icons it was built to hold, and this
+          one is the badge's whole content. */}
+      <span className="flex size-full items-center justify-center">
+        {isBirthday ? <CakeGlyph /> : <PresenceGlyph kind={glyphFor(status, activities)} />}
+      </span>
+    </AvatarBadge>
   );
 }

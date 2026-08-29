@@ -428,18 +428,27 @@ export default defineSchema({
 
   presence: defineTable({
     userId: v.id("users"),
+    /** What they chose. See src/lib/presence.ts for what each one means;
+     * "online" is the key for the active state, kept as it is so no row has to
+     * be migrated to say the same thing in different letters. */
     manualStatus: v.union(
       v.literal("online"),
       v.literal("idle"),
+      v.literal("away"),
       v.literal("dnd"),
+      v.literal("busy"),
       v.literal("invisible")
     ),
     isIdle: v.boolean(),
     lastHeartbeat: v.number(),
+    /** What everybody else sees — the same set, with invisible collapsed into
+     * offline, which is the whole point of it. */
     effective: v.union(
       v.literal("online"),
-      v.literal("dnd"),
       v.literal("idle"),
+      v.literal("away"),
+      v.literal("dnd"),
+      v.literal("busy"),
       v.literal("offline")
     ),
     /** Rich Presence, richest first — a user can be playing something and

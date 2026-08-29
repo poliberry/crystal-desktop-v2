@@ -18,7 +18,7 @@ import {
 import { useOpenCustomCss } from "@/components/settings/custom-css-dialog";
 import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
 
-import { ActivityStatusIcon } from "@/components/rich-presence-card";
+import { PresenceBadge } from "@/components/presence-dot";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
@@ -57,7 +57,6 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import {
-  STATUS_DOT_CLASS,
   STATUS_LABEL,
   type FriendStatus,
   type ManualStatus,
@@ -204,7 +203,7 @@ export function SettingsShell({
                           <AvatarFallback>
                             {me?.name.slice(0, 2).toUpperCase()}
                           </AvatarFallback>
-                          <AvatarBadge className={STATUS_DOT_CLASS[status]} />
+                          <PresenceBadge status={status} activities={activities} />
                         </Avatar>
 
                         <button
@@ -216,7 +215,6 @@ export function SettingsShell({
                           </p>
                           <div className="relative h-4 overflow-hidden">
                             <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
-                              <ActivityStatusIcon activities={activities} />
                               <span className="truncate">{subtitle}</span>
                             </p>
                             <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">

@@ -69,14 +69,28 @@ function sameStoredActivities(a: unknown[], b: unknown[]): boolean {
 const manualStatusValidator = v.union(
   v.literal("online"),
   v.literal("idle"),
+  v.literal("away"),
   v.literal("dnd"),
+  v.literal("busy"),
   v.literal("invisible")
 );
 
-function computeEffective(manualStatus: "online" | "idle" | "dnd" | "invisible", isIdle: boolean) {
+/**
+ * What a live user looks like to everyone else.
+ *
+ * Anything chosen deliberately stands: somebody who marked themselves busy and
+ * then stopped typing is still busy, not idle. The idle timer only has a say
+ * over the one status that means "nothing in particular".
+ *
+ * Mirrored by `displayStatus` (src/lib/presence.ts), which differs on exactly
+ * one point: you can see your own invisibility.
+ */
+function computeEffective(
+  manualStatus: "online" | "idle" | "away" | "dnd" | "busy" | "invisible",
+  isIdle: boolean
+) {
   if (manualStatus === "invisible") return "offline" as const;
-  if (manualStatus === "dnd") return "dnd" as const;
-  if (manualStatus === "idle") return "idle" as const;
+  if (manualStatus !== "online") return manualStatus;
   return isIdle ? ("idle" as const) : ("online" as const);
 }
 

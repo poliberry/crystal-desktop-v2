@@ -11,7 +11,6 @@ import { Nameplate } from "@/components/profile/nameplate";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -190,6 +189,7 @@ export function MemberList({ communityId }: MemberListProps) {
                               <AvatarDecoration value={member.avatarDecoration} />
                               <PresenceBadge
                                 status={member.status}
+                                activities={member.activities}
                                 isBirthday={member.isBirthday}
                                 decorated={!!member.avatarDecoration}
                               />
@@ -206,7 +206,6 @@ export function MemberList({ communityId }: MemberListProps) {
                                   way the activity glyph sits to its left. */}
                               {!isOffline && (!!member.customStatus || !!member.activities?.length) && (
                                 <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                                    <ActivityStatusIcon activities={member.activities} />
                                   <span className="truncate">
                                     {member.customStatus ??
                                       activitySummary(topActivity(member.activities))}
