@@ -610,6 +610,7 @@ function LayerInspector({
   onRemove: () => void;
 }) {
   const locked = layer.anchor === "locked";
+  const stretching = !!layer.stretchY && layer.height === undefined && !locked;
 
   return (
     <div className="space-y-3 border-t border-border/50 pt-3">
@@ -677,11 +678,48 @@ function LayerInspector({
             </p>
           </div>
           <Switch
-            checked={!!layer.stretchY && layer.height === undefined}
+            checked={stretching}
             onCheckedChange={(checked) =>
               onCommit({ stretchY: checked || undefined, height: undefined })
             }
           />
+        </div>
+      )}
+
+      {/* Which end of a stretched layer gives. Only worth asking once it is
+          stretching — and worth asking at all because a band across the middle
+          of a card and a border drawn around the whole of it want opposite
+          answers: one keeps its place and lets the space above it grow, the
+          other keeps its top and follows the card down. */}
+      {stretching && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Which end gives</Label>
+          <div className="grid grid-cols-2 gap-1">
+            {([
+              { value: "down", label: "Bottom" },
+              { value: "up", label: "Top" },
+            ] as const).map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                size="sm"
+                variant={
+                  (layer.stretchDirection ?? "down") === option.value
+                    ? "secondary"
+                    : "ghost"
+                }
+                className="h-7 px-1 text-[11px]"
+                onClick={() => onCommit({ stretchDirection: option.value })}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            {(layer.stretchDirection ?? "down") === "down"
+              ? "Its top stays put; its bottom follows the card's."
+              : "Its bottom stays put; its top reaches the card's top edge."}
+          </p>
         </div>
       )}
 

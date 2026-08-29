@@ -106,8 +106,8 @@ const cosmeticLayerValidator = v.object({
    * `<img>` with a width and no height already does by itself. */
   height: v.optional(v.number()),
   /**
-   * Height follows the card instead: the layer is drawn from its anchor to
-   * the card's full height, whatever that turns out to be.
+   * Height follows the card instead: the layer runs between its anchor line
+   * and one of the card's edges, whatever that turns out to be.
    *
    * For the one kind of artwork that *should* stretch — a border drawn to a
    * card's proportions, which has to grow with the card or stop being a
@@ -115,6 +115,16 @@ const cosmeticLayerValidator = v.object({
    * the same question.
    */
   stretchY: v.optional(v.boolean()),
+  /**
+   * Which of its two edges gives. Absent is `"down"`, which is what every
+   * stretched layer meant before there was a choice.
+   *
+   * `"down"` holds the anchor line and follows the card's bottom edge. `"up"`
+   * holds the card's top edge and follows the anchor line — what a band across
+   * the middle of a card needs, where the space above it should grow and the
+   * band itself should stay where it was put.
+   */
+  stretchDirection: v.optional(v.union(v.literal("down"), v.literal("up"))),
   /** Degrees clockwise. */
   rotation: v.optional(v.number()),
   /** 0–1. Absent is fully opaque. */
