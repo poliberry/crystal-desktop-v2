@@ -22,16 +22,24 @@
  * is what `anchor` decides: the layer is pinned to the card's top, centre or
  * bottom and `y` is measured from there. A border along the top edge stays on
  * the top edge, a badge in the bottom corner rides the bottom edge down, and
- * the card grows between them. `stretchY` is the fourth answer — grow with it —
+ * the card grows between them. `stretchY` is another answer — grow with it —
  * for the one kind of artwork that has to: a border drawn to the card's whole
  * shape.
  *
+ * `"locked"` is the last answer, and the only one that measures `y` against the
+ * card's *height*: 0 is the top edge, 100 the bottom, and the layer stays a
+ * third of the way down whatever the card does. Artwork sitting against
+ * something in the middle of the card — a signature over the bio, a character
+ * standing on the bottom third — is placed by eye against a card of one shape,
+ * and pinning it to an edge slides it off whatever it was placed against the
+ * moment the card grows. This keeps it where it was put.
+ *
  * The CSS falls out of that: the stack these are drawn in is a *container*, so
- * `cqw` is one percent of the card's width and the numbers here are written
- * into styles almost unchanged.
+ * `cqw` is one percent of the card's width, `cqh` one percent of its height,
+ * and the numbers here are written into styles almost unchanged.
  */
 
-export type LayerAnchor = "top" | "center" | "bottom";
+export type LayerAnchor = "top" | "center" | "bottom" | "locked";
 
 export interface CosmeticLayer {
   id: string;
@@ -41,14 +49,19 @@ export interface CosmeticLayer {
   anchor: LayerAnchor;
   /** Centre of the layer, in percent of the target box's width. `y` runs
    * downwards from the anchor line, so a negative `y` on a top-anchored layer
-   * lifts the artwork above the card — which is how a frame overhangs. */
+   * lifts the artwork above the card — which is how a frame overhangs.
+   *
+   * The one exception is a `"locked"` layer, whose `y` is a percentage of the
+   * card's *height* rather than its width. Nothing else changes: `x` is still
+   * measured against the width, and so is every size. */
   x: number;
   y: number;
   width: number;
   /** Absent keeps the artwork's own proportions. */
   height?: number;
   /** Height follows the card's, from the anchor down. Ignored when `height`
-   * is set. */
+   * is set, and meaningless on a `"locked"` layer, which has no edge to grow
+   * from. */
   stretchY?: boolean;
   rotation?: number;
   /** 0–1. */
@@ -208,6 +221,98 @@ export function clearVariant(layer: CosmeticLayer, variant: string): CosmeticLay
   };
 }
 
+/** Every anchor, in the order the editor offers them. */
+export const ANCHORS: LayerAnchor[] = ["top", "center", "bottom", "locked"];
+
+/**
+ * Where a layer's centre sits, measured down from the card's top edge in
+ * percent of the card's width.
+ *
+ * The one place that knows what `y` means, which is three different things
+ * depending on the anchor. Everything that has to reason about a layer in the
+ * card's own coordinates — the canvas, the headroom, switching anchors — asks
+ * here rather than repeating the arithmetic and getting one of the three wrong.
+ */
+export function layerCentreY(
+  layer: Pick<CosmeticLayer, "anchor" | "y">,
+  stageHeightPercent: number,
+): number {
+  if (layer.anchor === "center") return stageHeightPercent / 2 + layer.y;
+  if (layer.anchor === "bottom") return stageHeightPercent + layer.y;
+  if (layer.anchor === "locked") return (layer.y / 100) * stageHeightPercent;
+  return layer.y;
+}
+
+/** The inverse: a centre in card coordinates back to the `y` this anchor would
+ * store for it. */
+export function layerYFromCentre(
+  anchor: LayerAnchor,
+  centre: number,
+  stageHeightPercent: number,
+): number {
+  if (anchor === "center") return centre - stageHeightPercent / 2;
+  if (anchor === "bottom") return centre - stageHeightPercent;
+  if (anchor === "locked") {
+    // A card with no height cannot say where a third of the way down is; the
+    // top is the honest answer and only happens before the first measurement.
+    return stageHeightPercent > 0 ? (centre / stageHeightPercent) * 100 : 0;
+  }
+  return centre;
+}
+
+/**
+ * A layer's anchor changed without anything moving.
+ *
+ * An anchor is a statement about what happens *later* — what the artwork keeps
+ * up with as the card grows — so changing one should not move anything now.
+ * Without this the layer jumps the moment somebody presses the button whose
+ * whole purpose is to stop it from jumping, which reads as the button being
+ * broken.
+ *
+ * Every shape is rewritten, not just the one on screen. `anchor` belongs to the
+ * layer rather than to a variant, so changing it changes what every variant's
+ * `y` *means* — and a variant left alone would be a placement quietly
+ * reinterpreted against a line it was never measured from. Which is why the
+ * heights arrive as a function: each shape's `y` is converted against the card
+ * it was placed on.
+ */
+export function reanchorLayer(
+  layer: CosmeticLayer,
+  anchor: LayerAnchor,
+  heightPercentOf: (variant: string) => number,
+): CosmeticLayer {
+  const convert = (source: Pick<CosmeticLayer, "anchor" | "y">, variant: string) => {
+    const height = heightPercentOf(variant);
+    return layerYFromCentre(anchor, layerCentreY(source, height), height);
+  };
+
+  return {
+    ...layer,
+    anchor,
+    y: convert(layer, DEFAULT_VARIANT),
+    // Stretching is a top/centre/bottom idea; a locked layer has no edge to
+    // stretch from.
+    stretchY: anchor === "locked" ? undefined : layer.stretchY,
+    variants: layer.variants
+      ? Object.fromEntries(
+          Object.entries(layer.variants).map(([key, variant]) => [
+            key,
+            {
+              ...variant,
+              // An absent `y` is one this shape never had an opinion about, and
+              // giving it one here would pin it to a placement it was following
+              // by choice.
+              y:
+                variant.y === undefined
+                  ? undefined
+                  : convert(resolveLayer(layer, key), key),
+            },
+          ]),
+        )
+      : undefined,
+  };
+}
+
 /** What the editor will let a layer be. Wide enough to hang a frame well off
  * the card, narrow enough that a fumbled drag can't lose the artwork. */
 export const LAYER_LIMITS = {
@@ -239,8 +344,7 @@ const round = (value: number) => Math.round(value * 100) / 100;
 export function normalizeLayer(layer: CosmeticLayer): CosmeticLayer {
   return {
     ...layer,
-    anchor:
-      layer.anchor === "center" || layer.anchor === "bottom" ? layer.anchor : "top",
+    anchor: ANCHORS.includes(layer.anchor) ? layer.anchor : "top",
     x: round(clamp(layer.x, LAYER_LIMITS.position.min, LAYER_LIMITS.position.max)),
     y: round(clamp(layer.y, LAYER_LIMITS.position.min, LAYER_LIMITS.position.max)),
     width: round(clamp(layer.width, LAYER_LIMITS.size.min, LAYER_LIMITS.size.max)),
@@ -248,7 +352,10 @@ export function normalizeLayer(layer: CosmeticLayer): CosmeticLayer {
       layer.height === undefined
         ? undefined
         : round(clamp(layer.height, LAYER_LIMITS.size.min, LAYER_LIMITS.size.max)),
-    stretchY: layer.stretchY || undefined,
+    // A locked layer is placed against the card's height rather than an edge of
+    // it, so there is no edge for it to grow from — the flag is dropped rather
+    // than carried as something that will never be read.
+    stretchY: (layer.stretchY && layer.anchor !== "locked") || undefined,
     rotation: layer.rotation
       ? round(clamp(layer.rotation, LAYER_LIMITS.rotation.min, LAYER_LIMITS.rotation.max))
       : undefined,
@@ -328,7 +435,10 @@ export function layerStyle(layer: CosmeticLayer): React.CSSProperties {
   //            positioned by that edge and has no centre to speak of
   //  auto      the browser knows the box and this file doesn't — hence the
   //            translate, which centres it without anyone measuring anything
-  const stretched = layer.height === undefined && !!layer.stretchY && layer.anchor !== "bottom";
+  const stretched =
+    layer.height === undefined &&
+    !!layer.stretchY &&
+    (layer.anchor === "top" || layer.anchor === "center");
   const fixed = layer.height !== undefined;
   const halfHeight = fixed ? layer.height! / 2 : 0;
   const shifts: string[] = [];
@@ -348,8 +458,12 @@ export function layerStyle(layer: CosmeticLayer): React.CSSProperties {
     style.bottom = `calc(${-layer.y}cqw${fixed ? ` - ${halfHeight}cqw` : ""})`;
     if (!fixed) shifts.push("translateY(50%)");
   } else {
+    // A locked layer's `y` is the only measurement in the whole model taken
+    // against the card's height, so it is the only one written in `cqh` — which
+    // is exactly what makes it hold its place as the card grows.
     const line = layer.anchor === "center" ? "50cqh + " : "";
-    style.top = `calc(${line}${layer.y}cqw${fixed ? ` - ${halfHeight}cqw` : ""})`;
+    const offset = layer.anchor === "locked" ? `${layer.y}cqh` : `${layer.y}cqw`;
+    style.top = `calc(${line}${offset}${fixed ? ` - ${halfHeight}cqw` : ""})`;
     if (!fixed && !stretched) shifts.push("translateY(-50%)");
   }
 
@@ -392,7 +506,7 @@ export function layerHeight(
   stageHeightPercent: number,
 ): number {
   if (layer.height !== undefined) return layer.height;
-  if (layer.stretchY && layer.anchor !== "bottom") {
+  if (layer.stretchY && (layer.anchor === "top" || layer.anchor === "center")) {
     return layer.anchor === "center"
       ? stageHeightPercent / 2 - layer.y
       : stageHeightPercent - layer.y;
@@ -428,18 +542,20 @@ export function layersHeadroom(layers: CosmeticLayer[]): {
     // Every shape this layer might be drawn in, not just the one on screen: the
     // room is reserved by a margin on the card, and a card that grows into a
     // shape with a taller frame cannot go back and ask for more.
-    for (const variant of [layer, ...CARD_VARIANTS.map((v) => resolveLayer(layer, v.key))]) {
+    for (const shape of CARD_VARIANTS) {
+      const variant = resolveLayer(layer, shape.key);
       const halfWidth = variant.width / 2;
       inline = Math.max(inline, halfWidth - variant.x, variant.x + halfWidth - 100);
 
       // Height is only known for a layer that was given one; for the rest, half
       // its width is a fair guess at half its height and errs towards more room.
       const halfHeight = (variant.height ?? variant.width) / 2;
-      if (variant.anchor === "top") {
-        top = Math.max(top, halfHeight - variant.y);
-      } else if (variant.anchor === "bottom") {
-        bottom = Math.max(bottom, halfHeight + variant.y);
-      }
+      // Asked in the card's own coordinates rather than per anchor, so a locked
+      // layer — whose `y` is a percentage of a height that differs per shape —
+      // is measured against the shape it would actually be drawn on.
+      const centre = layerCentreY(variant, shape.heightPercent);
+      top = Math.max(top, halfHeight - centre);
+      bottom = Math.max(bottom, centre + halfHeight - shape.heightPercent);
     }
   }
 

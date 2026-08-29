@@ -66,6 +66,14 @@ const activityValidator = v.object({
  * stays on the top edge, a badge in the bottom corner follows the bottom
  * edge, and a card that grows grows between them.
  *
+ * `"locked"` is the exception to the paragraph above: its `y` is a percentage
+ * of the card's *height*, so the layer holds the same relative position as the
+ * card grows instead of following one of its edges. That is what artwork placed
+ * against something in the middle of the card needs — a signature over the bio,
+ * a character standing on the bottom third — where any edge to pin to is the
+ * wrong edge. Sizes are still measured against the width, so the artwork keeps
+ * its shape either way.
+ *
  * `x`/`y` are the layer's *centre*, so rotating and resizing turn about the
  * point the editor's handles surround rather than about a corner.
  */
@@ -76,12 +84,19 @@ const cosmeticLayerValidator = v.object({
   url: v.string(),
   /** Absent for a built-in preset, which is drawn from code and owns no file. */
   storageId: v.optional(v.id("_storage")),
-  /** Which edge of the card `y` is measured from. */
-  anchor: v.union(v.literal("top"), v.literal("center"), v.literal("bottom")),
+  /** Which edge of the card `y` is measured from — or `"locked"`, where it is
+   * measured against the card's height instead. */
+  anchor: v.union(
+    v.literal("top"),
+    v.literal("center"),
+    v.literal("bottom"),
+    v.literal("locked")
+  ),
   /** Centre of the layer, as a percentage of the target box's width. `x` is
    * measured from the left edge (50 is centred); `y` downwards from the
    * anchor line, so a negative `y` on a top-anchored layer lifts it above the
-   * card — which is how a frame overhangs. */
+   * card — which is how a frame overhangs. On a `"locked"` layer `y` is instead
+   * a percentage of the card's height: 0 the top edge, 100 the bottom. */
   x: v.number(),
   y: v.number(),
   /** Width, as a percentage of the target box's width. */

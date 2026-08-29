@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
+  ANCHORS,
   clearVariant,
   DEFAULT_VARIANT,
   LAYER_LIMITS,
@@ -26,6 +27,7 @@ import {
   MAX_LAYERS,
   newLayerId,
   patchLayer,
+  reanchorLayer,
   resolveLayer,
   type CosmeticLayer,
   type LayerAnchor,
@@ -56,6 +58,15 @@ import { cn } from "@/lib/utils";
  * stored — it has to be, since a card is drawn at several widths — and pixels
  * are what anybody lining artwork up with an edge is actually thinking in. */
 export type SizeUnit = "percent" | "px";
+
+/** What each anchor is called in the interface. "Locked" is the odd one out and
+ * says so: the other three name an edge, and it names what it does. */
+const ANCHOR_LABELS: Record<LayerAnchor, string> = {
+  top: "Top",
+  center: "Middle",
+  bottom: "Bottom",
+  locked: "Locked",
+};
 
 export interface StageHeightOption {
   key: string;
@@ -182,6 +193,33 @@ export function LayerEditor({
     commit(
       draft.map((layer) => (layer.id === id ? patchLayer(layer, patch, heightKey) : layer)),
     );
+
+  /** How tall each shape on offer is, in percent of the stage's width — the
+   * unit every layer is stored in, and what re-anchoring converts against. */
+  const heightPercentOf = useCallback(
+    (key: string) =>
+      (((heights.find((option) => option.key === key)?.height ?? stageHeight) / stageWidth) *
+        100),
+    [heights, stageHeight, stageWidth],
+  );
+
+  /**
+   * Pin the selected layer to something else, keeping it where it is.
+   *
+   * Not through `patchSaved`, which routes an edit to the shape currently on the
+   * canvas: an anchor is the layer's, and changing it changes what *every*
+   * shape's position means.
+   */
+  const reanchor = (anchor: LayerAnchor) => {
+    if (!selectedStored) return;
+    commit(
+      draft.map((layer) =>
+        layer.id === selectedStored.id
+          ? reanchorLayer(layer, anchor, heightPercentOf)
+          : layer,
+      ),
+    );
+  };
 
   const addLayer = (url: string, storageId?: string) => {
     if (draft.length >= MAX_LAYERS) {
@@ -410,7 +448,7 @@ export function LayerEditor({
                         />
                       </span>
                       <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-                        {Math.round(layer.width)}% · {layer.anchor}
+                        {Math.round(layer.width)}% · {ANCHOR_LABELS[layer.anchor]}
                       </span>
                     </button>
                     <div className="flex shrink-0 flex-col">
@@ -475,6 +513,8 @@ export function LayerEditor({
               // is a pixel of it — which is what makes "396px" mean the same
               // thing here as it does in the artwork somebody exported.
               pxPerPercent={stageWidth / 100}
+              stageHeightPercent={(stageHeight / stageWidth) * 100}
+              onAnchorChange={reanchor}
               variantLabel={
                 heightKey === DEFAULT_VARIANT
                   ? undefined
@@ -532,6 +572,8 @@ function LayerInspector({
   unit,
   onUnitChange,
   pxPerPercent,
+  stageHeightPercent,
+  onAnchorChange,
   variantLabel,
   overridden,
   onMatchDefault,
@@ -548,6 +590,11 @@ function LayerInspector({
   onUnitChange: (unit: SizeUnit) => void;
   /** Pixels per percent, for the unit that isn't stored. */
   pxPerPercent: number;
+  /** How tall the card on the canvas is, in percent of its width — what a
+   * locked layer's position is measured against. */
+  stageHeightPercent: number;
+  /** Change what the layer is pinned to, everywhere at once. */
+  onAnchorChange: (anchor: LayerAnchor) => void;
   /** Set when the canvas is showing a shape of card other than the default, in
    * which case the numbers below belong to that shape alone. */
   variantLabel?: string;
@@ -562,11 +609,7 @@ function LayerInspector({
   onDuplicate: () => void;
   onRemove: () => void;
 }) {
-  const anchors: { anchor: LayerAnchor; label: string }[] = [
-    { anchor: "top", label: "Top" },
-    { anchor: "center", label: "Middle" },
-    { anchor: "bottom", label: "Bottom" },
-  ];
+  const locked = layer.anchor === "locked";
 
   return (
     <div className="space-y-3 border-t border-border/50 pt-3">
@@ -601,39 +644,46 @@ function LayerInspector({
 
       <div className="space-y-1.5">
         <Label className="text-xs">Pinned to</Label>
-        <div className="grid grid-cols-3 gap-1">
-          {anchors.map((option) => (
+        <div className="grid grid-cols-4 gap-1">
+          {ANCHORS.map((anchor) => (
             <Button
-              key={option.anchor}
+              key={anchor}
               type="button"
               size="sm"
-              variant={layer.anchor === option.anchor ? "secondary" : "ghost"}
+              variant={layer.anchor === anchor ? "secondary" : "ghost"}
               className="h-7 px-1 text-[11px]"
-              onClick={() => onCommit({ anchor: option.anchor })}
+              // Not one of the patches above: an anchor belongs to the layer
+              // rather than to the shape on screen, and changing it has to
+              // rewrite every shape's position at once — see `reanchorLayer`.
+              onClick={() => onAnchorChange(anchor)}
             >
-              {option.label}
+              {ANCHOR_LABELS[anchor]}
             </Button>
           ))}
         </div>
         <p className="text-[10px] leading-snug text-muted-foreground">
-          Which edge it stays with when the card grows.
+          {locked
+            ? "Held the same distance down the card, whatever its height."
+            : "Which edge it stays with when the card grows."}
         </p>
       </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <Label className="text-xs">Grow with the card</Label>
-          <p className="text-[10px] leading-snug text-muted-foreground">
-            For a border drawn to the card&apos;s whole shape.
-          </p>
+      {!locked && (
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <Label className="text-xs">Grow with the card</Label>
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              For a border drawn to the card&apos;s whole shape.
+            </p>
+          </div>
+          <Switch
+            checked={!!layer.stretchY && layer.height === undefined}
+            onCheckedChange={(checked) =>
+              onCommit({ stretchY: checked || undefined, height: undefined })
+            }
+          />
         </div>
-        <Switch
-          checked={!!layer.stretchY && layer.height === undefined}
-          onCheckedChange={(checked) =>
-            onCommit({ stretchY: checked || undefined, height: undefined })
-          }
-        />
-      </div>
+      )}
 
       {/* Which unit the four measurements below are typed in. Percentages are
           what gets stored — they have to be, since a card is drawn at several
@@ -701,9 +751,13 @@ function LayerInspector({
         label="Down"
         value={layer.y}
         unit={unit}
-        pxPerPercent={pxPerPercent}
+        // A locked layer's `y` is the one measurement taken against the card's
+        // height rather than its width, so a pixel of it is a different number
+        // of percent — and typing "80px" has to mean 80 pixels either way.
+        pxPerPercent={locked ? (pxPerPercent * stageHeightPercent) / 100 : pxPerPercent}
         min={LAYER_LIMITS.position.min}
         max={LAYER_LIMITS.position.max}
+        hint={locked ? "Percent of the card's height." : undefined}
         onChange={(y) => onChange({ y })}
         onCommit={(y) => onCommit({ y })}
       />

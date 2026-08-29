@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   LAYER_LIMITS,
+  layerCentreY,
   layerHeight,
   layerObjectFit,
+  layerYFromCentre,
   patchLayer,
   resolveLayer,
   type CosmeticLayer,
@@ -86,25 +88,6 @@ interface Drag {
   startHeight: number;
   pointerX: number;
   pointerY: number;
-}
-
-/** Where a layer's centre sits vertically, in percent of stage width measured
- * from the stage's top edge. The anchor is what `y` is relative to. */
-function centreY(layer: CosmeticLayer, stageHeightPercent: number): number {
-  if (layer.anchor === "center") return stageHeightPercent / 2 + layer.y;
-  if (layer.anchor === "bottom") return stageHeightPercent + layer.y;
-  return layer.y;
-}
-
-/** The inverse: a centre in stage coordinates back to the layer's own `y`. */
-function yFromCentre(
-  anchor: CosmeticLayer["anchor"],
-  centre: number,
-  stageHeightPercent: number,
-): number {
-  if (anchor === "center") return centre - stageHeightPercent / 2;
-  if (anchor === "bottom") return centre - stageHeightPercent;
-  return centre;
 }
 
 const rotate = (x: number, y: number, degrees: number) => {
@@ -248,7 +231,12 @@ export function LayerCanvas({
 
       if (drag.handle === "move") {
         let x = start.x + dx;
-        let y = start.y + dy;
+        // Vertically the drag is done in stage coordinates and converted back
+        // at the end, because the pointer moves in pixels and `y` is not always
+        // measured in the same unit as those pixels — a locked layer's is a
+        // percentage of the stage's height. Everything between here and the
+        // write is one system.
+        let centre = layerCentreY(start, stageHeightPercent) + dy;
         const nextGuides: { x?: number; y?: number } = {};
 
         if (snapping) {
@@ -265,18 +253,22 @@ export function LayerCanvas({
               }
             }
           }
-          const centre = centreY({ ...start, y }, stageHeightPercent);
           for (const offset of [0, -height / 2, height / 2]) {
             for (const target of [0, stageHeightPercent / 2, stageHeightPercent]) {
               if (Math.abs(centre + offset - target) < SNAP_TOLERANCE) {
-                y = yFromCentre(start.anchor, target - offset, stageHeightPercent);
+                centre = target - offset;
                 nextGuides.y = target;
               }
             }
           }
         }
         setGuides(nextGuides);
-        apply(patch(start.id, { x, y }));
+        apply(
+          patch(start.id, {
+            x,
+            y: layerYFromCentre(start.anchor, centre, stageHeightPercent),
+          }),
+        );
         return;
       }
 
@@ -287,7 +279,7 @@ export function LayerCanvas({
         if (!box) return;
         const cx = box.left + (start.x / 100) * stage.width * zoom;
         const cy =
-          box.top + (centreY(start, stageHeightPercent) / 100) * stage.width * zoom;
+          box.top + (layerCentreY(start, stageHeightPercent) / 100) * stage.width * zoom;
         const angle =
           (Math.atan2(event.clientY - cy, event.clientX - cx) * 180) / Math.PI + 90;
         const snapped = snapping ? Math.round(angle / 15) * 15 : angle;
@@ -353,7 +345,13 @@ export function LayerCanvas({
           // question, so setting one puts the other away.
           stretchY: nextHeight !== undefined ? undefined : start.stretchY,
           x: start.x + shift.x,
-          y: start.y + shift.y,
+          // The shift is in stage coordinates, like every other measurement in
+          // this block, so it is applied to the centre and converted back.
+          y: layerYFromCentre(
+            start.anchor,
+            layerCentreY(start, stageHeightPercent) + shift.y,
+            stageHeightPercent,
+          ),
         }),
       );
     };
@@ -486,13 +484,25 @@ export function LayerCanvas({
       event.preventDefault();
       const layer = placed.find((l) => l.id === selectedId);
       if (!layer) return;
-      const next = patch(selectedId, { x: layer.x + delta[0], y: layer.y + delta[1] });
+      // A nudge is a distance on screen, so it moves the layer's centre in stage
+      // coordinates and is converted back — a locked layer's `y` is a
+      // percentage of the stage's height, and adding half a percent of its
+      // *width* to that would move it by whatever the card's shape happened
+      // to be.
+      const next = patch(selectedId, {
+        x: layer.x + delta[0],
+        y: layerYFromCentre(
+          layer.anchor,
+          layerCentreY(layer, stageHeightPercent) + delta[1],
+          stageHeightPercent,
+        ),
+      });
       onChange(next);
       onCommit(next);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [placed, onChange, onCommit, patch, selectedId]);
+  }, [placed, onChange, onCommit, patch, selectedId, stageHeightPercent]);
 
   // --- Render --------------------------------------------------------------
 
@@ -538,7 +548,7 @@ export function LayerCanvas({
           const box = {
             left: ((layer.x - layer.width / 2) / 100) * stage.width * zoom,
             top:
-              ((centreY(layer, stageHeightPercent) - height / 2) / 100) * stage.width * zoom,
+              ((layerCentreY(layer, stageHeightPercent) - height / 2) / 100) * stage.width * zoom,
             width: (layer.width / 100) * stage.width * zoom,
             height: (height / 100) * stage.width * zoom,
           };
