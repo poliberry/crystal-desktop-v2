@@ -4,6 +4,12 @@ import * as React from "react"
 import { Avatar as AvatarPrimitive } from "radix-ui"
 
 import { useStaticFrame } from "@/hooks/use-static-frame"
+import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations"
+import {
+  layerObjectFit,
+  layerStyle,
+  type CosmeticLayer,
+} from "@/lib/cosmetic-layers"
 import { cn } from "@/lib/utils"
 
 function Avatar({
@@ -61,35 +67,38 @@ function AvatarFallback({
 }
 
 /**
- * The frame drawn around an avatar — see src/lib/avatar-decorations.ts.
+ * The decoration worn around an avatar — see src/lib/avatar-decorations.ts.
  *
  * A sibling of AvatarImage rather than a wrapper, so it costs a render site one
- * line and nothing when there's no decoration to draw. It overflows the
- * avatar's box on every side (which is the point) and so has to be a child of
- * the root, whose `rounded-full` deliberately doesn't clip.
+ * line and nothing when there's nothing to draw. It overflows the avatar's box
+ * on every side (which is the point) and so has to be a child of the root,
+ * whose `rounded-full` deliberately doesn't clip.
  *
- * Sized as a percentage of the avatar and centred on it, rather than by four
- * negative insets. An `<img>` is a replaced element: given `inset` on every
- * side but no width, it falls back to the picture's *intrinsic* size and
- * honours only `left`/`top` — so the SVG presets (which have no intrinsic size)
- * fitted the box while an uploaded PNG rendered at its own pixel dimensions,
- * a thousand pixels of decoration across the window.
+ * Takes the *stored value* rather than an image source, because a decoration
+ * can be several images now and only this file should have to know how one is
+ * spelled. `decorationLayers` turns any of its forms — a preset, a birthday
+ * gift, an upload, a list of placed layers — into the same list of boxes.
  *
- * The ratio is the one the built-in presets are laid out for: the avatar
- * occupies the centred 76-unit square of their 100-unit viewBox. Custom uploads
- * drawn to the same convention (which is Discord's) therefore line up without
- * being told anything.
+ * ## Why a container
+ *
+ * The stack is `container-type: size`, which makes `cqw` one percent of the
+ * avatar's width, and every layer is positioned in those units. That is what
+ * lets one placement be right at 24 pixels in a member list and at 96 on a
+ * profile card. It also fixes the older bug this replaced: an `<img>` given
+ * insets and no width is a replaced element and falls back to its intrinsic
+ * pixel size, which is how an uploaded PNG once drew itself a thousand pixels
+ * wide across the window.
  *
  * Under the badge (`z-10`) rather than over it: a decoration is jewellery and
  * a presence dot is information.
  */
 function AvatarDecoration({
-  src,
+  value,
   animate = "hover",
   className,
-  ...props
-}: React.ComponentProps<"img"> & {
-  src: string | undefined;
+}: {
+  /** The decoration as stored. Undefined draws nothing. */
+  value: string | undefined;
   /**
    * When an animated decoration is allowed to play. `"hover"` — the default —
    * holds it on its first frame until the avatar is pointed at, because a
@@ -98,11 +107,12 @@ function AvatarDecoration({
    * *about* one person, where the decoration is worth seeing in full.
    */
   animate?: boolean | "hover";
+  className?: string;
 }) {
-  const ref = React.useRef<HTMLImageElement>(null);
+  const ref = React.useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = React.useState(false);
+  const layers = React.useMemo(() => decorationLayers(value), [value]);
   const frozen = animate !== true && !hovered;
-  const poster = useStaticFrame(src, frozen);
 
   // The hover target is the avatar, not this: the decoration is
   // `pointer-events-none` (it overhangs the avatar on every side, and a frame
@@ -122,22 +132,50 @@ function AvatarDecoration({
     };
   }, [animate]);
 
-  if (!src) return null;
+  if (layers.length === 0) return null;
   return (
-    <img
+    <span
       ref={ref}
       data-slot="avatar-decoration"
-      // The poster is a still of this same file, so a decoration that isn't
-      // animated in the first place is bit-for-bit what it always was.
-      src={poster ?? src}
-      alt=""
       aria-hidden
-      draggable={false}
       className={cn(
-        "pointer-events-none absolute top-1/2 left-1/2 z-1 h-[126%] w-[126%] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain",
+        "pointer-events-none absolute inset-0 z-1 select-none [container-type:size]",
         className
       )}
-      {...props}
+    >
+      {layers.map((layer) => (
+        <CosmeticLayerImage key={layer.id} layer={layer} frozen={frozen} />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * One placed image, held still or let run.
+ *
+ * Its own component because freezing an animation needs a hook per layer — see
+ * `useStaticFrame`, which draws a one-frame copy to a canvas since there is no
+ * way to pause a GIF in an `<img>`.
+ */
+function CosmeticLayerImage({
+  layer,
+  frozen,
+}: {
+  layer: CosmeticLayer;
+  frozen: boolean;
+}) {
+  // A layer's url is whatever was stored — a storage URL, or a preset key
+  // this build draws from code. Resolved here, at the last moment, so a preset
+  // is redrawn rather than frozen into the picture it made when it was chosen.
+  const src = decorationSrc(layer.url) ?? layer.url;
+  const poster = useStaticFrame(src, frozen);
+  return (
+    <img
+      src={poster ?? src}
+      alt=""
+      draggable={false}
+      className="pointer-events-none max-w-none select-none"
+      style={{ ...layerStyle(layer), objectFit: layerObjectFit(layer) }}
     />
   );
 }

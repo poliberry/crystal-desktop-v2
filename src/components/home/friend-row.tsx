@@ -11,7 +11,6 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,7 @@ interface FriendRowProps {
   customStatus?: string;
   activities?: RichPresenceActivity[];
   nameplateUrl?: string;
-  /** The frame around their avatar, as stored — see `decorationSrc`. */
+  /** The frame around their avatar, as stored — see `decorationLayers`. */
   avatarDecoration?: string;
   /** Their birthday is today: the presence dot becomes a cake. */
   isBirthday?: boolean;
@@ -68,7 +67,7 @@ export function FriendRow({
       <Avatar className="relative">
         <AvatarImage src={imageUrl} alt={name} />
         <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
-        <AvatarDecoration src={decorationSrc(avatarDecoration)} />
+        <AvatarDecoration value={avatarDecoration} />
         {status && (
           <PresenceDot
             status={status}

@@ -2,6 +2,16 @@
 
 import { useLoopedPlayback } from "@/hooks/use-looped-playback";
 import { useStaticFrame } from "@/hooks/use-static-frame";
+import { useEffect, useRef, useState } from "react";
+
+import {
+  DEFAULT_VARIANT,
+  layerObjectFit,
+  layerStyle,
+  resolveLayer,
+  variantForHeight,
+  type CosmeticLayer as Layer,
+} from "@/lib/cosmetic-layers";
 import {
   DEFAULT_FRAME_LAYOUT,
   type ProfileFrameLayout,
@@ -85,6 +95,80 @@ export function ProfileEffectLayer({
         rounded,
       )}
     />
+  );
+}
+
+/**
+ * The frame as a stack of placed images — one, or eight.
+ *
+ * The stack is a *container*, so `cqw` is one percent of the card's width and
+ * `cqh` one percent of its height, which is what every layer's geometry is
+ * written in (see src/lib/cosmetic-layers.ts). Two things fall out of that for
+ * free: one placement is right at every size the card is drawn at, and a
+ * `stretchY` layer follows the card's height when a long bio makes it grow.
+ *
+ * Not hit-tested, like everything else here: a frame overhangs into whatever
+ * is beside the card, and a layer that swallowed clicks would make its
+ * neighbours unusable.
+ */
+export function ProfileFrameLayers({
+  layers,
+  animate = true,
+}: {
+  layers: Layer[];
+  animate?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [variant, setVariant] = useState(DEFAULT_VARIANT);
+
+  /**
+   * Which shape of card this is, measured rather than declared.
+   *
+   * A layer may be placed differently per card shape (see `resolveLayer`), and
+   * the card's height is whatever its owner has written — so the only way to
+   * know which placement applies is to look. A container query could ask the
+   * same question in CSS, but the answer has to pick between whole sets of
+   * numbers rather than switch one property, which is a thing only JavaScript
+   * can do.
+   *
+   * Watched rather than measured once, because a card grows under its own
+   * frame: a rich presence card arriving is one of the things that changes the
+   * shape.
+   */
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const measure = () => {
+      const { width, height } = node.getBoundingClientRect();
+      if (width > 0) setVariant(variantForHeight((height / width) * 100));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  if (layers.length === 0) return null;
+  return (
+    <div
+      ref={ref}
+      aria-hidden
+      data-slot="profile-frame"
+      className="pointer-events-none absolute inset-0 z-30 [container-type:size]"
+    >
+      {layers.map((layer) => {
+        const placed = resolveLayer(layer, variant);
+        return (
+          <CosmeticLayer
+            key={layer.id}
+            src={placed.url}
+            animate={animate}
+            className="max-w-none"
+            style={{ ...layerStyle(placed), objectFit: layerObjectFit(placed) }}
+          />
+        );
+      })}
+    </div>
   );
 }
 

@@ -1,13 +1,16 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { Loader2, Upload } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GradientPicker } from "@/components/profile/gradient-picker";
-import { ProfileFrameLayer } from "@/components/profile/profile-card-cosmetics";
+import {
+  LayerEditor,
+  type StageHeightOption,
+} from "@/components/profile/layer-editor";
 import { Nameplate, NAMEPLATE_ACCEPT } from "@/components/profile/nameplate";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +23,12 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { DECORATION_PRESETS, isCustomDecoration } from "@/lib/avatar-decorations";
+import {
+  DECORATION_PRESETS,
+  decorationLayers,
+  decorationSrc,
+} from "@/lib/avatar-decorations";
+import { CARD_VARIANTS, DEFAULT_VARIANT, MAX_LAYERS } from "@/lib/cosmetic-layers";
 import {
   DEFAULT_FRAME_LAYOUT,
   DISPLAY_NAME_STYLES,
@@ -28,9 +36,7 @@ import {
   FRAME_FITS,
   FRAME_OFFSET_RANGE,
   FRAME_SCALE_RANGE,
-  frameHeadroom,
-  frameLayout,
-  type ProfileFrameLayout,
+  frameLayersFrom,
 } from "@/lib/profile-cosmetics";
 import { uploadToStorage } from "@/lib/storage-upload";
 import {
@@ -60,6 +66,7 @@ function CosmeticDialog({
   description,
   children,
   footer,
+  wide = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -67,16 +74,44 @@ function CosmeticDialog({
   description?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** For the two that hold a canvas: a picker needs a dialog, an editor needs
+   * a workspace. */
+  wide?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent
+        className={cn(
+          wide
+            ? [
+                // The whole window bar the app's own chrome. A canvas is a
+                // workspace: the more of the card and the artwork around it
+                // you can see at once, the less of the job is scrolling.
+                //
+                // All of it in classes, none of it inline. The dialog animates
+                // itself in with a transform, so an inline one fights the
+                // animation — and "sm:max-w-lg" is what a plain "max-w-none"
+                // silently loses to, since a responsive variant and a bare
+                // utility are different rules rather than the same one twice.
+                //
+                // 64px is APP_TOP_CHROME_PX plus a 12px margin, and the height
+                // is the window less that and the same margin at the bottom.
+                // Written out because Tailwind reads these at build time and
+                // cannot be handed a number.
+                "top-16 h-[calc(100vh-76px)] max-h-none w-[calc(100vw-24px)] translate-y-0",
+                "flex max-w-none flex-col overflow-hidden sm:max-w-none",
+              ]
+            : "sm:max-w-lg",
+        )}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
-        {children}
-        <DialogFooter>{footer}</DialogFooter>
+        {/* `min-h-0`: the canvas inside is a flex child that has to be allowed
+            to be shorter than its content, or it pushes the footer off. */}
+        <div className={cn(wide && "flex min-h-0 flex-1 flex-col")}>{children}</div>
+        {footer && <DialogFooter className="shrink-0">{footer}</DialogFooter>}
       </DialogContent>
     </Dialog>
   );
@@ -144,12 +179,14 @@ function UploadButton({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Avatar decorations.
+ * Arranging what goes around an avatar.
  *
- * Account-scoped even when a server profile is being edited — a decoration is
- * worn by the person, not by one of their identities, which is why
- * `users.getProfile` returns it unmerged. The dialog says so rather than
- * silently writing to the wrong place.
+ * A canvas rather than a row of swatches, because a decoration is a list of
+ * placed pictures now: the presets are still one click, but they arrive *as*
+ * layers, so one can be dropped behind an uploaded badge and both can be moved.
+ * What you drag against is an avatar at the size a profile card draws one, and
+ * the geometry is in percentages of it — so an arrangement made here is the
+ * same arrangement at 24 pixels in a member list.
  */
 export function DecorationDialog({
   open,
@@ -158,119 +195,91 @@ export function DecorationDialog({
   name,
   current,
   isAccount,
+  scope,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   imageUrl?: string;
   name: string;
+  /** The decoration as stored — any of its forms; `decorationLayers` unpacks
+   * the lot, so an old single-image one opens as one layer to drag. */
   current?: string;
   isAccount: boolean;
+  scope: ProfileScope;
 }) {
-  const setAvatarDecoration = useMutation(api.users.setAvatarDecoration);
-  const setCustomAvatarDecoration = useMutation(api.users.setCustomAvatarDecoration);
   const removeAvatarDecoration = useMutation(api.users.removeAvatarDecoration);
-  const generateUploadUrl = useMutation(api.users.generateUploadUrl);
-
-  const swatch = (
-    label: string,
-    src: string | undefined,
-    selected: boolean,
-    onSelect: () => void,
-  ) => (
-    <button
-      key={label}
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={cn(
-        "flex w-20 flex-col items-center gap-1 rounded-md border p-2 transition-colors",
-        selected ? "border-primary bg-accent/60" : "border-transparent hover:bg-accent/40",
-      )}
-    >
-      <span className="relative flex size-10 shrink-0 items-center justify-center">
-        {imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={imageUrl} alt="" className="size-full rounded-md object-cover" />
-        ) : (
-          <span className="flex size-full items-center justify-center rounded-md bg-muted text-xs text-muted-foreground">
-            {name.slice(0, 2).toUpperCase()}
-          </span>
-        )}
-        {src && (
-          // The geometry `AvatarDecoration` uses, repeated because this is a
-          // standalone preview rather than an `Avatar`.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={src}
-            alt=""
-            className="pointer-events-none absolute top-1/2 left-1/2 h-[126%] w-[126%] max-w-none -translate-x-1/2 -translate-y-1/2 object-contain"
-          />
-        )}
-      </span>
-      <span className="w-full truncate text-center text-[11px] text-muted-foreground">
-        {label}
-      </span>
-    </button>
-  );
+  const layers = useMemo(() => decorationLayers(current), [current]);
 
   return (
     <CosmeticDialog
       open={open}
       onOpenChange={onOpenChange}
+      wide
       title="Avatar decoration"
       description={
         isAccount
-          ? "A frame drawn around your avatar wherever you appear."
+          ? "Artwork worn around your avatar wherever you appear. Drag it to place it."
           : "Decorations are worn by you rather than by one server identity, so this applies everywhere."
       }
       footer={
-        <>
-          <UploadButton
-            label="Upload your own"
-            maxBytes={MAX_DECORATION_BYTES}
-            maxLabel={MAX_DECORATION_LABEL}
-            accept="image/png,image/gif,image/webp,image/svg+xml"
-            onPick={async (file) => {
-              const storageId = (await uploadToStorage(
-                await generateUploadUrl(),
-                file,
-              )) as Id<"_storage">;
-              await setCustomAvatarDecoration({ storageId });
-            }}
-          />
-          {current && (
-            <Button
-              variant="ghost"
-              className="text-destructive"
-              onClick={() => void removeAvatarDecoration()}
-            >
-              Remove
-            </Button>
-          )}
-        </>
+        layers.length > 0 && (
+          <Button
+            variant="ghost"
+            className="text-destructive"
+            onClick={() => void removeAvatarDecoration()}
+          >
+            Remove all
+          </Button>
+        )
       }
     >
-      <div className="flex flex-wrap items-start gap-2">
-        {swatch("None", undefined, !current, () =>
-          void setAvatarDecoration({ value: "" }),
+      <LayerEditor
+        className="min-h-0 flex-1"
+        layers={layers}
+        onSave={(next) => scope.setDecorationLayers(next)}
+        stageWidth={AVATAR_STAGE_PX}
+        // One shape only: an avatar is a square at every size the app draws
+        // one, so there is nothing to check a decoration against but itself.
+        // One shape, and it is the default one: an avatar is a square at every
+        // size the app draws one, so there is nothing to place a decoration
+        // against twice.
+        heights={[{ key: DEFAULT_VARIANT, label: "Avatar", height: AVATAR_STAGE_PX }]}
+        upload={scope.uploadLayerImage}
+        uploadHint={`Transparent PNG, GIF or WebP works best. Up to ${MAX_DECORATION_LABEL} each.`}
+        presets={DECORATION_PRESETS.map((preset) => ({
+          label: preset.name,
+          // The stored form, not the picture: a layer keeps the key so a
+          // preset redrawn in a later build is redrawn for everyone wearing it.
+          url: preset.value,
+        }))}
+        resolveSrc={(url) => decorationSrc(url) ?? url}
+        renderStage={() => (
+          <div className="flex size-full items-center justify-center">
+            {imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={imageUrl}
+                alt=""
+                className="size-full rounded-2xl object-cover"
+                draggable={false}
+              />
+            ) : (
+              <span className="flex size-full items-center justify-center rounded-2xl bg-muted text-2xl text-muted-foreground">
+                {name.slice(0, 2).toUpperCase()}
+              </span>
+            )}
+          </div>
         )}
-        {DECORATION_PRESETS.map((preset) =>
-          swatch(preset.name, preset.src, current === preset.value, () =>
-            void setAvatarDecoration({ value: preset.value }),
-          ),
-        )}
-        {isCustomDecoration(current) &&
-          swatch("Yours", current, true, () => {})}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        A square, transparent PNG or GIF works best — it isn&apos;t cropped, it&apos;s
-        drawn over and around your avatar. Up to {MAX_DECORATION_LABEL}.
-      </p>
+      />
     </CosmeticDialog>
   );
 }
 
-/* -------------------------------------------------------------------------- */
+/** The avatar the canvas draws against, in pixels. Big enough to place
+ * something on, and square, which is the only thing that matters — the
+ * geometry is relative, so the number itself never leaves this file. */
+const AVATAR_STAGE_PX = 132;
+
 
 export function DisplayNameStyleDialog({
   open,
@@ -466,90 +475,76 @@ export function ProfileEffectDialog({
 
 
 /**
- * A card, at a size that fits in a dialog, for positioning a frame against.
+ * A card to arrange a frame against, at a height you choose.
  *
- * A stand-in rather than the real `MemberProfileCard`: the real one is 360
- * pixels wide and queries four things, neither of which belongs in a dialog
- * that is already sitting on top of a live copy of it. What matters here is
- * only the *shape* — a rectangle of the right proportions with a banner band
- * and an avatar where the real ones are — because that's what tells you
- * whether your artwork is going to cover somebody's face.
+ * A stand-in rather than the real `MemberProfileCard`: the real one queries
+ * four things and sizes itself from what somebody has written, and neither
+ * belongs in a dialog whose whole purpose is to show the *shapes* a card comes
+ * in. What matters here is where the banner ends, where the avatar sits, and
+ * how far down the card goes — because those are what artwork either lines up
+ * with or covers.
  *
- * The frame itself is the real `ProfileFrameLayer`, so the geometry being
- * previewed is the geometry that will ship.
+ * The height is the point. A card grows with a long bio or a rich presence
+ * card, sometimes by half again, and a frame placed against a short one is a
+ * frame nobody has checked.
  */
-function FramePlacementPreview({
-  src,
-  layout,
+function CardStage({
+  height,
   avatarUrl,
   bannerUrl,
+  name,
 }: {
-  src?: string;
-  layout: ProfileFrameLayout;
+  height: number;
   avatarUrl?: string;
   bannerUrl?: string;
+  name: string;
 }) {
-  const room = frameHeadroom(layout, !!src);
-
   return (
-    <div className="flex h-56 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]">
-      {/* Scaled down as a whole, so the frame's pixel offsets stay in
-          proportion to the card they're measured against. */}
+    <div
+      className="relative overflow-hidden rounded-md border border-border/20 bg-accent shadow-lg"
+      style={{ height }}
+    >
       <div
-        className="origin-center"
-        style={{ transform: "scale(0.62)" }}
-      >
-        <div
-          style={{
-            paddingTop: room.paddingTop,
-            paddingBottom: room.paddingBottom,
-            paddingLeft: `${room.paddingInline}%`,
-            paddingRight: `${room.paddingInline}%`,
-          }}
-        >
-          <div className="relative h-[260px] w-[200px] rounded-md bg-accent p-0.5 shadow-lg">
-            <div className="flex h-full flex-col overflow-hidden rounded-[5px] border border-border/20 bg-background/70">
-              <div
-                className="h-16 w-full bg-cover bg-center bg-muted"
-                style={
-                  bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined
-                }
-              />
-              <div className="-mt-6 px-3">
-                <div className="size-12 overflow-hidden rounded-xl bg-muted ring-4 ring-background/70">
-                  {avatarUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={avatarUrl} alt="" className="size-full object-cover" />
-                  )}
-                </div>
-              </div>
-              <div className="space-y-1.5 px-3 pt-2">
-                <div className="h-3 w-2/3 rounded bg-foreground/25" />
-                <div className="h-2 w-1/2 rounded bg-foreground/15" />
-                <div className="mt-3 h-2 w-full rounded bg-foreground/10" />
-                <div className="h-2 w-4/5 rounded bg-foreground/10" />
-              </div>
-            </div>
-            <ProfileFrameLayer src={src} layout={layout} />
-          </div>
+        className="h-20 w-full bg-muted bg-cover bg-center"
+        style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
+      />
+      <div className="-mt-8 px-4">
+        <div className="size-16 overflow-hidden rounded-xl bg-muted ring-4 ring-background/70">
+          {avatarUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt="" className="size-full object-cover" draggable={false} />
+          )}
         </div>
+      </div>
+      <div className="space-y-2 px-4 pt-3">
+        <p className="truncate text-lg leading-tight font-bold">{name || "Your name"}</p>
+        <div className="h-2 w-1/2 rounded bg-foreground/15" />
+        <div className="mt-4 space-y-1.5">
+          <div className="h-2 w-full rounded bg-foreground/10" />
+          <div className="h-2 w-4/5 rounded bg-foreground/10" />
+          <div className="h-2 w-2/3 rounded bg-foreground/10" />
+        </div>
+        {/* Only drawn on the taller cards, because that is what makes a card
+            taller: something else to say. */}
+        {height > 460 && (
+          <div className="mt-4 h-24 rounded-md border border-border/40 bg-muted/40" />
+        )}
+        {height > 560 && (
+          <div className="mt-3 h-20 rounded-md border border-border/40 bg-muted/40" />
+        )}
       </div>
     </div>
   );
 }
 
 /**
- * Uploading a frame, and — the part that actually matters — placing it.
+ * Uploading a frame, and — the part that actually matters — arranging it.
  *
- * Frames are artwork of unknown shape. A border drawn to a card's proportions
- * and a tall piece meant to grow out of the card's top want opposite treatment,
- * and nothing in a PNG says which one you've got. So rather than this file
- * guessing, the person who just picked the file positions it against a live
- * card, and the four numbers they land on are stored with it.
- *
- * The preview is the real card from the editor behind this dialog, seen
- * through the dialog's own translucency — so there's no second implementation
- * of the geometry to drift. What's here is only the controls.
+ * Frames are artwork of unknown shape, and there are several of them now: a
+ * border, a badge in a corner, a shine over the top. Nothing in a PNG says
+ * where it belongs, so the person who picked the files places them, against a
+ * card they can make short or tall to see what happens when somebody writes a
+ * long bio.
  */
 export function ProfileFrameDialog({
   open,
@@ -560,187 +555,71 @@ export function ProfileFrameDialog({
   onOpenChange: (open: boolean) => void;
   scope: ProfileScope;
 }) {
-  const current = scope.values?.profileFrame;
-  const stored = frameLayout(scope.values ?? {});
-  // Local while dragging: a slider fires per frame and each one would be a
-  // write. Committed when the drag ends.
-  const [draft, setDraft] = useState<ProfileFrameLayout>(stored);
-  const [seeded, setSeeded] = useState(false);
-  if (open && !seeded) {
-    setSeeded(true);
-    setDraft(stored);
-  }
-  if (!open && seeded) setSeeded(false);
-
-  /** Applied straight away for the toggles, which are one click and want to be
-   * seen on the card immediately. */
-  const commit = (next: Partial<ProfileFrameLayout>) => {
-    setDraft((prev) => ({ ...prev, ...next }));
-    void scope.setFrameLayout(next);
-  };
+  const values = scope.values;
+  const layers = useMemo(() => frameLayersFrom(values ?? {}), [values]);
 
   return (
     <CosmeticDialog
       open={open}
       onOpenChange={onOpenChange}
+      wide
       title="Profile frame"
-      description="Artwork drawn around your card. Position it against the card below."
+      description="Artwork drawn around your card. Drag it into place, and check it against a card that has grown."
       footer={
-        <>
-          <UploadButton
-            label={current ? "Replace" : "Upload a frame"}
-            maxBytes={MAX_PROFILE_ASSET_BYTES}
-            maxLabel={MAX_PROFILE_ASSET_LABEL}
-            onPick={(file) => scope.setFrame(file, "overlay")}
-          />
-          {current && (
-            <Button
-              variant="ghost"
-              className="text-destructive"
-              onClick={() => void scope.removeFrame()}
-            >
-              Remove
-            </Button>
-          )}
-        </>
+        (values?.profileFrame || layers.length > 0) && (
+          <Button
+            variant="ghost"
+            className="text-destructive"
+            onClick={() => {
+              void scope.setFrameLayers([]);
+              void scope.removeFrame();
+            }}
+          >
+            Remove all
+          </Button>
+        )
       }
     >
-      <div className="space-y-4">
-{current ? (
-          <FramePlacementPreview
-            src={current}
-            layout={draft}
-            avatarUrl={scope.values?.imageUrl}
-            bannerUrl={scope.values?.bannerUrl}
+      <LayerEditor
+        className="min-h-0 flex-1"
+        layers={layers}
+        onSave={(next) => scope.setFrameLayers(next)}
+        stageWidth={CARD_STAGE_WIDTH_PX}
+        heights={CARD_HEIGHTS}
+        upload={scope.uploadLayerImage}
+        uploadHint={`Transparent PNG, GIF or WebP. Up to ${MAX_PROFILE_ASSET_LABEL} each, ${MAX_LAYERS} in total.`}
+        renderStage={(height) => (
+          <CardStage
+            height={height}
+            avatarUrl={values?.imageUrl}
+            bannerUrl={values?.bannerUrl}
+            name={values?.name ?? ""}
           />
-        ) : (
-          <div className="flex h-32 items-center justify-center rounded-md border-2 border-dashed border-border/50 text-sm text-muted-foreground">
-            Nothing uploaded yet
-          </div>
         )}
-
-        {current && (
-          <>
-            <div className="space-y-1.5">
-              <Label>Shape</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {FRAME_FITS.map((option) => (
-                  <button
-                    key={option.fit}
-                    type="button"
-                    aria-pressed={draft.fit === option.fit}
-                    onClick={() => commit({ fit: option.fit })}
-                    className={cn(
-                      "rounded-md border p-2 text-left transition-colors",
-                      draft.fit === option.fit
-                        ? "border-primary bg-accent/60"
-                        : "border-border hover:bg-accent/40",
-                    )}
-                  >
-                    <span className="block text-sm font-medium">{option.label}</span>
-                    <span className="block text-[11px] leading-snug text-muted-foreground">
-                      {option.hint}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Anchor</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {FRAME_ANCHORS.map((option) => (
-                  <button
-                    key={option.anchor}
-                    type="button"
-                    aria-pressed={draft.anchor === option.anchor}
-                    onClick={() => commit({ anchor: option.anchor })}
-                    className={cn(
-                      "rounded-md border py-1.5 text-center text-sm transition-colors",
-                      draft.anchor === option.anchor
-                        ? "border-primary bg-accent/60"
-                        : "border-border hover:bg-accent/40",
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Which edge of the card the artwork is pinned to.
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label>Size</Label>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {Math.round(draft.scale)}%
-                </span>
-              </div>
-              <Slider
-                value={[draft.scale]}
-                min={FRAME_SCALE_RANGE.min}
-                max={FRAME_SCALE_RANGE.max}
-                step={1}
-                onValueChange={([value]) =>
-                  setDraft((prev) => ({ ...prev, scale: value ?? prev.scale }))
-                }
-                onValueCommit={([value]) =>
-                  void scope.setFrameLayout({ scale: value ?? draft.scale })
-                }
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Width, as a percentage of the card.
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label>Offset</Label>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {Math.round(draft.offsetY)}px
-                </span>
-              </div>
-              <Slider
-                value={[draft.offsetY]}
-                min={FRAME_OFFSET_RANGE.min}
-                max={FRAME_OFFSET_RANGE.max}
-                step={1}
-                onValueChange={([value]) =>
-                  setDraft((prev) => ({ ...prev, offsetY: value ?? prev.offsetY }))
-                }
-                onValueCommit={([value]) =>
-                  void scope.setFrameLayout({ offsetY: value ?? draft.offsetY })
-                }
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Negative moves it up, past the card's edge.
-              </p>
-            </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setDraft(DEFAULT_FRAME_LAYOUT);
-                void scope.setFrameLayout(DEFAULT_FRAME_LAYOUT);
-              }}
-            >
-              Reset placement
-            </Button>
-          </>
-        )}
-
-        <p className="text-xs text-muted-foreground">
-          A transparent PNG, GIF or WebP. Up to {MAX_PROFILE_ASSET_LABEL}.
-        </p>
-      </div>
+      />
     </CosmeticDialog>
   );
 }
 
-/* -------------------------------------------------------------------------- */
+/** The width a profile card is drawn at — the popover's `w-72` plus the room
+ * the page gives it. Layer geometry is a percentage of this. */
+const CARD_STAGE_WIDTH_PX = 300;
+
+/**
+ * The heights a card comes in, from the shapes themselves.
+ *
+ * Derived rather than written out, because these keys are also what a
+ * per-shape placement is stored under and what the renderer matches a real
+ * card against — three lists of the same three things would drift the first
+ * time anybody added a fourth.
+ */
+const CARD_HEIGHTS: StageHeightOption[] = CARD_VARIANTS.map((variant) => ({
+  key: variant.key,
+  label: variant.label,
+  hint: variant.hint,
+  height: Math.round((CARD_STAGE_WIDTH_PX * variant.heightPercent) / 100),
+}));
+
 
 export function NameplateDialog({
   open,

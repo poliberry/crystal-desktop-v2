@@ -12,6 +12,11 @@
  * actually looks like.
  */
 
+import {
+  normalizeLayers,
+  type CosmeticLayer,
+} from "@/lib/cosmetic-layers";
+
 /** How an uploaded frame relates to the card it's drawn against. */
 export type ProfileFrameMode = "wrap" | "overlay";
 
@@ -113,6 +118,57 @@ export function frameHeadroom(
   }
   return { paddingTop: lift + MARGIN, paddingBottom: MARGIN, paddingInline: sideways + 8 };
 }
+
+/**
+ * A profile's frame as the list of layers to draw.
+ *
+ * Two eras of storage in one function. A profile edited since frames became a
+ * list carries `profileFrameLayers`, and that is the whole answer. One that
+ * isn't carries a single image and the four numbers that placed it, which are
+ * turned into one layer meaning the same thing — approximately, because the
+ * old offset was in pixels against a card of unknown width and the new one is
+ * a percentage of it. `LEGACY_CARD_WIDTH` is the conversion, and the editor
+ * shows the result live, which is where anybody who cares about the last few
+ * pixels will fix it.
+ *
+ * Nothing is written back: a profile is converted when its owner next saves
+ * the frame, so an older client goes on drawing what it always drew.
+ */
+export function frameLayersFrom(stored: {
+  profileFrame?: string;
+  profileFrameFit?: string;
+  profileFrameAnchor?: string;
+  profileFrameScale?: number;
+  profileFrameOffsetY?: number;
+  profileFrameLayers?: CosmeticLayer[];
+}): CosmeticLayer[] {
+  if (stored.profileFrameLayers?.length) {
+    return normalizeLayers(stored.profileFrameLayers);
+  }
+  if (!stored.profileFrame) return [];
+
+  const layout = frameLayout(stored);
+  const y = (layout.offsetY / LEGACY_CARD_WIDTH) * 100;
+  return normalizeLayers([
+    {
+      id: "legacy",
+      url: stored.profileFrame,
+      anchor: layout.anchor,
+      x: 50,
+      // The old numbers placed the artwork's *top edge*; the new ones place
+      // its centre. Half a layer's height is not knowable from here — the file
+      // hasn't loaded — so half its width stands in, which is right for the
+      // square-ish artwork most frames are.
+      y: layout.anchor === "bottom" ? y - layout.scale / 2 : y + layout.scale / 2,
+      width: layout.scale,
+      stretchY: layout.fit === "stretch" || undefined,
+    },
+  ]);
+}
+
+/** The card width the old pixel offsets were dragged against — the editor's
+ * preview, which is what everybody was looking at when they placed one. */
+const LEGACY_CARD_WIDTH = 320;
 
 /** Read a stored layout, filling in the defaults for anything unset — every
  * frame uploaded before placement existed lands on the Discord-ish default

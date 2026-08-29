@@ -11,6 +11,13 @@ import type {
   ProfileFrameLayout,
   ProfileFrameMode,
 } from "@/lib/profile-cosmetics";
+import type { CosmeticLayer } from "@/lib/cosmetic-layers";
+
+/** The layer shape the mutations take: the same thing, with Convex's branded
+ * storage id where the client carries a string. */
+type StoredLayers = (Omit<CosmeticLayer, "storageId"> & {
+  storageId?: Id<"_storage">;
+})[];
 
 /**
  * One profile being edited — the account's, or the caller's identity in one
@@ -46,6 +53,9 @@ export interface ProfileScopeValues {
   profileFrameAnchor?: string;
   profileFrameScale?: number;
   profileFrameOffsetY?: number;
+  /** The frame as placed artwork, which is what the canvas editor reads back —
+   * without it the editor opens empty on a frame that is plainly there. */
+  profileFrameLayers?: CosmeticLayer[];
   /** The owner's own stylesheet for this card. */
   profileCss?: string;
   /** Account-level and not overridable per server — a decoration is worn by
@@ -76,6 +86,15 @@ export interface ProfileScope {
   /** Where the frame sits — see `ProfileFrameLayout`. Partial, so a slider
    * can send only what it changed. */
   setFrameLayout: (layout: Partial<ProfileFrameLayout>) => Promise<void>;
+  /** The frame as placed artwork — the whole arrangement at once, which is
+   * what the canvas editor produces. */
+  setFrameLayers: (layers: CosmeticLayer[]) => Promise<void>;
+  /** The avatar decoration, likewise. Account-level in both scopes: a
+   * decoration is worn by the person, not by one server identity. */
+  setDecorationLayers: (layers: CosmeticLayer[]) => Promise<void>;
+  /** Puts a picked file in storage and hands back its URL, for a layer to
+   * point at. */
+  uploadLayerImage: (file: File) => Promise<{ url: string; storageId: string }>;
   removeFrame: () => Promise<void>;
   /** The card's own stylesheet, confined to the card when it's rendered. */
   setCss: (css: string) => Promise<void>;
@@ -113,6 +132,9 @@ export function useProfileScope(
   const setProfileFrameModeM = useMutation(api.users.setProfileFrameMode);
   const removeProfileFrameM = useMutation(api.users.removeProfileFrame);
   const setProfileFrameLayoutM = useMutation(api.users.setProfileFrameLayout);
+  const setProfileFrameLayersM = useMutation(api.users.setProfileFrameLayers);
+  const setAvatarDecorationLayersM = useMutation(api.users.setAvatarDecorationLayers);
+  const uploadCosmeticLayerM = useMutation(api.users.uploadCosmeticLayer);
   const setProfileCssM = useMutation(api.users.setProfileCss);
 
   // --- Server-profile mutations ---
@@ -150,6 +172,9 @@ export function useProfileScope(
   const setServerProfileFrameLayout = useMutation(
     api.serverProfiles.setServerProfileFrameLayout
   );
+  const setServerProfileFrameLayers = useMutation(
+    api.serverProfiles.setServerProfileFrameLayers
+  );
   const setServerProfileCss = useMutation(api.serverProfiles.setServerProfileCss);
 
   /**
@@ -183,6 +208,7 @@ export function useProfileScope(
         profileFrameAnchor: me.profileFrameAnchor,
         profileFrameScale: me.profileFrameScale,
         profileFrameOffsetY: me.profileFrameOffsetY,
+        profileFrameLayers: me.profileFrameLayers,
         profileCss: me.profileCss,
         avatarDecoration: me.avatarDecoration,
       };
@@ -217,6 +243,11 @@ export function useProfileScope(
       profileFrameOffsetY: sp?.profileFrame
         ? sp.profileFrameOffsetY
         : me.profileFrameOffsetY,
+      // As a set from whichever profile has any, for the reason the card reads
+      // them that way: two arrangements merged layer by layer are neither.
+      profileFrameLayers: sp?.profileFrameLayers?.length
+        ? sp.profileFrameLayers
+        : me.profileFrameLayers,
       profileCss: sp?.profileCss ?? me.profileCss,
       avatarDecoration: me.avatarDecoration,
     };
@@ -350,6 +381,26 @@ export function useProfileScope(
       setFrameLayout: async (layout) => {
         if (isAccount) await setProfileFrameLayoutM(layout);
         else await setServerProfileFrameLayout({ communityId: cid, ...layout });
+      },
+      setFrameLayers: async (layers) => {
+        // The cast is the schema's branded storage id meeting a plain string:
+        // a layer travels through the editor and the renderer as data, and
+        // neither has any business importing the data model to hold an id it
+        // only ever passes back.
+        const args = { layers: layers as StoredLayers };
+        if (isAccount) await setProfileFrameLayersM(args);
+        else await setServerProfileFrameLayers({ communityId: cid, ...args });
+      },
+      setDecorationLayers: async (layers) => {
+        await setAvatarDecorationLayersM({ layers: layers as StoredLayers });
+      },
+      uploadLayerImage: async (file) => {
+        const storageId = (await uploadToStorage(
+          await generateUploadUrl(),
+          file,
+        )) as Id<"_storage">;
+        const url = await uploadCosmeticLayerM({ storageId });
+        return { url, storageId };
       },
       removeFrame: async () => {
         if (isAccount) await removeProfileFrameM();

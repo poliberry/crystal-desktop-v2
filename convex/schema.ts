@@ -45,6 +45,92 @@ const activityValidator = v.object({
 });
 
 /**
+ * One piece of artwork placed on a card or an avatar.
+ *
+ * A frame used to be a single image with four numbers describing where it sat
+ * (`profileFrameFit` and friends). That is one decoration; people want a
+ * border *and* a badge in the corner *and* a shine over the top, which is
+ * three, each placed differently. So placement moved onto the artwork itself
+ * and the artwork became a list.
+ *
+ * Every measurement is a percentage of the target box's *width*, and never of
+ * its height. A profile card has no fixed height — a long bio or a rich
+ * presence card makes it grow, sometimes by half again — so a layer measured
+ * against the height would stretch and slide every time somebody wrote a
+ * longer status. Width is the one stable dimension, which makes it the unit
+ * for both axes and keeps artwork the shape it was drawn.
+ *
+ * That leaves the question of what happens to the *rest* of the card when it
+ * grows, which is what `anchor` answers: a layer is pinned to the card's top,
+ * centre or bottom, and `y` is measured from there. A border along the top
+ * stays on the top edge, a badge in the bottom corner follows the bottom
+ * edge, and a card that grows grows between them.
+ *
+ * `x`/`y` are the layer's *centre*, so rotating and resizing turn about the
+ * point the editor's handles surround rather than about a corner.
+ */
+const cosmeticLayerValidator = v.object({
+  /** Stable across edits, so the editor can key on it and a reorder is a
+   * reorder rather than a delete and an insert. Minted by the client. */
+  id: v.string(),
+  url: v.string(),
+  /** Absent for a built-in preset, which is drawn from code and owns no file. */
+  storageId: v.optional(v.id("_storage")),
+  /** Which edge of the card `y` is measured from. */
+  anchor: v.union(v.literal("top"), v.literal("center"), v.literal("bottom")),
+  /** Centre of the layer, as a percentage of the target box's width. `x` is
+   * measured from the left edge (50 is centred); `y` downwards from the
+   * anchor line, so a negative `y` on a top-anchored layer lifts it above the
+   * card — which is how a frame overhangs. */
+  x: v.number(),
+  y: v.number(),
+  /** Width, as a percentage of the target box's width. */
+  width: v.number(),
+  /** Height, in the same unit. Absent means "keep the artwork's own
+   * proportions", which is what almost every decoration wants and what an
+   * `<img>` with a width and no height already does by itself. */
+  height: v.optional(v.number()),
+  /**
+   * Height follows the card instead: the layer is drawn from its anchor to
+   * the card's full height, whatever that turns out to be.
+   *
+   * For the one kind of artwork that *should* stretch — a border drawn to a
+   * card's proportions, which has to grow with the card or stop being a
+   * border. Ignored when `height` is set, which is the fixed-size answer to
+   * the same question.
+   */
+  stretchY: v.optional(v.boolean()),
+  /** Degrees clockwise. */
+  rotation: v.optional(v.number()),
+  /** 0–1. Absent is fully opaque. */
+  opacity: v.optional(v.number()),
+  /**
+   * Placement for one shape of card, overriding the numbers above.
+   *
+   * A card that has grown is not the same picture with more room in it: a badge
+   * beside the bio on a short card is halfway up a tall one, and where somebody
+   * wants it is a different answer per shape. Anchoring handles the common
+   * case; this handles the rest.
+   *
+   * Keyed by the card shapes in src/lib/cosmetic-layers.ts. Absent — which is
+   * what every layer starts as — means the placement above is used for all of
+   * them, so nothing has to be arranged three times to be arranged once.
+   */
+  variants: v.optional(
+    v.record(
+      v.string(),
+      v.object({
+        x: v.optional(v.number()),
+        y: v.optional(v.number()),
+        width: v.optional(v.number()),
+        height: v.optional(v.number()),
+        rotation: v.optional(v.number()),
+      })
+    )
+  ),
+});
+
+/**
  * The cosmetics a profile card is dressed in, shared verbatim by `users` and
  * `serverProfiles`.
  *
@@ -108,6 +194,17 @@ const profileCosmetics = {
   ),
   profileFrameScale: v.optional(v.number()),
   profileFrameOffsetY: v.optional(v.number()),
+  /**
+   * The frame as a list of placed images — what the four fields above became.
+   *
+   * When this is set it *is* the frame, and the single-image fields are
+   * ignored: a profile written by this build carries its whole frame here, and
+   * one written before it is read through `frameLayersFrom`, which turns the
+   * old fields into a single layer at the same place they described. Nothing
+   * is migrated on write, so an older client keeps rendering what it always
+   * did until the frame is next edited.
+   */
+  profileFrameLayers: v.optional(v.array(cosmeticLayerValidator)),
   /**
    * A stylesheet the owner writes for their own profile card.
    *
@@ -187,6 +284,23 @@ export default defineSchema({
      * one thing — see src/lib/avatar-decorations.ts, which draws it. */
     avatarDecoration: v.optional(v.string()),
     avatarDecorationStorageId: v.optional(v.id("_storage")),
+    /**
+     * The decoration as a list of placed images, for the same reason a frame
+     * is one: one picture around an avatar is a decoration, and people want
+     * two.
+     *
+     * The target box here is the avatar, which is square — so the layer
+     * geometry means what it says on both axes and `anchor` is almost always
+     * "center". A single-image decoration (a preset, a birthday gift, an old
+     * upload) is read as one centred layer at the ratio decorations have
+     * always been drawn at; see `decorationLayers`.
+     *
+     * Every query that carries a decoration carries it as one string, so this
+     * list is serialised into `avatarDecoration` on read rather than added
+     * beside it — otherwise every member list, message row and call tile in
+     * the app would need a second field threaded through it.
+     */
+    avatarDecorationLayers: v.optional(v.array(cosmeticLayerValidator)),
     ...profileCosmetics,
     /** The decoration generated as a birthday present, and when it stops being
      * worn. Kept separate from `avatarDecoration` so the user's own choice is

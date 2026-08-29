@@ -26,11 +26,15 @@ import {
 } from "@/components/ui/tooltip";
 import { useOpenSettings } from "@/components/settings/settings-dialog";
 import { BadgeIcon } from "@/components/badge-icon";
+import {
+  layersHeadroom,
+  type CosmeticLayer,
+} from "@/lib/cosmetic-layers";
 import { PresenceBadge } from "@/components/presence-dot";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import {
   ProfileEffectLayer,
   ProfileFrameLayer,
+  ProfileFrameLayers,
 } from "@/components/profile/profile-card-cosmetics";
 import {
   ProfileCssLayer,
@@ -39,6 +43,7 @@ import {
 import {
   displayNameStyleClass,
   frameHeadroom,
+  frameLayersFrom,
   frameLayout,
 } from "@/lib/profile-cosmetics";
 import {
@@ -56,7 +61,7 @@ export interface MemberProfileMember {
   bio?: string;
   customStatus?: string;
   bannerUrl?: string;
-  /** The frame around their avatar, as stored — see `decorationSrc`. */
+  /** The frame around their avatar, as stored — see `decorationLayers`. */
   avatarDecoration?: string;
   /** Their birthday is today. */
   isBirthday?: boolean;
@@ -74,6 +79,9 @@ export interface MemberProfileMember {
   profileFrameAnchor?: string;
   profileFrameScale?: number;
   profileFrameOffsetY?: number;
+  /** The frame as placed artwork, which is what a profile edited since frames
+   * became a list carries instead of the five fields above. */
+  profileFrameLayers?: CosmeticLayer[];
   /** The owner's own stylesheet for this card — see `ProfileCssLayer`. */
   profileCss?: string;
   status: FriendStatus;
@@ -241,6 +249,16 @@ export function MemberProfileCard({
   const profileEffect = profile?.profileEffect ?? member.profileEffect;
   const profileCss = profile?.profileCss ?? member.profileCss;
   const profileFrame = profile?.profileFrame ?? member.profileFrame;
+  /**
+   * The frame as layers — one arrangement taken whole from whichever profile
+   * supplied it, rather than merged field by field: a server frame built out
+   * of three layers and an account frame built out of two are two different
+   * pictures, and mixing them would draw neither.
+   */
+  const frameLayers = frameLayersFrom(
+    profile?.profileFrame || profile?.profileFrameLayers?.length ? profile : member,
+  );
+  const frameRoomPercent = layersHeadroom(frameLayers);
   /** Where that frame sits. Read as a group so a half-loaded query can't mix
    * the account's scale with a server's anchor. */
   const profileFrameLayout = frameLayout(
@@ -286,8 +304,19 @@ export function MemberProfileCard({
           // asking each of those to know about it was how three of them ended
           // up clipping it. A margin here pushes every host's box outwards
           // instead, which is the same thing said once.
-          marginTop: reserveFrameRoom ? frameRoom.paddingTop : 0,
-          marginBottom: reserveFrameRoom ? frameRoom.paddingBottom : 0,
+          // Percentages for layers, pixels for a legacy frame — each in the
+          // unit its placement was written in. A percentage margin resolves
+          // against the containing block's width, and the card fills the box
+          // it is put in, so the two are the same number in every host it has.
+          ...(frameLayers.length > 0
+            ? {
+                marginTop: reserveFrameRoom ? `${frameRoomPercent.top}%` : 0,
+                marginBottom: reserveFrameRoom ? `${frameRoomPercent.bottom}%` : 0,
+              }
+            : {
+                marginTop: reserveFrameRoom ? frameRoom.paddingTop : 0,
+                marginBottom: reserveFrameRoom ? frameRoom.paddingBottom : 0,
+              }),
           ...(hasGradient
             ? {
                 background: `linear-gradient(to bottom, rgba(0,0,0,0.4), rgba(0,0,0,0.4)), linear-gradient(to bottom, ${member.borderGradientStart}, ${member.borderGradientEnd})`,
@@ -364,7 +393,7 @@ export function MemberProfileCard({
                 {/* The one place a decoration plays on its own: this card
                     is about one person, and is opened to look at them.
                     Everywhere else waits to be pointed at. */}
-                <AvatarDecoration src={decorationSrc(avatarDecoration)} animate />
+                <AvatarDecoration value={avatarDecoration} animate />
                 {/* Larger dot with thicker ring for the profile card — and a
                     cake sized to match on the day. */}
                 <PresenceBadge
@@ -540,9 +569,12 @@ export function MemberProfileCard({
           that hangs past the card's edges. */}
       <ProfileCssLayer css={profileCss} scopeId={member.userId} />
       <ProfileEffectLayer src={profileEffect} rounded="rounded-md" />
-      {!frameHandledByHost && (
-        <ProfileFrameLayer src={profileFrame} layout={profileFrameLayout} />
-      )}
+      {!frameHandledByHost &&
+        (frameLayers.length > 0 ? (
+          <ProfileFrameLayers layers={frameLayers} />
+        ) : (
+          <ProfileFrameLayer src={profileFrame} layout={profileFrameLayout} />
+        ))}
     </div>
   );
 }

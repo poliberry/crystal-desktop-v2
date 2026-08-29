@@ -46,7 +46,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useMyPresence } from "@/hooks/use-presence";
 import { useProfileScope, type ProfileScope } from "@/hooks/use-profile-scope";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { displayNameStyleClass } from "@/lib/profile-cosmetics";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -419,8 +418,7 @@ export function ProfileEditor({
                     <AvatarFallback>
                       {values.name.slice(0, 2).toUpperCase()}
                     </AvatarFallback>
-                    <AvatarDecoration
-                      src={decorationSrc(values.avatarDecoration)}
+                    <AvatarDecoration value={values.avatarDecoration}
                       animate
                     />
                   </Avatar>
@@ -676,6 +674,7 @@ export function ProfileEditor({
         name={values.name}
         current={values.avatarDecoration}
         isAccount={scope.isAccount}
+        scope={scope}
       />
       <DisplayNameStyleDialog
         open={dialog === "nameStyle"}

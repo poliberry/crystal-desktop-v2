@@ -19,6 +19,11 @@ import {
   resolveProfileAsset,
 } from "./lib/profileCosmetics";
 import {
+  dropUnusedLayerAssets,
+  layerArgValidator,
+  normalizeLayers,
+} from "./lib/cosmeticLayers";
+import {
   MAX_DECORATION_BYTES,
   MAX_PROFILE_ASSET_BYTES,
   requireWithinUploadLimit,
@@ -551,6 +556,82 @@ export const setProfileCss = mutation({
   },
 });
 
+/**
+ * The frame as a whole: every image in it, and where each one sits.
+ *
+ * Replaced wholesale rather than patched layer by layer, because that is what
+ * the editor produces — a canvas hands back an arrangement, not a diff, and
+ * "apply these eight positions atomically" is the only version of this that
+ * can't half-apply.
+ *
+ * Writing this list is also what retires the single-image fields for a
+ * profile: `frameLayersFrom` reads the old ones only when there are no layers,
+ * so a card written by this build carries its whole frame here. The old fields
+ * are left in place rather than cleared, so an older client keeps drawing what
+ * it always did.
+ */
+export const setProfileFrameLayers = mutation({
+  args: { layers: v.array(layerArgValidator) },
+  handler: async (ctx, { layers }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const next = normalizeLayers(layers);
+    await ctx.db.patch(me._id, { profileFrameLayers: next });
+    await dropUnusedLayerAssets(ctx, me.profileFrameLayers, next);
+  },
+});
+
+/**
+ * An image for a frame or a decoration to use as one of its layers.
+ *
+ * Separate from the mutation that places it: uploading and arranging are
+ * different moments, and the editor adds the layer to its working copy the
+ * instant the file lands rather than making somebody wait for a round trip
+ * before they can drag it. The URL is all that comes back; the arrangement is
+ * saved with everything else.
+ */
+export const uploadCosmeticLayer = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    await getCurrentUserOrThrow(ctx);
+    return resolveProfileAsset(ctx, storageId, "Profile artwork");
+  },
+});
+
+/**
+ * The decoration as a list of placed images.
+ *
+ * Two fields for one thing, deliberately: the list is what the editor reads
+ * back and what the storage cleanup diffs, and `avatarDecoration` is the
+ * single string every *other* query carries — it rides along with every member
+ * row, message author and call tile, so a second field beside it would have to
+ * be threaded through a dozen shapes that have no other reason to know
+ * decorations exist. `decorationValue` is the pairing; the client unpacks the
+ * same form in `decorationLayers`.
+ */
+export const setAvatarDecorationLayers = mutation({
+  args: { layers: v.array(layerArgValidator) },
+  handler: async (ctx, { layers }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const next = normalizeLayers(layers);
+    const previousLayers = me.avatarDecorationLayers;
+    const previousSingle = me.avatarDecorationStorageId;
+
+    await ctx.db.patch(me._id, {
+      avatarDecorationLayers: next.length > 0 ? next : undefined,
+      avatarDecoration: next.length > 0 ? `layers:${JSON.stringify(next)}` : undefined,
+      // The single-image upload this replaces is not one of the layers unless
+      // the editor kept it as one, which it does by carrying the same
+      // storageId across.
+      avatarDecorationStorageId: undefined,
+    });
+
+    await dropUnusedLayerAssets(ctx, previousLayers, next);
+    if (previousSingle && !next.some((layer) => layer.storageId === previousSingle)) {
+      await ctx.storage.delete(previousSingle).catch(() => {});
+    }
+  },
+});
+
 export const removeProfileFrame = mutation({
   args: {},
   handler: async (ctx) => {
@@ -839,7 +920,10 @@ export const getProfile = query({
        * the account's mode would be drawn the wrong way round. */
       // Placement travels with whichever profile supplied the frame — a server
       // frame positioned by the account's numbers would land anywhere.
-      ...(serverProfile?.profileFrame
+      // A server profile counts as having a frame if it has *either* form of
+      // one, so a server frame built out of layers isn't passed over in
+      // favour of the account's single image.
+      ...(serverProfile?.profileFrame || serverProfile?.profileFrameLayers?.length
         ? {
             profileFrame: serverProfile.profileFrame,
             profileFrameMode: serverProfile.profileFrameMode,
@@ -847,6 +931,7 @@ export const getProfile = query({
             profileFrameAnchor: serverProfile.profileFrameAnchor,
             profileFrameScale: serverProfile.profileFrameScale,
             profileFrameOffsetY: serverProfile.profileFrameOffsetY,
+            profileFrameLayers: serverProfile.profileFrameLayers,
           }
         : {
             profileFrame: user.profileFrame,
@@ -855,6 +940,7 @@ export const getProfile = query({
             profileFrameAnchor: user.profileFrameAnchor,
             profileFrameScale: user.profileFrameScale,
             profileFrameOffsetY: user.profileFrameOffsetY,
+            profileFrameLayers: user.profileFrameLayers,
           }),
       status: presence?.effective ?? "offline",
       activities: visibleActivities(presence, user),

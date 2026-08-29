@@ -5,7 +5,8 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { PopoverContent } from "@/components/ui/popover";
-import { frameHeadroom, frameLayout } from "@/lib/profile-cosmetics";
+import { frameHeadroom, frameLayersFrom, frameLayout } from "@/lib/profile-cosmetics";
+import { layersHeadroom } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,7 +34,10 @@ import { cn } from "@/lib/utils";
  * page. Being a little conservative here costs a few pixels of position and
  * buys never sliding a profile under the title bar.
  */
-const APP_TOP_CHROME_PX = 52;
+/** The title bar and tab strip the app always draws across the top. Anything
+ * that positions itself against the window — a popover keeping clear of it, a
+ * full-height dialog starting under it — measures from here. */
+export const APP_TOP_CHROME_PX = 52;
 
 /** Ordinary breathing room from the other three edges. */
 const EDGE_PADDING_PX = 8;
@@ -48,6 +52,10 @@ const EDGE_PADDING_PX = 8;
  *
  * `w-72` stays: the card has no width of its own and takes the popover's.
  */
+/** `w-72` in pixels — what a layer's percentage geometry is a percentage of
+ * when this popover is the card's host. */
+export const PROFILE_CARD_WIDTH_PX = 288;
+
 export const PROFILE_POPOVER_CLASS =
   "w-72 border-0 bg-transparent p-0 shadow-none";
 
@@ -68,9 +76,17 @@ export function ProfilePopoverContent({
   children: React.ReactNode;
 }) {
   const profile = useQuery(api.users.getProfile, { userId, communityId });
-  const overhang = profile?.profileFrame
-    ? frameHeadroom(frameLayout(profile), true).paddingTop
-    : 0;
+  // How far the frame reaches above the card, so the popover can be kept that
+  // much clear of the window's top edge. Layers are measured in percent of the
+  // card's width, which is what `PROFILE_CARD_WIDTH_PX` turns into pixels; a
+  // legacy frame was placed in pixels to begin with.
+  const frameLayers = profile ? frameLayersFrom(profile) : [];
+  const overhang =
+    frameLayers.length > 0
+      ? (layersHeadroom(frameLayers).top / 100) * PROFILE_CARD_WIDTH_PX
+      : profile?.profileFrame
+        ? frameHeadroom(frameLayout(profile), true).paddingTop
+        : 0;
 
   return (
     <PopoverContent

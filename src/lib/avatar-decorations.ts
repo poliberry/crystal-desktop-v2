@@ -25,6 +25,12 @@
  * there.
  */
 
+import {
+  defaultDecorationLayer,
+  normalizeLayers,
+  type CosmeticLayer,
+} from "@/lib/cosmetic-layers";
+
 export interface DecorationPreset {
   key: string;
   name: string;
@@ -264,6 +270,82 @@ export function decorationSrc(value: string | null | undefined): string | undefi
   // that isn't http(s) is refused rather than handed to `src` — a stored
   // `javascript:`/`data:` value should not become markup we render.
   return /^https?:\/\//.test(value) ? value : undefined;
+}
+
+/** The tag that says a stored value is a list of placed images rather than one
+ * picture. What follows it is the layers as JSON — see `decorationLayers`. */
+const LAYERS_PREFIX = "layers:";
+
+/**
+ * A decoration as the list of layers to draw, whichever of its four forms it
+ * was stored in.
+ *
+ * Every query in the app carries a decoration as one string, because it rides
+ * along with every member row, message author and call tile — so a second
+ * field for "and here are the other layers" would have to be threaded through
+ * a dozen shapes that have no other reason to know decorations exist. Instead
+ * the list is serialised into that same string, and this is the one place that
+ * knows the difference.
+ *
+ * A single-image decoration — a preset, a birthday gift, an upload from before
+ * layers existed — is one centred layer at the ratio decorations have always
+ * been drawn at, so nothing about how they look changes.
+ *
+ * A layer's `url` is kept exactly as stored, which is what lets a preset be a
+ * layer: "builtin:sparkles" behind an uploaded badge is a valid decoration and
+ * costs no upload. Whoever draws it resolves it — see `decorationSrc` — so the
+ * preset stays a key and is redrawn by whatever build renders it, rather than
+ * being frozen into the data URI it happened to produce today.
+ */
+export function decorationLayers(value: string | null | undefined): CosmeticLayer[] {
+  if (!value) return [];
+
+  if (value.startsWith(LAYERS_PREFIX)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value.slice(LAYERS_PREFIX.length));
+    } catch {
+      // Not JSON, so not a decoration this build can draw. Nothing is the
+      // right answer for the same reason an unknown preset key is.
+      return [];
+    }
+    if (!Array.isArray(parsed)) return [];
+    return normalizeLayers(parsed.filter(isLayerish)).filter(
+      // A layer whose artwork this build can't resolve is dropped rather than
+      // drawn as a broken picture, for the same reason an unknown preset key
+      // leaves an avatar plain.
+      (layer) => !!decorationSrc(layer.url),
+    );
+  }
+
+  return decorationSrc(value) ? [defaultDecorationLayer(value)] : [];
+}
+
+/** Enough of a shape to be worth normalising. Anything missing its geometry is
+ * dropped rather than defaulted: a layer at 0×0 in the corner is not what
+ * whoever wrote it meant, and guessing would hide the fact. */
+function isLayerish(value: unknown): value is CosmeticLayer {
+  const layer = value as Partial<CosmeticLayer> | null;
+  return (
+    !!layer &&
+    typeof layer === "object" &&
+    typeof layer.url === "string" &&
+    typeof layer.x === "number" &&
+    typeof layer.y === "number" &&
+    typeof layer.width === "number"
+  );
+}
+
+/**
+ * Layers back into the one string everything else passes around.
+ *
+ * The stored form keeps the layer's *own* url — `builtin:sparkles` stays a
+ * preset key rather than being flattened to the data URI it renders as, so a
+ * preset that gets redrawn in a later build redraws for everyone wearing it.
+ */
+export function serializeDecorationLayers(layers: CosmeticLayer[]): string {
+  if (layers.length === 0) return "";
+  return LAYERS_PREFIX + JSON.stringify(normalizeLayers(layers));
 }
 
 /**
