@@ -46,7 +46,6 @@ import {
   MAX_PROFILE_ASSET_LABEL,
 } from "@/lib/upload-limits";
 import { cn } from "@/lib/utils";
-import { APP_TOP_CHROME_PX } from "@/components/profile/profile-popover";
 import type { ProfileScope } from "@/hooks/use-profile-scope";
 
 /**
@@ -84,23 +83,26 @@ function CosmeticDialog({
       <DialogContent
         className={cn(
           wide
-            ? // The whole window bar the app's own chrome. A canvas is a
-              // workspace: the more of the card and the artwork around it you
-              // can see at once, the less of the job is scrolling. Pinned
-              // under the title bar rather than centred, so the dialog never
-              // covers the controls that are always up there.
-              "flex max-h-none w-[calc(100vw-1.5rem)] max-w-none flex-col overflow-hidden"
+            ? [
+                // The whole window bar the app's own chrome. A canvas is a
+                // workspace: the more of the card and the artwork around it
+                // you can see at once, the less of the job is scrolling.
+                //
+                // All of it in classes, none of it inline. The dialog animates
+                // itself in with a transform, so an inline one fights the
+                // animation — and "sm:max-w-lg" is what a plain "max-w-none"
+                // silently loses to, since a responsive variant and a bare
+                // utility are different rules rather than the same one twice.
+                //
+                // 64px is APP_TOP_CHROME_PX plus a 12px margin, and the height
+                // is the window less that and the same margin at the bottom.
+                // Written out because Tailwind reads these at build time and
+                // cannot be handed a number.
+                "top-16 h-[calc(100vh-76px)] max-h-none w-[calc(100vw-24px)] translate-y-0",
+                "flex max-w-none flex-col overflow-hidden sm:max-w-none",
+              ]
             : "sm:max-w-lg",
         )}
-        style={
-          wide
-            ? {
-                top: APP_TOP_CHROME_PX + 12,
-                height: `calc(100vh - ${APP_TOP_CHROME_PX + 24}px)`,
-                transform: "translateX(-50%)",
-              }
-            : undefined
-        }
       >
         <DialogHeader className="shrink-0">
           <DialogTitle>{title}</DialogTitle>
