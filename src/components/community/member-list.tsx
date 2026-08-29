@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { Crown } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
@@ -140,6 +141,8 @@ export function MemberList({ communityId }: MemberListProps) {
   const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
   const me = useQuery(api.users.getCurrentUser);
   const members = (rawMembers ?? []) as Member[];
+  // A list of people is the set of profile cards about to be opened.
+  usePreloadedCosmetics(members);
   const groups = buildGroups(members);
 
   return (

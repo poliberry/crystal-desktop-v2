@@ -6,6 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
   ActivityStatusIcon,
@@ -50,6 +51,7 @@ interface DmMember {
 export function DmMemberList({ conversationId }: DmMemberListProps) {
   const members = (useQuery(api.conversations.listMembersWithPresence, { conversationId }) ??
     []) as DmMember[];
+  usePreloadedCosmetics(members);
   const online = members.filter((m) => m.status !== "offline");
   const offline = members.filter((m) => m.status === "offline");
 

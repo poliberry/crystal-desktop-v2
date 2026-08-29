@@ -138,7 +138,7 @@ function SettingsSection({
     // Radix's viewport is `height: 100%` of this root, and if this root's own
     // height resolves to `auto` the viewport grows with the content instead
     // of scrolling it, and `main`'s `overflow-hidden` quietly clips the rest.
-    <ScrollArea key={section} className="min-h-0 flex-1 p-4">
+    <ScrollArea key={section} className="min-h-0 max-h-[67dvh] flex-1 p-4">
       {children}
     </ScrollArea>
   );
