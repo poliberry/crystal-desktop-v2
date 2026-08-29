@@ -39,7 +39,6 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -163,7 +162,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               <Avatar size="default">
                 <AvatarImage src={avatarUser?.imageUrl} alt={title} />
                 <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
-                <AvatarDecoration src={decorationSrc(avatarUser?.avatarDecoration)} />
+                <AvatarDecoration value={avatarUser?.avatarDecoration} />
                 {avatarUser && (
                   <PresenceBadge
                     status={avatarUser.status as FriendStatus}

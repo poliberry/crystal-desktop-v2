@@ -16,7 +16,6 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -202,7 +201,7 @@ export function NavSidebar({
                     <Avatar size="default" className="relative rounded-md">
                       <AvatarImage src={avatarUser?.imageUrl} alt={title} className="rounded-md" />
                       <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
-                      <AvatarDecoration src={decorationSrc(otherMember?.avatarDecoration)} />
+                      <AvatarDecoration value={otherMember?.avatarDecoration} />
                       {/* The badge slot is presence's now — unread moved to
                           the pill on the left edge, so the two no longer
                           compete for the same corner of the avatar. */}

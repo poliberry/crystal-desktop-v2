@@ -50,7 +50,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
-import { decorationSrc, ownDecorationState } from "@/lib/avatar-decorations";
+import { ownDecorationState } from "@/lib/avatar-decorations";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
 import { useOpenSettings } from "@/components/settings/settings-dialog";
 import {
@@ -408,7 +408,7 @@ export function UserCard() {
                   <AvatarFallback>
                     {me.name.slice(0, 2).toUpperCase()}
                   </AvatarFallback>
-                  <AvatarDecoration src={decorationSrc(decoration)} />
+                  <AvatarDecoration value={decoration} />
                   <PresenceBadge
                     status={status}
                     isBirthday={isBirthday}

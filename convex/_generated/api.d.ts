@@ -25,6 +25,7 @@ import type * as http from "../http.js";
 import type * as lib_activities from "../lib/activities.js";
 import type * as lib_birthday from "../lib/birthday.js";
 import type * as lib_callReconciliation from "../lib/callReconciliation.js";
+import type * as lib_cosmeticLayers from "../lib/cosmeticLayers.js";
 import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_liveKitAdmin from "../lib/liveKitAdmin.js";
 import type * as lib_liveKitWebhook from "../lib/liveKitWebhook.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   "lib/activities": typeof lib_activities;
   "lib/birthday": typeof lib_birthday;
   "lib/callReconciliation": typeof lib_callReconciliation;
+  "lib/cosmeticLayers": typeof lib_cosmeticLayers;
   "lib/gameHistory": typeof lib_gameHistory;
   "lib/liveKitAdmin": typeof lib_liveKitAdmin;
   "lib/liveKitWebhook": typeof lib_liveKitWebhook;

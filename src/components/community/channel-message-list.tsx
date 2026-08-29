@@ -17,7 +17,6 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -88,7 +87,7 @@ interface MessageDoc {
     name: string;
     username: string;
     imageUrl?: string;
-    /** The frame around their avatar, as stored — see `decorationSrc`. */
+    /** The frame around their avatar, as stored — see `decorationLayers`. */
     avatarDecoration?: string;
     /** Colour of the author's highest coloured role in this community. */
     roleColor?: string;
@@ -159,7 +158,7 @@ function MessageRow({
               <Avatar size="default" className="cursor-pointer">
                 <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
                 <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
-                <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
+                <AvatarDecoration value={message.author?.avatarDecoration} />
               </Avatar>
             </PopoverTrigger>
             <ProfilePopoverContent

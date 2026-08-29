@@ -22,7 +22,6 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -185,7 +184,7 @@ export function MemberList({ communityId }: MemberListProps) {
                             <Avatar size="default">
                               <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-md" />
                               <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                              <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
+                              <AvatarDecoration value={member.avatarDecoration} />
                               <PresenceBadge
                                 status={member.status}
                                 isBirthday={member.isBirthday}

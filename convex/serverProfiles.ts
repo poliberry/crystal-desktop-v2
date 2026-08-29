@@ -6,6 +6,11 @@ import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { dropProfileAsset, resolveProfileAsset } from "./lib/profileCosmetics";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { requireMember } from "./communities";
+import {
+  dropUnusedLayerAssets,
+  layerArgValidator,
+  normalizeLayers,
+} from "./lib/cosmeticLayers";
 
 /** Returns the merged profile for a user in a community: server overrides
  * take precedence over the global profile, with undefined fields falling back. */
@@ -47,6 +52,12 @@ export async function getMergedProfile(
     profileFrameMode: serverProfile?.profileFrame
       ? serverProfile.profileFrameMode
       : user.profileFrameMode,
+    // Taken as a set from whichever profile has any: a server frame built out
+    // of three layers and an account frame built out of two are two different
+    // arrangements, and merging them layer by layer would draw neither.
+    profileFrameLayers: serverProfile?.profileFrameLayers?.length
+      ? serverProfile.profileFrameLayers
+      : user.profileFrameLayers,
     // Account-level rather than merged: a decoration is worn by the person,
     // and a birthday isn't a per-server fact.
     avatarDecoration: effectiveDecoration(user),
@@ -511,6 +522,27 @@ export const setServerProfileCss = mutation({
         userId: me._id,
         communityId,
         profileCss: trimmed || undefined,
+      });
+    }
+  },
+});
+
+/** The per-server twin of `users.setProfileFrameLayers`. */
+export const setServerProfileFrameLayers = mutation({
+  args: { communityId: v.id("communities"), layers: v.array(layerArgValidator) },
+  handler: async (ctx, { communityId, layers }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const next = normalizeLayers(layers);
+    const existing = await lookupServerProfile(ctx, me._id, communityId);
+    if (existing) {
+      await ctx.db.patch(existing._id, { profileFrameLayers: next });
+      await dropUnusedLayerAssets(ctx, existing.profileFrameLayers, next);
+    } else {
+      await ctx.db.insert("serverProfiles", {
+        userId: me._id,
+        communityId,
+        profileFrameLayers: next,
       });
     }
   },

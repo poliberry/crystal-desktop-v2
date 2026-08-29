@@ -20,7 +20,6 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type FriendStatus } from "@/lib/presence";
@@ -83,7 +82,7 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 <Avatar size="sm">
                   <AvatarImage src={member.imageUrl} alt={member.name} />
                   <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                  <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
+                  <AvatarDecoration value={member.avatarDecoration} />
                   <PresenceBadge
                     status={member.status}
                     isBirthday={member.isBirthday}
