@@ -528,6 +528,14 @@ export function layerHeight(
  * is where its top edge was put, which is the number somebody drags until it
  * looks right — so that is what this follows, with a margin so the last few
  * pixels aren't shaved off.
+ *
+ * Only a layer pinned to an edge it hangs off is counted. A middle-pinned one
+ * is asking to be *on* the card, and half its width is a poor enough guess at
+ * its height that counting it reserved hundreds of pixels above cards whose
+ * artwork never left them — a full-card border drawn to a tall card is, on the
+ * short card's numbers, a layer twice the card's height with nowhere to be.
+ * Under-reserving costs the edge of a decoration somebody put in the middle
+ * anyway; over-reserving pushed the card off the bottom of its own page.
  */
 export function layersHeadroom(layers: CosmeticLayer[]): {
   top: number;
@@ -550,12 +558,32 @@ export function layersHeadroom(layers: CosmeticLayer[]): {
       // Height is only known for a layer that was given one; for the rest, half
       // its width is a fair guess at half its height and errs towards more room.
       const halfHeight = (variant.height ?? variant.width) / 2;
-      // Asked in the card's own coordinates rather than per anchor, so a locked
-      // layer — whose `y` is a percentage of a height that differs per shape —
-      // is measured against the shape it would actually be drawn on.
-      const centre = layerCentreY(variant, shape.heightPercent);
-      top = Math.max(top, halfHeight - centre);
-      bottom = Math.max(bottom, centre + halfHeight - shape.heightPercent);
+      // A stretched layer is the exception to `y` meaning a centre: it runs
+      // from `y` to the card's bottom edge, so `y` *is* its top and the only
+      // thing outside the card is however far above it that starts. Treating it
+      // like the others reserved half a card's width above a border that begins
+      // exactly on the card's top edge.
+      const stretches =
+        !!variant.stretchY &&
+        variant.height === undefined &&
+        (variant.anchor === "top" || variant.anchor === "center");
+
+      if (stretches) {
+        const topEdge =
+          variant.anchor === "center" ? shape.heightPercent / 2 + variant.y : variant.y;
+        top = Math.max(top, -topEdge);
+      } else if (variant.anchor === "top") {
+        top = Math.max(top, halfHeight - variant.y);
+      } else if (variant.anchor === "bottom") {
+        bottom = Math.max(bottom, halfHeight + variant.y);
+      } else if (variant.anchor === "locked") {
+        // The one that has to be asked in the card's own coordinates: a locked
+        // layer's `y` is a percentage of a height that differs per shape, so it
+        // is measured against the shape it would actually be drawn on.
+        const centre = layerCentreY(variant, shape.heightPercent);
+        top = Math.max(top, halfHeight - centre);
+        bottom = Math.max(bottom, centre + halfHeight - shape.heightPercent);
+      }
     }
   }
 
