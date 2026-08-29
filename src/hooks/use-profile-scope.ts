@@ -53,6 +53,9 @@ export interface ProfileScopeValues {
   profileFrameAnchor?: string;
   profileFrameScale?: number;
   profileFrameOffsetY?: number;
+  /** The frame as placed artwork, which is what the canvas editor reads back —
+   * without it the editor opens empty on a frame that is plainly there. */
+  profileFrameLayers?: CosmeticLayer[];
   /** The owner's own stylesheet for this card. */
   profileCss?: string;
   /** Account-level and not overridable per server — a decoration is worn by
@@ -205,6 +208,7 @@ export function useProfileScope(
         profileFrameAnchor: me.profileFrameAnchor,
         profileFrameScale: me.profileFrameScale,
         profileFrameOffsetY: me.profileFrameOffsetY,
+        profileFrameLayers: me.profileFrameLayers,
         profileCss: me.profileCss,
         avatarDecoration: me.avatarDecoration,
       };
@@ -239,6 +243,11 @@ export function useProfileScope(
       profileFrameOffsetY: sp?.profileFrame
         ? sp.profileFrameOffsetY
         : me.profileFrameOffsetY,
+      // As a set from whichever profile has any, for the reason the card reads
+      // them that way: two arrangements merged layer by layer are neither.
+      profileFrameLayers: sp?.profileFrameLayers?.length
+        ? sp.profileFrameLayers
+        : me.profileFrameLayers,
       profileCss: sp?.profileCss ?? me.profileCss,
       avatarDecoration: me.avatarDecoration,
     };

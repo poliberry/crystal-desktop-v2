@@ -20,6 +20,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import {
   LAYER_LIMITS,
+  layerHeight,
   MAX_LAYERS,
   newLayerId,
   type CosmeticLayer,
@@ -46,6 +47,11 @@ import { cn } from "@/lib/utils";
  * the stored value changes underneath, which is what makes "Reset" and an edit
  * from another window both land.
  */
+
+/** Which unit the inspector's measurements are typed in. Percent is what gets
+ * stored — it has to be, since a card is drawn at several widths — and pixels
+ * are what anybody lining artwork up with an edge is actually thinking in. */
+export type SizeUnit = "percent" | "px";
 
 export interface StageHeightOption {
   key: string;
@@ -95,6 +101,11 @@ export function LayerEditor({
   const [draft, setDraft] = useState<CosmeticLayer[]>(stored);
   const [selectedId, setSelectedId] = useState<string | null>(stored[0]?.id ?? null);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  /** Percent of the card, or pixels at the size it is drawn here. The stored
+   * number is the percentage either way — this only decides which one you type
+   * into, and pixels are what somebody matching artwork to a card edge wants. */
+  const [unit, setUnit] = useState<SizeUnit>("percent");
   const [heightKey, setHeightKey] = useState(heights[0]?.key ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -247,6 +258,9 @@ export function LayerEditor({
             onCommit={commit}
             ratios={ratios}
             zoom={zoom}
+            onZoomChange={setZoom}
+            pan={pan}
+            onPanChange={setPan}
             resolveSrc={resolveSrc}
             className="min-h-0 flex-1"
           >
@@ -278,6 +292,23 @@ export function LayerEditor({
               >
                 <Plus className="size-3.5" />
               </Button>
+              {/* Only offered once the view has actually been moved — a button
+                  that undoes nothing is a button in the way. */}
+              {(zoom !== 1 || pan.x !== 0 || pan.y !== 0) && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  title="Back to 100% and centred"
+                  onClick={() => {
+                    setZoom(1);
+                    setPan({ x: 0, y: 0 });
+                  }}
+                >
+                  Reset view
+                </Button>
+              )}
             </div>
 
             {/* The shapes the backdrop comes in. Not a preview toggle so much
@@ -419,6 +450,17 @@ export function LayerEditor({
           {selected && (
             <LayerInspector
               layer={selected}
+              height={layerHeight(
+                selected,
+                ratios[selected.url],
+                (stageHeight / stageWidth) * 100,
+              )}
+              unit={unit}
+              onUnitChange={setUnit}
+              // The stage is drawn at the card's real width, so a percent of it
+              // is a pixel of it — which is what makes "396px" mean the same
+              // thing here as it does in the artwork somebody exported.
+              pxPerPercent={stageWidth / 100}
               onChange={(patch) => patchLive(selected.id, patch)}
               onCommit={(patch) => patchSaved(selected.id, patch)}
               onDuplicate={() => {
@@ -450,12 +492,23 @@ export function LayerEditor({
  */
 function LayerInspector({
   layer,
+  height,
+  unit,
+  onUnitChange,
+  pxPerPercent,
   onChange,
   onCommit,
   onDuplicate,
   onRemove,
 }: {
   layer: CosmeticLayer;
+  /** What the layer is actually as tall as right now, in percent — from its own
+   * height, from the artwork's proportions, or from the card it stretches to. */
+  height: number;
+  unit: SizeUnit;
+  onUnitChange: (unit: SizeUnit) => void;
+  /** Pixels per percent, for the unit that isn't stored. */
+  pxPerPercent: number;
   /** Live, for a slider mid-drag. */
   onChange: (patch: Partial<CosmeticLayer>) => void;
   /** Saved, for the release and for everything that is one click. */
@@ -507,19 +560,63 @@ function LayerInspector({
         />
       </div>
 
+      {/* Which unit the four measurements below are typed in. Percentages are
+          what gets stored — they have to be, since a card is drawn at several
+          widths — but nobody matching artwork to an edge thinks in them, so
+          pixels are offered against the size the card has here. */}
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs">Measurements</Label>
+        <div className="flex items-center gap-0.5">
+          {(["percent", "px"] as const).map((option) => (
+            <Button
+              key={option}
+              type="button"
+              size="sm"
+              variant={unit === option ? "secondary" : "ghost"}
+              className="h-6 px-1.5 text-[10px]"
+              onClick={() => onUnitChange(option)}
+            >
+              {option === "percent" ? "%" : "px"}
+            </Button>
+          ))}
+        </div>
+      </div>
+
       <NumberRow
-        label="Size"
+        label="Width"
         value={layer.width}
-        suffix="%"
+        unit={unit}
+        pxPerPercent={pxPerPercent}
         min={LAYER_LIMITS.size.min}
         max={LAYER_LIMITS.size.max}
         onChange={(width) => onChange({ width })}
         onCommit={(width) => onCommit({ width })}
       />
       <NumberRow
+        label="Height"
+        value={height}
+        unit={unit}
+        pxPerPercent={pxPerPercent}
+        min={LAYER_LIMITS.size.min}
+        max={LAYER_LIMITS.size.max}
+        // Typing a height is how a layer stops keeping its own proportions —
+        // the two are answers to the same question, so setting one puts the
+        // other away.
+        hint={
+          layer.height === undefined
+            ? layer.stretchY
+              ? "Following the card."
+              : "The artwork's own shape."
+            : undefined
+        }
+        onChange={(next) => onChange({ height: next, stretchY: undefined })}
+        onCommit={(next) => onCommit({ height: next, stretchY: undefined })}
+      />
+      <NumberRow
         label="Across"
         value={layer.x}
-        suffix="%"
+        unit={unit}
+        pxPerPercent={pxPerPercent}
         min={LAYER_LIMITS.position.min}
         max={LAYER_LIMITS.position.max}
         onChange={(x) => onChange({ x })}
@@ -528,7 +625,8 @@ function LayerInspector({
       <NumberRow
         label="Down"
         value={layer.y}
-        suffix="%"
+        unit={unit}
+        pxPerPercent={pxPerPercent}
         min={LAYER_LIMITS.position.min}
         max={LAYER_LIMITS.position.max}
         onChange={(y) => onChange({ y })}
@@ -537,7 +635,8 @@ function LayerInspector({
       <NumberRow
         label="Turn"
         value={layer.rotation ?? 0}
-        suffix="°"
+        unit="degrees"
+        pxPerPercent={pxPerPercent}
         min={LAYER_LIMITS.rotation.min}
         max={LAYER_LIMITS.rotation.max}
         onChange={(rotation) => onChange({ rotation: rotation || undefined })}
@@ -546,7 +645,8 @@ function LayerInspector({
       <NumberRow
         label="Fade"
         value={Math.round((layer.opacity ?? 1) * 100)}
-        suffix="%"
+        unit="percent-plain"
+        pxPerPercent={pxPerPercent}
         min={0}
         max={100}
         onChange={(value) => onChange({ opacity: value >= 100 ? undefined : value / 100 })}
@@ -592,42 +692,95 @@ function LayerInspector({
   );
 }
 
-/** A slider with its number beside it — the same control five times, so it is
- * written once. */
+/** What a `NumberRow` is measuring. The first two convert; the last two are
+ * themselves whatever unit they are. */
+type RowUnit = SizeUnit | "degrees" | "percent-plain";
+
+/**
+ * One measurement: a field to type an exact number into, and a slider to find
+ * an approximate one with.
+ *
+ * Both, because the two are different jobs. Dragging is how you find out what
+ * looks right; typing is how you say "396 pixels, the width of the card" — and
+ * a slider cannot say that at any length.
+ *
+ * The field is only bound to the value while it isn't being typed in. A
+ * controlled input that rewrites itself on every keystroke makes "1" into "1%"
+ * and then refuses the "2" that was going to follow it.
+ */
 function NumberRow({
   label,
   value,
-  suffix,
+  unit,
+  pxPerPercent,
   min,
   max,
+  hint,
   onChange,
   onCommit,
 }: {
   label: string;
+  /** Always in the stored unit — percent, or degrees for a turn. */
   value: number;
-  suffix: string;
+  unit: RowUnit;
+  pxPerPercent: number;
   min: number;
   max: number;
+  hint?: string;
   onChange: (value: number) => void;
   onCommit: (value: number) => void;
 }) {
+  const [typing, setTyping] = useState<string | null>(null);
+
+  const factor = unit === "px" ? pxPerPercent : 1;
+  const suffix = unit === "degrees" ? "°" : unit === "px" ? "px" : "%";
+  /** Pixels are whole; a percentage of a card needs two places to be worth
+   * anything, since one percent of it is three pixels. */
+  const shown = unit === "px" ? Math.round(value * factor) : Math.round(value * 100) / 100;
+
+  const apply = (text: string, commit: boolean) => {
+    const parsed = Number(text);
+    if (!Number.isFinite(parsed)) return;
+    const next = Math.min(max, Math.max(min, parsed / factor));
+    (commit ? onCommit : onChange)(next);
+  };
+
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <Label className="text-xs">{label}</Label>
-        <span className="text-[11px] tabular-nums text-muted-foreground">
-          {Math.round(value)}
-          {suffix}
-        </span>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            inputMode="decimal"
+            value={typing ?? shown}
+            step={unit === "px" ? 1 : 0.5}
+            onChange={(event) => {
+              setTyping(event.target.value);
+              apply(event.target.value, false);
+            }}
+            onFocus={(event) => event.currentTarget.select()}
+            onBlur={(event) => {
+              setTyping(null);
+              apply(event.target.value, true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            className="h-6 w-16 rounded border border-input bg-transparent px-1 text-right text-[11px] tabular-nums outline-none focus:border-ring"
+          />
+          <span className="w-5 text-[10px] text-muted-foreground">{suffix}</span>
+        </div>
       </div>
       <Slider
-        value={[value]}
+        value={[Math.min(max, Math.max(min, value))]}
         min={min}
         max={max}
-        step={1}
+        step={unit === "px" ? 1 / Math.max(pxPerPercent, 0.001) : 0.5}
         onValueChange={([next]) => onChange(next ?? value)}
         onValueCommit={([next]) => onCommit(next ?? value)}
       />
+      {hint && <p className="text-[10px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }

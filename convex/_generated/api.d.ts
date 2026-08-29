@@ -34,6 +34,7 @@ import type * as lib_notificationPolicy from "../lib/notificationPolicy.js";
 import type * as lib_profileCosmetics from "../lib/profileCosmetics.js";
 import type * as lib_richEmbeds from "../lib/richEmbeds.js";
 import type * as linkPreviews from "../linkPreviews.js";
+import type * as maintenance from "../maintenance.js";
 import type * as messages from "../messages.js";
 import type * as notificationSettings from "../notificationSettings.js";
 import type * as notifications from "../notifications.js";
@@ -82,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   "lib/profileCosmetics": typeof lib_profileCosmetics;
   "lib/richEmbeds": typeof lib_richEmbeds;
   linkPreviews: typeof linkPreviews;
+  maintenance: typeof maintenance;
   messages: typeof messages;
   notificationSettings: typeof notificationSettings;
   notifications: typeof notifications;

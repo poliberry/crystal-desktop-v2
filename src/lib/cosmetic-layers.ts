@@ -70,9 +70,11 @@ export const MAX_LAYERS = 8;
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 
-/** Round to a tenth. Sub-pixel precision on a percentage is noise, and it
- * makes stored documents and diffs unreadable. */
-const round = (value: number) => Math.round(value * 10) / 10;
+/** Round to a hundredth of a percent. A card is around 300 pixels wide, so
+ * that is a third of a pixel — fine enough that a number typed in pixels comes
+ * back as the pixel that was typed, and coarse enough that stored documents
+ * stay readable. */
+const round = (value: number) => Math.round(value * 100) / 100;
 
 /**
  * A layer with every number brought inside the limits.
@@ -160,6 +162,30 @@ export function layerStyle(layer: CosmeticLayer): React.CSSProperties {
   if (shifts.length > 0) style.transform = shifts.join(" ");
 
   return style;
+}
+
+/**
+ * How tall a layer actually is, in the same percent-of-width unit as
+ * everything else.
+ *
+ * Three answers, because a height comes from three places: the layer was given
+ * one, the artwork keeps its own proportions (so the file decides, which is
+ * why the ratio has to be measured and passed in), or it stretches to the
+ * card. The editor needs this to draw handles around artwork it has not been
+ * told the shape of.
+ */
+export function layerHeight(
+  layer: CosmeticLayer,
+  ratio: number | undefined,
+  stageHeightPercent: number,
+): number {
+  if (layer.height !== undefined) return layer.height;
+  if (layer.stretchY && layer.anchor !== "bottom") {
+    return layer.anchor === "center"
+      ? stageHeightPercent / 2 - layer.y
+      : stageHeightPercent - layer.y;
+  }
+  return ratio ? layer.width / ratio : layer.width;
 }
 
 /**

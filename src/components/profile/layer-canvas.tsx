@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { LAYER_LIMITS, type CosmeticLayer } from "@/lib/cosmetic-layers";
+import {
+  LAYER_LIMITS,
+  layerHeight,
+  type CosmeticLayer,
+} from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
 
 /**
@@ -121,6 +125,9 @@ export function LayerCanvas({
    * handles in the right place. Measured by the caller as images load. */
   ratios,
   zoom,
+  onZoomChange,
+  pan,
+  onPanChange,
   resolveSrc,
   children,
   className,
@@ -136,6 +143,11 @@ export function LayerCanvas({
   onCommit: (layers: CosmeticLayer[]) => void;
   ratios: Record<string, number>;
   zoom: number;
+  onZoomChange: (zoom: number) => void;
+  /** How far the whole scene has been shoved around, in screen pixels. Owned
+   * by the editor so its "reset view" can put it back. */
+  pan: { x: number; y: number };
+  onPanChange: (pan: { x: number; y: number }) => void;
   /** A layer's stored url to the picture to draw for it. Identity for a frame,
    * where a url is a url; the decoration editor passes the one that also knows
    * how to draw a preset key. */
@@ -154,6 +166,16 @@ export function LayerCanvas({
    * from before the final move is a drag that snaps back the moment you let go.
    */
   const pending = useRef<CosmeticLayer[] | null>(null);
+  /** A pan in progress: where the pointer went down, and where the scene was
+   * at that moment. */
+  const [panFrom, setPanFrom] = useState<{
+    x: number;
+    y: number;
+    pan: { x: number; y: number };
+    moved: boolean;
+  } | null>(null);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
 
   /** Pixels per percent-of-stage-width, which is the only number that connects
@@ -165,16 +187,7 @@ export function LayerCanvas({
    * from its own `height`, from the artwork's ratio, or from the card when it
    * stretches. */
   const heightOf = useCallback(
-    (layer: CosmeticLayer): number => {
-      if (layer.height !== undefined) return layer.height;
-      if (layer.stretchY && layer.anchor !== "bottom") {
-        return layer.anchor === "center"
-          ? stageHeightPercent / 2 - layer.y
-          : stageHeightPercent - layer.y;
-      }
-      const ratio = ratios[layer.url];
-      return ratio ? layer.width / ratio : layer.width;
-    },
+    (layer: CosmeticLayer) => layerHeight(layer, ratios[layer.url], stageHeightPercent),
     [ratios, stageHeightPercent],
   );
 
@@ -346,6 +359,94 @@ export function LayerCanvas({
     };
   }, [drag, layers, onChange, onCommit, patch, scale, stage.width, stageHeightPercent, zoom]);
 
+  // --- Panning -------------------------------------------------------------
+
+  /**
+   * Dragging anywhere that isn't a layer moves the view.
+   *
+   * A layer stops its own pointerdown from reaching here, so anything that does
+   * reach it is background — the checkerboard, or the card itself, which is a
+   * picture of a card rather than a working one. Holding space or using the
+   * middle button pans from anywhere, including from on top of a layer, which
+   * is the gesture anyone who has used a canvas will try first.
+   */
+  const beginPan = (event: React.PointerEvent) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    setPanFrom({ x: event.clientX, y: event.clientY, pan, moved: false });
+  };
+
+  useEffect(() => {
+    if (!panFrom) return;
+    const move = (event: PointerEvent) => {
+      const dx = event.clientX - panFrom.x;
+      const dy = event.clientY - panFrom.y;
+      // A few pixels of slop, so a click that wobbles still counts as a click.
+      if (!panFrom.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+      panFrom.moved = true;
+      onPanChange({ x: panFrom.pan.x + dx, y: panFrom.pan.y + dy });
+    };
+    const end = () => {
+      // A click on the background with no drag in it means "nothing selected".
+      if (!panFrom.moved) onSelect(null);
+      setPanFrom(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [panFrom, onPanChange, onSelect]);
+
+  /**
+   * The wheel: scroll to shove the view about, ctrl (or a pinch, which arrives
+   * as ctrl+wheel) to zoom.
+   *
+   * Listened for by hand rather than with `onWheel`, because React attaches
+   * wheel listeners passively and a passive listener cannot call
+   * `preventDefault` — without which the dialog behind this scrolls instead.
+   */
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (event.ctrlKey || event.metaKey) {
+        const next = Math.min(3, Math.max(0.2, zoom * (1 - event.deltaY / 500)));
+        onZoomChange(Math.round(next * 100) / 100);
+        return;
+      }
+      onPanChange({
+        x: pan.x - (event.shiftKey ? event.deltaY : event.deltaX),
+        y: pan.y - (event.shiftKey ? 0 : event.deltaY),
+      });
+    };
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, [onPanChange, onZoomChange, pan.x, pan.y, zoom]);
+
+  /** Space is the hold-to-pan key everywhere else, so it is here too — but only
+   * while the pointer is over the canvas, or it would swallow the space bar
+   * from every button in the dialog. */
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || !rootRef.current?.matches(":hover")) return;
+      event.preventDefault();
+      setSpaceHeld(true);
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpaceHeld(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
   // --- Keyboard ------------------------------------------------------------
 
   useEffect(() => {
@@ -388,7 +489,9 @@ export function LayerCanvas({
         "relative flex items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]",
         className,
       )}
-      onPointerDown={() => onSelect(null)}
+      ref={rootRef}
+      onPointerDown={beginPan}
+      style={{ cursor: panFrom?.moved ? "grabbing" : spaceHeld ? "grab" : undefined }}
     >
       <div
         ref={stageRef}
@@ -396,6 +499,10 @@ export function LayerCanvas({
         style={{
           width: stage.width * zoom,
           height: stage.height * zoom,
+          // The whole scene, shifted. Layer geometry is worked out from pointer
+          // *deltas*, which a translation doesn't touch, so panning needs no
+          // other allowance anywhere.
+          transform: `translate(${pan.x}px, ${pan.y}px)`,
         }}
       >
         <div

@@ -54,7 +54,10 @@ export type LayerArg = {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 
-const round = (value: number) => Math.round(value * 10) / 10;
+/** A hundredth of a percent — see the note in src/lib/cosmetic-layers.ts, which
+ * rounds the same way so a value that has been through the editor survives a
+ * round trip unchanged. */
+const round = (value: number) => Math.round(value * 100) / 100;
 
 /** Every number brought inside the limits, the list cut to length, and the
  * absent-means-default fields dropped rather than stored as their default. */
