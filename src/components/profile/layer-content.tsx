@@ -6,6 +6,7 @@ import {
   layerObjectFit,
   type CosmeticLayer,
 } from "@/lib/cosmetic-layers";
+import { useCachedImageSrc } from "@/lib/image-cache";
 
 /**
  * What one layer looks like, inside the box its geometry has already decided.
@@ -42,6 +43,9 @@ export function LayerContent({
   // Called unconditionally, because hooks are: a text layer resolves an empty
   // url, which the hook is happy to do nothing with.
   const poster = useStaticFrame(kind === "image" ? src : "", frozen);
+  // Every frame, decoration and effect layer in the app renders through
+  // here — see src/lib/image-cache.ts.
+  const cachedSrc = useCachedImageSrc(kind === "image" ? src : undefined);
 
   if (kind === "text") {
     return (
@@ -101,7 +105,7 @@ export function LayerContent({
 
   return (
     <img
-      src={poster ?? src}
+      src={poster ?? cachedSrc ?? src}
       alt=""
       draggable={false}
       className={className}

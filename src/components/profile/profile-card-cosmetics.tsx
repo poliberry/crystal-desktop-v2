@@ -12,6 +12,7 @@ import {
   variantForHeight,
   type CosmeticLayer as Layer,
 } from "@/lib/cosmetic-layers";
+import { useCachedImageSrc } from "@/lib/image-cache";
 import {
   DEFAULT_FRAME_LAYOUT,
   type ProfileFrameLayout,
@@ -47,9 +48,12 @@ function CosmeticLayer({
   style?: React.CSSProperties;
 }) {
   const poster = useStaticFrame(src, !animate);
+  // The legacy single-image frame (a list of layers goes through
+  // LayerContent instead) — see src/lib/image-cache.ts.
+  const cachedSrc = useCachedImageSrc(src);
   return (
     <img
-      src={poster ?? src}
+      src={poster ?? cachedSrc ?? src}
       alt=""
       aria-hidden
       draggable={false}

@@ -6,6 +6,7 @@ import { Avatar as AvatarPrimitive } from "radix-ui"
 import { LayerContent } from "@/components/profile/layer-content"
 import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations"
 import { layerStyle, type CosmeticLayer } from "@/lib/cosmetic-layers"
+import { useCachedImageSrc } from "@/lib/image-cache"
 import { cn } from "@/lib/utils"
 
 function Avatar({
@@ -34,12 +35,17 @@ function Avatar({
 }
 
 function AvatarImage({
+  src,
   className,
   ...props
 }: React.ComponentProps<typeof AvatarPrimitive.Image>) {
+  // Every avatar in the app renders through here, which is what makes this
+  // the one place worth caching from — see src/lib/image-cache.ts.
+  const cachedSrc = useCachedImageSrc(typeof src === "string" ? src : undefined);
   return (
     <AvatarPrimitive.Image
       data-slot="avatar-image"
+      src={cachedSrc ?? src}
       className={cn("aspect-square size-full rounded-full object-cover", className)}
       {...props}
     />
