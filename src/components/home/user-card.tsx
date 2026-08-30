@@ -10,7 +10,6 @@ import {
   MonitorCog,
   MonitorUp,
   Phone,
-  Radio,
   ScreenShareOff,
   Settings,
   Video,
@@ -22,6 +21,7 @@ import { AudioDeviceMenuItems } from "@/components/audio-device-menu";
 import { Nameplate } from "@/components/profile/nameplate";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { useCall } from "@/components/call/call-provider";
+import { ConnectionDetails } from "@/components/call/connection-details";
 import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
@@ -266,21 +266,15 @@ export function UserCard() {
           className={`border-t border-l border-r border-border/50 bg-card p-2 shadow-sm`}
         >
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={expand}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
-            >
-              <Radio className="size-4 shrink-0 text-emerald-500" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-emerald-500">
-                  Voice Connected
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {title}
-                </p>
-              </div>
-            </button>
+            {/* The status line and the icon beside it are one component now:
+                both say how the call is going, and they were saying it in a
+                colour that never changed. */}
+            <ConnectionDetails
+              room={controller.room}
+              active={!!activeCall}
+              title={title}
+              onExpand={expand}
+            />
 
             <TooltipProvider>
               <Tooltip>
