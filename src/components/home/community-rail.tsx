@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Compass, Home, Volume2 } from "lucide-react";
+import { Compass, Volume2 } from "lucide-react";
+import { LogoMark } from "@/components/logo-mark";
 import { Fragment, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -596,7 +597,10 @@ export function CommunityRail({
         active={!selectedCommunityId}
         onClick={onSelectHome}
       >
-        <Home />
+        {/* The app's own mark rather than a house: this tile is Crystal,
+            not a home page, and it is the one tile in the rail that isn't
+            somebody's picture. */}
+        <LogoMark className="size-6" />
       </RailButton>
 
       <Separator className="max-w-8 mx-2" />

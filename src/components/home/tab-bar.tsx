@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { Hash, Home, Pin, PinOff, X } from "lucide-react";
+import { Hash, Pin, PinOff, X } from "lucide-react";
+import { LogoMark } from "@/components/logo-mark";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -66,7 +67,7 @@ function TabLabel({ tab }: { tab: Tab }) {
     case "home":
       return (
         <>
-          <Home className="size-3.5 shrink-0" />
+          <LogoMark className="size-3.5 shrink-0" />
           <span className="truncate">Home</span>
         </>
       );
