@@ -57,9 +57,11 @@ function AuthCallbackHandler() {
  * The namespace is set during render rather than in an effect on purpose:
  * everything below reads the cache while it renders, so an effect would run a
  * frame too late and the first paint after switching accounts would come from
- * the previous account's cache. Assigning a module-level string is idempotent
- * and observable to nobody, so doing it here is safe in a way that most
- * render-phase side effects aren't.
+ * the previous account's cache. Assigning a module-level string is idempotent,
+ * so doing it here is safe in a way that most render-phase side effects
+ * aren't — it also kicks off that account's IndexedDB hydration (see
+ * persistent-cache.ts), which finishes a few renders later and is what
+ * `useCacheHydration` is for.
  */
 function CacheScope() {
   const { userId } = useAuth();
