@@ -130,6 +130,30 @@ const cosmeticLayerValidator = v.object({
   /** 0–1. Absent is fully opaque. */
   opacity: v.optional(v.number()),
   /**
+   * What this layer is made of. Absent is an image, which is what every layer
+   * was before there were three kinds — so nothing stored has to be migrated
+   * to keep meaning what it meant.
+   *
+   * The geometry above is shared by all three: a line of text and a rectangle
+   * are placed, sized, turned and anchored exactly the way a picture is.
+   */
+  kind: v.optional(v.union(v.literal("image"), v.literal("text"), v.literal("shape"))),
+  /** Text layers. `fontSize` and `strokeWidth` are percentages of the target
+   * box's width, like every other measurement here. */
+  text: v.optional(v.string()),
+  fontSize: v.optional(v.number()),
+  fontWeight: v.optional(v.number()),
+  italic: v.optional(v.boolean()),
+  align: v.optional(v.union(v.literal("left"), v.literal("center"), v.literal("right"))),
+  /** The text's colour, or the shape's fill. */
+  color: v.optional(v.string()),
+  /** Shape layers. `radius` is a rectangle's corner, in percent of width. */
+  shape: v.optional(v.union(v.literal("rect"), v.literal("ellipse"))),
+  radius: v.optional(v.number()),
+  /** An outline: around the shape, or around the letters. */
+  strokeColor: v.optional(v.string()),
+  strokeWidth: v.optional(v.number()),
+  /**
    * Placement for one shape of card, overriding the numbers above.
    *
    * A card that has grown is not the same picture with more room in it: a badge

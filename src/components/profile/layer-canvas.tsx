@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { LayerContent } from "@/components/profile/layer-content";
 import {
   LAYER_LIMITS,
   layerCentreY,
   layerHeight,
-  layerObjectFit,
   layerYFromCentre,
   patchLayer,
   resolveLayer,
@@ -635,13 +635,13 @@ export function LayerCanvas({
                 opacity: layer.opacity ?? 1,
               }}
             >
-              <img
-                src={resolveSrc(layer.url)}
-                alt=""
-                draggable={false}
-                className="pointer-events-none size-full select-none"
-                style={{ objectFit: layerObjectFit(layer) }}
-              />
+              {/* The same renderer the card uses, so what you arrange here is
+                  what everybody else sees — an editor with its own drawing
+                  code is an editor that quietly disagrees with the thing it
+                  is editing. */}
+              <div className="pointer-events-none size-full select-none [container-type:size]">
+                <LayerContent layer={layer} resolveSrc={resolveSrc} />
+              </div>
 
               {isSelected && (
                 <>

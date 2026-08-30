@@ -3,13 +3,9 @@
 import * as React from "react"
 import { Avatar as AvatarPrimitive } from "radix-ui"
 
-import { useStaticFrame } from "@/hooks/use-static-frame"
+import { LayerContent } from "@/components/profile/layer-content"
 import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations"
-import {
-  layerObjectFit,
-  layerStyle,
-  type CosmeticLayer,
-} from "@/lib/cosmetic-layers"
+import { layerStyle, type CosmeticLayer } from "@/lib/cosmetic-layers"
 import { cn } from "@/lib/utils"
 
 function Avatar({
@@ -164,19 +160,17 @@ function CosmeticLayerImage({
   layer: CosmeticLayer;
   frozen: boolean;
 }) {
-  // A layer's url is whatever was stored — a storage URL, or a preset key
-  // this build draws from code. Resolved here, at the last moment, so a preset
-  // is redrawn rather than frozen into the picture it made when it was chosen.
-  const src = decorationSrc(layer.url) ?? layer.url;
-  const poster = useStaticFrame(src, frozen);
   return (
-    <img
-      src={poster ?? src}
-      alt=""
-      draggable={false}
-      className="pointer-events-none max-w-none select-none"
-      style={{ ...layerStyle(layer), objectFit: layerObjectFit(layer) }}
-    />
+    <span
+      className="pointer-events-none absolute select-none"
+      style={layerStyle(layer)}
+    >
+      {/* A layer's url is whatever was stored — a storage URL, or a preset key
+          this build draws from code. Resolved at the last moment, so a preset
+          is redrawn rather than frozen into the picture it made when it was
+          chosen. */}
+      <LayerContent layer={layer} resolveSrc={(url) => decorationSrc(url) ?? url} frozen={frozen} />
+    </span>
   );
 }
 

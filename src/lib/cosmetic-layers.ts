@@ -41,8 +41,31 @@
 
 export type LayerAnchor = "top" | "center" | "bottom" | "locked";
 
+/**
+ * What a layer *is*.
+ *
+ * Absent means `"image"`, which is what every layer was before there was a
+ * choice — so nothing stored has to be migrated to keep meaning what it meant.
+ *
+ * The geometry above is shared by all three: a line of text and a rectangle
+ * are placed, sized, turned and anchored exactly the way a picture is, so
+ * everything that reasons about position — the canvas, the handles, the
+ * headroom, the per-shape variants — never has to ask which kind it has.
+ */
+export type LayerKind = "image" | "text" | "shape";
+
+/** The shapes worth having. Two, because a rectangle with a corner radius is
+ * already most of them and the rest is a drawing program. */
+export type LayerShape = "rect" | "ellipse";
+
+export type LayerAlign = "left" | "center" | "right";
+
 export interface CosmeticLayer {
   id: string;
+  /** Absent is `"image"` — see `LayerKind`. */
+  kind?: LayerKind;
+  /** The picture, for an image layer. Empty on the other two, which draw
+   * themselves. */
   url: string;
   /** Absent for a built-in preset, which owns no uploaded file. */
   storageId?: string;
@@ -77,6 +100,25 @@ export interface CosmeticLayer {
   rotation?: number;
   /** 0–1. */
   opacity?: number;
+
+  /** What it says, for a text layer. Newlines are kept. */
+  text?: string;
+  /** Type size, in percent of the target box's width like every other
+   * measurement here — so text on a card scales with the card rather than
+   * staying fourteen pixels on a thumbnail. */
+  fontSize?: number;
+  fontWeight?: number;
+  italic?: boolean;
+  align?: LayerAlign;
+  /** The text's colour, or the shape's fill. Any CSS colour. */
+  color?: string;
+  /** Rectangle or ellipse, for a shape layer. Absent is a rectangle. */
+  shape?: LayerShape;
+  /** Corner radius, in percent of the box's width. Rectangles only. */
+  radius?: number;
+  /** An outline, around the shape or around the letters. */
+  strokeColor?: string;
+  strokeWidth?: number;
   /**
    * Placement for one shape of card, overriding the numbers above.
    *
@@ -340,6 +382,19 @@ export const LAYER_LIMITS = {
  * card stays a card — and every one of them is a file every viewer downloads. */
 export const MAX_LAYERS = 8;
 
+/** Long enough for a name, a slogan or a joke; short enough that a layer
+ * cannot become a paragraph nobody can see the end of. */
+export const MAX_TEXT_LENGTH = 120;
+
+/** Percent of the card's width. About 22px on a 288px card, which is roughly
+ * the size of the name on a profile card. */
+export const DEFAULT_FONT_SIZE = 7.5;
+
+/** What a layer is, with the default filled in. */
+export function layerKind(layer: Pick<CosmeticLayer, "kind">): LayerKind {
+  return layer.kind === "text" || layer.kind === "shape" ? layer.kind : "image";
+}
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 
@@ -383,6 +438,80 @@ export function normalizeLayer(layer: CosmeticLayer): CosmeticLayer {
         ? undefined
         : round(clamp(layer.opacity, 0, 1) * 100) / 100,
     variants: normalizeVariants(layer.variants),
+    ...normalizeContent(layer),
+  };
+}
+
+/**
+ * The fields that belong to one kind of layer, kept only for that kind.
+ *
+ * A layer that was a picture and is now a rectangle should not carry the url
+ * it used to have, and a document that arrives with a `text` on a shape is
+ * either a bug or somebody editing JSON. Dropping them is also what keeps a
+ * stored layer honest about what it is.
+ */
+function normalizeContent(layer: CosmeticLayer): Partial<CosmeticLayer> {
+  const kind = layerKind(layer);
+  const stroke =
+    layer.strokeColor && (layer.strokeWidth ?? 0) > 0
+      ? {
+          strokeColor: layer.strokeColor,
+          strokeWidth: round(clamp(layer.strokeWidth ?? 0, 0, LAYER_LIMITS.size.max)),
+        }
+      : { strokeColor: undefined, strokeWidth: undefined };
+
+  if (kind === "text") {
+    return {
+      kind: "text",
+      url: "",
+      storageId: undefined,
+      text: (layer.text ?? "").slice(0, MAX_TEXT_LENGTH),
+      fontSize: round(clamp(layer.fontSize ?? DEFAULT_FONT_SIZE, 0.5, LAYER_LIMITS.size.max)),
+      fontWeight: clamp(Math.round((layer.fontWeight ?? 700) / 100) * 100, 100, 900),
+      italic: layer.italic || undefined,
+      align: layer.align === "left" || layer.align === "right" ? layer.align : "center",
+      color: layer.color || "#ffffff",
+      shape: undefined,
+      radius: undefined,
+      ...stroke,
+    };
+  }
+
+  if (kind === "shape") {
+    return {
+      kind: "shape",
+      url: "",
+      storageId: undefined,
+      text: undefined,
+      fontSize: undefined,
+      fontWeight: undefined,
+      italic: undefined,
+      align: undefined,
+      color: layer.color || "#ffffff",
+      shape: layer.shape === "ellipse" ? "ellipse" : "rect",
+      radius:
+        layer.shape === "ellipse" || !layer.radius
+          ? undefined
+          : round(clamp(layer.radius, 0, LAYER_LIMITS.size.max)),
+      ...stroke,
+    };
+  }
+
+  // An image, which is every layer written before there were three kinds —
+  // so `kind` stays absent rather than being stamped onto documents that were
+  // fine without it.
+  return {
+    kind: undefined,
+    text: undefined,
+    fontSize: undefined,
+    fontWeight: undefined,
+    italic: undefined,
+    align: undefined,
+    color: undefined,
+    shape: undefined,
+    radius: undefined,
+    strokeColor: undefined,
+    strokeWidth: undefined,
   };
 }
 
@@ -551,6 +680,10 @@ export function layerHeight(
   stageHeightPercent: number,
 ): number {
   if (layer.height !== undefined) return layer.height;
+  // Text and shapes are created with a height and keep one; a missing one can
+  // only be a hand-written document, and a square is a better guess than a
+  // ratio nobody measured.
+  if (layerKind(layer) !== "image") return layer.width;
   if (layer.stretchY && layer.anchor !== "locked") {
     // The two edges it runs between, whichever way round they are.
     const edge = stretchEdgePercent(layer, stageHeightPercent);
@@ -661,6 +794,47 @@ export function defaultFrameLayer(url: string, storageId?: string): CosmeticLaye
     x: 50,
     y: 24,
     width: 112,
+  };
+}
+
+/** A new piece of text: centred, at the size of a name, in white — the colour
+ * that reads on the most cards, since a card is a photograph as often as not. */
+export function defaultTextLayer(text = "Text"): CosmeticLayer {
+  return {
+    id: newLayerId(),
+    kind: "text",
+    url: "",
+    anchor: "center",
+    x: 50,
+    y: 0,
+    width: 80,
+    // Explicit, unlike an image's: there is no intrinsic shape to fall back
+    // on, and a box that grew with the words would resize itself as they were
+    // typed.
+    height: DEFAULT_FONT_SIZE * 1.6,
+    text,
+    fontSize: DEFAULT_FONT_SIZE,
+    fontWeight: 700,
+    align: "center",
+    color: "#ffffff",
+  };
+}
+
+/** A new shape: a square in the middle, which is the easiest thing to see and
+ * then drag into whatever was actually wanted. */
+export function defaultShapeLayer(shape: LayerShape = "rect"): CosmeticLayer {
+  return {
+    id: newLayerId(),
+    kind: "shape",
+    url: "",
+    anchor: "center",
+    x: 50,
+    y: 0,
+    width: 40,
+    height: 40,
+    shape,
+    color: "#ffffff",
+    radius: shape === "rect" ? 4 : undefined,
   };
 }
 

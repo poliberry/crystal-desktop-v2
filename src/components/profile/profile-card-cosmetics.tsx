@@ -4,9 +4,9 @@ import { useLoopedPlayback } from "@/hooks/use-looped-playback";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import { useEffect, useRef, useState } from "react";
 
+import { LayerContent } from "@/components/profile/layer-content";
 import {
   DEFAULT_VARIANT,
-  layerObjectFit,
   layerStyle,
   resolveLayer,
   variantForHeight,
@@ -56,6 +56,20 @@ function CosmeticLayer({
       className={cn("pointer-events-none absolute select-none", className)}
       style={style}
     />
+  );
+}
+
+/** One placed layer of a frame — a picture, a shape or a line of text. The
+ * box comes from `layerStyle`; what goes in it is `LayerContent`, which the
+ * canvas editor draws with too, so what you arrange is what everyone sees. */
+function PlacedLayer({ layer, animate }: { layer: Layer; animate: boolean }) {
+  return (
+    <div
+      className="pointer-events-none absolute select-none"
+      style={layerStyle(layer)}
+    >
+      <LayerContent layer={layer} frozen={!animate} />
+    </div>
   );
 }
 
@@ -156,18 +170,9 @@ export function ProfileFrameLayers({
       data-slot="profile-frame"
       className="pointer-events-none absolute inset-0 z-30 [container-type:size]"
     >
-      {layers.map((layer) => {
-        const placed = resolveLayer(layer, variant);
-        return (
-          <CosmeticLayer
-            key={layer.id}
-            src={placed.url}
-            animate={animate}
-            className="max-w-none"
-            style={{ ...layerStyle(placed), objectFit: layerObjectFit(placed) }}
-          />
-        );
-      })}
+      {layers.map((layer) => (
+        <PlacedLayer key={layer.id} layer={resolveLayer(layer, variant)} animate={animate} />
+      ))}
     </div>
   );
 }

@@ -9,7 +9,9 @@ import {
   Minus,
   Plus,
   RotateCcw,
+  Square,
   Trash2,
+  Type,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
@@ -22,6 +24,10 @@ import { Switch } from "@/components/ui/switch";
 import {
   ANCHORS,
   clearVariant,
+  defaultShapeLayer,
+  defaultTextLayer,
+  layerKind,
+  MAX_TEXT_LENGTH,
   DEFAULT_VARIANT,
   LAYER_LIMITS,
   layerHeight,
@@ -223,6 +229,17 @@ export function LayerEditor({
     );
   };
 
+  /** Put a ready-made layer on the canvas and select it, which is what makes
+   * the inspector show its controls straight away. */
+  const addLayerObject = (layer: CosmeticLayer) => {
+    if (draft.length >= MAX_LAYERS) {
+      setError(`That's the most one of these can hold (${MAX_LAYERS}).`);
+      return;
+    }
+    commit([...draft, layer]);
+    setSelectedId(layer.id);
+  };
+
   const addLayer = (url: string, storageId?: string) => {
     if (draft.length >= MAX_LAYERS) {
       setError(`That's the most artwork one of these can hold (${MAX_LAYERS}).`);
@@ -411,6 +428,31 @@ export function LayerEditor({
                 )}
                 Add images
               </Button>
+              {/* A frame is not only pictures: a name across the bottom or a
+                  band behind the avatar is a thing people want and had to
+                  make in another program and upload. */}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7"
+                disabled={draft.length >= MAX_LAYERS}
+                onClick={() => addLayerObject(defaultTextLayer())}
+              >
+                <Type className="size-3.5" />
+                Text
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7"
+                disabled={draft.length >= MAX_LAYERS}
+                onClick={() => addLayerObject(defaultShapeLayer("rect"))}
+              >
+                <Square className="size-3.5" />
+                Shape
+              </Button>
             </div>
           </div>
         </div>
@@ -444,13 +486,33 @@ export function LayerEditor({
                       onClick={() => setSelectedId(layer.id)}
                       className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     >
-                      <span className="size-7 shrink-0 rounded bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:8px_8px]">
-                        <img
-                          src={resolveSrc(layer.url)}
-                          alt=""
-                          className="size-full object-contain"
-                          draggable={false}
-                        />
+                      {/* A thumbnail of the thing itself rather than of its
+                          file: a text layer has no file, and "Aa" in the
+                          right colour identifies it faster than a name would. */}
+                      <span className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:8px_8px] [container-type:size]">
+                        {layerKind(layer) === "text" ? (
+                          <span
+                            className="text-[11px] font-bold leading-none"
+                            style={{ color: layer.color ?? "#ffffff" }}
+                          >
+                            Aa
+                          </span>
+                        ) : layerKind(layer) === "shape" ? (
+                          <span
+                            className="size-4"
+                            style={{
+                              background: layer.color ?? "#ffffff",
+                              borderRadius: layer.shape === "ellipse" ? "50%" : 2,
+                            }}
+                          />
+                        ) : (
+                          <img
+                            src={resolveSrc(layer.url)}
+                            alt=""
+                            className="size-full object-contain"
+                            draggable={false}
+                          />
+                        )}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
                         {Math.round(layer.width)}% · {ANCHOR_LABELS[layer.anchor]}
@@ -616,9 +678,157 @@ function LayerInspector({
 }) {
   const locked = layer.anchor === "locked";
   const stretching = !!layer.stretchY && layer.height === undefined && !locked;
+  const kind = layerKind(layer);
 
   return (
     <div className="space-y-3 border-t border-border/50 pt-3">
+      {/* What it is made of, above where it sits: the geometry below is the
+          same questions for all three kinds, and these are the ones that only
+          make sense for one. */}
+      {kind === "text" && (
+        <div className="space-y-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs" htmlFor="layer-text">
+              Words
+            </Label>
+            <textarea
+              id="layer-text"
+              value={layer.text ?? ""}
+              maxLength={MAX_TEXT_LENGTH}
+              rows={2}
+              onChange={(event) => onChange({ text: event.target.value })}
+              // Typed live and saved on the way out: a mutation per keystroke
+              // is a write per letter.
+              onBlur={(event) => onCommit({ text: event.target.value })}
+              className="w-full resize-none rounded-md border border-border/60 bg-background px-2 py-1 text-xs outline-none focus-visible:border-ring"
+            />
+          </div>
+
+          <NumberRow
+            label="Type size"
+            value={layer.fontSize ?? 7.5}
+            unit={unit}
+            pxPerPercent={pxPerPercent}
+            min={0.5}
+            max={LAYER_LIMITS.size.max}
+            onChange={(fontSize) => onChange({ fontSize })}
+            onCommit={(fontSize) => onCommit({ fontSize })}
+          />
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Weight</Label>
+            <div className="grid grid-cols-4 gap-1">
+              {[400, 600, 700, 900].map((weight) => (
+                <Button
+                  key={weight}
+                  type="button"
+                  size="sm"
+                  variant={(layer.fontWeight ?? 700) === weight ? "secondary" : "ghost"}
+                  className="h-7 px-1 text-[11px]"
+                  onClick={() => onCommit({ fontWeight: weight })}
+                >
+                  {weight}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Alignment</Label>
+            <div className="grid grid-cols-3 gap-1">
+              {(["left", "center", "right"] as const).map((align) => (
+                <Button
+                  key={align}
+                  type="button"
+                  size="sm"
+                  variant={(layer.align ?? "center") === align ? "secondary" : "ghost"}
+                  className="h-7 px-1 text-[11px] capitalize"
+                  onClick={() => onCommit({ align })}
+                >
+                  {align}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs">Italic</Label>
+            <Switch
+              checked={!!layer.italic}
+              onCheckedChange={(italic) => onCommit({ italic: italic || undefined })}
+            />
+          </div>
+        </div>
+      )}
+
+      {kind === "shape" && (
+        <div className="space-y-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Shape</Label>
+            <div className="grid grid-cols-2 gap-1">
+              {(["rect", "ellipse"] as const).map((shape) => (
+                <Button
+                  key={shape}
+                  type="button"
+                  size="sm"
+                  variant={(layer.shape ?? "rect") === shape ? "secondary" : "ghost"}
+                  className="h-7 px-1 text-[11px]"
+                  onClick={() => onCommit({ shape })}
+                >
+                  {shape === "rect" ? "Rectangle" : "Ellipse"}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {(layer.shape ?? "rect") === "rect" && (
+            <NumberRow
+              label="Corners"
+              value={layer.radius ?? 0}
+              unit={unit}
+              pxPerPercent={pxPerPercent}
+              min={0}
+              max={50}
+              onChange={(radius) => onChange({ radius })}
+              onCommit={(radius) => onCommit({ radius })}
+            />
+          )}
+        </div>
+      )}
+
+      {kind !== "image" && (
+        <div className="space-y-2">
+          <ColorRow
+            label={kind === "text" ? "Colour" : "Fill"}
+            value={layer.color ?? "#ffffff"}
+            onChange={(color) => onCommit({ color })}
+          />
+          <ColorRow
+            label="Outline"
+            value={layer.strokeColor}
+            onChange={(strokeColor) =>
+              onCommit({
+                strokeColor,
+                // An outline with no width is an outline nobody can see, so
+                // turning one on gives it something to draw.
+                strokeWidth: strokeColor ? layer.strokeWidth || 0.5 : undefined,
+              })
+            }
+          />
+          {layer.strokeColor && (
+            <NumberRow
+              label="Outline width"
+              value={layer.strokeWidth ?? 0.5}
+              unit={unit}
+              pxPerPercent={pxPerPercent}
+              min={0}
+              max={20}
+              onChange={(strokeWidth) => onChange({ strokeWidth })}
+              onCommit={(strokeWidth) => onCommit({ strokeWidth })}
+            />
+          )}
+        </div>
+      )}
       {/* What editing means right now. Without this the same sliders quietly do
           two different things depending on which card is on the canvas, which
           is the kind of surprise that ends with somebody's frame moved on a
@@ -858,6 +1068,50 @@ function LayerInspector({
         >
           <Trash2 className="size-3" />
           Remove
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A colour, and whether there is one at all.
+ *
+ * The swatch is a native colour input — the OS picker is better than anything
+ * worth building here, and it is the one control people already know. The
+ * cross beside it is what makes the value optional: an outline has to be able
+ * to be *no* outline, and a colour input has no way to say that.
+ */
+function ColorRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string | undefined;
+  onChange: (value: string | undefined) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <Label className="text-xs">{label}</Label>
+      <div className="flex items-center gap-1">
+        <input
+          type="color"
+          value={value ?? "#ffffff"}
+          onChange={(event) => onChange(event.target.value)}
+          className="size-7 cursor-pointer rounded-md border border-border/60 bg-transparent p-0.5"
+          aria-label={label}
+        />
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="size-7"
+          title={value ? `Remove ${label.toLowerCase()}` : `No ${label.toLowerCase()}`}
+          disabled={!value}
+          onClick={() => onChange(undefined)}
+        >
+          <Trash2 className="size-3" />
         </Button>
       </div>
     </div>
