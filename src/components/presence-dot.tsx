@@ -25,17 +25,6 @@ interface PresenceDotProps {
    * point of the cake is that it's noticed. */
   isBirthday?: boolean;
   /**
-   * There is a decoration drawn around this avatar, so the dot moves out of
-   * its way — out along the diagonal, onto the frame, instead of sitting
-   * inside it half over the picture.
-   *
-   * A shift of its own width rather than of the avatar's, because the dot is
-   * the only one of the two this component is given: it is already sized in
-   * proportion to the avatar wherever it is used, so a proportion of it lands
-   * in the same place either way.
-   */
-  decorated?: boolean;
-  /**
    * The colour of the plate the glyph sits on, and of the ring around it.
    *
    * Somebody with a gradient on their card gets their own colour here instead
@@ -89,7 +78,16 @@ function CakeGlyph() {
   );
 }
 
-const DECORATED_OFFSET = "translate-x-[35%] translate-y-[35%]";
+/**
+ * Where the dot sits, always.
+ *
+ * It used to move out along the diagonal only when the avatar wore a
+ * decoration, to get off the artwork — and the position it moved *to* is
+ * simply the better one: on the corner rather than half over the picture. So
+ * it is where the dot lives now, decoration or not, and a badge no longer
+ * shifts under somebody who has just put a frame on.
+ */
+const DOT_OFFSET = "translate-x-[35%] translate-y-[35%]";
 
 /**
  * The plate the glyph sits on.
@@ -134,7 +132,6 @@ export function PresenceDot({
   status,
   activities,
   isBirthday,
-  decorated,
   accent,
   className,
 }: PresenceDotProps) {
@@ -151,9 +148,9 @@ export function PresenceDot({
         PLATE,
         isBirthday && !accent && "bg-muted",
         className,
-        // After `className`, which is where a caller puts the dot: a decoration
+        // After `className`, which is where a caller puts the dot: the offset
         // moves it from wherever that was rather than to a fixed corner.
-        decorated && DECORATED_OFFSET,
+        DOT_OFFSET,
       )}
     >
       {isBirthday ? <CakeGlyph /> : <PresenceGlyph kind={glyphFor(status, activities)} />}
@@ -172,7 +169,6 @@ export function PresenceBadge({
   status,
   activities,
   isBirthday,
-  decorated,
   accent,
   className,
 }: PresenceDotProps) {
@@ -189,7 +185,7 @@ export function PresenceBadge({
         // — a controller or a moon at eight pixels is a smudge.
         "group-data-[size=sm]/avatar:size-3 group-data-[size=default]/avatar:size-3.5 group-data-[size=lg]/avatar:size-4",
         className,
-        decorated && DECORATED_OFFSET,
+        DOT_OFFSET,
       )}
     >
       {/* Wrapped, because AvatarBadge sizes (and at `sm`, hides) a direct `svg`

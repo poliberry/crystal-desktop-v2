@@ -196,9 +196,7 @@ export function MemberList({ communityId }: MemberListProps) {
                                 status={member.status}
                                 activities={member.activities}
                                 accent={member.borderGradientStart}
-                                isBirthday={member.isBirthday}
-                                decorated={!!member.avatarDecoration}
-                              />
+                                isBirthday={member.isBirthday}                              />
                             </Avatar>
                             <div className="min-w-0 flex-1">
                               <p

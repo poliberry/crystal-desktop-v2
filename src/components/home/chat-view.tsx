@@ -160,9 +160,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                     status={avatarUser.status as FriendStatus}
                     activities={activities}
                     accent={avatarUser.borderGradientStart}
-                    isBirthday={avatarUser.isBirthday}
-                    decorated={!!avatarUser.avatarDecoration}
-                  />
+                    isBirthday={avatarUser.isBirthday}                  />
                 )}
               </Avatar>
               <div className="min-w-0 flex flex-row gap-2 items-center">

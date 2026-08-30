@@ -405,9 +405,7 @@ export function UserCard() {
                     status={status}
                     activities={activities}
                     accent={me.borderGradientStart}
-                    isBirthday={isBirthday}
-                    decorated={!!decoration}
-                  />
+                    isBirthday={isBirthday}                  />
                 </Avatar>
               </PopoverTrigger>
               {/* The same transparent host every other profile card gets: the

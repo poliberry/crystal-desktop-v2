@@ -26,10 +26,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useOpenSettings } from "@/components/settings/settings-dialog";
 import { BadgeIcon } from "@/components/badge-icon";
-import {
-  layersHeadroom,
-  type CosmeticLayer,
-} from "@/lib/cosmetic-layers";
+import { layersHeadroom, type CosmeticLayer } from "@/lib/cosmetic-layers";
 import { PresenceBadge } from "@/components/presence-dot";
 import {
   ProfileEffectLayer,
@@ -53,6 +50,7 @@ import {
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { useUserActivities } from "@/hooks/use-rich-presence";
+import { ScrollArea } from "../ui/scroll-area";
 
 export interface MemberProfileMember {
   userId: Id<"users">;
@@ -188,7 +186,9 @@ export function MemberProfileCard({
   const profileCss = profile?.profileCss ?? member.profileCss;
   const profileFrame = profile?.profileFrame ?? member.profileFrame;
   const frameLayers = frameLayersFrom(
-    profile?.profileFrame || profile?.profileFrameLayers?.length ? profile : member,
+    profile?.profileFrame || profile?.profileFrameLayers?.length
+      ? profile
+      : member,
   );
   const frameRoomPercent = layersHeadroom(frameLayers);
   const profileFrameLayout = frameLayout(
@@ -212,13 +212,18 @@ export function MemberProfileCard({
     <div
       data-slot="profile-card"
       {...profileCssAttributes(profileCss, member.userId)}
-      className={cn("relative flex min-h-full flex-col rounded-md p-0.5", className)}
+      className={cn(
+        "relative flex min-h-full flex-col rounded-2xl p-1",
+        className,
+      )}
       style={
         {
           ...(frameLayers.length > 0
             ? {
                 marginTop: reserveFrameRoom ? `${frameRoomPercent.top}%` : 0,
-                marginBottom: reserveFrameRoom ? `${frameRoomPercent.bottom}%` : 0,
+                marginBottom: reserveFrameRoom
+                  ? `${frameRoomPercent.bottom}%`
+                  : 0,
               }
             : {
                 marginTop: reserveFrameRoom ? frameRoom.paddingTop : 0,
@@ -235,10 +240,12 @@ export function MemberProfileCard({
       }
     >
       {/* Inner overlay — 3px inset, clips content and carries the border */}
-      <div
+      <ScrollArea
         data-slot="profile-card-inner"
         className={cn(
-          "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-border/20",
+          "min-h-full",
+          expanded ? "h-[130%]" : "h-full",
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/20",
           hasGradient ? "bg-background/70" : "bg-accent",
         )}
       >
@@ -279,7 +286,8 @@ export function MemberProfileCard({
                   "shadow-md rounded-xl",
                   expanded ? "size-24" : "size-16",
                   !avatarDecoration && "ring-4",
-                  !avatarDecoration && (hasGradient ? "ring-background/70" : "ring-accent"),
+                  !avatarDecoration &&
+                    (hasGradient ? "ring-background/70" : "ring-accent"),
                 )}
               >
                 <AvatarImage
@@ -300,9 +308,11 @@ export function MemberProfileCard({
                   status={member.status}
                   activities={activities}
                   isBirthday={isBirthday}
-                  decorated={!!avatarDecoration}
                   accent={hasGradient ? member.borderGradientStart : undefined}
-                  className={cn("min-w-7 min-h-7 ring-2", !hasGradient && "ring-accent bg-accent")}
+                  className={cn(
+                    "min-w-7 min-h-7 ring-2",
+                    !hasGradient && "ring-accent bg-accent",
+                  )}
                 />
               </Avatar>
             </div>
@@ -350,7 +360,10 @@ export function MemberProfileCard({
                 {member.name}
               </p>
             </div>
-            <p data-slot="profile-username" className="truncate text-sm text-muted-foreground">
+            <p
+              data-slot="profile-username"
+              className="truncate text-sm text-muted-foreground"
+            >
               @{member.username}
             </p>
             <ProfileBadges badges={badges} />
@@ -360,19 +373,30 @@ export function MemberProfileCard({
         {/* Content */}
         <div
           data-slot="profile-body"
-          className={cn("min-w-0 space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}
+          className={cn(
+            "min-w-0 space-y-3 px-4 pb-2",
+            expanded ? "pt-4" : "pt-4",
+          )}
         >
-
+          {" "}
+          {!isSelf && (
+            <FriendActionButton
+              userId={member.userId}
+              username={member.username}
+              hideMessage={hideMessageAction}
+              className="w-full"
+            />
+          )}
           {member.bio ? (
-            <p data-slot="profile-bio" className="text-sm whitespace-pre-wrap">{member.bio}</p>
+            <p data-slot="profile-bio" className="text-sm whitespace-pre-wrap">
+              {member.bio}
+            </p>
           ) : (
             <p className="text-sm italic text-muted-foreground">No bio yet.</p>
           )}
-
           {/* In the dialog the activity list owns its own column, so showing
               it here too would just be the same card twice. */}
           {showActivity && <UserRichPresenceCard userId={member.userId} />}
-
           {member.roles && member.roles.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {member.roles.map((role) => (
@@ -390,9 +414,11 @@ export function MemberProfileCard({
               ))}
             </div>
           )}
-
           {expanded && profile?.createdAt && (
-            <div data-slot="profile-member-since" className="border-t border-border/40 pt-3">
+            <div
+              data-slot="profile-member-since"
+              className="border-t border-border/40 pt-3"
+            >
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Member since
               </p>
@@ -405,21 +431,12 @@ export function MemberProfileCard({
               </p>
             </div>
           )}
-
           <div
             data-slot="profile-actions"
             // `z-40`: above the frame (z-30) and the effect (z-20). Decoration
             // that covered these would make the card unusable.
             className="z-40 flex flex-col items-center w-full gap-1 pb-4"
           >
-            {!isSelf && (
-              <FriendActionButton
-                userId={member.userId}
-                username={member.username}
-                hideMessage={hideMessageAction}
-                className="w-full"
-              />
-            )}
             {expandable && (
               <Button
                 variant="outline"
@@ -454,7 +471,7 @@ export function MemberProfileCard({
             )}
           </div>
         </div>
-      </div>
+      </ScrollArea>
       {/* end inner overlay */}
 
       {/* Drawn outside the clipping box, so a wrapping frame keeps the part

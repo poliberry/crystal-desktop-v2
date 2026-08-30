@@ -75,9 +75,7 @@ export function FriendRow({
             status={status}
             activities={activities}
             isBirthday={isBirthday}
-            accent={borderGradientStart}
-            decorated={!!avatarDecoration}
-            className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
+            accent={borderGradientStart}            className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
           />
         )}
       </Avatar>
