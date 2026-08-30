@@ -40,7 +40,7 @@ export const get = query({
     );
 
     return {
-      dnd: policy.dnd,
+      suppressedBy: policy.suppressedBy,
       dmMessages: policy.dmMessages,
       channelMessages: policy.channelMessages,
       friendRequests: policy.friendRequests,

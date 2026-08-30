@@ -52,6 +52,7 @@ import {
 } from "@/components/profile/status-bubble";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
+import { useUserActivities } from "@/hooks/use-rich-presence";
 
 export interface MemberProfileMember {
   userId: Id<"users">;
@@ -156,61 +157,20 @@ export function MemberProfileCard({
   member: MemberProfileMember;
   communityId?: Id<"communities">;
   communityName?: string;
-  /** False inside the profile page, which is itself the expanded view. */
   expandable?: boolean;
-  /** Larger layout for the dialog: taller banner, bigger avatar, name on its
-   * own line under it. */
   expanded?: boolean;
-  /** False in the dialog, where the activity list has its own column and
-   * repeating it here would just be the same card twice. */
   showActivity?: boolean;
-  /** True where the card is already *in* the conversation its Message button
-   * would open — the DM panel. The other relationship actions (add, accept,
-   * withdraw) still make sense there and are left alone. */
   hideMessageAction?: boolean;
-  /**
-   * Leave the profile frame to the caller.
-   *
-   * A frame surrounds the thing you're looking at, and when a profile has been
-   * opened into a dialog that thing is the dialog rather than the card inside
-   * it. The page passes this and draws the frame around itself; everywhere
-   * else the card is the whole of the profile and draws its own.
-   */
   frameHandledByHost?: boolean;
-  /**
-   * Whether to hold the card away from its container to make room for the
-   * frame.
-   *
-   * True for anything that clips — the profile page's column, the editor's
-   * preview — where the artwork would otherwise be cut off. False in a
-   * popover, which clips nothing and is *positioned against something*: there,
-   * reserving room pushes the card down away from the row it was opened from,
-   * and the frame is better left to overflow.
-   */
   reserveFrameRoom?: boolean;
-  /** For a caller that owns the card's box — the DM panel stretches it down
-   * the full height of the column. */
   className?: string;
 }) {
   const me = useQuery(api.users.getCurrentUser);
-  /**
-   * The card's own read of this person.
-   *
-   * Needed by every card, not just the expanded one, for the status pill: the
-   * `member` prop comes from whatever list opened the card, and a list hides an
-   * offline person's custom status because a row is about reachability. On the
-   * card the status is the reason you opened it, so it comes from here instead,
-   * where it isn't filtered by presence. (It also carries "Member since", which
-   * only the dialog shows.)
-   */
   const profile = useQuery(api.users.getProfile, {
     userId: member.userId,
     communityId,
   });
   const isSelf = !!me && me._id === member.userId;
-  // Queried by the card rather than by `ProfileBadges`, even though only that
-  // row draws them: whether there are any badges also decides where the status
-  // bubble sits, because the badge row is what pushes the avatar down.
   const badges = (useQuery(api.users.badgesOf, { userId: member.userId }) ??
     []) as ProfileBadge[];
   const [statusOpen, setStatusOpen] = useState(false);
@@ -221,46 +181,16 @@ export function MemberProfileCard({
   const hasGradient = !!(
     member.borderGradientStart && member.borderGradientEnd
   );
-
-  /**
-   * Whoever's card this is, whatever their presence — a status somebody set is
-   * shown here for as long as they've set it, including while they're offline,
-   * which is the whole point of "Back Monday".
-   *
-   * The list's value is the fallback rather than the source, so the pill is
-   * there on the first frame instead of appearing when the query lands.
-   */
   const customStatus = profile?.customStatus ?? member.customStatus;
-
-  /**
-   * Cosmetics that the card's own read is the authority on.
-   *
-   * The `member` prop is whatever the thing that opened the card had to hand —
-   * a message author, a friend row, a call tile — and not all of those carry a
-   * decoration. Taking it from the profile query means the card looks the same
-   * wherever it was opened from, and the prop only fills the first frame.
-   */
   const avatarDecoration = profile?.avatarDecoration ?? member.avatarDecoration;
   const isBirthday = profile?.isBirthday ?? member.isBirthday;
-
-  /** The card's own cosmetics, on the same footing as the decoration above:
-   * whatever opened the card may not have carried them, and the query is the
-   * authority once it lands. */
   const profileEffect = profile?.profileEffect ?? member.profileEffect;
   const profileCss = profile?.profileCss ?? member.profileCss;
   const profileFrame = profile?.profileFrame ?? member.profileFrame;
-  /**
-   * The frame as layers — one arrangement taken whole from whichever profile
-   * supplied it, rather than merged field by field: a server frame built out
-   * of three layers and an account frame built out of two are two different
-   * pictures, and mixing them would draw neither.
-   */
   const frameLayers = frameLayersFrom(
     profile?.profileFrame || profile?.profileFrameLayers?.length ? profile : member,
   );
   const frameRoomPercent = layersHeadroom(frameLayers);
-  /** Where that frame sits. Read as a group so a half-loaded query can't mix
-   * the account's scale with a server's anchor. */
   const profileFrameLayout = frameLayout(
     profile?.profileFrame
       ? profile
@@ -271,43 +201,20 @@ export function MemberProfileCard({
           profileFrameOffsetY: member.profileFrameOffsetY,
         },
   );
-  /** How far the card holds itself away from its container, so the frame it
-   * draws outside its edges has somewhere to be. */
   const frameRoom = frameHeadroom(profileFrameLayout, !!profileFrame);
   const nameStyle = displayNameStyleClass(
     profile?.displayNameStyle ?? member.displayNameStyle,
   );
-
-  /** Said or thought — see StatusBubble. The card is the only place a status
-   * gets a shape rather than a line of text. */
   const statusBubble = (profile?.statusBubble ?? "speech") as StatusBubbleKind;
+  const activities = useUserActivities(member.userId);
 
   return (
     <div
-      // `relative`: the effect and frame layers below are positioned against
-      // this box rather than against the inner one, which clips.
-      // Stable hooks for custom CSS, on every part of the card somebody might
-      // reasonably want to restyle. Utility classes get rewritten whenever this
-      // file is edited; a slot name is something a stylesheet can rely on. See
-      // src/lib/css-snippets.ts.
       data-slot="profile-card"
-      // Marks the subtree this person's own stylesheet is allowed to reach.
-      // Only set when they have one, so the attribute never appears for the
-      // vast majority of cards.
       {...profileCssAttributes(profileCss, member.userId)}
       className={cn("relative flex min-h-full flex-col rounded-md p-0.5", className)}
       style={
         {
-          // Room for the frame, reserved by the card rather than by whatever
-          // is hosting it. A frame is drawn outside these edges, and the card
-          // turns up in a popover, a page, a DM panel and an editor preview —
-          // asking each of those to know about it was how three of them ended
-          // up clipping it. A margin here pushes every host's box outwards
-          // instead, which is the same thing said once.
-          // Percentages for layers, pixels for a legacy frame — each in the
-          // unit its placement was written in. A percentage margin resolves
-          // against the containing block's width, and the card fills the box
-          // it is put in, so the two are the same number in every host it has.
           ...(frameLayers.length > 0
             ? {
                 marginTop: reserveFrameRoom ? `${frameRoomPercent.top}%` : 0,
@@ -329,9 +236,6 @@ export function MemberProfileCard({
     >
       {/* Inner overlay — 3px inset, clips content and carries the border */}
       <div
-        // `relative`: the actions in the corner are positioned against the
-        // card. Without it they anchor to whatever positioned ancestor happens
-        // to be up the tree — the popover, or the page.
         data-slot="profile-card-inner"
         className={cn(
           "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[5px] border border-border/20",
@@ -374,10 +278,6 @@ export function MemberProfileCard({
                 className={cn(
                   "shadow-md rounded-xl",
                   expanded ? "size-24" : "size-16",
-                  // The ring is the card's own frame around the avatar. A
-                  // decoration is a frame too, and two of them stacked read as
-                  // a border somebody forgot to remove — so whoever is
-                  // wearing one gets theirs instead.
                   !avatarDecoration && "ring-4",
                   !avatarDecoration && (hasGradient ? "ring-background/70" : "ring-accent"),
                 )}
@@ -398,11 +298,12 @@ export function MemberProfileCard({
                     cake sized to match on the day. */}
                 <PresenceBadge
                   status={member.status}
+                  activities={activities}
                   isBirthday={isBirthday}
                   decorated={!!avatarDecoration}
                   className={cn(
-                    "min-w-4 min-h-4 ring-4",
-                    hasGradient ? "ring-background/70" : "ring-accent",
+                    "min-w-7 min-h-7 ring-4",
+                    hasGradient ? `ring-[${member.borderGradientStart}]` : "ring-accent",
                   )}
                 />
               </Avatar>
@@ -463,13 +364,6 @@ export function MemberProfileCard({
           data-slot="profile-body"
           className={cn("min-w-0 space-y-3 px-4 pb-2", expanded ? "pt-4" : "pt-4")}
         >
-          {!isSelf && (
-            <FriendActionButton
-              userId={member.userId}
-              username={member.username}
-              hideMessage={hideMessageAction}
-            />
-          )}
 
           {member.bio ? (
             <p data-slot="profile-bio" className="text-sm whitespace-pre-wrap">{member.bio}</p>
@@ -518,21 +412,28 @@ export function MemberProfileCard({
             data-slot="profile-actions"
             // `z-40`: above the frame (z-30) and the effect (z-20). Decoration
             // that covered these would make the card unusable.
-            className="absolute top-2 right-2 z-40 flex items-center gap-0.5"
+            className="z-40 flex flex-col items-center w-full gap-1 pb-4"
           >
+            {!isSelf && (
+              <FriendActionButton
+                userId={member.userId}
+                username={member.username}
+                hideMessage={hideMessageAction}
+                className="w-full"
+              />
+            )}
             {expandable && (
               <Button
-                variant="ghost"
-                size="icon"
+                variant="outline"
+                size="default"
                 title="Open profile"
-                // A page rather than a dialog now — see `ProfilePageProvider`.
-                // The identity this card already has is handed over so the page
-                // paints complete on its first frame.
+                className="w-full"
                 onClick={() =>
                   openProfile({ member, communityId, communityName })
                 }
               >
                 <Maximize2 className="size-4" />
+                Open Full Profile
               </Button>
             )}
             {isSelf && (
@@ -542,21 +443,14 @@ export function MemberProfileCard({
                     "server profile" dialog would be a second way to write the
                     same fields. */}
                 <Button
-                  variant="ghost"
-                  size="icon"
+                  variant="outline"
+                  size="default"
                   title="Edit profile"
+                  className="w-full"
                   onClick={openProfileEditor}
                 >
                   <UserPen className="size-4" />
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Settings"
-                  onClick={openSettings}
-                >
-                  <Cog className="size-4" />
+                  Edit Profile
                 </Button>
               </>
             )}

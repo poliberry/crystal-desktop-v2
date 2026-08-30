@@ -18,6 +18,24 @@ import { anyApi } from "convex/server";
  * this just borrows a token from it.
  */
 
+/** What a message carried, when it carried files. */
+interface FeedAttachment {
+  fileName: string;
+  count: number;
+}
+
+/**
+ * One line for a toast: the paperclip when files came with it, then whatever
+ * was said — or the file itself when nothing was.
+ */
+function describe(text: string, attachment: FeedAttachment | null): string {
+  const said = text.trim();
+  if (!attachment) return said || "Sent a message";
+  const what =
+    said || (attachment.count > 1 ? `${attachment.count} files` : attachment.fileName);
+  return `📎 ${what}`;
+}
+
 interface FeedConversation {
   conversationId: string;
   conversationName: string;
@@ -26,6 +44,7 @@ interface FeedConversation {
   authorName: string;
   authorImageUrl?: string;
   text: string;
+  attachment: FeedAttachment | null;
   createdAt: number;
 }
 
@@ -39,6 +58,7 @@ interface FeedChannel {
   authorName: string;
   authorImageUrl?: string;
   text: string;
+  attachment: FeedAttachment | null;
   createdAt: number;
 }
 
@@ -199,7 +219,7 @@ function handleFeed(feed: Feed): void {
 
     void notify(
       c.conversationName,
-      `${c.authorName}: ${c.text || "Sent an attachment"}`,
+      `${c.authorName}: ${describe(c.text, c.attachment)}`,
       () => onNavigate?.({ kind: "conversation", conversationId: c.conversationId }),
       c.authorImageUrl
     );
@@ -214,7 +234,7 @@ function handleFeed(feed: Feed): void {
 
     void notify(
       `#${c.channelName} · ${c.communityName}`,
-      `${c.authorName}: ${c.text || "Sent an attachment"}`,
+      `${c.authorName}: ${describe(c.text, c.attachment)}`,
       () => onNavigate?.({ kind: "channel", communityId: c.communityId, channelId: c.channelId }),
       c.authorImageUrl
     );

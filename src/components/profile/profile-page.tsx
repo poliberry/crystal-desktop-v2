@@ -161,7 +161,7 @@ function ProfilePageBody({
     <div
       data-slot="profile-page"
       {...profileCssAttributes(profileCss, member.userId)}
-      className="fixed inset-0 z-50 flex flex-col bg-background mt-9"
+      className="fixed inset-0 z-50 flex flex-col bg-background mt-10"
     >
       <ProfileCssLayer css={profileCss} scopeId={member.userId} />
       {/* The banner bleeds a tint across the whole page, as it did across the
@@ -202,11 +202,10 @@ function ProfilePageBody({
         data-slot="profile-page-body"
         className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[380px_1fr]"
       >
-        <div data-slot="profile-page-card-column" className="min-h-0">
-          <ScrollArea className="h-full">
+        <div data-slot="profile-page-card-column" className="h-full">
             {/* The card reserves its own room for the frame — see
                 MemberProfileCard. */}
-            <div className="px-3 pb-6">
+            <div className="px-3 pb-6 h-[80%]">
               {/* `expandable={false}`: this *is* the expanded view. */}
               <MemberProfileCard
                 member={member}
@@ -214,10 +213,9 @@ function ProfilePageBody({
                 communityName={communityName}
                 expandable={false}
                 expanded
-                showActivity={false}
+                showActivity={true}
               />
             </div>
-          </ScrollArea>
         </div>
 
         <div data-slot="profile-page-panel" className="flex min-h-0 flex-col">

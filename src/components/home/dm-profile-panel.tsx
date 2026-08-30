@@ -38,7 +38,7 @@ export function DmProfilePanel({
   const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   return (
-    <div className="flex w-72 shrink-0 flex-col border-l bg-background/40">
+    <div className="flex w-72 shrink-0 flex-col border-l">
       {/* A plain scroller rather than `ScrollArea`: Radix wraps its viewport's
           children in a `display: table` div, and a percentage height inside
           that resolves to auto — which is exactly what the card needs to fill
@@ -51,10 +51,10 @@ export function DmProfilePanel({
           // `min-h-full` here and `flex-1` on the card: it runs the height of
           // the panel when there's little to say, and grows past it into the
           // scroll when there's a lot.
-          <div className="flex min-h-full flex-col p-3">
+          <div className="flex min-h-full flex-col justify-center p-3">
             <MemberProfileCard
               member={member}
-              className="flex-1"
+              className="min-h-140"
               // The card is *in* the conversation its Message button opens.
               hideMessageAction
             />

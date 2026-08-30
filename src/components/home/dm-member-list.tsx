@@ -55,7 +55,7 @@ export function DmMemberList({ conversationId }: DmMemberListProps) {
   const offline = members.filter((m) => m.status === "offline");
 
   return (
-    <div className="flex w-56 shrink-0 flex-col border-l bg-background/40">
+    <div className="flex w-56 shrink-0 flex-col border-l">
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-2">
           {online.length > 0 && <DmMemberGroup label="Online" members={online} />}

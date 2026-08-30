@@ -113,6 +113,14 @@ export const listMine = query({
 
         const lastMessage = await lastMessageOf(ctx, conversation._id);
         const unread = isUnread(lastMessage, membership.lastReadAt, me._id);
+        // One indexed read per conversation, and only ever a handful of rows —
+        // the composer caps how many files a message can carry.
+        const lastAttachments = lastMessage
+          ? await ctx.db
+              .query("messageAttachments")
+              .withIndex("by_message", (q) => q.eq("messageId", lastMessage._id))
+              .collect()
+          : [];
 
         // Only counted for conversations already known to be unread, and
         // capped: an exact count of a hundred unread messages isn't more
@@ -136,6 +144,17 @@ export const listMine = query({
           imageUrl: conversation.imageUrl,
           members: await otherMembers(ctx, conversation._id, me._id),
           lastMessageText: lastMessage?.text ?? null,
+          /**
+           * What the last message carried, if anything.
+           *
+           * A message with a file and no text used to preview as nothing at
+           * all — the row said "No messages yet" about a conversation whose
+           * last event was somebody sending a photo. The name is what makes
+           * the preview worth reading; the count is for the rest.
+           */
+          lastMessageAttachment: lastAttachments[0]
+            ? { fileName: lastAttachments[0].fileName, count: lastAttachments.length }
+            : null,
           lastMessageAt: lastMessage?._creationTime ?? conversation.createdAt,
           /** So the list can prefix the preview with "Me:" — whose turn it is
            * is most of what a one-line preview is for. */

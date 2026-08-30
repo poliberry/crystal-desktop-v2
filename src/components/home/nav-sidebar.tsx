@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MessagePreview } from "@/components/message-preview";
 import { PresenceDot } from "@/components/presence-dot";
 import {
   activitySummary,
@@ -166,22 +167,48 @@ export function NavSidebar({
                 : otherMember?.customStatus ||
                   activitySummary(activity) ||
                   (otherMember ? STATUS_LABEL[otherMember.status as FriendStatus] : null);
-              const lastMessageLine = conversation.lastMessageText
-                ? conversation.lastMessageMine
-                  ? `Me: ${conversation.lastMessageText}`
-                  : conversation.lastMessageText
-                : null;
-              const subtitle =
-                (!isGroup && stale ? presenceLine : null) ??
-                lastMessageLine ??
-                "No messages yet";
+              /**
+               * The last thing said, or the last thing sent.
+               *
+               * A file with no words is still a message — the row used to say
+               * "No messages yet" about a conversation whose last event was a
+               * photo. The paperclip carries that, and when there are words
+               * too they are what the line is for, so the clip just precedes
+               * them.
+               */
+              const attachment = conversation.lastMessageAttachment;
+              const attachmentText =
+                attachment && !conversation.lastMessageText
+                  ? attachment.count > 1
+                    ? `${attachment.count} files`
+                    : attachment.fileName
+                  : null;
+              const body = conversation.lastMessageText ?? attachmentText;
+              // A day-old conversation is still better described by what the
+              // other person is up to than by a stale line of chat, exactly as
+              // before — the preview only speaks when the presence line
+              // doesn't.
+              const presenceWins = !isGroup && stale && !!presenceLine;
+              const preview =
+                body === null || presenceWins
+                  ? null
+                  : {
+                      // "Me:" first, then the clip: whose turn it is is the
+                      // first thing a one-line preview has to answer.
+                      prefix: `${conversation.lastMessageMine ? "Me:" : ""}${
+                        attachment ? "📎" : ""
+                      }`.trim(),
+                      body,
+                    };
+              const fallback =
+                (!isGroup && stale ? presenceLine : null) ?? "No messages yet";
 
               return (
                 <button
                   key={conversation.id}
                   onClick={() => onSelectConversation(conversation.id)}
                   className={cn(
-                    "group relative flex items-center gap-2.5 overflow-hidden rounded-none px-2 py-2 text-left hover:bg-accent/60",
+                    "group relative flex items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left hover:bg-accent/60",
                     active && "bg-accent",
                     isOffline && !active && "opacity-60 hover:opacity-90"
                   )}
@@ -224,8 +251,15 @@ export function NavSidebar({
                     >
                       {title}
                     </p>
-                    <p className="flex w-46 items-center gap-1 truncate text-xs text-muted-foreground">
-                      <span className="truncate">{subtitle}</span>
+                    <p className="flex w-42 items-center gap-1 truncate text-xs text-muted-foreground">
+                      {preview ? (
+                        <MessagePreview
+                          text={preview.body}
+                          prefix={preview.prefix || undefined}
+                        />
+                      ) : (
+                        <span className="truncate">{fallback}</span>
+                      )}
                     </p>
                   </div>
                 </button>

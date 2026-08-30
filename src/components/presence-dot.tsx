@@ -153,7 +153,7 @@ export function PresenceBadge({
           child — those rules are for the icons it was built to hold, and this
           one is the badge's whole content. */}
       <span className="flex size-full items-center justify-center">
-        {isBirthday ? <CakeGlyph /> : <PresenceGlyph kind={glyphFor(status, activities)} />}
+        {isBirthday ? <CakeGlyph /> : <PresenceGlyph className="size-6" kind={glyphFor(status, activities)} />}
       </span>
     </AvatarBadge>
   );

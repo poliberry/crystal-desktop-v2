@@ -459,7 +459,6 @@ export function UserCard() {
                   <div className="relative h-4 overflow-hidden">
                     <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
                       <span className="truncate">
-                        {activities.length > 0 ? " • " : ""}
                         {subtitle}
                       </span>
                     </p>

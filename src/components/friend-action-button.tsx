@@ -71,7 +71,7 @@ export function FriendActionButton({
     friends: {
       label: "Message",
       icon: MessageSquare,
-      variant: "secondary" as const,
+      variant: "outline" as const,
       onClick: openDm,
     },
     outgoing: {
@@ -110,7 +110,7 @@ export function FriendActionButton({
     <div className={cn("space-y-1", className)}>
       <Button
         type="button"
-        size="sm"
+        size="default"
         variant={config.variant}
         disabled={busy}
         onClick={() => void config.onClick()}

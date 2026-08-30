@@ -130,17 +130,12 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
+      <ChatBackground
+        url={conversation?.backgroundUrl}
+        opacity={conversation?.backgroundOpacity}
+      />
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* The conversation's wallpaper — set by any member, since a DM has no
-            roles and two people sharing a room can share it. */}
-        <ChatBackground
-          url={conversation?.backgroundUrl}
-          opacity={conversation?.backgroundOpacity}
-        />
         <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-          {/* For a group the whole identity block is the way into its
-              settings — the icon and name are what you'd click to change
-              them, so there's no separate button for it. */}
           {isGroup ? (
             <button
               type="button"
