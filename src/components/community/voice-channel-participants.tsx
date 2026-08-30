@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 import { HeadphoneOff, MicOff } from "lucide-react";
 import { RoomEvent, type Room } from "livekit-client";
 import { useEffect, useState } from "react";
@@ -15,10 +16,11 @@ import {
 import { useCall } from "@/components/call/call-provider";
 import { StreamPreviewCard } from "@/components/call/stream-preview-card";
 import { UserProfileContent } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 
@@ -191,7 +193,11 @@ function ParticipantRow({
       ) : (
         trigger
       )}
-      <PopoverContent side="right" align="start" className="w-72 p-0">
+      <ProfilePopoverContent
+        userId={participant.id}
+        communityId={communityId}
+        side="right"
+      >
         <UserProfileContent
           userId={participant.id}
           communityId={communityId}
@@ -199,7 +205,7 @@ function ParticipantRow({
           username={participant.username}
           imageUrl={participant.imageUrl}
         />
-      </PopoverContent>
+      </ProfilePopoverContent>
     </Popover>
   );
 }
@@ -226,13 +232,19 @@ export function VoiceChannelHoverCard({
   const participants = (useQuery(api.channels.listVoiceParticipants, { channelId }) ??
     []) as VoiceParticipant[];
   const { joinChannelCall } = useCall();
+  // Above the early return: hooks cannot be called conditionally.
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   if (participants.length === 0) return <>{children}</>;
 
   return (
     <HoverCard>
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
-      <HoverCardContent side="right" className="w-76 max-h-[70vh] overflow-y-auto">
+      <HoverCardContent
+        ref={smoothRef}
+        side="right"
+        className="w-76 max-h-[70vh] overflow-y-auto"
+      >
         <p className="mb-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           {channelName} — {participants.length}
         </p>

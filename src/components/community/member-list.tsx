@@ -1,14 +1,16 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { Crown } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberContextMenu } from "@/components/community/member-context-menu";
+import { Nameplate } from "@/components/profile/nameplate";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -20,8 +22,7 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
-import { decorationSrc } from "@/lib/avatar-decorations";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
@@ -139,6 +140,8 @@ export function MemberList({ communityId }: MemberListProps) {
   const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
   const me = useQuery(api.users.getCurrentUser);
   const members = (rawMembers ?? []) as Member[];
+  // A list of people is the set of profile cards about to be opened.
+  usePreloadedCosmetics(members);
   const groups = buildGroups(members);
 
   return (
@@ -183,9 +186,10 @@ export function MemberList({ communityId }: MemberListProps) {
                             <Avatar size="default">
                               <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-md" />
                               <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                              <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
+                              <AvatarDecoration value={member.avatarDecoration} />
                               <PresenceBadge
                                 status={member.status}
+                                activities={member.activities}
                                 isBirthday={member.isBirthday}
                                 decorated={!!member.avatarDecoration}
                               />
@@ -202,7 +206,6 @@ export function MemberList({ communityId }: MemberListProps) {
                                   way the activity glyph sits to its left. */}
                               {!isOffline && (!!member.customStatus || !!member.activities?.length) && (
                                 <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                                    <ActivityStatusIcon activities={member.activities} />
                                   <span className="truncate">
                                     {member.customStatus ??
                                       activitySummary(topActivity(member.activities))}
@@ -210,23 +213,22 @@ export function MemberList({ communityId }: MemberListProps) {
                                 </p>
                               )}
                             </div>
-                            {member.nameplateUrl && (
-                              <img
-                                src={member.nameplateUrl}
-                                alt=""
-                                className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20"
-                              />
-                            )}
+                            <Nameplate url={member.nameplateUrl} className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-20" />
                           </button>
                         </PopoverTrigger>
                         </MemberContextMenu>
-                        <PopoverContent side="left" align="start" className="w-72 p-0">
+                        <ProfilePopoverContent
+                          userId={member.userId}
+                          communityId={communityId}
+                          side="left"
+                        >
                           <MemberProfileCard
+                            reserveFrameRoom={false}
                             member={member}
                             communityId={communityId}
                             communityName={community?.name}
                           />
-                        </PopoverContent>
+                        </ProfilePopoverContent>
                       </Popover>
                     );
                   })}

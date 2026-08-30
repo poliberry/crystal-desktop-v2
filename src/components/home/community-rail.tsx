@@ -46,19 +46,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCachedQuery } from "@/hooks/use-cached-query";
+import { parseInviteCode } from "@/lib/invites";
 import { cn } from "@/lib/utils";
 import { useNavigation } from "@/components/home/navigation-context";
 import { SelectionPill } from "@/components/home/selection-pill";
 import { USER_CARD_HEIGHT } from "./user-card";
 import { useCall } from "../call/call-provider";
 
-/** Strips an optional "joincrystal:" prefix so pasting a full invite string
- * (copied straight from the Invite dialog) works the same as a bare code. */
+/** Pasting a whole invite link works the same as typing the bare code — see
+ * `parseInviteCode`, which knows all the forms a link has had. Anything
+ * unrecognised is passed through untouched so the join mutation reports it. */
 function normalizeInviteInput(raw: string): string {
-  const trimmed = raw.trim();
-  return trimmed.startsWith("joincrystal:")
-    ? trimmed.slice("joincrystal:".length)
-    : trimmed;
+  return parseInviteCode(raw) ?? raw.trim();
 }
 
 function RailButton({

@@ -99,7 +99,11 @@ export function isBirthdayNow(
  */
 export function effectiveDecoration(
   user:
-    | (BirthdayFields & Pick<Doc<"users">, "avatarDecoration" | "birthdayDecoration">)
+    | (BirthdayFields &
+        Pick<
+          Doc<"users">,
+          "avatarDecoration" | "avatarDecorationLayers" | "birthdayDecoration"
+        >)
     | null
     | undefined,
   now: number = Date.now()
@@ -107,6 +111,24 @@ export function effectiveDecoration(
   if (!user) return undefined;
   if (isBirthdayNow(user, now)) {
     return user.birthdayDecoration ?? generateBirthdayDecoration(user as Doc<"users">);
+  }
+  return decorationValue(user);
+}
+
+/**
+ * A user's own decoration as the single string every query carries.
+ *
+ * A decoration can be several placed images now, but it rides along with every
+ * member row, message author and call tile in the app — so it stays one field,
+ * and a list is serialised into it rather than threaded beside it. The client
+ * unpacks the same form in `decorationLayers` (src/lib/avatar-decorations.ts);
+ * change the shape in one, change it in the other.
+ */
+export function decorationValue(
+  user: Pick<Doc<"users">, "avatarDecoration" | "avatarDecorationLayers">
+): string | undefined {
+  if (user.avatarDecorationLayers?.length) {
+    return `layers:${JSON.stringify(user.avatarDecorationLayers)}`;
   }
   return user.avatarDecoration;
 }

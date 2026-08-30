@@ -10,6 +10,8 @@ import {
   conversationMessagesKey,
   rememberFirstPage,
 } from "@/lib/message-cache";
+import { ownDecorationState } from "@/lib/avatar-decorations";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import {
   getRecentViewsSnapshot,
   getServerSnapshot,
@@ -140,6 +142,15 @@ function useRecentViews(): RecentView[] {
  */
 export function DataPreloader() {
   const me = useQuery(api.users.getCurrentUser);
+  // Your own cosmetics, which are the ones drawn most often and the ones a
+  // slow first paint is most obvious on — your card is in the corner of every
+  // screen. `ownDecorationState` because a birthday overrides what you chose.
+  usePreloadedCosmetics(
+    useMemo(
+      () => (me ? [{ ...me, avatarDecoration: ownDecorationState(me).decoration }] : []),
+      [me],
+    ),
+  );
   if (!me) return null;
   return <PreloadEverything />;
 }

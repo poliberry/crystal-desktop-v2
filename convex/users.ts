@@ -13,7 +13,21 @@ import {
   MAX_BIRTHDAY_WINDOW_MS,
 } from "./lib/birthday";
 import { badgeByIdMap, badgeView } from "./badges";
-import { MAX_DECORATION_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import {
+  dropProfileAsset,
+  FRAME_MODES,
+  resolveProfileAsset,
+} from "./lib/profileCosmetics";
+import {
+  dropUnusedLayerAssets,
+  layerArgValidator,
+  normalizeLayers,
+} from "./lib/cosmeticLayers";
+import {
+  MAX_DECORATION_BYTES,
+  MAX_PROFILE_ASSET_BYTES,
+  requireWithinUploadLimit,
+} from "./uploadLimits";
 import {
   internalMutation,
   internalQuery,
@@ -296,10 +310,24 @@ export const removeBanner = mutation({
   },
 });
 
+/**
+ * The strip behind this user's name in chat — a picture, or a short video.
+ *
+ * Size-checked now that a nameplate can be a video: an image of a few hundred
+ * kilobytes needed no ceiling, and an MP4 very much does. The renderer decides
+ * which of the two a file is from its extension — see
+ * src/components/profile/nameplate.tsx.
+ */
 export const setNameplate = mutation({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }) => {
     const me = await getCurrentUserOrThrow(ctx);
+    await requireWithinUploadLimit(
+      ctx,
+      storageId,
+      MAX_PROFILE_ASSET_BYTES,
+      "Nameplates"
+    );
     const url = await ctx.storage.getUrl(storageId);
     if (!url) throw new Error("Nameplate upload failed.");
     const previous = me.nameplateStorageId;
@@ -380,6 +408,241 @@ export const removeAvatarDecoration = mutation({
       avatarDecorationStorageId: undefined,
     });
     if (previous) await ctx.storage.delete(previous);
+  },
+});
+
+// --- Card cosmetics: display name style, effect, frame ---------------------
+
+/**
+ * How the display name is drawn — see src/lib/profile-cosmetics.ts.
+ *
+ * The key isn't validated against a catalogue here, only bounded, for the same
+ * reason `setAvatarDecoration` doesn't own the list of presets: which styles
+ * exist is presentation, and the renderer already falls back to the plain name
+ * for a key it doesn't recognise. Validating here would mean a style couldn't
+ * ship without a backend deploy.
+ */
+export const setDisplayNameStyle = mutation({
+  args: { style: v.string() },
+  handler: async (ctx, { style }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = style.trim().slice(0, 32);
+    await ctx.db.patch(me._id, {
+      // "default" is the absence of a style, not a style — stored as nothing so
+      // a card doesn't carry a field that means what its absence already does.
+      displayNameStyle: !trimmed || trimmed === "default" ? undefined : trimmed,
+    });
+  },
+});
+
+export const setProfileEffect = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile effects");
+    const previous = me.profileEffectStorageId;
+    await ctx.db.patch(me._id, {
+      profileEffect: url,
+      profileEffectStorageId: storageId,
+    });
+    await dropProfileAsset(ctx, previous, storageId);
+    return url;
+  },
+});
+
+export const removeProfileEffect = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.profileEffectStorageId;
+    await ctx.db.patch(me._id, {
+      profileEffect: undefined,
+      profileEffectStorageId: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
+  },
+});
+
+/** A frame of your own, plus how it's meant to be drawn. The mode travels with
+ * the upload because the person who just picked the file is the only one who
+ * knows which kind it is — nothing in the pixels says. */
+export const setProfileFrame = mutation({
+  args: {
+    storageId: v.id("_storage"),
+    mode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
+  },
+  handler: async (ctx, { storageId, mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const url = await resolveProfileAsset(ctx, storageId, "Profile frames");
+    const previous = me.profileFrameStorageId;
+    await ctx.db.patch(me._id, {
+      profileFrame: url,
+      profileFrameStorageId: storageId,
+      profileFrameMode: mode ?? me.profileFrameMode ?? "wrap",
+    });
+    await dropProfileAsset(ctx, previous, storageId);
+    return url;
+  },
+});
+
+/** Switch an already-uploaded frame between wrapping the card and lying on
+ * top of it, without re-uploading. */
+export const setProfileFrameMode = mutation({
+  args: { mode: v.union(v.literal("wrap"), v.literal("overlay")) },
+  handler: async (ctx, { mode }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!FRAME_MODES.includes(mode)) throw new Error("Unknown frame mode.");
+    await ctx.db.patch(me._id, { profileFrameMode: mode });
+  },
+});
+
+/**
+ * Where the frame sits.
+ *
+ * Placed by the person who uploaded it rather than inferred from the file —
+ * see the note on `profileFrameFit` in the schema. Clamped rather than
+ * rejected: the sliders can only produce sane numbers, and a call from
+ * anywhere else shouldn't be able to park somebody's artwork three screens
+ * away from their card.
+ */
+export const setProfileFrameLayout = mutation({
+  args: {
+    fit: v.optional(v.union(v.literal("stretch"), v.literal("aspect"))),
+    anchor: v.optional(
+      v.union(v.literal("top"), v.literal("center"), v.literal("bottom"))
+    ),
+    scale: v.optional(v.number()),
+    offsetY: v.optional(v.number()),
+  },
+  handler: async (ctx, { fit, anchor, scale, offsetY }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await ctx.db.patch(me._id, {
+      ...(fit !== undefined ? { profileFrameFit: fit } : {}),
+      ...(anchor !== undefined ? { profileFrameAnchor: anchor } : {}),
+      ...(scale !== undefined
+        ? { profileFrameScale: Math.min(220, Math.max(60, scale)) }
+        : {}),
+      ...(offsetY !== undefined
+        ? { profileFrameOffsetY: Math.min(240, Math.max(-240, offsetY)) }
+        : {}),
+    });
+  },
+});
+
+/** How long a profile stylesheet may be. Mirrored in
+ * src/lib/scoped-css.ts, which also truncates on read — this is the copy that
+ * binds. */
+const MAX_PROFILE_CSS_LENGTH = 8_000;
+
+/**
+ * Your own stylesheet for your own profile card.
+ *
+ * Stored as written and confined to the card by the client that renders it —
+ * see `scopeCss`. Nothing is validated beyond the length: CSS that doesn't
+ * parse simply doesn't apply, and the scoping (not any check here) is what
+ * stops a rule reaching past the card it belongs to.
+ */
+export const setProfileCss = mutation({
+  args: { css: v.string() },
+  handler: async (ctx, { css }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = css.trim();
+    if (trimmed.length > MAX_PROFILE_CSS_LENGTH) {
+      throw new Error(
+        `Profile CSS must be under ${MAX_PROFILE_CSS_LENGTH} characters.`
+      );
+    }
+    await ctx.db.patch(me._id, { profileCss: trimmed || undefined });
+  },
+});
+
+/**
+ * The frame as a whole: every image in it, and where each one sits.
+ *
+ * Replaced wholesale rather than patched layer by layer, because that is what
+ * the editor produces — a canvas hands back an arrangement, not a diff, and
+ * "apply these eight positions atomically" is the only version of this that
+ * can't half-apply.
+ *
+ * Writing this list is also what retires the single-image fields for a
+ * profile: `frameLayersFrom` reads the old ones only when there are no layers,
+ * so a card written by this build carries its whole frame here. The old fields
+ * are left in place rather than cleared, so an older client keeps drawing what
+ * it always did.
+ */
+export const setProfileFrameLayers = mutation({
+  args: { layers: v.array(layerArgValidator) },
+  handler: async (ctx, { layers }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const next = normalizeLayers(layers);
+    await ctx.db.patch(me._id, { profileFrameLayers: next });
+    await dropUnusedLayerAssets(ctx, me.profileFrameLayers, next);
+  },
+});
+
+/**
+ * An image for a frame or a decoration to use as one of its layers.
+ *
+ * Separate from the mutation that places it: uploading and arranging are
+ * different moments, and the editor adds the layer to its working copy the
+ * instant the file lands rather than making somebody wait for a round trip
+ * before they can drag it. The URL is all that comes back; the arrangement is
+ * saved with everything else.
+ */
+export const uploadCosmeticLayer = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    await getCurrentUserOrThrow(ctx);
+    return resolveProfileAsset(ctx, storageId, "Profile artwork");
+  },
+});
+
+/**
+ * The decoration as a list of placed images.
+ *
+ * Two fields for one thing, deliberately: the list is what the editor reads
+ * back and what the storage cleanup diffs, and `avatarDecoration` is the
+ * single string every *other* query carries — it rides along with every member
+ * row, message author and call tile, so a second field beside it would have to
+ * be threaded through a dozen shapes that have no other reason to know
+ * decorations exist. `decorationValue` is the pairing; the client unpacks the
+ * same form in `decorationLayers`.
+ */
+export const setAvatarDecorationLayers = mutation({
+  args: { layers: v.array(layerArgValidator) },
+  handler: async (ctx, { layers }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const next = normalizeLayers(layers);
+    const previousLayers = me.avatarDecorationLayers;
+    const previousSingle = me.avatarDecorationStorageId;
+
+    await ctx.db.patch(me._id, {
+      avatarDecorationLayers: next.length > 0 ? next : undefined,
+      avatarDecoration: next.length > 0 ? `layers:${JSON.stringify(next)}` : undefined,
+      // The single-image upload this replaces is not one of the layers unless
+      // the editor kept it as one, which it does by carrying the same
+      // storageId across.
+      avatarDecorationStorageId: undefined,
+    });
+
+    await dropUnusedLayerAssets(ctx, previousLayers, next);
+    if (previousSingle && !next.some((layer) => layer.storageId === previousSingle)) {
+      await ctx.storage.delete(previousSingle).catch(() => {});
+    }
+  },
+});
+
+export const removeProfileFrame = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const previous = me.profileFrameStorageId;
+    await ctx.db.patch(me._id, {
+      profileFrame: undefined,
+      profileFrameStorageId: undefined,
+      profileFrameMode: undefined,
+    });
+    await dropProfileAsset(ctx, previous);
   },
 });
 
@@ -639,6 +902,46 @@ export const getProfile = query({
       isBirthday: isBirthdayNow(user),
       borderGradientStart: serverProfile?.borderGradientStart ?? user.borderGradientStart,
       borderGradientEnd: serverProfile?.borderGradientEnd ?? user.borderGradientEnd,
+      /**
+       * Card cosmetics, merged field by field like the banner above them
+       * rather than account-only like the decoration.
+       *
+       * The split is about what the thing dresses: a decoration is worn by the
+       * *person* and follows them into every server, whereas an effect and a
+       * frame dress this *card* — and a card in a community is that community's
+       * view of them, which is exactly what a server profile is for.
+       */
+      displayNameStyle: serverProfile?.displayNameStyle ?? user.displayNameStyle,
+      profileEffect: serverProfile?.profileEffect ?? user.profileEffect,
+      /** Raw, as written. The client that renders the card is what confines it
+       * to that card — see `scopeCss`. */
+      profileCss: serverProfile?.profileCss ?? user.profileCss,
+      /** Taken from whichever profile supplied the frame — a server frame with
+       * the account's mode would be drawn the wrong way round. */
+      // Placement travels with whichever profile supplied the frame — a server
+      // frame positioned by the account's numbers would land anywhere.
+      // A server profile counts as having a frame if it has *either* form of
+      // one, so a server frame built out of layers isn't passed over in
+      // favour of the account's single image.
+      ...(serverProfile?.profileFrame || serverProfile?.profileFrameLayers?.length
+        ? {
+            profileFrame: serverProfile.profileFrame,
+            profileFrameMode: serverProfile.profileFrameMode,
+            profileFrameFit: serverProfile.profileFrameFit,
+            profileFrameAnchor: serverProfile.profileFrameAnchor,
+            profileFrameScale: serverProfile.profileFrameScale,
+            profileFrameOffsetY: serverProfile.profileFrameOffsetY,
+            profileFrameLayers: serverProfile.profileFrameLayers,
+          }
+        : {
+            profileFrame: user.profileFrame,
+            profileFrameMode: user.profileFrameMode,
+            profileFrameFit: user.profileFrameFit,
+            profileFrameAnchor: user.profileFrameAnchor,
+            profileFrameScale: user.profileFrameScale,
+            profileFrameOffsetY: user.profileFrameOffsetY,
+            profileFrameLayers: user.profileFrameLayers,
+          }),
       status: presence?.effective ?? "offline",
       activities: visibleActivities(presence, user),
       roles,

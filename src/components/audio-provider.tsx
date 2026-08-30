@@ -40,6 +40,8 @@ interface AudioPreferencesContextValue extends AudioPreferences {
   noiseSuppressionSupported: boolean;
   setQuality: (quality: StreamQuality) => void;
   setShareAudio: (choice: SystemAudioChoice) => void;
+  setParticipantVolume: (volume: number) => void;
+  setStreamVolume: (volume: number) => void;
   setSoundboardVolume: (volume: number) => void;
   setUiSoundVolume: (volume: number) => void;
   setRichPresenceEnabled: (enabled: boolean) => void;
@@ -198,6 +200,8 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       toggleNoiseSuppression: () => update({ noiseSuppression: !prefs.noiseSuppression }),
       setQuality: (quality) => update({ quality }),
       setShareAudio: (shareAudio) => update({ shareAudio }),
+      setParticipantVolume: (participantVolume) => update({ participantVolume }),
+      setStreamVolume: (streamVolume) => update({ streamVolume }),
       setSoundboardVolume: (soundboardVolume) => update({ soundboardVolume }),
       setUiSoundVolume: (uiSoundVolume) => update({ uiSoundVolume }),
       setRichPresenceEnabled: (richPresenceEnabled) => update({ richPresenceEnabled }),

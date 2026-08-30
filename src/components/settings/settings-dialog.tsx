@@ -9,50 +9,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SettingsShell } from "@/components/settings/settings-shell";
-import { getDesktopAPI } from "@/lib/desktop";
 
 const SettingsDialogContext = createContext<(() => void) | null>(null);
 
-/** Falls back to asking the desktop layer directly, which is what anything
- * mounted outside the provider gets — including the Electron Settings window,
- * whose whole document *is* the shell. */
-function openDesktopSettings(): void {
-  void getDesktopAPI()?.settings.open();
-}
-
 /**
- * Makes Settings reachable in both shells.
+ * Makes Settings reachable from anywhere, as a dialog.
  *
- * On the desktop it's a real second window (`settings:open` → a frameless
- * BrowserWindow on /settings), which a browser has no equivalent for: the
- * call sites went through `getDesktopAPI()?.settings.open()`, so on the web
- * the optional chain swallowed the click and Settings simply never opened.
- * Here the same gesture renders the shell in a dialog instead — same
- * component, so the two stay in step by construction.
+ * It used to be a second Electron `BrowserWindow` on `/settings` for desktop
+ * builds and a dialog only on the web, which meant two shells to keep in step:
+ * a window has its own document, its own providers and its own copy of every
+ * subscription, and anything the main window knew — an open call, the profile
+ * being edited — had to be re-derived there or passed over IPC. The dialog is
+ * the whole story now, on both platforms.
  */
 export function SettingsDialogProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-
-  const openSettings = useCallback(() => {
-    // Presence of the desktop API — not the dialog — decides, so an Electron
-    // build keeps its window even though this provider is mounted there too.
-    if (getDesktopAPI()) {
-      openDesktopSettings();
-      return;
-    }
-    setOpen(true);
-  }, []);
+  const openSettings = useCallback(() => setOpen(true), []);
 
   return (
     <SettingsDialogContext.Provider value={openSettings}>
       {children}
       <Dialog open={open} onOpenChange={setOpen}>
-        {/* Sized like the desktop window (840x600) but capped to the viewport.
-            `p-0` because the shell draws its own chrome, right down to the
-            titlebar row — WindowControls renders nothing off Electron, which
-            is what leaves that row free for the dialog's own close button. */}
+        {/* Wider than the old window (which was 840x600) because the profile
+            editor inside is three panes across. `p-0` because the shell draws
+            its own chrome down to the titlebar row. */}
         <DialogContent
-          className="h-[min(85vh,600px)] w-[min(94vw,840px)] gap-0 overflow-hidden p-0 sm:max-w-none"
+          className="h-[min(90vh,720px)] w-[min(96vw,1180px)] gap-0 overflow-hidden p-0 sm:max-w-none"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <DialogTitle className="sr-only">Settings</DialogTitle>
@@ -66,9 +48,14 @@ export function SettingsDialogProvider({ children }: { children: React.ReactNode
   );
 }
 
-/** Opens Settings the way this shell does it — a window on the desktop, a
- * dialog on the web. */
+/**
+ * Opens Settings.
+ *
+ * Falls back to a no-op outside the provider rather than to the old desktop
+ * IPC call: there is no window to open any more, and a click that silently did
+ * nothing was the bug this whole context exists to have fixed.
+ */
 export function useOpenSettings(): () => void {
   const openSettings = useContext(SettingsDialogContext);
-  return useMemo(() => openSettings ?? openDesktopSettings, [openSettings]);
+  return useMemo(() => openSettings ?? (() => {}), [openSettings]);
 }

@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { inviteUrl } from "@/lib/invites";
 
 interface InviteDialogProps {
   communityId: Id<"communities">;
@@ -22,7 +23,6 @@ interface InviteDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const INVITE_PREFIX = "joincrystal:";
 
 export function InviteDialog({ communityId, open, onOpenChange }: InviteDialogProps) {
   const getOrCreateInviteCode = useMutation(api.communities.getOrCreateInviteCode);
@@ -58,7 +58,7 @@ export function InviteDialog({ communityId, open, onOpenChange }: InviteDialogPr
 
   const handleCopy = async () => {
     if (!code) return;
-    await navigator.clipboard.writeText(`${INVITE_PREFIX}${code}`);
+    await navigator.clipboard.writeText(inviteUrl(code));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -69,12 +69,13 @@ export function InviteDialog({ communityId, open, onOpenChange }: InviteDialogPr
         <DialogHeader>
           <DialogTitle>Invite people</DialogTitle>
           <DialogDescription>
-            Share this code, or paste it into a message as-is — it'll render as a clickable join
-            embed for anyone who sees it.
+            Share this link anywhere. It opens Crystal if it&apos;s installed and the
+            web app if it isn&apos;t — and pasted into a message here, it renders as a
+            join embed.
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2">
-          <Input readOnly value={code ? `${INVITE_PREFIX}${code}` : "Generating..."} className="font-mono" />
+          <Input readOnly value={code ? inviteUrl(code) : "Generating…"} className="font-mono" />
           <Button size="icon" variant="secondary" disabled={!code || loading} onClick={() => void handleCopy()}>
             {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
           </Button>

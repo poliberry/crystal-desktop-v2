@@ -197,8 +197,17 @@ export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
   appInfo(): Promise<AppInfo>;
-  settings: {
-    open(): Promise<void>;
+  /**
+   * The user's custom stylesheet, kept as a real file in the app's data
+   * directory. Optional so a renderer running against an older preload — a
+   * packaged build whose window predates an update — falls back to the
+   * `localStorage` copy rather than throwing.
+   */
+  customCss?: {
+    read(): Promise<string>;
+    write(css: string): Promise<string>;
+    path(): Promise<string>;
+    reveal(): Promise<boolean>;
   };
   window: {
     minimize(): Promise<void>;
@@ -264,6 +273,12 @@ export interface DesktopAPI {
   };
   auth?: {
     onCallback(cb: (url: string) => void): () => void;
+  };
+  /** `crystal://invite/<code>` deep links, handed over by the web page that
+   * an `https://…/invite/<code>` link lands on. Optional so an older preload
+   * simply never delivers one. */
+  invites?: {
+    onOpen(cb: (code: string) => void): () => void;
   };
   /**
    * "Pop out" a video tile into a real, separate always-on-top

@@ -5,6 +5,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
   const row = await ctx.db
@@ -29,6 +30,16 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     imageUrl: user.imageUrl,
     nameplateUrl: user.nameplateUrl,
     avatarDecoration: effectiveDecoration(user),
+    // The card this row opens draws these, and a url in hand can be fetched
+    // before anybody asks for it — see src/lib/image-preload.ts.
+    profileEffect: user.profileEffect,
+    profileFrame: user.profileFrame,
+    profileFrameMode: user.profileFrameMode,
+    profileFrameFit: user.profileFrameFit,
+    profileFrameAnchor: user.profileFrameAnchor,
+    profileFrameScale: user.profileFrameScale,
+    profileFrameOffsetY: user.profileFrameOffsetY,
+    profileFrameLayers: user.profileFrameLayers,
     isBirthday: isBirthdayNow(user),
     status,
     customStatus: visibleCustomStatus(user, status),
@@ -162,6 +173,10 @@ export const get = query({
       type: conversation.type,
       name: conversation.name,
       imageUrl: conversation.imageUrl,
+      // Carried by the read the chat view already does, so the wallpaper is
+      // there on the first frame rather than fading in a beat later.
+      backgroundUrl: conversation.backgroundUrl,
+      backgroundOpacity: conversation.backgroundOpacity,
       members: await otherMembers(ctx, conversationId, me._id),
       /** Live, so the open chat can catch a message that arrives while
        * you're sitting in it rather than leaving the rail lit behind you. */
@@ -210,6 +225,15 @@ export const listMembersWithPresence = query({
           bio: user?.bio,
           nameplateUrl: user?.nameplateUrl,
           avatarDecoration: effectiveDecoration(user),
+          // Drawn by the card this row opens — see src/lib/image-preload.ts.
+          profileEffect: user?.profileEffect,
+          profileFrame: user?.profileFrame,
+          profileFrameMode: user?.profileFrameMode,
+          profileFrameFit: user?.profileFrameFit,
+          profileFrameAnchor: user?.profileFrameAnchor,
+          profileFrameScale: user?.profileFrameScale,
+          profileFrameOffsetY: user?.profileFrameOffsetY,
+          profileFrameLayers: user?.profileFrameLayers,
           isBirthday: isBirthdayNow(user),
           bannerUrl: user?.bannerUrl,
           borderGradientStart: user?.borderGradientStart,
@@ -358,6 +382,17 @@ export const getOrCreateDirect = mutation({
   },
 });
 
+/**
+ * How many people a group DM holds, the creator included.
+ *
+ * A ceiling rather than a technical limit: past thirty a group stops behaving
+ * like a group — everyone is notified about everything, nobody can be removed,
+ * and it wants the roles and channels a server already has. Mirrored in
+ * src/lib/group-limits.ts, which is what the picker greys out at; this is
+ * where it binds.
+ */
+export const MAX_GROUP_MEMBERS = 30;
+
 export const createGroup = mutation({
   args: { memberIds: v.array(v.id("users")), name: v.optional(v.string()) },
   handler: async (ctx, { memberIds, name }) => {
@@ -365,6 +400,10 @@ export const createGroup = mutation({
     const uniqueMemberIds = Array.from(new Set(memberIds.filter((id) => id !== me._id)));
     if (uniqueMemberIds.length < 2) {
       throw new Error("Pick at least 2 friends to start a group DM.");
+    }
+    // `+ 1` for the creator, who is a member of the group they just made.
+    if (uniqueMemberIds.length + 1 > MAX_GROUP_MEMBERS) {
+      throw new Error(`A group DM can hold up to ${MAX_GROUP_MEMBERS} people.`);
     }
     for (const id of uniqueMemberIds) {
       if (!(await areFriends(ctx, me._id, id))) {
@@ -446,5 +485,94 @@ export const markRead = mutation({
     const lastMessage = await lastMessageOf(ctx, conversationId);
     if (!lastMessage || lastMessage._creationTime <= membership.lastReadAt) return;
     await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
+  },
+});
+
+// --- Conversation background ------------------------------------------------
+
+/**
+ * The picture behind a DM or group's messages.
+ *
+ * Any member can set it, unlike a channel background, which needs Manage
+ * Channels: a conversation has no roles, and two people sharing a room can
+ * share its wallpaper. The same fields and the same component as a channel's
+ * — see `channels.setBackground`, whose comments explain why `opacity` travels
+ * with the image.
+ */
+export const setConversationBackground = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    storageId: v.optional(v.id("_storage")),
+    opacity: v.optional(v.number()),
+    clear: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { conversationId, storageId, opacity, clear }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("You're not in that conversation.");
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) throw new Error("Conversation not found.");
+
+    if (clear) {
+      const previous = conversation.backgroundStorageId;
+      await ctx.db.patch(conversationId, {
+        backgroundUrl: undefined,
+        backgroundStorageId: undefined,
+        backgroundOpacity: undefined,
+      });
+      if (previous) await ctx.storage.delete(previous).catch(() => {});
+      return;
+    }
+
+    const patch: {
+      backgroundUrl?: string;
+      backgroundStorageId?: Id<"_storage">;
+      backgroundOpacity?: number;
+    } = {};
+
+    if (storageId) {
+      await requireWithinUploadLimit(
+        ctx,
+        storageId,
+        MAX_PROFILE_ASSET_BYTES,
+        "Chat backgrounds"
+      );
+      const url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Background upload failed.");
+      patch.backgroundUrl = url;
+      patch.backgroundStorageId = storageId;
+    }
+    if (opacity !== undefined) {
+      patch.backgroundOpacity = Math.min(1, Math.max(0, opacity));
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    const previous = conversation.backgroundStorageId;
+    await ctx.db.patch(conversationId, patch);
+    if (storageId && previous && previous !== storageId) {
+      await ctx.storage.delete(previous).catch(() => {});
+    }
+  },
+});
+
+/** Upload URL for a conversation background. Membership is the only gate — see
+ * `setConversationBackground`. */
+export const generateConversationAssetUploadUrl = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("You're not in that conversation.");
+    return ctx.storage.generateUploadUrl();
   },
 });

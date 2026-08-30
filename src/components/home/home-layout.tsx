@@ -6,6 +6,7 @@ import { CallPip } from "@/components/call/call-pip";
 import { CallStage } from "@/components/call/call-stage";
 import { useCall } from "@/components/call/call-provider";
 import { ChannelView } from "@/components/community/channel-view";
+import { ServerOverview } from "@/components/community/server-overview";
 import { CommunitySidebar } from "@/components/community/community-sidebar";
 import { ChatView } from "@/components/home/chat-view";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
@@ -35,6 +36,8 @@ export function HomeLayout() {
   // pending state (rail click, shift-click, right-click menu). A ref since
   // it's only ever read synchronously when that tab actually opens.
   const pendingModeRef = useRef<"replace" | "new">("new");
+  // Which community's overview is being looked at, if any — see showOverview.
+  const [overviewFor, setOverviewFor] = useState<Id<"communities"> | null>(null);
 
   const { activeCall, expanded, joinDmCall, joinChannelCall, expand, collapse, joinError, dismissJoinError } = useCall();
   const { tabs, activeTab, openTab, activateTab, closeTab } = useTabs();
@@ -46,6 +49,7 @@ export function HomeLayout() {
 
   useEffect(() => {
     setPendingCommunityId(null);
+    setOverviewFor(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab.id]);
 
@@ -164,6 +168,8 @@ export function HomeLayout() {
 
   const selectChannel = (channelId: Id<"channels">, type: "text" | "voice") => {
     if (!browsingCommunityId) return;
+    // Picking a channel is how you leave the overview.
+    setOverviewFor(null);
     if (type === "voice") {
       // Already connected — just expand back to the full call stage
       if (activeCall?.kind === "channel" && activeCall.channelId === channelId) {
@@ -227,6 +233,19 @@ export function HomeLayout() {
   const showCommunityPlaceholder =
     browsingCommunityId !== null && !(target.type === "channel" && target.communityId === browsingCommunityId);
 
+  /**
+   * The overview covers the channel it's opened over, rather than being a tab
+   * target of its own.
+   *
+   * A tab is a place you were reading; the overview is a glance at the server
+   * before you pick one. Making it a `TabTarget` would mean it could be
+   * pinned, restored on launch and sit in the bar as a peer of a channel,
+   * which is more than it is. Cleared whenever the tab changes, so it never
+   * survives navigating somewhere else.
+   */
+  const showOverview =
+    overviewFor !== null && overviewFor === browsingCommunityId;
+
   return (
     <div className={`flex h-full`}>
       {communityNavStyle === "rail" && (
@@ -246,6 +265,8 @@ export function HomeLayout() {
             target.type === "channel" && target.communityId === browsingCommunityId ? target.channelId : null
           }
           onSelectChannel={selectChannel}
+          onSelectOverview={() => setOverviewFor(browsingCommunityId)}
+          overviewSelected={showOverview}
         />
       ) : (
         <NavSidebar
@@ -279,12 +300,26 @@ export function HomeLayout() {
             </div>
           )}
 
-          {target.type === "channel" ? (
+          {/* Checked first: the overview covers whatever channel tab is
+              active, and is dismissed by picking a channel. */}
+          {showOverview && browsingCommunityId ? (
+            <ServerOverview
+              communityId={browsingCommunityId}
+              onOpenChannel={(channelId) => selectChannel(channelId, "text")}
+            />
+          ) : target.type === "channel" ? (
             <ChannelView channelId={target.channelId} />
-          ) : showCommunityPlaceholder ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              Select a channel
-            </div>
+          ) : showCommunityPlaceholder && browsingCommunityId ? (
+            // Where "Select a channel" used to be. A server's overview is
+            // exactly what belongs in the moment somebody has opened it and
+            // hasn't chosen anything yet — and it still says "pick a channel"
+            // when nobody has set one up.
+            <ServerOverview
+              communityId={browsingCommunityId}
+              onOpenChannel={(channelId) =>
+                openCommunityChannel(browsingCommunityId, channelId, "replace")
+              }
+            />
           ) : target.type === "dm" ? (
             <ChatView
               conversationId={target.conversationId}

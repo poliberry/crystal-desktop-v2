@@ -3,6 +3,7 @@
 import { CallProvider } from "@/components/call/call-provider";
 import { HomeLayout } from "@/components/home/home-layout";
 import { NavigationProvider } from "@/components/home/navigation-context";
+import { InviteDeepLinkHandler } from "@/components/invite-deeplink-handler";
 import { TabsProvider } from "@/components/home/tabs-context";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TopNav } from "@/components/top-nav";
@@ -137,6 +138,9 @@ export default function HomePage() {
           <TabsProvider>
             <NavigationProvider>
               <BirthdayProvider>
+                {/* Inside NavigationProvider: accepting an invite jumps
+                    straight into the server it was for. */}
+                <InviteDeepLinkHandler />
                 <div className="flex h-full flex-col">
                   <TopNav />
                   <div className="min-h-0 flex-1">

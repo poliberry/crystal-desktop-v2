@@ -5,8 +5,10 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
+import { Nameplate } from "@/components/profile/nameplate";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -18,8 +20,7 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
-import { decorationSrc } from "@/lib/avatar-decorations";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type FriendStatus } from "@/lib/presence";
 
@@ -49,6 +50,7 @@ interface DmMember {
 export function DmMemberList({ conversationId }: DmMemberListProps) {
   const members = (useQuery(api.conversations.listMembersWithPresence, { conversationId }) ??
     []) as DmMember[];
+  usePreloadedCosmetics(members);
   const online = members.filter((m) => m.status !== "offline");
   const offline = members.filter((m) => m.status === "offline");
 
@@ -81,9 +83,10 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 <Avatar size="sm">
                   <AvatarImage src={member.imageUrl} alt={member.name} />
                   <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                  <AvatarDecoration src={decorationSrc(member.avatarDecoration)} />
+                  <AvatarDecoration value={member.avatarDecoration} />
                   <PresenceBadge
                     status={member.status}
+                    activities={member.activities}
                     isBirthday={member.isBirthday}
                     decorated={!!member.avatarDecoration}
                   />
@@ -93,25 +96,18 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                   {member.status !== "offline" &&
                     (!!member.customStatus || !!member.activities?.length) && (
                       <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                        <ActivityStatusIcon activities={member.activities} />
                         <span className="truncate">
                           {member.customStatus ?? activitySummary(topActivity(member.activities))}
                         </span>
                       </p>
                     )}
                 </div>
-                {member.nameplateUrl && (
-                  <img
-                    src={member.nameplateUrl}
-                    alt=""
-                    className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10"
-                  />
-                )}
+                <Nameplate url={member.nameplateUrl} className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-cover opacity-0 transition-opacity group-hover/member:opacity-10" />
               </button>
             </PopoverTrigger>
-            <PopoverContent side="left" align="start" className="w-72 p-0">
-              <MemberProfileCard member={member} />
-            </PopoverContent>
+            <ProfilePopoverContent userId={member.userId} side="left">
+              <MemberProfileCard member={member} reserveFrameRoom={false} />
+            </ProfilePopoverContent>
           </Popover>
         ))}
       </div>

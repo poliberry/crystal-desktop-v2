@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ChatDecorationEditor } from "@/components/chat-decoration-editor";
 
 /** Matches the server's limit, so an over-long name is stopped by the input
  * rather than by a thrown error after the fact. */
@@ -25,6 +26,9 @@ const MAX_GROUP_NAME_LENGTH = 64;
 
 interface GroupSettingsDialogProps {
   conversationId: Id<"conversations">;
+  /** The group's wallpaper, so its editor can show what's already set. */
+  backgroundUrl?: string;
+  backgroundOpacity?: number;
   name: string | null;
   imageUrl?: string;
   members: { name: string; imageUrl?: string }[];
@@ -43,6 +47,8 @@ interface GroupSettingsDialogProps {
  */
 export function GroupSettingsDialog({
   conversationId,
+  backgroundUrl,
+  backgroundOpacity,
   name,
   imageUrl,
   members,
@@ -113,7 +119,7 @@ export function GroupSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Group settings</DialogTitle>
           <DialogDescription>
@@ -176,6 +182,14 @@ export function GroupSettingsDialog({
             Remove icon
           </Button>
         )}
+
+        <div className="border-t border-border/40 pt-4">
+          <ChatDecorationEditor
+            target={{ kind: "conversation", conversationId }}
+            backgroundUrl={backgroundUrl}
+            backgroundOpacity={backgroundOpacity}
+          />
+        </div>
 
         {error && <p className="text-xs text-destructive">{error}</p>}
 

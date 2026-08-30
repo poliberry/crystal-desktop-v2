@@ -1,6 +1,6 @@
 import { PresenceDot } from "@/components/presence-dot";
+import { Nameplate } from "@/components/profile/nameplate";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -10,7 +10,6 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { cn } from "@/lib/utils";
@@ -28,7 +27,7 @@ interface FriendRowProps {
   customStatus?: string;
   activities?: RichPresenceActivity[];
   nameplateUrl?: string;
-  /** The frame around their avatar, as stored — see `decorationSrc`. */
+  /** The frame around their avatar, as stored — see `decorationLayers`. */
   avatarDecoration?: string;
   /** Their birthday is today: the presence dot becomes a cake. */
   isBirthday?: boolean;
@@ -63,20 +62,15 @@ export function FriendRow({
     <div className="group relative flex items-center gap-3 overflow-hidden rounded-md px-2 py-2 mb-2 hover:bg-accent/60">
       {/* Nameplate behind the row, faded towards the name so it decorates
           rather than competes with it. */}
-      {nameplateUrl && (
-        <img
-          src={nameplateUrl}
-          alt=""
-          className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
-        />
-      )}
+      <Nameplate url={nameplateUrl} />
       <Avatar className="relative">
         <AvatarImage src={imageUrl} alt={name} />
         <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
-        <AvatarDecoration src={decorationSrc(avatarDecoration)} />
+        <AvatarDecoration value={avatarDecoration} />
         {status && (
           <PresenceDot
             status={status}
+            activities={activities}
             isBirthday={isBirthday}
             decorated={!!avatarDecoration}
             className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
@@ -86,7 +80,6 @@ export function FriendRow({
       <div className={cn("relative min-w-0 flex-1")}>
         <p className="truncate text-sm font-medium">{name}</p>
         <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-          {activity && <ActivityStatusIcon activities={activities} />}
           <span className="truncate">{line}</span>
         </p>
       </div>

@@ -15,6 +15,21 @@ const RELEASES_URL = `https://github.com/${REPO.owner}/${REPO.repo}/releases`;
 const isDev = !!process.env.ELECTRON_START_URL;
 
 /**
+ * Chromium's own wheel animation, asked for rather than assumed.
+ *
+ * Chrome enables it; Electron does not always, and without it every wheel
+ * notch is applied as an instant jump — which is what the whole app felt like
+ * on Windows. The renderer animates the scrollers it owns (see
+ * src/hooks/use-smooth-scroll.ts), but it can only do that where it has
+ * attached a listener, and this covers everything else including native
+ * scrollbars and keyboard scrolling.
+ *
+ * Must be set before the app is ready, which is why it is here rather than in
+ * `whenReady`.
+ */
+app.commandLine.appendSwitch("enable-smooth-scrolling");
+
+/**
  * Which build this is: Stable, PTB, Canary or Development (see
  * electron/channels.ts). Decides the window/tray icon, the name the app
  * excludes from its own system-audio capture, and — via electron/updater.ts —
@@ -126,6 +141,17 @@ function appIconPath(): string | undefined {
 }
 
 /**
+ * Where the user's custom stylesheet lives.
+ *
+ * Under `userData`, which is per-channel (see `applyChannelIdentity`) — a
+ * stable release and a beta running side by side get their own, which is what
+ * you want when the point of the file is to be experimented with.
+ */
+function customCssPath(): string {
+  return path.join(app.getPath("userData"), "custom.css");
+}
+
+/**
  * The app icon sized for a tray/menu-bar slot.
  *
  * `new Tray(path)` uses the image at its natural size, and our icons ship at
@@ -226,15 +252,28 @@ if (!isDev) {
   }
 }
 
+/**
+ * Route a `crystal://` URL to the renderer.
+ *
+ * Two kinds now. `crystal://auth/callback?...` completes an OAuth handshake;
+ * `crystal://invite/<code>` is an invitation, handed over by the web page an
+ * `https://…/invite/<code>` link lands on. The web link is the one that gets
+ * shared, because it means something in a browser, on a phone, and in every
+ * other chat app — this scheme is only ever the last hop.
+ */
 function handleCrystalUrl(url: string): void {
-  if (!url.startsWith("crystal://auth/callback")) return;
+  const isAuth = url.startsWith("crystal://auth/callback");
+  const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(url);
+  if (!isAuth && !invite) return;
+
   createOrFocusMainWindow();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("auth:callback", url);
-  } else {
-    // Window not yet ready — store and deliver on did-finish-load
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    // Window not yet ready — stored and delivered on did-finish-load.
     pendingProtocolUrl = url;
+    return;
   }
+  if (invite) mainWindow.webContents.send("invite:open", invite[1]);
+  else mainWindow.webContents.send("auth:callback", url);
 }
 
 // ---------------------------------------------------------------------------
@@ -297,7 +336,9 @@ function createWindow(): void {
     const pendingUrl = pendingProtocolUrl;
     pendingProtocolUrl = null;
     win.webContents.once("did-finish-load", () => {
-      win.webContents.send("auth:callback", pendingUrl);
+      const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(pendingUrl);
+      if (invite) win.webContents.send("invite:open", invite[1]);
+      else win.webContents.send("auth:callback", pendingUrl);
     });
   }
 
@@ -392,53 +433,6 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
   });
 
   pipWindow = win;
-}
-
-let settingsWindow: BrowserWindow | null = null;
-
-/** Opens the Settings window, or focuses it if it's already open (singleton). */
-function createOrFocusSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus();
-    return;
-  }
-
-  const win = new BrowserWindow({
-    width: 840,
-    height: 600,
-    minWidth: 720,
-    minHeight: 480,
-    autoHideMenuBar: true,
-    title: `${channel.productName} Settings`,
-    icon: appIconPath(),
-    ...FRAMELESS_WINDOW_OPTIONS,
-    webPreferences: {
-      preload: PRELOAD,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-
-  if (isDev) {
-    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/settings`);
-  } else {
-    void win.loadURL("http://crystal.localhost/settings/");
-  }
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https:") || url.startsWith("http:")) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
-
-  win.on("closed", () => {
-    settingsWindow = null;
-  });
-
-  wireWindowStateEvents(win);
-  settingsWindow = win;
 }
 
 app.whenReady().then(async () => {
@@ -633,8 +627,43 @@ app.whenReady().then(async () => {
     },
   }));
 
-  ipcMain.handle("settings:open", () => {
-    createOrFocusSettingsWindow();
+  /**
+   * The user's custom stylesheet, as a real file in the app's data directory.
+   *
+   * A file rather than a preference blob because that's what a stylesheet is:
+   * it can be opened in an editor, kept in version control, copied between
+   * machines, and — most usefully — fixed from outside the app when a rule in
+   * it has made the UI unusable. The renderer keeps a copy in `localStorage`
+   * so the web build has the same feature and so the first paint doesn't wait
+   * on IPC; this is the copy that survives a reinstall.
+   */
+  ipcMain.handle("custom-css:read", () => {
+    try {
+      return fs.readFileSync(customCssPath(), "utf8");
+    } catch {
+      // Not written yet, or unreadable. Either way the answer is "no styles".
+      return "";
+    }
+  });
+
+  ipcMain.handle("custom-css:write", (_event, css: string) => {
+    const file = customCssPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof css === "string" ? css : "", "utf8");
+    return file;
+  });
+
+  /** Where that file lives, so the UI can tell the user where to look. */
+  ipcMain.handle("custom-css:path", () => customCssPath());
+
+  ipcMain.handle("custom-css:reveal", async () => {
+    const file = customCssPath();
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "", "utf8");
+    }
+    shell.showItemInFolder(file);
+    return true;
   });
 
   ipcMain.handle("pip:open", (_event, options?: { width?: number; height?: number; title?: string }) => {

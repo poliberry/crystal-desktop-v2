@@ -11,6 +11,7 @@ import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { UserProfileContent } from "@/components/community/member-profile-card";
+import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import {
   AttachmentView,
@@ -22,9 +23,8 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
-import { decorationSrc } from "@/lib/avatar-decorations";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EMPTY_EMOJI_MAP } from "@/lib/custom-emoji";
@@ -55,7 +55,7 @@ interface MessageDoc {
     name: string;
     username: string;
     imageUrl?: string;
-    /** The frame around their avatar, as stored — see `decorationSrc`. */
+    /** The frame around their avatar, as stored — see `decorationLayers`. */
     avatarDecoration?: string;
   } | null;
   attachments: AttachmentSummary[];
@@ -98,22 +98,29 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
 
   const content = (
     <div
+      // A stable hook for custom CSS — utility classes get rewritten as this
+      // component is edited, whereas a slot name is something a user's
+      // stylesheet can rely on. See src/lib/css-snippets.ts.
+      data-slot="message-row"
       className={cn(
         "group relative flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
         startsGroup && "mt-3"
       )}
     >
       <div className="w-9 shrink-0">
-        {startsGroup && (
+        {/* Guarded on the author here rather than inside the popover: the
+            popover now needs their id to work out how much room their frame
+            wants, and an avatar with nobody behind it opens nothing useful. */}
+        {startsGroup && message.author && (
           <Popover>
             <PopoverTrigger asChild>
               <Avatar size="default" className="cursor-pointer">
                 <AvatarImage src={message.author?.imageUrl} alt={message.author?.name ?? ""} className="rounded-md" />
                 <AvatarFallback>{(message.author?.name ?? "?").slice(0, 2).toUpperCase()}</AvatarFallback>
-                <AvatarDecoration src={decorationSrc(message.author?.avatarDecoration)} />
+                <AvatarDecoration value={message.author?.avatarDecoration} />
               </Avatar>
             </PopoverTrigger>
-            <PopoverContent side="top" align="start" className="w-72 p-0">
+            <ProfilePopoverContent userId={message.author.id} side="top">
               {message.author && (
                 <UserProfileContent
                   userId={message.author.id}
@@ -122,7 +129,7 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
                   imageUrl={message.author.imageUrl}
                 />
               )}
-            </PopoverContent>
+            </ProfilePopoverContent>
           </Popover>
         )}
       </div>

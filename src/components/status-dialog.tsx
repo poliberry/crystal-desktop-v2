@@ -28,17 +28,13 @@ import {
 } from "@/components/ui/select";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
 import { DURATION_OPTIONS, formatRemaining } from "@/lib/presence-duration";
-import { STATUS_LABEL, type ManualStatus } from "@/lib/presence";
+import {
+  MANUAL_STATUSES,
+  STATUS_HINT,
+  STATUS_LABEL,
+  type ManualStatus,
+} from "@/lib/presence";
 import { cn } from "@/lib/utils";
-
-const MANUAL_STATUSES: ManualStatus[] = ["online", "idle", "dnd", "invisible"];
-
-const STATUS_HINT: Record<ManualStatus, string> = {
-  online: "Visible to everyone.",
-  idle: "Shown as away.",
-  dnd: "Notifications are suppressed.",
-  invisible: "You'll appear offline, and your activity stays private.",
-};
 
 /** Custom status has to fit a member-list row without swallowing it. */
 const MAX_CUSTOM_STATUS = 128;

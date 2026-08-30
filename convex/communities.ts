@@ -27,6 +27,42 @@ export async function requireMember(
   return membership;
 }
 
+/**
+ * Whose frame to show, taken whole rather than field by field.
+ *
+ * A server frame built out of three layers and an account frame built out of
+ * two are two different pictures; merged one field at a time they would be a
+ * third that nobody arranged. So whichever profile has a frame supplies all of
+ * it — the same rule `getMergedProfile` and the card itself follow.
+ */
+function frameOf(
+  serverProfile: Doc<"serverProfiles"> | null,
+  user: Doc<"users"> | null
+): {
+  profileFrame?: string;
+  profileFrameMode?: string;
+  profileFrameFit?: string;
+  profileFrameAnchor?: string;
+  profileFrameScale?: number;
+  profileFrameOffsetY?: number;
+  profileFrameLayers?: Doc<"users">["profileFrameLayers"];
+} {
+  const source =
+    serverProfile?.profileFrameLayers?.length || serverProfile?.profileFrame
+      ? serverProfile
+      : user;
+  if (!source) return {};
+  return {
+    profileFrame: source.profileFrame,
+    profileFrameMode: source.profileFrameMode,
+    profileFrameFit: source.profileFrameFit,
+    profileFrameAnchor: source.profileFrameAnchor,
+    profileFrameScale: source.profileFrameScale,
+    profileFrameOffsetY: source.profileFrameOffsetY,
+    profileFrameLayers: source.profileFrameLayers,
+  };
+}
+
 export async function requireCommunity(ctx: QueryCtx, communityId: Id<"communities">): Promise<Doc<"communities">> {
   const community = await ctx.db.get(communityId);
   if (!community) throw new Error("Community not found.");
@@ -504,6 +540,15 @@ export const listMembers = query({
           // Not merged with the server profile: a decoration and a birthday
           // belong to the account, not to one server identity.
           avatarDecoration: effectiveDecoration(user),
+          // The card's own cosmetics, carried on the row that opens it.
+          //
+          // Both because it saves the card a round trip — it drew itself, then
+          // grew a frame a beat later — and because a url the client has in
+          // hand is a url it can fetch before anybody clicks (see
+          // src/lib/image-preload.ts). The user document is already loaded
+          // here, so this is bytes on the wire and nothing else.
+          ...frameOf(serverProfile, user),
+          profileEffect: serverProfile?.profileEffect ?? user?.profileEffect,
           isBirthday: isBirthdayNow(user),
           bannerUrl: serverProfile?.bannerUrl ?? user?.bannerUrl,
           borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
