@@ -60,6 +60,16 @@ function normalizeInviteInput(raw: string): string {
   return parseInviteCode(raw) ?? raw.trim();
 }
 
+/**
+ * A tile in the rail that isn't a community — Home, and anything else that
+ * ends up alongside it.
+ *
+ * Dressed exactly like a community tile, because it is one as far as the eye
+ * is concerned: the same square that softens into a squircle on hover and
+ * stays there while it is the thing you are looking at, and the same pill in
+ * the gutter saying so. Two tiles in one column behaving differently is read
+ * as one of them being broken.
+ */
 function RailButton({
   label,
   active,
@@ -75,14 +85,22 @@ function RailButton({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant={active ? "default" : "secondary"}
-            size="icon"
-            className="size-12 rounded-none"
-            onClick={onClick}
-          >
-            {children}
-          </Button>
+          {/* `group` is what the pill's hover step reads; `relative` is what
+              it positions against. */}
+          <div className="group relative">
+            <Button
+              variant={active ? "default" : "secondary"}
+              size="icon"
+              className={cn(
+                "size-12 rounded-none transition-[border-radius] ease-in-out hover:rounded-2xl",
+                active && "rounded-2xl",
+              )}
+              onClick={onClick}
+            >
+              {children}
+            </Button>
+            <SelectionPill className="-left-2" state={active ? "active" : "idle"} />
+          </div>
         </TooltipTrigger>
         <TooltipContent side="right">{label}</TooltipContent>
       </Tooltip>
@@ -610,7 +628,13 @@ export function CommunityRail({
       </ScrollArea>
 
       <div className="flex flex-col items-center gap-2 px-2">
-        <CreateCommunityDialog onCreated={onSelectCommunity} />
+        {/* Wrapped rather than given a prop: the pill needs a positioned,
+            hoverable box around the trigger, and that box is the dialog's
+            neighbour rather than its business. */}
+        <div className="group relative">
+          <CreateCommunityDialog onCreated={onSelectCommunity} />
+          <SelectionPill className="-left-2" state="idle" />
+        </div>
       </div>
     </div>
   );
