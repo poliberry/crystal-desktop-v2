@@ -15,6 +15,7 @@ import { FriendsPanel } from "@/components/home/friends-panel";
 import { NavSidebar } from "@/components/home/nav-sidebar";
 import { useNavigation, useRegisterNavigation } from "@/components/home/navigation-context";
 import { type TabTarget, useTabs } from "@/components/home/tabs-context";
+import { WindowTitle } from "@/components/home/window-title";
 import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -248,6 +249,8 @@ export function HomeLayout() {
 
   return (
     <div className={`flex h-full`}>
+      <WindowTitle target={target} />
+
       {communityNavStyle === "rail" && (
         <CommunityRail
           selectedCommunityId={browsingCommunityId}
