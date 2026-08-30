@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { Loader2, Upload } from "lucide-react";
 
@@ -474,67 +474,150 @@ export function ProfileEffectDialog({
 /* -------------------------------------------------------------------------- */
 
 
+/** A placeholder line of the length real body copy tends to run, so the "bio"
+ * and "activity" shapes grow by roughly what a paragraph actually costs rather
+ * than by a guessed number of pixels. */
+const BIO_PLACEHOLDER =
+  "Say something about yourself here — a line or two is usually about this long, sometimes wrapping to a third.";
+
 /**
- * A card to arrange a frame against, at a height you choose.
+ * A card to arrange a frame against, built from the same classes as
+ * `MemberProfileCard` rather than a diagram of it.
  *
- * A stand-in rather than the real `MemberProfileCard`: the real one queries
- * four things and sizes itself from what somebody has written, and neither
- * belongs in a dialog whose whole purpose is to show the *shapes* a card comes
- * in. What matters here is where the banner ends, where the avatar sits, and
- * how far down the card goes — because those are what artwork either lines up
- * with or covers.
+ * The two used to disagree — this banner was `h-20` where the real one is
+ * `h-24`, among other things — which is exactly how a frame lined up here
+ * against a real card would end up wrong by a few pixels. Sharing the classes
+ * is what keeps that from happening again; sharing the component outright
+ * isn't possible, since the real one queries badges, roles and a rich
+ * presence from Convex, none of which a dialog editing an upload should have
+ * to fetch a real profile to open.
  *
- * The height is the point. A card grows with a long bio or a rich presence
- * card, sometimes by half again, and a frame placed against a short one is a
- * frame nobody has checked.
+ * `variant` picks which of the things that actually make a card taller are
+ * drawn — a bio, a rich-presence card — the same three shapes
+ * `CARD_VARIANTS` names. Everything here is either present at every shape
+ * (the banner, the avatar, the name) or turned on by one of them; nothing is
+ * sized by a threshold on `height` the way this used to guess.
  */
 function CardStage({
+  variant,
   height,
   avatarUrl,
   bannerUrl,
   name,
+  measureRef,
 }: {
-  height: number;
+  variant: string;
+  /** Forced, for the shape currently on the canvas. Omitted while measuring —
+   * the whole point then is to let the content decide it. */
+  height?: number;
   avatarUrl?: string;
   bannerUrl?: string;
   name: string;
+  measureRef?: React.Ref<HTMLDivElement>;
 }) {
+  const hasBio = variant !== "plain";
+  const hasActivity = variant === "activity";
   return (
     <div
-      className="relative overflow-hidden rounded-md border border-border/20 bg-accent shadow-lg"
-      style={{ height }}
+      ref={measureRef}
+      className="relative flex flex-col rounded-2xl p-1"
+      style={height === undefined ? undefined : { height }}
     >
       <div
-        className="h-20 w-full bg-muted bg-cover bg-center"
-        style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
-      />
-      <div className="-mt-8 px-4">
-        <div className="size-16 overflow-hidden rounded-xl bg-muted ring-4 ring-background/70">
-          {avatarUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="" className="size-full object-cover" draggable={false} />
+        className={cn(
+          "relative flex flex-1 flex-col overflow-hidden rounded-xl border border-border/20 bg-accent",
+          height === undefined ? "h-auto" : "h-full",
+        )}
+      >
+        <div
+          className="h-24 w-full bg-muted bg-cover bg-center opacity-80"
+          style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
+        />
+        <div className="flex items-end gap-3 px-4 -mt-8">
+          <div className="size-16 shrink-0 overflow-hidden rounded-xl bg-muted shadow-md ring-4 ring-accent">
+            {avatarUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarUrl} alt="" className="size-full object-cover" draggable={false} />
+            )}
+          </div>
+        </div>
+        <div className="ml-4 pt-1">
+          <p className="truncate text-base leading-tight font-bold">{name || "Your name"}</p>
+          <p className="truncate text-sm text-muted-foreground">@username</p>
+        </div>
+        <div className="min-w-0 space-y-3 px-4 pt-4 pb-2">
+          {hasBio ? (
+            <p className="text-sm whitespace-pre-wrap">{BIO_PLACEHOLDER}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">No bio yet.</p>
           )}
+          {/* A stand-in for `UserRichPresenceCard` rather than the real thing:
+              what it shows — a game's own art and buttons — is exactly as
+              variable as the game, so there is no one true height for it to
+              be measured at. This is close to what one typically costs. */}
+          {hasActivity && (
+            <div className="h-24 rounded-md border border-border/40 bg-muted/40" />
+          )}
+          <div className="z-40 flex w-full flex-col items-center gap-1 pb-4">
+            <div className="h-9 w-full rounded-md border border-border/60" />
+            <div className="h-9 w-full rounded-md border border-border/60" />
+          </div>
         </div>
-      </div>
-      <div className="space-y-2 px-4 pt-3">
-        <p className="truncate text-lg leading-tight font-bold">{name || "Your name"}</p>
-        <div className="h-2 w-1/2 rounded bg-foreground/15" />
-        <div className="mt-4 space-y-1.5">
-          <div className="h-2 w-full rounded bg-foreground/10" />
-          <div className="h-2 w-4/5 rounded bg-foreground/10" />
-          <div className="h-2 w-2/3 rounded bg-foreground/10" />
-        </div>
-        {/* Only drawn on the taller cards, because that is what makes a card
-            taller: something else to say. */}
-        {height > 460 && (
-          <div className="mt-4 h-24 rounded-md border border-border/40 bg-muted/40" />
-        )}
-        {height > 560 && (
-          <div className="mt-3 h-20 rounded-md border border-border/40 bg-muted/40" />
-        )}
       </div>
     </div>
   );
+}
+
+/**
+ * The real height each card shape comes out to, measured rather than assumed.
+ *
+ * Three copies of `CardStage` are rendered off-screen at the card's actual
+ * width with nothing forcing their height, and a `ResizeObserver` on each
+ * reports what it settled on — which is what "the card's shape" has to mean
+ * once a bio can be one line or four and a rich presence card can be there or
+ * not. `CARD_VARIANTS.heightPercent` used to stand in for this and drifted the
+ * moment anyone changed a padding.
+ *
+ * Starts from that same fallback, so the editor has *a* size to draw at before
+ * the first measurement lands rather than a moment of zero-height nothing.
+ */
+function useMeasuredCardHeights(avatarUrl: string | undefined, bannerUrl: string | undefined, name: string) {
+  const [heights, setHeights] = useState<Record<string, number>>(() =>
+    Object.fromEntries(
+      CARD_VARIANTS.map((variant) => [
+        variant.key,
+        Math.round((CARD_STAGE_WIDTH_PX * variant.heightPercent) / 100),
+      ]),
+    ),
+  );
+
+  const measure = useCallback((key: string, node: HTMLDivElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.round(entry!.borderBoxSize?.[0]?.blockSize ?? entry!.contentRect.height);
+      if (next > 0) setHeights((prev) => (prev[key] === next ? prev : { ...prev, [key]: next }));
+    });
+    observer.observe(node);
+    // Only ever attached once — React calls a ref callback with `null` on
+    // unmount, but there is nothing mounted here that ever goes away.
+  }, []);
+
+  const offscreen = (
+    <div aria-hidden className="pointer-events-none absolute top-0 left-0 -z-50 opacity-0" style={{ width: CARD_STAGE_WIDTH_PX }}>
+      {CARD_VARIANTS.map((variant) => (
+        <CardStage
+          key={variant.key}
+          variant={variant.key}
+          avatarUrl={avatarUrl}
+          bannerUrl={bannerUrl}
+          name={name}
+          measureRef={(node) => measure(variant.key, node)}
+        />
+      ))}
+    </div>
+  );
+
+  return { heights, offscreen };
 }
 
 /**
@@ -557,6 +640,24 @@ export function ProfileFrameDialog({
 }) {
   const values = scope.values;
   const layers = useMemo(() => frameLayersFrom(values ?? {}), [values]);
+  const { heights: measured, offscreen } = useMeasuredCardHeights(
+    values?.imageUrl,
+    values?.bannerUrl,
+    values?.name ?? "",
+  );
+  // The keys and copy still come from `CARD_VARIANTS` — only the number is
+  // measured now rather than assumed, so a per-shape placement is still
+  // stored under the same three names the renderer picks between.
+  const cardHeights: StageHeightOption[] = useMemo(
+    () =>
+      CARD_VARIANTS.map((variant) => ({
+        key: variant.key,
+        label: variant.label,
+        hint: variant.hint,
+        height: measured[variant.key] ?? Math.round((CARD_STAGE_WIDTH_PX * variant.heightPercent) / 100),
+      })),
+    [measured],
+  );
 
   return (
     <CosmeticDialog
@@ -580,16 +681,19 @@ export function ProfileFrameDialog({
         )
       }
     >
+      {/* Rendered, not shown: this is what measures the three shapes above. */}
+      {offscreen}
       <LayerEditor
         className="min-h-0 flex-1"
         layers={layers}
         onSave={(next) => scope.setFrameLayers(next)}
         stageWidth={CARD_STAGE_WIDTH_PX}
-        heights={CARD_HEIGHTS}
+        heights={cardHeights}
         upload={scope.uploadLayerImage}
         uploadHint={`Transparent PNG, GIF or WebP. Up to ${MAX_PROFILE_ASSET_LABEL} each, ${MAX_LAYERS} in total.`}
         renderStage={(height) => (
           <CardStage
+            variant={cardHeights.find((option) => option.height === height)?.key ?? DEFAULT_VARIANT}
             height={height}
             avatarUrl={values?.imageUrl}
             bannerUrl={values?.bannerUrl}
@@ -604,21 +708,6 @@ export function ProfileFrameDialog({
 /** The width a profile card is drawn at — the popover's `w-72` plus the room
  * the page gives it. Layer geometry is a percentage of this. */
 const CARD_STAGE_WIDTH_PX = 300;
-
-/**
- * The heights a card comes in, from the shapes themselves.
- *
- * Derived rather than written out, because these keys are also what a
- * per-shape placement is stored under and what the renderer matches a real
- * card against — three lists of the same three things would drift the first
- * time anybody added a fourth.
- */
-const CARD_HEIGHTS: StageHeightOption[] = CARD_VARIANTS.map((variant) => ({
-  key: variant.key,
-  label: variant.label,
-  hint: variant.hint,
-  height: Math.round((CARD_STAGE_WIDTH_PX * variant.heightPercent) / 100),
-}));
 
 
 export function NameplateDialog({

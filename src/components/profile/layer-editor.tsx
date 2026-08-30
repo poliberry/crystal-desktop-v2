@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 
 import { LayerCanvas } from "@/components/profile/layer-canvas";
+import { LayerContent } from "@/components/profile/layer-content";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -30,6 +31,7 @@ import {
   MAX_TEXT_LENGTH,
   DEFAULT_VARIANT,
   LAYER_LIMITS,
+  layerCentreY,
   layerHeight,
   MAX_LAYERS,
   newLayerId,
@@ -454,24 +456,36 @@ export function LayerEditor({
               )}
             </div>
 
-            {/* The shapes the backdrop comes in. Not a preview toggle so much
-                as the second half of placing a frame: a card grows with what's
-                written on it, and artwork that only works on a short one is
-                artwork that mostly doesn't work. */}
+            {/* The shapes the backdrop comes in, shown together rather than
+                named on a row of buttons — a card grows with what's written on
+                it, and seeing all three at once is how you notice a frame that
+                only works on the short one. Clicking one makes it the shape
+                the big canvas edits. */}
             {stageOptions.length > 1 && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 {stageOptions.map((option) => (
-                  <Button
+                  <button
                     key={option.key}
                     type="button"
-                    size="sm"
-                    variant={heightKey === option.key ? "secondary" : "ghost"}
-                    className="h-7 px-2 text-xs"
                     title={option.hint}
                     onClick={() => setHeightKey(option.key)}
+                    className={cn(
+                      "flex flex-col items-center gap-0.5 rounded-md border p-1 transition-colors",
+                      heightKey === option.key
+                        ? "border-primary bg-accent/60"
+                        : "border-transparent hover:bg-accent/40",
+                    )}
                   >
-                    {option.label}
-                  </Button>
+                    <ShapePreview
+                      height={option.height}
+                      stageWidth={stageWidth}
+                      renderStage={renderStage}
+                      layers={draft}
+                      variant={option.key}
+                      resolveSrc={resolveSrc}
+                    />
+                    <span className="text-[10px] text-muted-foreground">{option.label}</span>
+                  </button>
                 ))}
               </div>
             )}
@@ -1186,6 +1200,73 @@ function ColorRow({
         >
           <Trash2 className="size-3" />
         </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The width a shape's thumbnail is drawn at — big enough to tell a border
+ * from a badge, small enough that three fit beside the zoom controls. */
+const SHAPE_PREVIEW_WIDTH = 34;
+
+/**
+ * A whole shape of card, small — the backdrop and every layer on it, scaled
+ * down together rather than drawn twice.
+ *
+ * Scaling the backdrop as a picture and the layers as a second, separately
+ * computed set of boxes is how a thumbnail ends up disagreeing with the
+ * canvas it is a thumbnail of. Instead this is the same trick the canvas
+ * itself uses for zoom: render the real backdrop at its real size, and shrink
+ * the whole thing with one `transform: scale()` — proportions inside it,
+ * text included, come out right for free.
+ */
+function ShapePreview({
+  height,
+  stageWidth,
+  renderStage,
+  layers,
+  variant,
+  resolveSrc,
+}: {
+  height: number;
+  stageWidth: number;
+  renderStage: (height: number) => React.ReactNode;
+  layers: CosmeticLayer[];
+  variant: string;
+  resolveSrc: (url: string) => string;
+}) {
+  const scale = SHAPE_PREVIEW_WIDTH / stageWidth;
+  const stageHeightPercent = (height / stageWidth) * 100;
+  return (
+    <div
+      className="relative overflow-hidden rounded-[3px]"
+      style={{ width: SHAPE_PREVIEW_WIDTH, height: height * scale }}
+    >
+      <div
+        className="absolute top-0 left-0 origin-top-left [container-type:size]"
+        style={{ width: stageWidth, height, transform: `scale(${scale})` }}
+      >
+        {renderStage(height)}
+        {layers.map((layer) => {
+          const placed = resolveLayer(layer, variant);
+          const layerHeightPercent = layerHeight(placed, undefined, stageHeightPercent);
+          return (
+            <div
+              key={placed.id}
+              className="pointer-events-none absolute select-none"
+              style={{
+                left: `${placed.x - placed.width / 2}%`,
+                top: `${layerCentreY(placed, stageHeightPercent) - layerHeightPercent / 2}%`,
+                width: `${placed.width}%`,
+                height: `${layerHeightPercent}%`,
+                transform: placed.rotation ? `rotate(${placed.rotation}deg)` : undefined,
+                opacity: placed.opacity ?? 1,
+              }}
+            >
+              <LayerContent layer={placed} resolveSrc={resolveSrc} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
