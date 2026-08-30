@@ -756,6 +756,30 @@ app.whenReady().then(async () => {
     }
   );
 
+  /**
+   * How many things are waiting for you, on the icon in the dock or taskbar.
+   *
+   * Two mechanisms because the platforms disagree about whose job it is.
+   * macOS and Linux own the drawing — hand them a number and they render the
+   * badge in the system style. Windows has no such thing: it composites an
+   * *image* over the taskbar button, so the renderer draws one and sends it,
+   * which is also the only place with a canvas and a font to draw it with.
+   */
+  ipcMain.handle(
+    "badge:set",
+    (_event, count: number, overlayDataUrl: string | null) => {
+      app.setBadgeCount(count);
+      if (process.platform !== "win32") return;
+      const overlay =
+        overlayDataUrl && count > 0 ? nativeImage.createFromDataURL(overlayDataUrl) : null;
+      for (const win of BrowserWindow.getAllWindows()) {
+        // The description is what a screen reader announces for the overlay,
+        // and Windows requires a non-empty one when clearing is not the goal.
+        win.setOverlayIcon(overlay, count > 0 ? `${count} unread` : "");
+      }
+    }
+  );
+
   updater.init();
   updater.onStateChange((state) => {
     for (const win of BrowserWindow.getAllWindows()) {

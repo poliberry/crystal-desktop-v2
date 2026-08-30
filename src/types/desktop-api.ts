@@ -271,6 +271,11 @@ export interface DesktopAPI {
     setActiveView(view: ActiveNotificationView): Promise<void>;
     onNavigate(cb: (target: NavigateTarget) => void): () => void;
   };
+  /** The unread count on the dock or taskbar icon. Optional so an older
+   * preload simply never gets asked. */
+  badge?: {
+    set(count: number, overlayDataUrl: string | null): Promise<void>;
+  };
   auth?: {
     onCallback(cb: (url: string) => void): () => void;
   };
