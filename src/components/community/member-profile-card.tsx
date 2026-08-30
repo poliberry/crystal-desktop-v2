@@ -301,10 +301,8 @@ export function MemberProfileCard({
                   activities={activities}
                   isBirthday={isBirthday}
                   decorated={!!avatarDecoration}
-                  className={cn(
-                    "min-w-7 min-h-7 ring-4",
-                    hasGradient ? `ring-[${member.borderGradientStart}]` : "ring-accent",
-                  )}
+                  accent={hasGradient ? member.borderGradientStart : undefined}
+                  className={cn("min-w-7 min-h-7 ring-2", !hasGradient && "ring-accent bg-accent")}
                 />
               </Avatar>
             </div>

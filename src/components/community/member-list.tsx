@@ -190,6 +190,7 @@ export function MemberList({ communityId }: MemberListProps) {
                               <PresenceBadge
                                 status={member.status}
                                 activities={member.activities}
+                                accent={member.borderGradientStart}
                                 isBirthday={member.isBirthday}
                                 decorated={!!member.avatarDecoration}
                               />

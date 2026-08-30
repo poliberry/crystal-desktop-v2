@@ -30,6 +30,9 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     imageUrl: user.imageUrl,
     nameplateUrl: user.nameplateUrl,
     avatarDecoration: effectiveDecoration(user),
+    // The presence dot takes this as its backdrop wherever they appear — see
+    // src/components/presence-dot.tsx.
+    borderGradientStart: user.borderGradientStart,
     // The card this row opens draws these, and a url in hand can be fetched
     // before anybody asks for it — see src/lib/image-preload.ts.
     profileEffect: user.profileEffect,

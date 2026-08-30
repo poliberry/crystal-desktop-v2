@@ -31,6 +31,9 @@ interface FriendRowProps {
   avatarDecoration?: string;
   /** Their birthday is today: the presence dot becomes a cake. */
   isBirthday?: boolean;
+  /** Their card gradient, which the presence dot sits on — see
+   * src/components/presence-dot.tsx. */
+  borderGradientStart?: string;
   actions?: React.ReactNode;
 }
 
@@ -45,6 +48,7 @@ export function FriendRow({
   nameplateUrl,
   avatarDecoration,
   isBirthday,
+  borderGradientStart,
   actions,
 }: FriendRowProps) {
   const offline = !status || status === "offline";
@@ -72,6 +76,7 @@ export function FriendRow({
             status={status}
             activities={activities}
             isBirthday={isBirthday}
+            accent={borderGradientStart}
             decorated={!!avatarDecoration}
             className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
           />

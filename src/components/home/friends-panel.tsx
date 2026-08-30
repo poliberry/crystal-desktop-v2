@@ -98,6 +98,7 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
                   nameplateUrl={friend.nameplateUrl}
                   avatarDecoration={friend.avatarDecoration}
                   isBirthday={friend.isBirthday}
+                  borderGradientStart={friend.borderGradientStart}
                   actions={
                     <>
                       <Button
@@ -213,6 +214,7 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
                   nameplateUrl={friend.nameplateUrl}
                   avatarDecoration={friend.avatarDecoration}
                   isBirthday={friend.isBirthday}
+                  borderGradientStart={friend.borderGradientStart}
                   actions={
                     <>
                       <Button

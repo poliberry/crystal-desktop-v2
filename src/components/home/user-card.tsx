@@ -401,6 +401,7 @@ export function UserCard() {
                   <PresenceBadge
                     status={status}
                     activities={activities}
+                    accent={me.borderGradientStart}
                     isBirthday={isBirthday}
                     decorated={!!decoration}
                   />

@@ -161,6 +161,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                   <PresenceBadge
                     status={avatarUser.status as FriendStatus}
                     activities={activities}
+                    accent={avatarUser.borderGradientStart}
                     isBirthday={avatarUser.isBirthday}
                     decorated={!!avatarUser.avatarDecoration}
                   />

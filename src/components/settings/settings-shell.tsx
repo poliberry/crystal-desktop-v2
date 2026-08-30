@@ -203,7 +203,11 @@ export function SettingsShell({
                           <AvatarFallback>
                             {me?.name.slice(0, 2).toUpperCase()}
                           </AvatarFallback>
-                          <PresenceBadge status={status} activities={activities} />
+                          <PresenceBadge
+                            status={status}
+                            activities={activities}
+                            accent={me?.borderGradientStart}
+                          />
                         </Avatar>
 
                         <button

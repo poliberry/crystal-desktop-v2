@@ -35,6 +35,16 @@ interface PresenceDotProps {
    * in the same place either way.
    */
   decorated?: boolean;
+  /**
+   * The colour of the plate the glyph sits on, and of the ring around it.
+   *
+   * Somebody with a gradient on their card gets their own colour here instead
+   * of the app background, so the dot reads as part of them rather than as a
+   * hole punched through their picture. Passed as a value rather than as a
+   * class because it *is* a value — a hex out of a database can never be a
+   * Tailwind class, which is compiled from the source text and cannot know it.
+   */
+  accent?: string;
   className?: string;
 }
 
@@ -85,17 +95,47 @@ const DECORATED_OFFSET = "translate-x-[35%] translate-y-[35%]";
  * The plate the glyph sits on.
  *
  * A glyph is not a solid disc — a moon, a controller and a half-filled circle
- * all have holes in them, and an avatar showing through those is a mess. So the
- * background colour goes behind it, and the ring that used to separate the dot
- * from the picture becomes the plate's edge.
+ * all have holes in them — so it sits on a plate. `backdrop-blur-sm` is for the
+ * tinted case below: at forty percent the avatar shows through the holes, and
+ * blurring what shows through keeps the glyph readable over a busy picture.
+ * Over the opaque default it costs nothing and does nothing.
  */
-const PLATE = "flex items-center justify-center rounded-full bg-background";
+const PLATE =
+  "flex items-center justify-center rounded-full bg-background backdrop-blur-sm";
+
+/**
+ * The plate and its edge, in one colour.
+ *
+ * All three properties, because the edge is spelled two ways across the app —
+ * a `border` on the standalone dot, a `ring` inside an avatar badge — and
+ * `--tw-ring-color` is what every `ring-*` utility reads, so setting it here
+ * colours whichever width the caller asked for.
+ *
+ * As a style rather than a class, which is not a preference: `ring-[#a3e]` is
+ * a class Tailwind compiles by *reading the source text*, so one built from a
+ * value out of the database matches nothing and silently does nothing. That is
+ * the bug this replaces.
+ */
+function plateStyle(accent: string | undefined): React.CSSProperties | undefined {
+  if (!accent) return undefined;
+  // Forty percent, because a card gradient is chosen to be a *border* and at
+  // full strength it competes with the glyph sitting on it. `color-mix` rather
+  // than an alpha hex: the stored value is whatever the colour picker wrote,
+  // and this works whatever notation that was.
+  const tint = `color-mix(in srgb, ${accent} 40%, transparent)`;
+  return {
+    backgroundColor: tint,
+    borderColor: tint,
+    "--tw-ring-color": tint,
+  } as React.CSSProperties;
+}
 
 export function PresenceDot({
   status,
   activities,
   isBirthday,
   decorated,
+  accent,
   className,
 }: PresenceDotProps) {
   return (
@@ -103,12 +143,13 @@ export function PresenceDot({
       role={isBirthday ? "img" : undefined}
       title={isBirthday ? BIRTHDAY_LABEL : undefined}
       aria-label={isBirthday ? BIRTHDAY_LABEL : undefined}
+      style={plateStyle(accent)}
       className={cn(
         // The dot's own box, unchanged from when it was a coloured circle:
         // whatever a caller sizes it with lands the same way it always did.
         "size-4 border-2 border-background select-none",
         PLATE,
-        isBirthday && "bg-muted",
+        isBirthday && !accent && "bg-muted",
         className,
         // After `className`, which is where a caller puts the dot: a decoration
         // moves it from wherever that was rather than to a fixed corner.
@@ -132,6 +173,7 @@ export function PresenceBadge({
   activities,
   isBirthday,
   decorated,
+  accent,
   className,
 }: PresenceDotProps) {
   return (
@@ -139,9 +181,10 @@ export function PresenceBadge({
       role={isBirthday ? "img" : undefined}
       title={isBirthday ? BIRTHDAY_LABEL : undefined}
       aria-label={isBirthday ? BIRTHDAY_LABEL : undefined}
+      style={plateStyle(accent)}
       className={cn(
         PLATE,
-        isBirthday && "bg-muted",
+        isBirthday && !accent && "bg-muted",
         // Bigger than the badge's own sizes, which were drawn for a plain disc
         // — a controller or a moon at eight pixels is a smudge.
         "group-data-[size=sm]/avatar:size-3 group-data-[size=default]/avatar:size-3.5 group-data-[size=lg]/avatar:size-4",
