@@ -36,12 +36,18 @@ export const layerArgValidator = v.object({
   id: v.string(),
   url: v.string(),
   storageId: v.optional(v.id("_storage")),
-  anchor: v.union(v.literal("top"), v.literal("center"), v.literal("bottom")),
+  anchor: v.union(
+    v.literal("top"),
+    v.literal("center"),
+    v.literal("bottom"),
+    v.literal("locked")
+  ),
   x: v.number(),
   y: v.number(),
   width: v.number(),
   height: v.optional(v.number()),
   stretchY: v.optional(v.boolean()),
+  stretchDirection: v.optional(v.union(v.literal("down"), v.literal("up"))),
   rotation: v.optional(v.number()),
   opacity: v.optional(v.number()),
   variants: v.optional(v.record(v.string(), variantArgValidator)),
@@ -51,12 +57,13 @@ export type LayerArg = {
   id: string;
   url: string;
   storageId?: Id<"_storage">;
-  anchor: "top" | "center" | "bottom";
+  anchor: "top" | "center" | "bottom" | "locked";
   x: number;
   y: number;
   width: number;
   height?: number;
   stretchY?: boolean;
+  stretchDirection?: "down" | "up";
   rotation?: number;
   opacity?: number;
   variants?: Record<string, LayerVariantArg>;
@@ -91,7 +98,16 @@ export function normalizeLayers(layers: LayerArg[]): LayerArg[] {
     width: round(clamp(layer.width, SIZE.min, SIZE.max)),
     height:
       layer.height === undefined ? undefined : round(clamp(layer.height, SIZE.min, SIZE.max)),
-    stretchY: layer.stretchY || undefined,
+    // A locked layer is placed against the card's height rather than an edge of
+    // it, so it has no edge to grow from — see src/lib/cosmetic-layers.ts,
+    // which drops the flag the same way.
+    stretchY: (layer.stretchY && layer.anchor !== "locked") || undefined,
+    // Only stored when it isn't the default, and only when there is a stretch
+    // for it to be a direction of.
+    stretchDirection:
+      layer.stretchY && layer.anchor !== "locked" && layer.stretchDirection === "up"
+        ? ("up" as const)
+        : undefined,
     rotation: layer.rotation ? round(clamp(layer.rotation, -180, 180)) : undefined,
     opacity:
       layer.opacity === undefined || layer.opacity >= 1

@@ -1,7 +1,6 @@
 import { PresenceDot } from "@/components/presence-dot";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -71,6 +70,7 @@ export function FriendRow({
         {status && (
           <PresenceDot
             status={status}
+            activities={activities}
             isBirthday={isBirthday}
             decorated={!!avatarDecoration}
             className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
@@ -80,7 +80,6 @@ export function FriendRow({
       <div className={cn("relative min-w-0 flex-1")}>
         <p className="truncate text-sm font-medium">{name}</p>
         <p className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-          {activity && <ActivityStatusIcon activities={activities} />}
           <span className="truncate">{line}</span>
         </p>
       </div>

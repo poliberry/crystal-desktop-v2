@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { Crown } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
@@ -10,7 +11,6 @@ import { Nameplate } from "@/components/profile/nameplate";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -140,6 +140,8 @@ export function MemberList({ communityId }: MemberListProps) {
   const community = useQuery(api.communities.get, communityId ? { communityId } : "skip");
   const me = useQuery(api.users.getCurrentUser);
   const members = (rawMembers ?? []) as Member[];
+  // A list of people is the set of profile cards about to be opened.
+  usePreloadedCosmetics(members);
   const groups = buildGroups(members);
 
   return (
@@ -187,6 +189,7 @@ export function MemberList({ communityId }: MemberListProps) {
                               <AvatarDecoration value={member.avatarDecoration} />
                               <PresenceBadge
                                 status={member.status}
+                                activities={member.activities}
                                 isBirthday={member.isBirthday}
                                 decorated={!!member.avatarDecoration}
                               />
@@ -203,7 +206,6 @@ export function MemberList({ communityId }: MemberListProps) {
                                   way the activity glyph sits to its left. */}
                               {!isOffline && (!!member.customStatus || !!member.activities?.length) && (
                                 <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                                    <ActivityStatusIcon activities={member.activities} />
                                   <span className="truncate">
                                     {member.customStatus ??
                                       activitySummary(topActivity(member.activities))}

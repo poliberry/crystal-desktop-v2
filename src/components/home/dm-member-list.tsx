@@ -6,9 +6,9 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -50,6 +50,7 @@ interface DmMember {
 export function DmMemberList({ conversationId }: DmMemberListProps) {
   const members = (useQuery(api.conversations.listMembersWithPresence, { conversationId }) ??
     []) as DmMember[];
+  usePreloadedCosmetics(members);
   const online = members.filter((m) => m.status !== "offline");
   const offline = members.filter((m) => m.status === "offline");
 
@@ -85,6 +86,7 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                   <AvatarDecoration value={member.avatarDecoration} />
                   <PresenceBadge
                     status={member.status}
+                    activities={member.activities}
                     isBirthday={member.isBirthday}
                     decorated={!!member.avatarDecoration}
                   />
@@ -94,7 +96,6 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                   {member.status !== "offline" &&
                     (!!member.customStatus || !!member.activities?.length) && (
                       <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                        <ActivityStatusIcon activities={member.activities} />
                         <span className="truncate">
                           {member.customStatus ?? activitySummary(topActivity(member.activities))}
                         </span>

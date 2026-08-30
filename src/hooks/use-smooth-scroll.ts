@@ -32,7 +32,7 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
  * attached to the wheel. Also comfortably inside the 400ms window
  * `use-stick-to-bottom` treats as "the reader is scrolling", so a fling that
  * ends at the bottom still re-pins. */
-const DURATION_MS = 200;
+const DURATION_MS = 280;
 
 /** Firefox reports line deltas; this is what a line is worth in pixels. */
 const LINE_HEIGHT_PX = 16;
@@ -93,19 +93,40 @@ export function attachSmoothScroll(el: HTMLElement): () => void {
   let startedAt = 0;
   /** Where we last put the scroller, so drift from anywhere else is visible. */
   let applied = -1;
+  /** How tall the content was when we last put it there, so a drift can be
+   * told apart from the content growing under it. */
+  let appliedHeight = -1;
 
   const stop = () => {
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
     applied = -1;
+    appliedHeight = -1;
   };
 
   const step = (now: number) => {
-    // Something else moved this scroller mid-animation — a jump to the newest
-    // message, an anchor, a resize. Whatever it was outranks a wheel gesture.
-    if (applied >= 0 && Math.abs(el.scrollTop - applied) > DRIFT_TOLERANCE_PX) {
-      stop();
-      return;
+    const drift = applied >= 0 ? el.scrollTop - applied : 0;
+    if (Math.abs(drift) > DRIFT_TOLERANCE_PX) {
+      if (el.scrollHeight === appliedHeight) {
+        // Something else moved this scroller mid-animation — a jump to the
+        // newest message, an anchor, a resize. Whatever it was outranks a
+        // wheel gesture.
+        stop();
+        return;
+      }
+      /**
+       * The content changed height instead, and the browser moved the scroller
+       * to keep the same thing in view — its scroll anchoring, which is a
+       * feature and the reason reading history doesn't lurch when an image
+       * three messages up finally loads.
+       *
+       * The animation's start and target are positions in the old layout, so
+       * they are moved by exactly the same amount. Abandoning here instead was
+       * what made a fling up through a channel full of images die on every
+       * image that landed, and made the way back down stutter.
+       */
+      from += drift;
+      target += drift;
     }
 
     // Re-clamped every frame: content can grow or shrink underneath a fling.
@@ -115,6 +136,7 @@ export function attachSmoothScroll(el: HTMLElement): () => void {
 
     el.scrollTop = from + (to - from) * easeOutCubic(progress);
     applied = el.scrollTop;
+    appliedHeight = el.scrollHeight;
 
     if (progress < 1) frame = requestAnimationFrame(step);
     else stop();

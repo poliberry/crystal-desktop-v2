@@ -9,9 +9,11 @@ import { useUserActivities } from "@/hooks/use-rich-presence";
 import { cn } from "@/lib/utils";
 import type { RichPresenceActivity, RichPresenceActivityType } from "@/types/desktop-api";
 
-/** Icon per activity type — also used for the small badge next to a user's
- * status line (see `ActivityStatusIcon`). Streaming and watching share the TV,
- * since both mean "there is a screen involved". */
+/** Icon per activity type, for the placeholder on a card whose artwork hasn't
+ * loaded. The dot beside a name draws its own — see
+ * src/components/presence-glyph.tsx, which uses the set chosen in issue #101.
+ * Streaming and watching share the TV, since both mean "there is a screen
+ * involved". */
 export const ACTIVITY_ICON: Record<RichPresenceActivityType, LucideIcon> = {
   playing: Gamepad2,
   listening: Music,
@@ -81,39 +83,6 @@ export function activitySummary(activity: RichPresenceActivity | null | undefine
     return activity.state ? `${activity.state}` : activity.details;
   }
   return `${ACTIVITY_VERB[activity.type]} ${activity.name}`;
-}
-
-/**
- * A small green glyph — controller, music notes or TV — for the activity a
- * user is broadcasting, sized to sit inline next to their status line. Renders
- * nothing when there's no activity, so it can be dropped in unconditionally.
- */
-export function ActivityStatusIcon({
-  activities,
-  className,
-}: {
-  activities: RichPresenceActivity[] | null | undefined;
-  className?: string;
-}) {
-  const activity = topActivity(activities);
-  if (!activity) return null;
-
-  const Icon = ACTIVITY_ICON[activity.type] ?? Gamepad2;
-  const extra = (activities?.length ?? 0) - 1;
-  const label = activities!.map((a) => `${ACTIVITY_VERB[a.type]} ${a.name}`).join(" · ");
-
-  return (
-    <span
-      className={cn("flex shrink-0 items-center gap-0.5 text-emerald-500", className)}
-      title={label}
-      aria-label={label}
-    >
-      <Icon className="size-3 shrink-0" />
-      {/* Only the headline gets an icon; the rest are summarised as a count
-          so the status line stays one line wide. */}
-      {extra > 0 && <span className="text-[10px] font-semibold leading-none">+{extra}</span>}
-    </span>
-  );
 }
 
 function Artwork({ activity, size }: { activity: RichPresenceActivity; size: "sm" | "lg" }) {

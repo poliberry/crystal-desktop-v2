@@ -23,7 +23,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PresenceDot } from "@/components/presence-dot";
 import {
-  ActivityStatusIcon,
   activitySummary,
   topActivity,
 } from "@/components/rich-presence-card";
@@ -208,6 +207,7 @@ export function NavSidebar({
                       {otherMember && (
                         <PresenceDot
                           status={otherMember.status as FriendStatus}
+                          activities={activities}
                           isBirthday={otherMember.isBirthday}
                           decorated={!!otherMember.avatarDecoration}
                           className="absolute -right-0.5 -bottom-0.5 z-10"
@@ -225,7 +225,6 @@ export function NavSidebar({
                       {title}
                     </p>
                     <p className="flex w-46 items-center gap-1 truncate text-xs text-muted-foreground">
-                      {activity && <ActivityStatusIcon activities={activities} />}
                       <span className="truncate">{subtitle}</span>
                     </p>
                   </div>

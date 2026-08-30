@@ -66,6 +66,14 @@ const activityValidator = v.object({
  * stays on the top edge, a badge in the bottom corner follows the bottom
  * edge, and a card that grows grows between them.
  *
+ * `"locked"` is the exception to the paragraph above: its `y` is a percentage
+ * of the card's *height*, so the layer holds the same relative position as the
+ * card grows instead of following one of its edges. That is what artwork placed
+ * against something in the middle of the card needs — a signature over the bio,
+ * a character standing on the bottom third — where any edge to pin to is the
+ * wrong edge. Sizes are still measured against the width, so the artwork keeps
+ * its shape either way.
+ *
  * `x`/`y` are the layer's *centre*, so rotating and resizing turn about the
  * point the editor's handles surround rather than about a corner.
  */
@@ -76,12 +84,19 @@ const cosmeticLayerValidator = v.object({
   url: v.string(),
   /** Absent for a built-in preset, which is drawn from code and owns no file. */
   storageId: v.optional(v.id("_storage")),
-  /** Which edge of the card `y` is measured from. */
-  anchor: v.union(v.literal("top"), v.literal("center"), v.literal("bottom")),
+  /** Which edge of the card `y` is measured from — or `"locked"`, where it is
+   * measured against the card's height instead. */
+  anchor: v.union(
+    v.literal("top"),
+    v.literal("center"),
+    v.literal("bottom"),
+    v.literal("locked")
+  ),
   /** Centre of the layer, as a percentage of the target box's width. `x` is
    * measured from the left edge (50 is centred); `y` downwards from the
    * anchor line, so a negative `y` on a top-anchored layer lifts it above the
-   * card — which is how a frame overhangs. */
+   * card — which is how a frame overhangs. On a `"locked"` layer `y` is instead
+   * a percentage of the card's height: 0 the top edge, 100 the bottom. */
   x: v.number(),
   y: v.number(),
   /** Width, as a percentage of the target box's width. */
@@ -91,8 +106,8 @@ const cosmeticLayerValidator = v.object({
    * `<img>` with a width and no height already does by itself. */
   height: v.optional(v.number()),
   /**
-   * Height follows the card instead: the layer is drawn from its anchor to
-   * the card's full height, whatever that turns out to be.
+   * Height follows the card instead: the layer runs between its anchor line
+   * and one of the card's edges, whatever that turns out to be.
    *
    * For the one kind of artwork that *should* stretch — a border drawn to a
    * card's proportions, which has to grow with the card or stop being a
@@ -100,6 +115,16 @@ const cosmeticLayerValidator = v.object({
    * the same question.
    */
   stretchY: v.optional(v.boolean()),
+  /**
+   * Which of its two edges gives. Absent is `"down"`, which is what every
+   * stretched layer meant before there was a choice.
+   *
+   * `"down"` holds the anchor line and follows the card's bottom edge. `"up"`
+   * holds the card's top edge and follows the anchor line — what a band across
+   * the middle of a card needs, where the space above it should grow and the
+   * band itself should stay where it was put.
+   */
+  stretchDirection: v.optional(v.union(v.literal("down"), v.literal("up"))),
   /** Degrees clockwise. */
   rotation: v.optional(v.number()),
   /** 0–1. Absent is fully opaque. */
@@ -403,18 +428,27 @@ export default defineSchema({
 
   presence: defineTable({
     userId: v.id("users"),
+    /** What they chose. See src/lib/presence.ts for what each one means;
+     * "online" is the key for the active state, kept as it is so no row has to
+     * be migrated to say the same thing in different letters. */
     manualStatus: v.union(
       v.literal("online"),
       v.literal("idle"),
+      v.literal("away"),
       v.literal("dnd"),
+      v.literal("busy"),
       v.literal("invisible")
     ),
     isIdle: v.boolean(),
     lastHeartbeat: v.number(),
+    /** What everybody else sees — the same set, with invisible collapsed into
+     * offline, which is the whole point of it. */
     effective: v.union(
       v.literal("online"),
-      v.literal("dnd"),
       v.literal("idle"),
+      v.literal("away"),
+      v.literal("dnd"),
+      v.literal("busy"),
       v.literal("offline")
     ),
     /** Rich Presence, richest first — a user can be playing something and

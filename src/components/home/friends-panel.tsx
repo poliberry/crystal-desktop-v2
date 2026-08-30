@@ -6,6 +6,7 @@ import { Check, MessageSquare, Users, X } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { AddFriendDialog } from "@/components/home/add-friend-dialog";
+import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { ActivityFeed } from "@/components/home/activity-feed";
 import { FriendRow } from "@/components/home/friend-row";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,9 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
     useCachedQuery(api.friends.listIncomingRequests, {}, "friends.listIncomingRequests") ?? [];
   const outgoing =
     useCachedQuery(api.friends.listOutgoingRequests, {}, "friends.listOutgoingRequests") ?? [];
+
+  // Everyone here has a card one click away — warm what it draws.
+  usePreloadedCosmetics(friends);
 
   const acceptRequest = useMutation(api.friends.acceptFriendRequest);
   const declineRequest = useMutation(api.friends.declineFriendRequest);

@@ -26,6 +26,17 @@ function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
     customStatus: visibleCustomStatus(user, status),
     nameplateUrl: user.nameplateUrl,
     avatarDecoration: effectiveDecoration(user),
+    // Carried for the same reason as on a member row: the card that opens from
+    // here draws them, and a url in hand can be fetched before it is asked for
+    // (see src/lib/image-preload.ts).
+    profileEffect: user.profileEffect,
+    profileFrame: user.profileFrame,
+    profileFrameMode: user.profileFrameMode,
+    profileFrameFit: user.profileFrameFit,
+    profileFrameAnchor: user.profileFrameAnchor,
+    profileFrameScale: user.profileFrameScale,
+    profileFrameOffsetY: user.profileFrameOffsetY,
+    profileFrameLayers: user.profileFrameLayers,
     isBirthday: isBirthdayNow(user),
     status,
     activities: visibleActivities(presence, user),

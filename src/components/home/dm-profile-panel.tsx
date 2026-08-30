@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -34,6 +35,7 @@ export function DmProfilePanel({
     conversationId,
   }) as MemberProfileMember[] | undefined;
   const member = members?.find((entry) => entry.userId === userId);
+  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   return (
     <div className="flex w-72 shrink-0 flex-col border-l bg-background/40">
@@ -41,7 +43,7 @@ export function DmProfilePanel({
           children in a `display: table` div, and a percentage height inside
           that resolves to auto — which is exactly what the card needs to fill
           the column. */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={smoothRef} className="min-h-0 flex-1 overflow-y-auto">
         {/* Nothing at all until the query lands, rather than a placeholder
             card: this panel is a copy of information already on screen, and a
             skeleton of it would be the loudest thing in the window. */}
