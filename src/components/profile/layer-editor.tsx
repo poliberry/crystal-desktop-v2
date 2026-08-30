@@ -121,7 +121,7 @@ export function LayerEditor({
   className?: string;
 }) {
   const [draft, setDraft] = useState<CosmeticLayer[]>(stored);
-  const [selectedId, setSelectedId] = useState<string | null>(stored[0]?.id ?? null);
+  const [selectedIds, setSelectedIds] = useState<string[]>(stored[0] ? [stored[0].id] : []);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   /** Percent of the card, or pixels at the size it is drawn here. The stored
@@ -172,17 +172,84 @@ export function LayerEditor({
   const stageHeight =
     heights.find((option) => option.key === heightKey)?.height ?? heights[0]?.height ?? stageWidth;
 
+  /**
+   * Undo/redo, as a stack of drafts rather than of edits.
+   *
+   * A stack of whole drafts is more memory than a stack of diffs, but a layer
+   * list is a few kilobytes and fifty of them is nothing — and it means every
+   * kind of change (a drag, a slider, a delete, a paste) undoes the same way,
+   * with no special case for the one that isn't expressible as a diff.
+   */
+  const HISTORY_LIMIT = 50;
+  const history = useRef<{ past: CosmeticLayer[][]; future: CosmeticLayer[][] }>({
+    past: [],
+    future: [],
+  });
+
   const commit = useCallback(
     (next: CosmeticLayer[]) => {
+      history.current.past.push(draft);
+      if (history.current.past.length > HISTORY_LIMIT) history.current.past.shift();
+      history.current.future = [];
       setDraft(next);
       void Promise.resolve(onSave(next)).catch((err) =>
         setError(err instanceof Error ? err.message : "Couldn't save that."),
       );
     },
-    [onSave],
+    [draft, onSave],
   );
 
-  const selectedStored = draft.find((layer) => layer.id === selectedId) ?? null;
+  const undo = useCallback(() => {
+    const previous = history.current.past.pop();
+    if (!previous) return;
+    history.current.future.push(draft);
+    setDraft(previous);
+    void Promise.resolve(onSave(previous)).catch((err) =>
+      setError(err instanceof Error ? err.message : "Couldn't save that."),
+    );
+  }, [draft, onSave]);
+
+  const redo = useCallback(() => {
+    const next = history.current.future.pop();
+    if (!next) return;
+    history.current.past.push(draft);
+    setDraft(next);
+    void Promise.resolve(onSave(next)).catch((err) =>
+      setError(err instanceof Error ? err.message : "Couldn't save that."),
+    );
+  }, [draft, onSave]);
+
+  const deleteLayers = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      commit(draft.filter((layer) => !ids.includes(layer.id)));
+      setSelectedIds([]);
+    },
+    [commit, draft],
+  );
+
+  const duplicateLayers = useCallback(
+    (ids: string[]) => {
+      const chosen = draft.filter((layer) => ids.includes(layer.id));
+      if (chosen.length === 0) return;
+      if (draft.length + chosen.length > MAX_LAYERS) {
+        setError(`That's the most one of these can hold (${MAX_LAYERS}).`);
+        return;
+      }
+      const copies = chosen.map((layer) => ({
+        ...layer,
+        id: newLayerId(),
+        x: layer.x + 4,
+        y: layer.y + 4,
+      }));
+      commit([...draft, ...copies]);
+      setSelectedIds(copies.map((copy) => copy.id));
+    },
+    [commit, draft],
+  );
+
+  const selectedStored =
+    selectedIds.length === 1 ? draft.find((layer) => layer.id === selectedIds[0]) ?? null : null;
   /** The selected layer as it is drawn on the shape currently on the canvas. */
   const selected = selectedStored ? resolveLayer(selectedStored, heightKey) : null;
 
@@ -237,7 +304,7 @@ export function LayerEditor({
       return;
     }
     commit([...draft, layer]);
-    setSelectedId(layer.id);
+    setSelectedIds([layer.id]);
   };
 
   const addLayer = (url: string, storageId?: string) => {
@@ -257,7 +324,7 @@ export function LayerEditor({
       width: 100,
     };
     commit([...draft, layer]);
-    setSelectedId(layer.id);
+    setSelectedIds([layer.id]);
   };
 
   const pickFiles = async (files: FileList | null) => {
@@ -285,7 +352,7 @@ export function LayerEditor({
       }
       if (added.length > 0) {
         commit([...draft, ...added]);
-        setSelectedId(added[added.length - 1]!.id);
+        setSelectedIds([added[added.length - 1]!.id]);
       }
       if (chosen.length < files.length) {
         setError(`Only ${chosen.length} of those fitted — ${MAX_LAYERS} is the limit.`);
@@ -322,10 +389,15 @@ export function LayerEditor({
           <LayerCanvas
             layers={draft}
             stage={{ width: stageWidth, height: stageHeight }}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
+            selectedIds={selectedIds}
+            onSelect={setSelectedIds}
             onChange={setDraft}
             onCommit={commit}
+            onDelete={deleteLayers}
+            onDuplicate={duplicateLayers}
+            onReorder={move}
+            onUndo={undo}
+            onRedo={redo}
             ratios={ratios}
             variant={heightKey}
             zoom={zoom}
@@ -476,14 +548,27 @@ export function LayerEditor({
                     key={layer.id}
                     className={cn(
                       "flex items-center gap-1.5 rounded-md border p-1 transition-colors",
-                      layer.id === selectedId
+                      selectedIds.includes(layer.id)
                         ? "border-primary bg-accent/60"
                         : "border-transparent hover:bg-accent/40",
                     )}
                   >
                     <button
                       type="button"
-                      onClick={() => setSelectedId(layer.id)}
+                      onClick={(event) => {
+                        // Shift or ctrl/cmd extends the selection, the same as
+                        // clicking a layer on the canvas does — one place to
+                        // learn the gesture, not two.
+                        if (event.shiftKey || event.ctrlKey || event.metaKey) {
+                          setSelectedIds((prev) =>
+                            prev.includes(layer.id)
+                              ? prev.filter((id) => id !== layer.id)
+                              : [...prev, layer.id],
+                          );
+                        } else {
+                          setSelectedIds([layer.id]);
+                        }
+                      }}
                       className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     >
                       {/* A thumbnail of the thing itself rather than of its
@@ -601,20 +686,8 @@ export function LayerEditor({
               }
               onChange={(patch) => patchLive(selected.id, patch)}
               onCommit={(patch) => patchSaved(selected.id, patch)}
-              onDuplicate={() => {
-                const copy = {
-                  ...(selectedStored ?? selected),
-                  id: newLayerId(),
-                  x: selected.x + 4,
-                  y: selected.y + 4,
-                };
-                commit([...draft, copy]);
-                setSelectedId(copy.id);
-              }}
-              onRemove={() => {
-                commit(draft.filter((layer) => layer.id !== selected.id));
-                setSelectedId(null);
-              }}
+              onDuplicate={() => duplicateLayers([selected.id])}
+              onRemove={() => deleteLayers([selected.id])}
             />
           )}
         </div>
