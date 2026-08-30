@@ -16,7 +16,7 @@ import { DmProfilePanel } from "@/components/home/dm-profile-panel";
 import { MessageList } from "@/components/home/message-list";
 import { PresenceBadge } from "@/components/presence-dot";
 import {
-  activitySummary,
+  presenceHeadline,
   topActivity,
 } from "@/components/rich-presence-card";
 import type { FriendStatus } from "@/lib/presence";
@@ -117,10 +117,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
     : (conversation.members[0]?.name ?? "Unknown");
   const avatarUser = isGroup ? undefined : conversation.members[0];
   const activities = (avatarUser?.activities ?? []) as RichPresenceActivity[];
-  // Their own words outrank anything detected, the same order the friends list
-  // and the user card use.
-  const headerLine =
-    avatarUser?.customStatus ?? activitySummary(topActivity(activities)) ?? null;
+  // Both, when there are both — see `presenceHeadline`.
+  const headerLine = presenceHeadline(avatarUser?.customStatus, topActivity(activities));
   const panelName = isGroup ? "member list" : "profile";
   // Everyone in here whose birthday it is — the composer prompt is about them.
   // A plural list because a group DM can, eventually, have two.
@@ -167,7 +165,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                   />
                 )}
               </Avatar>
-              <div className="min-w-0">
+              <div className="min-w-0 flex flex-row gap-2 items-center">
                 <p className="truncate text-sm font-semibold leading-tight">{title}</p>
                 {/* Their own words first, then whatever they are doing. Nothing
                     at all when there is neither: the dot on the avatar already

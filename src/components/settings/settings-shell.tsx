@@ -19,6 +19,7 @@ import { useOpenCustomCss } from "@/components/settings/custom-css-dialog";
 import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
 
 import { PresenceBadge } from "@/components/presence-dot";
+import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
@@ -161,9 +162,9 @@ export function SettingsShell({
   // now, so opening Settings can't land on it.
   const [section, setSection] = useState("account");
 
-  const subtitle = me?.customStatus
-    ? `${me?.customStatus}`
-    : STATUS_LABEL[status];
+  // Both halves on one line, as everywhere else — see `presenceHeadline`.
+  const subtitle =
+    presenceHeadline(me?.customStatus, topActivity(activities)) ?? STATUS_LABEL[status];
 
   return (
     <div className="flex h-full flex-col bg-background">

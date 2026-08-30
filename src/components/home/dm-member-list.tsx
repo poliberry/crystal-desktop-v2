@@ -9,7 +9,7 @@ import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
-  activitySummary,
+  presenceHeadline,
   topActivity,
 } from "@/components/rich-presence-card";
 import type { RichPresenceActivity } from "@/types/desktop-api";
@@ -94,11 +94,17 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{member.name}</p>
+                  {/* Both halves on one line — see `presenceHeadline` — and
+                      neither for someone offline, since both are claims about
+                      right now. */}
                   {member.status !== "offline" &&
-                    (!!member.customStatus || !!member.activities?.length) && (
+                    presenceHeadline(member.customStatus, topActivity(member.activities)) && (
                       <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
                         <span className="truncate">
-                          {member.customStatus ?? activitySummary(topActivity(member.activities))}
+                          {presenceHeadline(
+                            member.customStatus,
+                            topActivity(member.activities),
+                          )}
                         </span>
                       </p>
                     )}

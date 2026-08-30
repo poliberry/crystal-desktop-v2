@@ -23,10 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessagePreview } from "@/components/message-preview";
 import { PresenceDot } from "@/components/presence-dot";
-import {
-  activitySummary,
-  topActivity,
-} from "@/components/rich-presence-card";
+import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { useCachedQuery } from "@/hooks/use-cached-query";
@@ -164,8 +161,7 @@ export function NavSidebar({
               // already said by the dimmed row and the presence dot.
               const presenceLine = isOffline
                 ? null
-                : otherMember?.customStatus ||
-                  activitySummary(activity) ||
+                : presenceHeadline(otherMember?.customStatus, activity) ||
                   (otherMember ? STATUS_LABEL[otherMember.status as FriendStatus] : null);
               /**
                * The last thing said, or the last thing sent.

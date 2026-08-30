@@ -26,6 +26,7 @@ import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
 import { PresenceBadge } from "@/components/presence-dot";
+import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import {
   Avatar,
   AvatarDecoration,
@@ -100,11 +101,13 @@ export function UserCard() {
       ? undefined
       : me.customStatus;
 
-  const subtitle = customStatus
-    ? `${customStatus}`
-    : activeCall
-      ? "In voice"
-      : STATUS_LABEL[status];
+  // What you are doing and what you say you are doing, on one line — the same
+  // rule every other list follows now. A call outranks the plain status label
+  // but not either of those: "In voice" is something the panel below already
+  // says in more detail.
+  const subtitle =
+    presenceHeadline(customStatus, topActivity(activities)) ??
+    (activeCall ? "In voice" : STATUS_LABEL[status]);
 
   // The card floats over the left column, so its width has to match what's
   // actually there: the rail plus the sidebar, or — with the communities

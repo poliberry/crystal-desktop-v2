@@ -11,7 +11,7 @@ import { Nameplate } from "@/components/profile/nameplate";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import {
-  activitySummary,
+  presenceHeadline,
   topActivity,
 } from "@/components/rich-presence-card";
 import type { RichPresenceActivity } from "@/types/desktop-api";
@@ -166,6 +166,11 @@ export function MemberList({ communityId }: MemberListProps) {
                       false
                     );
                     const isOffline = member.status === "offline";
+                    // Nothing at all for someone offline: both halves of the
+                    // line are claims about right now.
+                    const headline = isOffline
+                      ? null
+                      : presenceHeadline(member.customStatus, topActivity(member.activities));
                     return (
                       <Popover key={member.userId}>
                         <MemberContextMenu
@@ -202,15 +207,12 @@ export function MemberList({ communityId }: MemberListProps) {
                               >
                                   {member.name} {member.isOwner ? <Crown size={12} className="text-yellow-400" /> : ""}
                               </p>
-                              {/* Custom status wins the line when set;
-                                  otherwise the activity fills it, and either
-                                  way the activity glyph sits to its left. */}
-                              {!isOffline && (!!member.customStatus || !!member.activities?.length) && (
+                              {/* What they are doing and what they say they
+                                  are doing, on one line — see
+                                  `presenceHeadline`. */}
+                              {headline && (
                                 <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground leading-tight">
-                                  <span className="truncate">
-                                    {member.customStatus ??
-                                      activitySummary(topActivity(member.activities))}
-                                  </span>
+                                  <span className="truncate">{headline}</span>
                                 </p>
                               )}
                             </div>

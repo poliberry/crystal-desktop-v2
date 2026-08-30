@@ -1,7 +1,7 @@
 import { PresenceDot } from "@/components/presence-dot";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
-  activitySummary,
+  presenceHeadline,
   topActivity,
 } from "@/components/rich-presence-card";
 import {
@@ -58,8 +58,7 @@ export function FriendRow({
 
   const line =
     subtitle ??
-    (offline ? null : customStatus) ??
-    (offline ? null : activitySummary(activity)) ??
+    (offline ? null : presenceHeadline(customStatus, activity)) ??
     (status ? STATUS_LABEL[status] : `@${username}`);
 
   return (
