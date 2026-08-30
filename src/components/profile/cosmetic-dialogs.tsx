@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
-import { Loader2, Upload } from "lucide-react";
+import { ExternalLink, Loader2, Upload } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -13,6 +13,7 @@ import {
 } from "@/components/profile/layer-editor";
 import { Nameplate, NAMEPLATE_ACCEPT } from "@/components/profile/nameplate";
 import { Button } from "@/components/ui/button";
+import { getDesktopAPI, isElectron } from "@/lib/desktop";
 import {
   Dialog,
   DialogContent,
@@ -117,6 +118,49 @@ function CosmeticDialog({
   );
 }
 
+/**
+ * "Open in its own window" — the canvas editors' escape hatch from a dialog
+ * pinned to the size of the main window.
+ *
+ * Electron-only: there's no second window to open in a browser tab, and
+ * `getDesktopAPI()` is `undefined` there, so this quietly draws nothing
+ * rather than a button that can't work. The new window is handed nothing but
+ * which profile to edit — see `DesktopAPI.editor` — because it loads
+ * `/editor` itself and gets a working Convex session for free, the same
+ * origin the main window is already signed in on.
+ */
+function PopOutButton({
+  kind,
+  scopeId,
+  scopeName,
+  onOpened,
+}: {
+  kind: "frame" | "decoration";
+  scopeId?: Id<"communities">;
+  scopeName?: string;
+  /** Closes the in-dialog editor once the window has it — editing in both
+   * places at once is two drafts racing to save last. */
+  onOpened: () => void;
+}) {
+  if (!isElectron()) return null;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="h-7 gap-1.5 px-2 text-xs"
+      title="Open in its own window"
+      onClick={() => {
+        void getDesktopAPI()?.editor.open({ kind, scopeId, scopeName });
+        onOpened();
+      }}
+    >
+      <ExternalLink className="size-3.5" />
+      Pop out
+    </Button>
+  );
+}
+
 /** Pick a file, size-check it, hand it over. The check is a courtesy that
  * saves a doomed transfer — the mutation enforces it once the bytes land. */
 function UploadButton({
@@ -188,6 +232,69 @@ function UploadButton({
  * the geometry is in percentages of it — so an arrangement made here is the
  * same arrangement at 24 pixels in a member list.
  */
+/**
+ * The decoration editor's insides — everything but the dialog chrome, so the
+ * `/editor` pop-out window (`src/app/editor/page.tsx`) can render exactly
+ * this without dragging a `<Dialog>` it isn't inside of along with it.
+ */
+export function DecorationEditor({
+  imageUrl,
+  name,
+  current,
+  scope,
+  className,
+}: {
+  imageUrl?: string;
+  name: string;
+  /** The decoration as stored — any of its forms; `decorationLayers` unpacks
+   * the lot, so an old single-image one opens as one layer to drag. */
+  current?: string;
+  scope: ProfileScope;
+  className?: string;
+}) {
+  const layers = useMemo(() => decorationLayers(current), [current]);
+  return (
+    <LayerEditor
+      className={className}
+      layers={layers}
+      onSave={(next) => scope.setDecorationLayers(next)}
+      stageWidth={AVATAR_STAGE_PX}
+      // One shape only: an avatar is a square at every size the app draws
+      // one, so there is nothing to check a decoration against but itself.
+      // One shape, and it is the default one: an avatar is a square at every
+      // size the app draws one, so there is nothing to place a decoration
+      // against twice.
+      heights={[{ key: DEFAULT_VARIANT, label: "Avatar", height: AVATAR_STAGE_PX }]}
+      upload={scope.uploadLayerImage}
+      uploadHint={`Transparent PNG, GIF or WebP works best. Up to ${MAX_DECORATION_LABEL} each.`}
+      presets={DECORATION_PRESETS.map((preset) => ({
+        label: preset.name,
+        // The stored form, not the picture: a layer keeps the key so a
+        // preset redrawn in a later build is redrawn for everyone wearing it.
+        url: preset.value,
+      }))}
+      resolveSrc={(url) => decorationSrc(url) ?? url}
+      renderStage={() => (
+        <div className="flex size-full items-center justify-center">
+          {imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageUrl}
+              alt=""
+              className="size-full rounded-2xl object-cover"
+              draggable={false}
+            />
+          ) : (
+            <span className="flex size-full items-center justify-center rounded-2xl bg-muted text-2xl text-muted-foreground">
+              {name.slice(0, 2).toUpperCase()}
+            </span>
+          )}
+        </div>
+      )}
+    />
+  );
+}
+
 export function DecorationDialog({
   open,
   onOpenChange,
@@ -196,6 +303,8 @@ export function DecorationDialog({
   current,
   isAccount,
   scope,
+  scopeId,
+  scopeName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -206,6 +315,9 @@ export function DecorationDialog({
   current?: string;
   isAccount: boolean;
   scope: ProfileScope;
+  /** Which profile this is, for the pop-out window — see `PopOutButton`. */
+  scopeId?: Id<"communities">;
+  scopeName?: string;
 }) {
   const removeAvatarDecoration = useMutation(api.users.removeAvatarDecoration);
   const layers = useMemo(() => decorationLayers(current), [current]);
@@ -222,54 +334,33 @@ export function DecorationDialog({
           : "Decorations are worn by you rather than by one server identity, so this applies everywhere."
       }
       footer={
-        layers.length > 0 && (
-          <Button
-            variant="ghost"
-            className="text-destructive"
-            onClick={() => void removeAvatarDecoration()}
-          >
-            Remove all
-          </Button>
+        (isElectron() || layers.length > 0) && (
+          <>
+            <PopOutButton
+              kind="decoration"
+              scopeId={scopeId}
+              scopeName={scopeName}
+              onOpened={() => onOpenChange(false)}
+            />
+            {layers.length > 0 && (
+              <Button
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => void removeAvatarDecoration()}
+              >
+                Remove all
+              </Button>
+            )}
+          </>
         )
       }
     >
-      <LayerEditor
+      <DecorationEditor
         className="min-h-0 flex-1"
-        layers={layers}
-        onSave={(next) => scope.setDecorationLayers(next)}
-        stageWidth={AVATAR_STAGE_PX}
-        // One shape only: an avatar is a square at every size the app draws
-        // one, so there is nothing to check a decoration against but itself.
-        // One shape, and it is the default one: an avatar is a square at every
-        // size the app draws one, so there is nothing to place a decoration
-        // against twice.
-        heights={[{ key: DEFAULT_VARIANT, label: "Avatar", height: AVATAR_STAGE_PX }]}
-        upload={scope.uploadLayerImage}
-        uploadHint={`Transparent PNG, GIF or WebP works best. Up to ${MAX_DECORATION_LABEL} each.`}
-        presets={DECORATION_PRESETS.map((preset) => ({
-          label: preset.name,
-          // The stored form, not the picture: a layer keeps the key so a
-          // preset redrawn in a later build is redrawn for everyone wearing it.
-          url: preset.value,
-        }))}
-        resolveSrc={(url) => decorationSrc(url) ?? url}
-        renderStage={() => (
-          <div className="flex size-full items-center justify-center">
-            {imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imageUrl}
-                alt=""
-                className="size-full rounded-2xl object-cover"
-                draggable={false}
-              />
-            ) : (
-              <span className="flex size-full items-center justify-center rounded-2xl bg-muted text-2xl text-muted-foreground">
-                {name.slice(0, 2).toUpperCase()}
-              </span>
-            )}
-          </div>
-        )}
+        imageUrl={imageUrl}
+        name={name}
+        current={current}
+        scope={scope}
       />
     </CosmeticDialog>
   );
@@ -629,14 +720,17 @@ function useMeasuredCardHeights(avatarUrl: string | undefined, bannerUrl: string
  * card they can make short or tall to see what happens when somebody writes a
  * long bio.
  */
-export function ProfileFrameDialog({
-  open,
-  onOpenChange,
+/**
+ * The frame editor's insides — everything but the dialog chrome, so the
+ * `/editor` pop-out window can render exactly this without a `<Dialog>` it
+ * isn't inside of.
+ */
+export function ProfileFrameEditor({
   scope,
+  className,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   scope: ProfileScope;
+  className?: string;
 }) {
   const values = scope.values;
   const layers = useMemo(() => frameLayersFrom(values ?? {}), [values]);
@@ -660,31 +754,11 @@ export function ProfileFrameDialog({
   );
 
   return (
-    <CosmeticDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      wide
-      title="Profile frame"
-      description="Artwork drawn around your card. Drag it into place, and check it against a card that has grown."
-      footer={
-        (values?.profileFrame || layers.length > 0) && (
-          <Button
-            variant="ghost"
-            className="text-destructive"
-            onClick={() => {
-              void scope.setFrameLayers([]);
-              void scope.removeFrame();
-            }}
-          >
-            Remove all
-          </Button>
-        )
-      }
-    >
+    <>
       {/* Rendered, not shown: this is what measures the three shapes above. */}
       {offscreen}
       <LayerEditor
-        className="min-h-0 flex-1"
+        className={className}
         layers={layers}
         onSave={(next) => scope.setFrameLayers(next)}
         stageWidth={CARD_STAGE_WIDTH_PX}
@@ -701,6 +775,60 @@ export function ProfileFrameDialog({
           />
         )}
       />
+    </>
+  );
+}
+
+export function ProfileFrameDialog({
+  open,
+  onOpenChange,
+  scope,
+  scopeId,
+  scopeName,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  scope: ProfileScope;
+  /** Which profile this is, for the pop-out window — see `PopOutButton`. */
+  scopeId?: Id<"communities">;
+  scopeName?: string;
+}) {
+  const values = scope.values;
+  const hasFrame = !!(values?.profileFrame || (values?.profileFrameLayers?.length ?? 0) > 0);
+
+  return (
+    <CosmeticDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      wide
+      title="Profile frame"
+      description="Artwork drawn around your card. Drag it into place, and check it against a card that has grown."
+      footer={
+        (isElectron() || hasFrame) && (
+          <>
+            <PopOutButton
+              kind="frame"
+              scopeId={scopeId}
+              scopeName={scopeName}
+              onOpened={() => onOpenChange(false)}
+            />
+            {hasFrame && (
+              <Button
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => {
+                  void scope.setFrameLayers([]);
+                  void scope.removeFrame();
+                }}
+              >
+                Remove all
+              </Button>
+            )}
+          </>
+        )
+      }
+    >
+      <ProfileFrameEditor className="min-h-0 flex-1" scope={scope} />
     </CosmeticDialog>
   );
 }

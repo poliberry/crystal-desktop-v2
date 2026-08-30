@@ -133,6 +133,10 @@ const api = {
       return () => ipcRenderer.removeListener("pip:size", handler);
     },
   },
+  editor: {
+    open: (options: { kind: "frame" | "decoration"; scopeId?: string; scopeName?: string }) =>
+      ipcRenderer.invoke("editor:open", options),
+  },
 };
 
 type NavigateTarget =

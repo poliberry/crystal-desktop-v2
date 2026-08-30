@@ -675,6 +675,8 @@ export function ProfileEditor({
         current={values.avatarDecoration}
         isAccount={scope.isAccount}
         scope={scope}
+        scopeId={scopeId}
+        scopeName={scopeName}
       />
       <DisplayNameStyleDialog
         open={dialog === "nameStyle"}
@@ -708,6 +710,8 @@ export function ProfileEditor({
         open={dialog === "frame"}
         onOpenChange={(o) => setDialog(o ? "frame" : null)}
         scope={scope}
+        scopeId={scopeId}
+        scopeName={scopeName}
       />
       <ProfileCssDialog
         open={dialog === "css"}

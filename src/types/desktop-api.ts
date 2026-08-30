@@ -309,4 +309,23 @@ export interface DesktopAPI {
      * can be captured at a matching resolution instead of a fixed guess. */
     onSize(cb: (size: { width: number; height: number }) => void): () => void;
   };
+  /**
+   * Opens the cosmetic canvas editor — a profile frame or an avatar
+   * decoration — in its own resizable window rather than a dialog stealing
+   * most of the main one.
+   *
+   * Unlike `pip`, nothing is streamed over IPC: the new window loads
+   * `/editor` itself, which is just another page of this same app and so
+   * gets its own working Convex/Clerk session for free (they share cookies
+   * and local storage with the main window, both being the same origin).
+   * `scopeId`/`scopeName` say which profile — the account's, or one
+   * community's — the same way `useProfileScope` already takes them.
+   */
+  editor: {
+    open(options: {
+      kind: "frame" | "decoration";
+      scopeId?: string;
+      scopeName?: string;
+    }): Promise<boolean>;
+  };
 }

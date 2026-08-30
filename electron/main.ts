@@ -435,6 +435,74 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
   pipWindow = win;
 }
 
+let editorWindow: BrowserWindow | null = null;
+
+/**
+ * Opens the cosmetic canvas editor in its own window, or focuses it and
+ * points it at a different profile if one is already open.
+ *
+ * A normal, resizable, framed-by-us window rather than a dialog — a canvas
+ * editor wants the room a dialog stealing most of the main window can't give
+ * it without hiding everything else being edited. Singleton, like the pip
+ * window: two editors open on two profiles at once is two windows fighting
+ * over which one's save actually stuck.
+ *
+ * No IPC channel carries the profile itself. The window loads `/editor`,
+ * which is this same app's own React tree — it queries Convex directly, the
+ * same way the main window's dialogs did, and shares its session because
+ * both windows are the same origin in the same (default) Electron session.
+ * `scopeId`/`scopeName` in the query string are the only things that have to
+ * cross the process boundary, because nothing else says *which* profile.
+ */
+function createOrFocusEditorWindow(options: {
+  kind: "frame" | "decoration";
+  scopeId?: string;
+  scopeName?: string;
+}): void {
+  const params = new URLSearchParams({ kind: options.kind });
+  if (options.scopeId) params.set("scope", options.scopeId);
+  if (options.scopeName) params.set("scopeName", options.scopeName);
+
+  if (editorWindow && !editorWindow.isDestroyed()) {
+    editorWindow.focus();
+    void editorWindow.loadURL(
+      isDev
+        ? `${process.env.ELECTRON_START_URL as string}/editor?${params}`
+        : `http://crystal.localhost/editor/?${params}`,
+    );
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 1180,
+    height: 780,
+    minWidth: 760,
+    minHeight: 520,
+    icon: appIconPath(),
+    ...FRAMELESS_WINDOW_OPTIONS,
+    webPreferences: {
+      preload: PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  if (isDev) {
+    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/editor?${params}`);
+  } else {
+    void win.loadURL(`http://crystal.localhost/editor/?${params}`);
+  }
+
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  wireWindowStateEvents(win);
+  win.on("closed", () => {
+    editorWindow = null;
+  });
+
+  editorWindow = win;
+}
+
 app.whenReady().then(async () => {
   // Production: intercept http://crystal.localhost and serve the static
   // Next.js export from the out/ directory. This gives Clerk a stable,
@@ -682,6 +750,14 @@ app.whenReady().then(async () => {
       pipWindow.webContents.send("pip:frame", dataUrl);
     }
   });
+
+  ipcMain.handle(
+    "editor:open",
+    (_event, options: { kind: "frame" | "decoration"; scopeId?: string; scopeName?: string }) => {
+      createOrFocusEditorWindow(options);
+      return true;
+    },
+  );
 
   // Custom titlebar controls — frameless windows have no native ones. Each
   // handler acts on whichever window actually sent the request, so the main
