@@ -1,7 +1,7 @@
 import { PresenceDot } from "@/components/presence-dot";
 import { Nameplate } from "@/components/profile/nameplate";
 import {
-  activitySummary,
+  presenceHeadline,
   topActivity,
 } from "@/components/rich-presence-card";
 import {
@@ -31,6 +31,9 @@ interface FriendRowProps {
   avatarDecoration?: string;
   /** Their birthday is today: the presence dot becomes a cake. */
   isBirthday?: boolean;
+  /** Their card gradient, which the presence dot sits on — see
+   * src/components/presence-dot.tsx. */
+  borderGradientStart?: string;
   actions?: React.ReactNode;
 }
 
@@ -45,6 +48,7 @@ export function FriendRow({
   nameplateUrl,
   avatarDecoration,
   isBirthday,
+  borderGradientStart,
   actions,
 }: FriendRowProps) {
   const offline = !status || status === "offline";
@@ -54,8 +58,7 @@ export function FriendRow({
 
   const line =
     subtitle ??
-    (offline ? null : customStatus) ??
-    (offline ? null : activitySummary(activity)) ??
+    (offline ? null : presenceHeadline(customStatus, activity)) ??
     (status ? STATUS_LABEL[status] : `@${username}`);
 
   return (
@@ -72,8 +75,7 @@ export function FriendRow({
             status={status}
             activities={activities}
             isBirthday={isBirthday}
-            decorated={!!avatarDecoration}
-            className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
+            accent={borderGradientStart}            className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
           />
         )}
       </Avatar>

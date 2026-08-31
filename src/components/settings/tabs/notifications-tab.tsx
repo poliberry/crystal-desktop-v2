@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { STATUS_LABEL } from "@/lib/presence";
 
 const LEVELS = [
   { value: "all", label: "All messages" },
@@ -68,12 +69,15 @@ export function NotificationsTab() {
 
   return (
     <div className="space-y-6">
-      {settings.dnd && (
+      {/* Two statuses suppress, and they are different sentences: naming the
+          one that is actually on is the difference between an explanation and
+          a puzzle. */}
+      {settings.suppressedBy && (
         <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
           <BellOff className="mt-0.5 size-4 shrink-0 text-amber-500" />
           <div className="text-sm">
             <p className="font-medium text-amber-600 dark:text-amber-400">
-              Do Not Disturb is on
+              {STATUS_LABEL[settings.suppressedBy]} is on
             </p>
             <p className="text-xs text-muted-foreground">
               Nothing below applies while it is — every notification is suppressed. Change your
@@ -96,7 +100,7 @@ export function NotificationsTab() {
             label="Direct messages"
             description="DMs and group conversations."
             checked={settings.dmMessages}
-            disabled={settings.dnd}
+            disabled={!!settings.suppressedBy}
             onChange={(dmMessages) => void update({ dmMessages }).catch(() => {})}
           />
           <ToggleRow
@@ -104,7 +108,7 @@ export function NotificationsTab() {
             label="Channel messages"
             description="Messages in servers that don't mention you. Mentions are controlled per server below."
             checked={settings.channelMessages}
-            disabled={settings.dnd}
+            disabled={!!settings.suppressedBy}
             onChange={(channelMessages) => void update({ channelMessages }).catch(() => {})}
           />
           <ToggleRow
@@ -112,7 +116,7 @@ export function NotificationsTab() {
             label="Friend requests"
             description="New requests and accepted ones."
             checked={settings.friendRequests}
-            disabled={settings.dnd}
+            disabled={!!settings.suppressedBy}
             onChange={(friendRequests) => void update({ friendRequests }).catch(() => {})}
           />
         </CardContent>
@@ -141,7 +145,7 @@ export function NotificationsTab() {
                 <span className="min-w-0 flex-1 truncate text-sm">{community.name}</span>
                 <Select
                   value={community.level}
-                  disabled={settings.dnd}
+                  disabled={!!settings.suppressedBy}
                   onValueChange={(level) =>
                     void setCommunityLevel({
                       communityId: community.communityId as Id<"communities">,

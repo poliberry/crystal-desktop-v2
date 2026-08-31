@@ -7,6 +7,7 @@ import { AudioAttachment } from "@/components/home/audio-attachment";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
 import { VideoAttachment } from "@/components/home/video-attachment";
 import { downloadFile, formatBytes } from "@/lib/download";
+import { useCachedAttachmentSrc } from "@/lib/image-cache";
 
 /** One row of `messageAttachments`, as the message queries return it. Shared
  * by DM and channel messages — the two tables store attachments identically. */
@@ -29,6 +30,10 @@ function ImageAttachment({
   createdAt?: number;
 }) {
   const [open, setOpen] = useState(false);
+  // Cached bytes when we have them (see src/lib/image-cache.ts); the raw url
+  // meanwhile. Also what makes a just-sent attachment paint without a second
+  // download once the real message row replaces the optimistic one.
+  const cachedSrc = useCachedAttachmentSrc(attachment.url ?? undefined);
   if (!attachment.url) return null;
 
   return (
@@ -39,7 +44,7 @@ function ImageAttachment({
         className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={attachment.url} alt={attachment.fileName} className="max-h-80 max-w-full" />
+        <img src={cachedSrc ?? attachment.url} alt={attachment.fileName} className="max-h-80 max-w-full" />
       </button>
       <ImageLightbox
         open={open}

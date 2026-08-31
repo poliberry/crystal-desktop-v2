@@ -33,6 +33,7 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, u
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { CachedBackground } from "@/components/cached-background";
 import { useCall } from "@/components/call/call-provider";
 import { communityActionItems } from "@/components/community/community-actions";
 import { CommunitySettingsDialog } from "@/components/community/community-settings-dialog";
@@ -65,6 +66,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { LayoutDashboardIcon } from "@animateicons/react/lucide";
 
 type ChannelRow = {
   id: Id<"channels">;
@@ -97,15 +99,6 @@ interface CommunitySidebarProps {
   overviewSelected: boolean;
 }
 
-/**
- * Which community this sidebar is showing.
- *
- * A context rather than a prop because it's constant for the whole subtree
- * and only one leaf deep inside it — the voice channel roster, which resolves
- * members against their profile *here* — actually needs it. Threading it down
- * through ChannelTree → CategorySection → ChannelBucket → ChannelItem adds a
- * parameter to four components that have no use for it.
- */
 const SidebarCommunityContext = createContext<Id<"communities"> | null>(null);
 
 function useSidebarCommunityId(): Id<"communities"> {
@@ -116,13 +109,6 @@ function useSidebarCommunityId(): Id<"communities"> {
   return communityId;
 }
 
-/**
- * Which of a community's channels have unread messages.
- *
- * Shares the rail's summary query — it already computes this for every
- * community to decide which servers get a badge, and Convex dedupes identical
- * subscriptions, so reading it per channel row costs nothing extra.
- */
 function useUnreadChannelIds(communityId: Id<"communities">): Set<string> {
   const activity = useQuery(api.communities.listMineActivity);
   return useMemo(() => {
@@ -214,15 +200,6 @@ export function CommunitySidebar({
         .find((c) => c.type === "text");
       if (firstText) onSelectChannel(firstText.id, "text");
     }
-    // Deliberately keyed on communityId/selectedChannelId (not `channels`
-    // itself, and not just `channels.length > 0`) — this component doesn't
-    // remount when `communityId` changes (no `key` prop upstream), so a
-    // dependency on the loading-boolean alone only re-fires on a true/false
-    // *transition*. Switching to a community whose channel list is already
-    // cached from earlier in the session never produces that transition
-    // (`channels.length > 0` is `true` before and after), so the effect
-    // would silently never re-run and no channel would ever get selected.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [communityId, selectedChannelId, channels.length > 0]);
 
   if (!community) {
@@ -242,18 +219,13 @@ export function CommunitySidebar({
     <SidebarCommunityContext.Provider value={communityId}>
     <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl shadow-md">
       <DropdownMenu>
-        {/* Banner + trigger share a relative container so the trigger can
-            overlay the bottom of the banner with a gradient backdrop */}
         <div className={cn("relative shrink-0", hasBanner ? "h-32" : "h-12")}>
-          {hasBanner && (
+          {hasBanner && community.bannerUrl && (
             <>
-              <div
+              <CachedBackground
+                url={community.bannerUrl}
                 className="absolute inset-0 bg-cover bg-center"
-                style={{
-                  backgroundImage: `url(${community.bannerUrl})`,
-                }}
               />
-              {/* Fade banner to sidebar background at the bottom */}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-background" />
             </>
           )}
@@ -265,8 +237,6 @@ export function CommunitySidebar({
           </DropdownMenuTrigger>
         </div>
         <DropdownMenuContent className="w-56" align="start">
-          {/* Described once in community-actions.tsx and drawn here, so this
-              and the rail's right-click menu can't drift apart. */}
           {communityActionItems({
             permissions: myPermissions,
             isOwner: community.isOwner,
@@ -305,7 +275,7 @@ export function CommunitySidebar({
             : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
         )}
       >
-        <LayoutDashboard className="size-4 shrink-0" />
+        <LayoutDashboardIcon duration={0.8} className="size-4 shrink-0" />
         Overview
       </button>
 
@@ -464,18 +434,6 @@ function ChannelTree({
     isBefore: boolean;
   } | null>(null);
 
-  /**
-   * Custom collision detection that restricts candidates to the same drag-type.
-   *
-   * With a single DndContext covering both category headers and channel rows,
-   * the default `closestCenter` considers ALL droppables simultaneously. When
-   * dragging a channel near a category boundary the category-header sortable
-   * can "win" the collision even though it's the wrong type — the drop
-   * indicator then snaps to completely the wrong position.
-   *
-   * Fix: filter droppable containers to only those whose ID prefix matches the
-   * active item's type before handing off to `closestCenter`.
-   */
   const collisionDetection: CollisionDetection = useCallback((args) => {
     const activeData = args.active.data.current as
       { type?: string } | undefined;
@@ -547,8 +505,6 @@ function ChannelTree({
       return;
     }
 
-    // Compare the dragged item's current translated centre with the over
-    // item's centre to decide before vs. after.
     const translated = active.rect.current.translated;
     if (!translated) {
       setOverInfo(null);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useCachedBackgroundImage } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,7 +38,14 @@ export function ChatBackground({
   url?: string;
   opacity?: number;
 }) {
+  // Inner component so the cache hook isn't called on every message list that
+  // has no wallpaper — same "costs nothing when empty" shape as AvatarDecoration.
   if (!url) return null;
+  return <ChatBackgroundLayer url={url} opacity={opacity} />;
+}
+
+function ChatBackgroundLayer({ url, opacity }: { url: string; opacity: number }) {
+  const backgroundImage = useCachedBackgroundImage(url);
   return (
     // -z-10 inside an isolated parent: that paints the picture above the
     // column's own background colour but below every message in it, without
@@ -45,7 +53,7 @@ export function ChatBackground({
     <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
       <div
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: `url(${url})`, opacity }}
+        style={{ backgroundImage, opacity }}
       />
       {/* Darker towards the bottom, where the composer and the newest — most
           likely to be read — messages are. */}
@@ -85,22 +93,7 @@ export function ChannelBanner({
         className,
       )}
     >
-      {imageUrl && (
-        <>
-          <div
-            aria-hidden
-            className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${imageUrl})` }}
-          />
-          {/* Faded, per the design: the picture is atmosphere and the words
-              are the point. Left-weighted so the text side is the darker one
-              whatever the artwork does. */}
-          <div
-            aria-hidden
-            className="absolute inset-0 bg-gradient-to-r from-background/90 via-background/70 to-background/40"
-          />
-        </>
-      )}
+      {imageUrl && <ChannelBannerImage url={imageUrl} />}
       <div className="relative px-4 py-3">
         {title && <p className="text-sm font-semibold">{title}</p>}
         {description && (
@@ -110,5 +103,21 @@ export function ChannelBanner({
         )}
       </div>
     </div>
+  );
+}
+
+function ChannelBannerImage({ url }: { url: string }) {
+  const backgroundImage = useCachedBackgroundImage(url);
+  return (
+    <>
+      <div aria-hidden className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage }} />
+      {/* Faded, per the design: the picture is atmosphere and the words are the
+          point. Left-weighted so the text side is the darker one whatever the
+          artwork does. */}
+      <div
+        aria-hidden
+        className="absolute inset-0 bg-gradient-to-r from-background/90 via-background/70 to-background/40"
+      />
+    </>
   );
 }

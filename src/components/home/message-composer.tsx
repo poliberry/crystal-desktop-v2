@@ -19,9 +19,10 @@ import {
 } from "@/components/home/emoji-text-input";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import { useComposerAttachments } from "@/hooks/use-composer-attachments";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { matchInProgressShortcode } from "@/lib/custom-emoji";
-import { searchSystemEmoji } from "@/lib/system-emoji";
+import { randomSmiley, searchSystemEmoji } from "@/lib/system-emoji";
 
 interface MessageComposerProps {
   conversationId: Id<"conversations">;
@@ -74,10 +75,12 @@ export function MessageComposer({
   const [sending, setSending] = useState(false);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  // A random greyscale emoji that replaces the Smile icon while the emoji
+  // button is hovered — re-rolled on every pointer enter.
+  const [hoverEmoji, setHoverEmoji] = useState<string | null>(null);
   const textareaRef = useRef<EmojiTextInputHandle>(null);
 
   const generateUploadUrl = useMutation(api.messages.generateUploadUrl);
-  const sendMessage = useMutation(api.messages.send);
   const {
     pending,
     uploading,
@@ -91,8 +94,10 @@ export function MessageComposer({
     clear: clearAttachments,
     handlePaste,
     dropZoneRef,
-    attachmentsPayload,
   } = useComposerAttachments(generateUploadUrl);
+  // Durable: the send lands in the IndexedDB outbox first and is drawn by the
+  // message list's overlay, then flushed to Convex (see src/lib/outbox.ts).
+  const sendMessage = useOutboxMutation("send", "dm");
   const startTyping = useMutation(api.typing.start);
   const stopTyping = useMutation(api.typing.stop);
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,8 +141,10 @@ export function MessageComposer({
     try {
       await sendMessage({
         conversationId,
-        text: trimmed ? encodeCustomEmojiShortcodes(trimmed, (name) => customEmojiByName.get(name)) : undefined,
-        attachments: pending.length ? attachmentsPayload() : undefined,
+        text: trimmed
+          ? encodeCustomEmojiShortcodes(trimmed, (name) => customEmojiByName.get(name))
+          : undefined,
+        attachments: pending.length ? pending : undefined,
         birthdayWish: wishArmed || undefined,
       });
       setText("");
@@ -307,8 +314,26 @@ export function MessageComposer({
 
         <Popover>
           <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="relative size-8 shrink-0 overflow-hidden"
+              onMouseEnter={() => setHoverEmoji(randomSmiley())}
+              onMouseLeave={() => setHoverEmoji(null)}
+            >
+              {/* The Smile icon stays mounted; the random emoji is an overlay.
+                  Swapping the hovered node out instead makes React fire a
+                  spurious mouseleave and the emoji never appears. */}
               <Smile className="size-4" />
+              {hoverEmoji && (
+                <span
+                  aria-hidden
+                  className="absolute inset-0 flex items-center justify-center bg-accent text-sm leading-none grayscale"
+                >
+                  {hoverEmoji}
+                </span>
+              )}
             </Button>
           </PopoverTrigger>
           <PopoverContent side="top" align="end" className="w-auto p-0">

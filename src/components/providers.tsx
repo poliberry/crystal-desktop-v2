@@ -9,6 +9,10 @@ import { ConvexProviderWithClerk } from "convex/react-clerk";
 
 import { getDesktopAPI } from "@/lib/desktop";
 import { pruneExpired, setCacheNamespace } from "@/lib/persistent-cache";
+import { pruneAttachmentCache, pruneImageCache } from "@/lib/image-cache";
+import { setOutboxUser } from "@/lib/outbox";
+import { OutboxFlusher } from "@/components/outbox-flusher";
+import { OutboxStatus } from "@/components/outbox-status";
 import { AccessibilityProvider } from "@/components/accessibility-provider";
 import { AudioPreferencesProvider } from "@/components/audio-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -57,16 +61,23 @@ function AuthCallbackHandler() {
  * The namespace is set during render rather than in an effect on purpose:
  * everything below reads the cache while it renders, so an effect would run a
  * frame too late and the first paint after switching accounts would come from
- * the previous account's cache. Assigning a module-level string is idempotent
- * and observable to nobody, so doing it here is safe in a way that most
- * render-phase side effects aren't.
+ * the previous account's cache. Assigning a module-level string is idempotent,
+ * so doing it here is safe in a way that most render-phase side effects
+ * aren't — it also kicks off that account's IndexedDB hydration (see
+ * persistent-cache.ts), which finishes a few renders later and is what
+ * `useCacheHydration` is for.
  */
 function CacheScope() {
   const { userId } = useAuth();
   setCacheNamespace(userId);
+  // Point the durable send outbox at the same account, for the same reason —
+  // an account switch must not flush one user's queued messages as another.
+  setOutboxUser(userId);
 
   useEffect(() => {
     pruneExpired();
+    pruneImageCache();
+    pruneAttachmentCache();
   }, []);
 
   return null;
@@ -87,6 +98,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   <CacheScope />
                   <AuthCallbackHandler />
                   <DataPreloader />
+                  <OutboxFlusher />
+                  <OutboxStatus />
                   <FileDropGuard />
                   {/* All inside Convex/Clerk: each of these renders something
                       that queries the current user.

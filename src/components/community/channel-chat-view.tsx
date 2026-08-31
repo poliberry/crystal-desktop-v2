@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Hash, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import moment from "moment";
@@ -19,8 +19,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChannelBanner, ChatBackground } from "@/components/chat-decoration";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
+import { ChevronLeftIcon, ChevronRightIcon } from "@animateicons/react/lucide";
 
 interface ChannelChatViewProps {
   channelId: Id<"channels">;
@@ -36,7 +38,9 @@ export function ChannelChatView({
   topic,
 }: ChannelChatViewProps) {
   const [showMembers, setShowMembers] = useState(true);
-  const markRead = useMutation(api.channels.markRead);
+  // Durable + coalescing: the read marker queues in the outbox so it still
+  // lands after an offline read (see src/lib/outbox.ts).
+  const markRead = useOutboxMutation("markRead", "channel");
   const unread = useQuery(api.channels.unreadInfo, { channelId });
   const focused = useWindowFocus();
   const [atBottom, setAtBottom] = useState(true);
@@ -119,9 +123,9 @@ export function ChannelChatView({
                   onClick={() => setShowMembers((v) => !v)}
                 >
                   {showMembers ? (
-                    <PanelRightClose className="size-4" />
+                    <ChevronRightIcon duration={0.8} className="size-4" />
                   ) : (
-                    <PanelRightOpen className="size-4" />
+                    <ChevronLeftIcon duration={0.8} className="size-4" />
                   )}
                 </Button>
               </TooltipTrigger>

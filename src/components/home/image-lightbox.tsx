@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { downloadFile } from "@/lib/download";
+import { useCachedAttachmentSrc } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
 
 /**
@@ -60,6 +61,9 @@ export function ImageLightbox({
 }) {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Cached bytes when we have them — the lightbox is opened from a thumbnail
+  // that already warmed the same url (see src/lib/image-cache.ts).
+  const cachedSrc = useCachedAttachmentSrc(url);
   /** The image's true pixel size — known only once it has loaded. */
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
   const [scale, setScale] = useState(DEFAULT_SCALE);
@@ -197,7 +201,7 @@ export function ImageLightbox({
           <div className="flex min-h-full w-max min-w-full items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={url}
+              src={cachedSrc ?? url}
               alt={fileName}
               draggable={false}
               onClick={(e) => e.stopPropagation()}

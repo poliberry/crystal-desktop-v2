@@ -1,5 +1,6 @@
 "use client";
 
+import { useCachedImageSrc } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
 
 /**
@@ -38,6 +39,14 @@ export function Nameplate({
    * row and masks it towards the text, but the boxes differ. */
   className?: string;
 }) {
+  const isVideo = isVideoNameplate(url);
+  // Images only — a nameplate video is tens of times the size of one of these
+  // pictures, and it's already a `<video src>` streaming from the network
+  // rather than a single fetch to hold as a blob. Called unconditionally
+  // (hooks are), with `undefined` for a video or when there's nothing to
+  // show, which the hook is happy to do nothing with.
+  const cachedUrl = useCachedImageSrc(url && !isVideo ? url : undefined);
+
   if (!url) return null;
 
   const shared = cn(
@@ -45,7 +54,7 @@ export function Nameplate({
     className,
   );
 
-  if (isVideoNameplate(url)) {
+  if (isVideo) {
     return (
       <video
         src={url}
@@ -63,5 +72,5 @@ export function Nameplate({
   }
 
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt="" aria-hidden draggable={false} className={shared} />;
+  return <img src={cachedUrl ?? url} alt="" aria-hidden draggable={false} className={shared} />;
 }

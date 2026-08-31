@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { Hash, Home, Pin, PinOff, X } from "lucide-react";
+import { Hash, Pin, PinOff, X } from "lucide-react";
+import { LogoMark } from "@/components/logo-mark";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -24,7 +25,7 @@ function DmTabLabel({ conversationId }: { conversationId: Id<"conversations"> })
       {isGroup ? (
         <GroupAvatar size="sm" imageUrl={conversation.imageUrl} members={conversation.members} />
       ) : (
-        <Avatar size="sm" className="size-4 rounded-md">
+        <Avatar size="sm" className="size-3 rounded-md">
           <AvatarImage src={conversation.members[0]?.imageUrl} alt={title} className="rounded-md" />
           <AvatarFallback className="text-[8px]">{title.slice(0, 2).toUpperCase()}</AvatarFallback>
         </Avatar>
@@ -66,7 +67,7 @@ function TabLabel({ tab }: { tab: Tab }) {
     case "home":
       return (
         <>
-          <Home className="size-3.5 shrink-0" />
+          <LogoMark className="size-3.5 shrink-0" />
           <span className="truncate">Home</span>
         </>
       );
@@ -93,7 +94,7 @@ function TabButton({ tab }: { tab: Tab }) {
       <button
         type="button"
         onClick={() => activateTab(tab.id)}
-        className="flex min-w-0 flex-1 items-center gap-1.5"
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2"
       >
         <TabLabel tab={tab} />
       </button>
@@ -133,7 +134,7 @@ export function TabBar() {
   return (
     <div
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+      className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto"
     >
       {tabs.map((tab) => (
         <TabButton key={tab.id} tab={tab} />

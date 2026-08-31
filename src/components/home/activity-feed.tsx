@@ -23,6 +23,7 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import type { RichPresenceActivity } from "@/types/desktop-api";
+import { ActivityIcon, BellMinusIcon } from "@animateicons/react/lucide";
 
 /**
  * "Active now": the calls you could walk into and what your friends are up to.
@@ -53,10 +54,11 @@ export function ActivityFeed() {
 
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-l p-4 lg:flex">
-      <h2 className="mb-3 text-sm font-semibold">Active now</h2>
+      <h2 className="mb-3 text-sm font-semibold"><ActivityIcon duration={0.8} size={14} /> Activity</h2>
 
       {empty ? (
-        <div className="rounded-lg bg-accent/30 p-4">
+        <div className="rounded-lg text-center bg-accent/30 p-4">
+          <BellMinusIcon duration={0.8} />
           <p className="text-sm font-medium">It&apos;s quiet for now</p>
           <p className="mt-1 text-xs text-muted-foreground">
             When your friends start a call or fire up a game, it&apos;ll show up here.

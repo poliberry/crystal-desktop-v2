@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { UserPlus } from "lucide-react";
+import { UserPlusIcon } from "@animateicons/react/lucide";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -58,8 +58,8 @@ export function AddFriendDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button size="sm" className="gap-1.5">
-          <UserPlus className="size-4" />
+        <Button size="icon" variant="ghost" className="gap-1.5 -mt-1">
+          <UserPlusIcon duration={0.8} className="size-4" />
         </Button>
       </DialogTrigger>
       <DialogContent>

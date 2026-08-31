@@ -85,6 +85,33 @@ export function activitySummary(activity: RichPresenceActivity | null | undefine
   return `${ACTIVITY_VERB[activity.type]} ${activity.name}`;
 }
 
+/** What joins the two halves of a headline. A middle dot rather than a comma
+ * or a dash: they are two separate facts about someone, not a list and not a
+ * clause. */
+const HEADLINE_SEPARATOR = " • ";
+
+/**
+ * The one line under somebody's name — what they're doing, and what they say.
+ *
+ * Both, when there are both. These were exclusive everywhere: a custom status
+ * hid the game, or the game hid the status, depending on which list you were
+ * looking at. They answer different questions — one is detected, one is
+ * written — and a line with room for both should carry both.
+ *
+ * The activity leads because it is the live half; a custom status can be weeks
+ * old. Only the top one, since the rest is a list and this is a line — the
+ * profile card is where a second activity gets a card of its own.
+ */
+export function presenceHeadline(
+  customStatus: string | null | undefined,
+  activity: RichPresenceActivity | null | undefined,
+): string | null {
+  const parts = [activitySummary(activity), customStatus?.trim() || null].filter(
+    (part): part is string => !!part,
+  );
+  return parts.length > 0 ? parts.join(HEADLINE_SEPARATOR) : null;
+}
+
 function Artwork({ activity, size }: { activity: RichPresenceActivity; size: "sm" | "lg" }) {
   const [failed, setFailed] = useState(false);
 

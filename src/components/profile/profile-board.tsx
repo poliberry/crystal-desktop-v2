@@ -5,6 +5,7 @@ import { ExternalLink, LayoutGrid } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { useCachedImageSrc } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
 
 /**
@@ -35,13 +36,16 @@ function WidgetField({
 }: {
   field: BoardWidget["fields"][number];
 }) {
+  const cachedFieldImage = useCachedImageSrc(
+    field.kind === "image" ? field.value : undefined,
+  );
   if (field.kind === "image") {
     return (
       <div className="min-w-0">
         <div className="overflow-hidden rounded-md border border-border/40 bg-background/40">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={field.value}
+            src={cachedFieldImage ?? field.value}
             alt={field.label}
             className="h-20 w-full object-cover"
             loading="lazy"
@@ -80,6 +84,7 @@ export function ProfileWidgetCard({
   inert?: boolean;
 }) {
   const accent = widget.accent;
+  const cachedCover = useCachedImageSrc(widget.imageUrl);
 
   return (
     <div
@@ -97,7 +102,7 @@ export function ProfileWidgetCard({
         <div data-slot="profile-widget-image" className="relative h-24 w-full overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={widget.imageUrl}
+            src={cachedCover ?? widget.imageUrl}
             alt=""
             className="h-full w-full object-cover"
             loading="lazy"

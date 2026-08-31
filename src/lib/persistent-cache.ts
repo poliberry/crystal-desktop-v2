@@ -1,7 +1,9 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+
 /**
- * A small stale-while-revalidate cache on top of `localStorage`.
+ * A small stale-while-revalidate cache on top of IndexedDB.
  *
  * The in-memory caches elsewhere in the app (see src/lib/message-cache.ts)
  * make *switching* between views instant, but they die with the window. A
@@ -12,6 +14,27 @@
  * Everything written here is a copy of server state that the live Convex
  * subscription is already on its way to replace, so entries are only ever a
  * first paint — never the source of truth, and never written back anywhere.
+ *
+ * ## Why there's a memo map in front of an IndexedDB that already has one
+ *
+ * Every read here happens synchronously, during render — that's the whole
+ * point, a value has to be there on the very first paint. IndexedDB has no
+ * synchronous read, in any browser, ever; even a request that resolves
+ * "immediately" still does it on a later microtask. So `readCache` only ever
+ * looks at `memo`, a plain object kept in sync with IndexedDB by hand:
+ * `writeCache` updates it before it fires off the (unawaited) write to
+ * IndexedDB, and `hydrateNamespace` fills it from IndexedDB once, right after
+ * a cold start, before anything has had a chance to write to it directly.
+ *
+ * That leaves exactly one gap: the render that happens *before* hydration has
+ * finished. Nothing blocks for it — gating the whole app behind an IndexedDB
+ * read would trade a fast, harmless cache miss for a slower, riskier one, and
+ * the sign-in screen doesn't need this cache to be there to render. Instead
+ * `useCacheHydration` below hands out a tick that changes the moment
+ * hydration lands, so the two hooks built on this (`useCachedQuery`,
+ * `useCachedFirstPage`) re-render once with real data a few milliseconds
+ * later — still far ahead of the websocket handshake this cache exists to
+ * get in front of.
  */
 
 /**
@@ -39,10 +62,11 @@ export function setCacheNamespace(userId: string | null | undefined): void {
   if (next === namespace) return;
   namespace = next;
   memo.clear();
+  notify();
+  void hydrateNamespace(next);
 }
 
-/** Reads hit this before `localStorage`; a JSON parse per render is the one
- * cost this layer could plausibly add, and it's easy not to pay. */
+/** Every read goes through this — see the module doc for why. */
 const memo = new Map<string, Entry<unknown>>();
 
 function storageKey(key: string): string {
@@ -51,70 +75,192 @@ function storageKey(key: string): string {
 
 export function readCache<T>(key: string): T | undefined {
   const cached = memo.get(key);
-  if (cached) {
-    return Date.now() - cached.at > CACHE_TTL_MS ? undefined : (cached.data as T);
-  }
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.localStorage.getItem(storageKey(key));
-    if (!raw) return undefined;
-    const entry = JSON.parse(raw) as Entry<T>;
-    if (typeof entry?.at !== "number") return undefined;
-    if (Date.now() - entry.at > CACHE_TTL_MS) {
-      window.localStorage.removeItem(storageKey(key));
-      return undefined;
-    }
-    memo.set(key, entry);
-    return entry.data;
-  } catch {
-    // Corrupt entry, quota error, or storage disabled. A cache miss is always
-    // a valid answer here — the live query is what actually feeds the UI.
+  if (!cached) return undefined;
+  if (Date.now() - cached.at > CACHE_TTL_MS) {
+    memo.delete(key);
     return undefined;
   }
+  return cached.data as T;
 }
 
 export function writeCache<T>(key: string, data: T): void {
   const entry: Entry<T> = { at: Date.now(), data };
   memo.set(key, entry);
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(storageKey(key), JSON.stringify(entry));
-  } catch {
-    // Almost always the quota. Drop everything expired and try once more;
-    // if it still doesn't fit, the in-memory copy above is enough for this
-    // session and the next start simply pays full price.
-    pruneExpired();
-    try {
-      window.localStorage.setItem(storageKey(key), JSON.stringify(entry));
-    } catch {
-      /* give up — nothing here is worth failing a render over */
+  notify();
+  void putEntry(storageKey(key), entry);
+}
+
+// --- IndexedDB -------------------------------------------------------------
+
+const DB_NAME = "crystal-cache";
+const DB_VERSION = 1;
+const STORE = "kv";
+
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+
+/** Opened once and reused — `indexedDB.open` is cheap to call again, but
+ * there's no reason to pay even that twice. Resolves to `null` rather than
+ * rejecting when IndexedDB is missing or blocked, since a cache miss is
+ * always a valid answer here and nothing downstream should have to catch. */
+function openDb(): Promise<IDBDatabase | null> {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve) => {
+    if (typeof indexedDB === "undefined") {
+      resolve(null);
+      return;
     }
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore(STORE);
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+      request.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return dbPromise;
+}
+
+async function putEntry(fullKey: string, entry: Entry<unknown>): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  try {
+    db.transaction(STORE, "readwrite").objectStore(STORE).put(entry, fullKey);
+  } catch {
+    // Quota, or the transaction outlived the database (e.g. a version change
+    // elsewhere). The in-memory copy already made it into `memo`; the next
+    // write gets another chance.
   }
+}
+
+async function deleteEntries(fullKeys: string[]): Promise<void> {
+  if (fullKeys.length === 0) return;
+  const db = await openDb();
+  if (!db) return;
+  try {
+    const store = db.transaction(STORE, "readwrite").objectStore(STORE);
+    for (const key of fullKeys) store.delete(key);
+  } catch {
+    /* next prune gets another chance */
+  }
+}
+
+/** Namespaces already loaded into `memo` this session — hydrating twice would
+ * just repeat the same cursor scan for no new data. */
+const hydrated = new Set<string>();
+
+/**
+ * Loads one account's worth of entries from IndexedDB into `memo`.
+ *
+ * Fired once per namespace, from `setCacheNamespace` — nothing awaits it,
+ * because nothing can: it runs alongside the very first render rather than
+ * before it. `useCacheHydration` is how the two hooks built on this cache
+ * find out when it lands.
+ */
+async function hydrateNamespace(ns: string): Promise<void> {
+  if (hydrated.has(ns)) return;
+  hydrated.add(ns);
+  const db = await openDb();
+  if (!db) return;
+
+  const prefix = `${PREFIX}${ns}.`;
+  const now = Date.now();
+  const doomed: string[] = [];
+
+  await new Promise<void>((resolve) => {
+    try {
+      const store = db.transaction(STORE, "readonly").objectStore(STORE);
+      const range = IDBKeyRange.bound(prefix, prefix + "￿", false, false);
+      const request = store.openCursor(range);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const entry = cursor.value as Entry<unknown>;
+        const fullKey = String(cursor.key);
+        if (typeof entry?.at === "number" && now - entry.at <= CACHE_TTL_MS) {
+          // Only if this is still the active namespace and nothing has
+          // already written a fresher value for this key since hydration
+          // started — a live query effect racing ahead of us wins.
+          const bareKey = fullKey.slice(prefix.length);
+          if (ns === namespace && !memo.has(bareKey)) memo.set(bareKey, entry);
+        } else {
+          doomed.push(fullKey);
+        }
+        cursor.continue();
+      };
+      request.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+
+  if (doomed.length) void deleteEntries(doomed);
+  if (ns === namespace) notify();
 }
 
 /**
  * Drop every entry past its TTL, including other accounts' — expiry is the
  * only thing that bounds this cache's size, so it has to run over the whole
- * prefix rather than just the current namespace.
+ * store rather than just the current namespace.
  */
-export function pruneExpired(): void {
-  if (typeof window === "undefined") return;
-  try {
-    const now = Date.now();
-    const doomed: string[] = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const key = window.localStorage.key(i);
-      if (!key?.startsWith(PREFIX)) continue;
-      try {
-        const entry = JSON.parse(window.localStorage.getItem(key) ?? "") as Entry<unknown>;
-        if (typeof entry?.at !== "number" || now - entry.at > CACHE_TTL_MS) doomed.push(key);
-      } catch {
-        doomed.push(key);
-      }
+export async function pruneExpired(): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  const now = Date.now();
+  const doomed: string[] = [];
+  await new Promise<void>((resolve) => {
+    try {
+      const store = db.transaction(STORE, "readonly").objectStore(STORE);
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const entry = cursor.value as Entry<unknown>;
+        if (typeof entry?.at !== "number" || now - entry.at > CACHE_TTL_MS) {
+          doomed.push(String(cursor.key));
+        }
+        cursor.continue();
+      };
+      request.onerror = () => resolve();
+    } catch {
+      resolve();
     }
-    for (const key of doomed) window.localStorage.removeItem(key);
-    memo.clear();
-  } catch {
-    /* storage unavailable */
-  }
+  });
+  await deleteEntries(doomed);
+}
+
+// --- Hydration notifications ------------------------------------------------
+
+type Listener = () => void;
+const listeners = new Set<Listener>();
+let tick = 0;
+
+function notify(): void {
+  tick++;
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/**
+ * A value that changes exactly when this cache has something new to offer —
+ * a namespace finishing hydration, or a fresh write. Subscribing to it is how
+ * `useCachedQuery` and `useCachedFirstPage` re-render the instant IndexedDB
+ * catches up, without either of them polling or this module reaching into
+ * React itself to force one.
+ */
+export function useCacheHydration(): number {
+  return useSyncExternalStore(subscribe, () => tick, () => tick);
 }

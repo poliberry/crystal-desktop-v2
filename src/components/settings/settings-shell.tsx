@@ -19,6 +19,7 @@ import { useOpenCustomCss } from "@/components/settings/custom-css-dialog";
 import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
 
 import { PresenceBadge } from "@/components/presence-dot";
+import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AboutTab } from "@/components/settings/tabs/about-tab";
@@ -137,7 +138,7 @@ function SettingsSection({
     // Radix's viewport is `height: 100%` of this root, and if this root's own
     // height resolves to `auto` the viewport grows with the content instead
     // of scrolling it, and `main`'s `overflow-hidden` quietly clips the rest.
-    <ScrollArea key={section} className="min-h-0 max-h-[67dvh] flex-1 p-4">
+    <ScrollArea key={section} className="min-h-0 lg:max-h-[67dvh] md:max-h-[86dvh] flex-1 p-4">
       {children}
     </ScrollArea>
   );
@@ -161,25 +162,12 @@ export function SettingsShell({
   // now, so opening Settings can't land on it.
   const [section, setSection] = useState("account");
 
-  const subtitle = me?.customStatus
-    ? `${me?.customStatus}`
-    : STATUS_LABEL[status];
+  // Both halves on one line, as everywhere else — see `presenceHeadline`.
+  const subtitle =
+    presenceHeadline(me?.customStatus, topActivity(activities)) ?? STATUS_LABEL[status];
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <div
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-        className="flex h-9 absolute top-0 left-0 z-[99] w-full shrink-0 items-center justify-between pl-4"
-      >
-        <span className="text-xs font-medium text-muted-foreground">
-          Settings
-        </span>
-      </div>
-      {/* `min-h-0 h-full` overrides the provider's own `min-h-svh`. That
-          default is right for a sidebar filling a page and wrong for one
-          inside a dialog: it forces this subtree to be at least a viewport
-          tall, so in a dialog capped at 90vh the last card sat below the
-          bottom edge with nothing left to scroll. */}
       <SidebarProvider className="h-full min-h-0">
         <Sidebar>
           <SidebarHeader className="pt-9">
@@ -203,7 +191,11 @@ export function SettingsShell({
                           <AvatarFallback>
                             {me?.name.slice(0, 2).toUpperCase()}
                           </AvatarFallback>
-                          <PresenceBadge status={status} activities={activities} />
+                          <PresenceBadge
+                            status={status}
+                            activities={activities}
+                            accent={me?.borderGradientStart}
+                          />
                         </Avatar>
 
                         <button

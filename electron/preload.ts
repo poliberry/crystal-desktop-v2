@@ -91,6 +91,12 @@ const api = {
       return () => ipcRenderer.removeListener("notifications:navigate", handler);
     },
   },
+  badge: {
+    /** `overlayDataUrl` is a PNG the renderer drew — see use-app-badge.ts.
+     * Only Windows uses it; the other platforms draw their own from `count`. */
+    set: (count: number, overlayDataUrl: string | null) =>
+      ipcRenderer.invoke("badge:set", count, overlayDataUrl),
+  },
   auth: {
     onCallback: (cb: (url: string) => void) => {
       const handler = (_e: IpcRendererEvent, url: string) => cb(url);
@@ -126,6 +132,10 @@ const api = {
       ipcRenderer.on("pip:size", handler);
       return () => ipcRenderer.removeListener("pip:size", handler);
     },
+  },
+  editor: {
+    open: (options: { kind: "frame" | "decoration"; scopeId?: string; scopeName?: string }) =>
+      ipcRenderer.invoke("editor:open", options),
   },
 };
 

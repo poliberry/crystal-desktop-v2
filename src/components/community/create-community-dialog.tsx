@@ -61,7 +61,13 @@ export function CreateCommunityDialog({ onCreated, open: controlledOpen, onOpenC
           <Tooltip>
             <TooltipTrigger asChild>
               <DialogTrigger asChild>
-                <Button variant="secondary" size="icon" className="size-12 rounded-none">
+                {/* Squares off and softens like every other tile in the rail
+                    — see `RailButton`. */}
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="size-12 rounded-none transition-[border-radius] ease-in-out hover:rounded-2xl"
+                >
                   <Plus />
                 </Button>
               </DialogTrigger>

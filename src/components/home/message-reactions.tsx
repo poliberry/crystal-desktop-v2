@@ -1,5 +1,6 @@
 "use client";
 
+import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import { parseCustomEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
@@ -17,10 +18,9 @@ function ReactionEmoji({ emoji }: { emoji: string }) {
   const serverEmoji = byId.get(custom.id);
   if (serverEmoji) {
     return (
-      <img
+      <CustomEmojiImage
         src={serverEmoji.imageUrl}
-        alt={`:${serverEmoji.name}:`}
-        title={`:${serverEmoji.name}:`}
+        name={serverEmoji.name}
         className="size-4 object-contain"
       />
     );
@@ -35,7 +35,9 @@ export function MessageReactions({
   onToggle,
 }: {
   reactions: Reaction[];
-  onToggle: (emoji: string) => void;
+  /** `desired` is the end state this click is asking for — computed here from
+   * `reactedByMe` so a retried reaction converges instead of double-toggling. */
+  onToggle: (emoji: string, desired: "add" | "remove") => void;
 }) {
   if (reactions.length === 0) return null;
   return (
@@ -44,7 +46,7 @@ export function MessageReactions({
         <button
           key={r.emoji}
           type="button"
-          onClick={() => onToggle(r.emoji)}
+          onClick={() => onToggle(r.emoji, r.reactedByMe ? "remove" : "add")}
           className={cn(
             "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs hover:border-foreground/40",
             r.reactedByMe && "border-primary bg-primary/10"

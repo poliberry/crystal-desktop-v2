@@ -4,14 +4,15 @@ import { useLoopedPlayback } from "@/hooks/use-looped-playback";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import { useEffect, useRef, useState } from "react";
 
+import { LayerContent } from "@/components/profile/layer-content";
 import {
-  DEFAULT_VARIANT,
-  layerObjectFit,
   layerStyle,
   resolveLayer,
-  variantForHeight,
+  variantFor,
+  type CardSizeClass,
   type CosmeticLayer as Layer,
 } from "@/lib/cosmetic-layers";
+import { useCachedImageSrc } from "@/lib/image-cache";
 import {
   DEFAULT_FRAME_LAYOUT,
   type ProfileFrameLayout,
@@ -47,15 +48,32 @@ function CosmeticLayer({
   style?: React.CSSProperties;
 }) {
   const poster = useStaticFrame(src, !animate);
+  // The legacy single-image frame (a list of layers goes through
+  // LayerContent instead) — see src/lib/image-cache.ts.
+  const cachedSrc = useCachedImageSrc(src);
   return (
     <img
-      src={poster ?? src}
+      src={poster ?? cachedSrc ?? src}
       alt=""
       aria-hidden
       draggable={false}
       className={cn("pointer-events-none absolute select-none", className)}
       style={style}
     />
+  );
+}
+
+/** One placed layer of a frame — a picture, a shape or a line of text. The
+ * box comes from `layerStyle`; what goes in it is `LayerContent`, which the
+ * canvas editor draws with too, so what you arrange is what everyone sees. */
+function PlacedLayer({ layer, animate }: { layer: Layer; animate: boolean }) {
+  return (
+    <div
+      className="pointer-events-none absolute select-none"
+      style={layerStyle(layer)}
+    >
+      <LayerContent layer={layer} frozen={!animate} />
+    </div>
   );
 }
 
@@ -113,13 +131,20 @@ export function ProfileEffectLayer({
  */
 export function ProfileFrameLayers({
   layers,
+  sizeClass,
   animate = true,
 }: {
   layers: Layer[];
+  /** Which width the card is drawn at here — the popover/DM card is `compact`,
+   * the full profile page is `expanded`. A layer may be placed differently for
+   * each, so the renderer has to be told which one it is rather than guess it
+   * from a height ratio (a tall compact card and a short expanded one land on
+   * the same ratio). */
+  sizeClass: CardSizeClass;
   animate?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [variant, setVariant] = useState(DEFAULT_VARIANT);
+  const [variant, setVariant] = useState(() => variantFor(sizeClass, 0));
 
   /**
    * Which shape of card this is, measured rather than declared.
@@ -140,13 +165,13 @@ export function ProfileFrameLayers({
     if (!node) return;
     const measure = () => {
       const { width, height } = node.getBoundingClientRect();
-      if (width > 0) setVariant(variantForHeight((height / width) * 100));
+      if (width > 0) setVariant(variantFor(sizeClass, (height / width) * 100));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [sizeClass]);
 
   if (layers.length === 0) return null;
   return (
@@ -156,18 +181,9 @@ export function ProfileFrameLayers({
       data-slot="profile-frame"
       className="pointer-events-none absolute inset-0 z-30 [container-type:size]"
     >
-      {layers.map((layer) => {
-        const placed = resolveLayer(layer, variant);
-        return (
-          <CosmeticLayer
-            key={layer.id}
-            src={placed.url}
-            animate={animate}
-            className="max-w-none"
-            style={{ ...layerStyle(placed), objectFit: layerObjectFit(placed) }}
-          />
-        );
-      })}
+      {layers.map((layer) => (
+        <PlacedLayer key={layer.id} layer={resolveLayer(layer, variant)} animate={animate} />
+      ))}
     </div>
   );
 }

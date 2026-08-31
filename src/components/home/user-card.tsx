@@ -10,7 +10,6 @@ import {
   MonitorCog,
   MonitorUp,
   Phone,
-  Radio,
   ScreenShareOff,
   Settings,
   Video,
@@ -22,10 +21,12 @@ import { AudioDeviceMenuItems } from "@/components/audio-device-menu";
 import { Nameplate } from "@/components/profile/nameplate";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { useCall } from "@/components/call/call-provider";
+import { ConnectionDetails } from "@/components/call/connection-details";
 import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
 import { PresenceBadge } from "@/components/presence-dot";
+import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import {
   Avatar,
   AvatarDecoration,
@@ -60,6 +61,7 @@ import { MemberProfileCard } from "../community/member-profile-card";
 import { useEffect, useRef, useState } from "react";
 import { useUiPreferences } from "../ui-preferences-provider";
 import { cn } from "@/lib/utils";
+import { MicIcon, MicOffIcon, HeadphonesIcon, HeadphoneOffIcon, SettingsIcon, ChevronUpIcon } from "@animateicons/react/lucide";
 
 export let USER_CARD_HEIGHT: number = 0;
 
@@ -100,11 +102,13 @@ export function UserCard() {
       ? undefined
       : me.customStatus;
 
-  const subtitle = customStatus
-    ? `${customStatus}`
-    : activeCall
-      ? "In voice"
-      : STATUS_LABEL[status];
+  // What you are doing and what you say you are doing, on one line — the same
+  // rule every other list follows now. A call outranks the plain status label
+  // but not either of those: "In voice" is something the panel below already
+  // says in more detail.
+  const subtitle =
+    presenceHeadline(customStatus, topActivity(activities)) ??
+    (activeCall ? "In voice" : STATUS_LABEL[status]);
 
   // The card floats over the left column, so its width has to match what's
   // actually there: the rail plus the sidebar, or — with the communities
@@ -141,9 +145,9 @@ export function UserCard() {
               onClick={toggleMuted}
             >
               {muted ? (
-                <MicOff className="size-4" />
+                <MicOffIcon duration={0.8} className="size-4" />
               ) : (
-                <Mic className="size-4" />
+                <MicIcon duration={0.8} className="size-4" />
               )}
             </Button>
           </TooltipTrigger>
@@ -168,9 +172,9 @@ export function UserCard() {
               onClick={toggleDeafened}
             >
               {deafened ? (
-                <HeadphoneOff className="size-4" />
+                <HeadphoneOffIcon duration={0.8} className="size-4" />
               ) : (
-                <Headphones className="size-4" />
+                <HeadphonesIcon duration={0.8} className="size-4" />
               )}
             </Button>
           </TooltipTrigger>
@@ -180,38 +184,28 @@ export function UserCard() {
         </Tooltip>
 
         <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0 hover:bg-black/10"
-                >
-                  <ChevronUp className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="top">Audio devices</TooltipContent>
-          </Tooltip>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 hover:bg-black/10"
+            >
+              <ChevronUpIcon duration={0.8} className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="end" className="w-64">
             <AudioDeviceMenuItems />
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0 hover:bg-black/10"
-              onClick={openSettings}
-            >
-              <Settings className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">Settings</TooltipContent>
-        </Tooltip>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 hover:bg-black/10"
+          onClick={openSettings}
+        >
+          <SettingsIcon duration={0.8} className="size-4" />
+        </Button>
       </div>
     </TooltipProvider>
   );
@@ -266,21 +260,15 @@ export function UserCard() {
           className={`border-t border-l border-r border-border/50 bg-card p-2 shadow-sm`}
         >
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={expand}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
-            >
-              <Radio className="size-4 shrink-0 text-emerald-500" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-emerald-500">
-                  Voice Connected
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {title}
-                </p>
-              </div>
-            </button>
+            {/* The status line and the icon beside it are one component now:
+                both say how the call is going, and they were saying it in a
+                colour that never changed. */}
+            <ConnectionDetails
+              room={controller.room}
+              active={!!activeCall}
+              title={title}
+              onExpand={expand}
+            />
 
             <TooltipProvider>
               <Tooltip>
@@ -407,8 +395,8 @@ export function UserCard() {
                   <PresenceBadge
                     status={status}
                     activities={activities}
+                    accent={me.borderGradientStart}
                     isBirthday={isBirthday}
-                    decorated={!!decoration}
                   />
                 </Avatar>
               </PopoverTrigger>
@@ -459,7 +447,6 @@ export function UserCard() {
                   <div className="relative h-4 overflow-hidden">
                     <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
                       <span className="truncate">
-                        {activities.length > 0 ? " • " : ""}
                         {subtitle}
                       </span>
                     </p>

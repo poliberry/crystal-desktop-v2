@@ -125,10 +125,58 @@ const cosmeticLayerValidator = v.object({
    * band itself should stay where it was put.
    */
   stretchDirection: v.optional(v.union(v.literal("down"), v.literal("up"))),
+  /**
+   * A stretch pinned at *both* ends. When both are set the layer runs between
+   * `stretchTop` and `stretchBottom` and grows to keep both as the card's
+   * height changes — which is what a full-card border needs on a card whose
+   * drawn height isn't its content's (the full profile page).
+   *
+   * Each end is a point on the card: `anchor` `"top"`/`"bottom"` measures `y`
+   * from that edge in percent of card width (negative reaches past it),
+   * `"locked"` makes `y` a percent of the card's height. Takes precedence over
+   * `stretchDirection`; `anchor`/`y`/`height` stop placing the layer
+   * vertically while it's on.
+   */
+  stretchTop: v.optional(
+    v.object({
+      anchor: v.union(v.literal("top"), v.literal("bottom"), v.literal("locked")),
+      y: v.number(),
+    })
+  ),
+  stretchBottom: v.optional(
+    v.object({
+      anchor: v.union(v.literal("top"), v.literal("bottom"), v.literal("locked")),
+      y: v.number(),
+    })
+  ),
   /** Degrees clockwise. */
   rotation: v.optional(v.number()),
   /** 0–1. Absent is fully opaque. */
   opacity: v.optional(v.number()),
+  /**
+   * What this layer is made of. Absent is an image, which is what every layer
+   * was before there were three kinds — so nothing stored has to be migrated
+   * to keep meaning what it meant.
+   *
+   * The geometry above is shared by all three: a line of text and a rectangle
+   * are placed, sized, turned and anchored exactly the way a picture is.
+   */
+  kind: v.optional(v.union(v.literal("image"), v.literal("text"), v.literal("shape"))),
+  /** Text layers. `fontSize` and `strokeWidth` are percentages of the target
+   * box's width, like every other measurement here. */
+  text: v.optional(v.string()),
+  fontSize: v.optional(v.number()),
+  fontWeight: v.optional(v.number()),
+  italic: v.optional(v.boolean()),
+  align: v.optional(v.union(v.literal("left"), v.literal("center"), v.literal("right"))),
+  /** The text's colour, or the shape's fill. */
+  color: v.optional(v.string()),
+  /** Shape layers. `radius` is a rectangle's corner, in percent of width. */
+  shape: v.optional(v.union(v.literal("rect"), v.literal("ellipse"))),
+  radius: v.optional(v.number()),
+  /** An outline: around the shape, or around the letters. */
+  strokeColor: v.optional(v.string()),
+  strokeWidth: v.optional(v.number()),
   /**
    * Placement for one shape of card, overriding the numbers above.
    *
@@ -542,6 +590,14 @@ export default defineSchema({
     userId: v.id("users"),
     joinedAt: v.number(),
     lastReadAt: v.number(),
+    /** Kept at the top of this member's DM list, above the by-recency rest.
+     * Per-member — pinning a DM is one person's arrangement of their own list. */
+    pinnedAt: v.optional(v.number()),
+    /** This member closed the DM: it drops out of their list until something
+     * new is said in it (a message after `closedAt`) or they open it again.
+     * The conversation and its history are untouched — this is "hide from my
+     * list", not "delete". */
+    closedAt: v.optional(v.number()),
   })
     .index("by_conversation", ["conversationId"])
     .index("by_user", ["userId"])
@@ -558,8 +614,15 @@ export default defineSchema({
      * both people need to see the cakes fall and both are already subscribed
      * to this conversation — the message arriving *is* the signal. */
     birthdayWish: v.optional(v.boolean()),
+    /** Client-minted idempotency key for the durable send outbox (see
+     * src/lib/outbox.ts). A queued send that gets retried after its ack was
+     * lost carries the same `clientId`, so `send` can hand back the row it
+     * already inserted instead of a duplicate. Also what the optimistic
+     * overlay matches a pending send against once the real row lands. */
+    clientId: v.optional(v.string()),
   })
     .index("by_conversation", ["conversationId"])
+    .index("by_client_id", ["clientId"])
     // Scoped search — see convex/search.ts. The filter field is what lets a
     // search mean "in this conversation" without scanning every message.
     .searchIndex("search_text", {
@@ -805,8 +868,12 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
+    /** Idempotency key for the durable send outbox — see the twin field on
+     * `messages` above and src/lib/outbox.ts. */
+    clientId: v.optional(v.string()),
   })
     .index("by_channel", ["channelId"])
+    .index("by_client_id", ["clientId"])
     // Scoped search — see convex/search.ts. Filtered by channel rather than
     // community because these rows carry no community id; a server-wide search
     // fans out over the channels the caller can see instead, which needs no

@@ -9,6 +9,7 @@ import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { CachedBackground } from "@/components/cached-background";
 import { ServerOverviewEditor } from "@/components/community/server-overview-editor";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -182,10 +183,10 @@ function BannerCard({
     >
       {widget.imageUrl && (
         <>
-          <div
+          <CachedBackground
+            url={widget.imageUrl}
             aria-hidden
             className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${widget.imageUrl})` }}
           />
           <div
             aria-hidden
@@ -238,10 +239,10 @@ export function ServerOverview({
       {/* The server's own banner behind the page, if it has one — the overview
           is the closest thing a server has to a cover. */}
       {community?.bannerUrl && (
-        <div
+        <CachedBackground
+          url={community.bannerUrl}
           aria-hidden
           className="pointer-events-none absolute inset-0 -z-10 bg-cover bg-center opacity-15 blur-2xl"
-          style={{ backgroundImage: `url(${community.bannerUrl})` }}
         />
       )}
 

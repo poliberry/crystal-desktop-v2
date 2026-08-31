@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Compass, Home, Volume2 } from "lucide-react";
+import { Compass, Volume2 } from "lucide-react";
+import { LogoMark } from "@/components/logo-mark";
 import { Fragment, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -46,6 +47,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCachedQuery } from "@/hooks/use-cached-query";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { parseInviteCode } from "@/lib/invites";
 import { cn } from "@/lib/utils";
 import { useNavigation } from "@/components/home/navigation-context";
@@ -60,6 +62,16 @@ function normalizeInviteInput(raw: string): string {
   return parseInviteCode(raw) ?? raw.trim();
 }
 
+/**
+ * A tile in the rail that isn't a community — Home, and anything else that
+ * ends up alongside it.
+ *
+ * Dressed exactly like a community tile, because it is one as far as the eye
+ * is concerned: the same square that softens into a squircle on hover and
+ * stays there while it is the thing you are looking at, and the same pill in
+ * the gutter saying so. Two tiles in one column behaving differently is read
+ * as one of them being broken.
+ */
 function RailButton({
   label,
   active,
@@ -75,14 +87,22 @@ function RailButton({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant={active ? "default" : "secondary"}
-            size="icon"
-            className="size-12 rounded-none"
-            onClick={onClick}
-          >
-            {children}
-          </Button>
+          {/* `group` is what the pill's hover step reads; `relative` is what
+              it positions against. */}
+          <div className="group relative">
+            <Button
+              variant={active ? "default" : "secondary"}
+              size="icon"
+              className={cn(
+                "size-12 rounded-none transition-[border-radius] ease-in-out hover:rounded-2xl",
+                active && "rounded-2xl",
+              )}
+              onClick={onClick}
+            >
+              {children}
+            </Button>
+            <SelectionPill className="-left-2" state={active ? "active" : "idle"} />
+          </div>
         </TooltipTrigger>
         <TooltipContent side="right">{label}</TooltipContent>
       </Tooltip>
@@ -163,11 +183,6 @@ function DiscoverDialog({
 
         <ScrollArea className="h-72">
           <div className="flex flex-col gap-1 pr-3">
-            {discoverable.length === 0 && (
-              <p className="px-2 py-8 text-center text-sm text-muted-foreground">
-                No new communities to join.
-              </p>
-            )}
             {discoverable.map((community) => (
               <div
                 key={community.id}
@@ -235,7 +250,8 @@ function badgeText(count: number): string {
 function UnreadDirectMessages() {
   const nav = useNavigation();
   const conversations = useCachedQuery(api.conversations.listMine, {}, "conversations.listMine") ?? [];
-  const markRead = useMutation(api.conversations.markRead);
+  // Durable + coalescing, like the chat views (see src/lib/outbox.ts).
+  const markRead = useOutboxMutation("markRead", "dm");
   const unread = conversations.filter((c) => c.unread);
 
   return (
@@ -570,15 +586,18 @@ export function CommunityRail({
 
   return (
     <div className={cn(
-      `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
-      activeCall && screenSharing ? `mb-52` : activeCall ? `mb-42` : `mb-18`
+      `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 backdrop-blur-xl py-3`,
+      activeCall && screenSharing ? `pb-54` : activeCall ? `pb-44` : `pb-20`
     )}>
       <RailButton
         label="Direct messages"
         active={!selectedCommunityId}
         onClick={onSelectHome}
       >
-        <Home />
+        {/* The app's own mark rather than a house: this tile is Crystal,
+            not a home page, and it is the one tile in the rail that isn't
+            somebody's picture. */}
+        <LogoMark className="size-6" />
       </RailButton>
 
       <Separator className="max-w-8 mx-2" />
@@ -610,7 +629,13 @@ export function CommunityRail({
       </ScrollArea>
 
       <div className="flex flex-col items-center gap-2 px-2">
-        <CreateCommunityDialog onCreated={onSelectCommunity} />
+        {/* Wrapped rather than given a prop: the pill needs a positioned,
+            hoverable box around the trigger, and that box is the dialog's
+            neighbour rather than its business. */}
+        <div className="group relative">
+          <CreateCommunityDialog onCreated={onSelectCommunity} />
+          <SelectionPill className="-left-2" state="idle" />
+        </div>
       </div>
     </div>
   );
