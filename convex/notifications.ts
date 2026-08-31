@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
   allowsChannelMessage,
   allowsDirectMessage,
@@ -11,6 +11,7 @@ import {
   loadNotificationPolicy,
   type NotificationPolicy,
 } from "./lib/notificationPolicy";
+import { renderMentionsAsText } from "./lib/mentions";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { markAllConversationsRead } from "./conversations";
@@ -40,7 +41,7 @@ function wants(
       // notifier instead (see `feed` below).
       return communityId
         ? allowsChannelMessage(policy, communityId, isMention)
-        : !policy.dnd;
+        : !policy.suppressedBy;
   }
 }
 
@@ -117,6 +118,30 @@ export async function notifyUsers(
   }
 }
 
+/** What a message carried, for a toast that has to say so in one line. */
+type AttachmentSummary = { fileName: string; count: number } | null;
+
+/**
+ * The files on one message, summarised.
+ *
+ * Both attachment tables have the same shape and the same index, so this takes
+ * the table name — the alternative is the same six lines twice, differing in a
+ * string.
+ */
+async function attachmentSummary(
+  ctx: QueryCtx,
+  table: "messageAttachments" | "channelMessageAttachments",
+  messageId: Id<"messages"> | Id<"channelMessages">
+): Promise<AttachmentSummary> {
+  const rows = await ctx.db
+    .query(table)
+    // The union of the two id types is what the shared signature costs; each
+    // table only ever sees its own.
+    .withIndex("by_message", (q) => q.eq("messageId", messageId as never))
+    .collect();
+  return rows[0] ? { fileName: rows[0].fileName, count: rows.length } : null;
+}
+
 /**
  * One query the Electron main process's background notifier (see
  * electron/backgroundNotifier.ts) subscribes to for everything it needs to
@@ -137,10 +162,11 @@ export const feed = query({
     if (!me) return { conversations: [], channels: [], friendRequests: [] };
 
     // Filtering here rather than in the Electron notifier keeps that process
-    // dumb, and means Do Not Disturb and the per-server settings hold for
-    // push and mobile too. DND empties the feed outright.
+    // dumb, and means the suppressing statuses and the per-server settings
+    // hold for push and mobile too. Do Not Disturb and Busy empty the feed
+    // outright.
     const policy = await loadNotificationPolicy(ctx, me._id);
-    if (policy.dnd) return { conversations: [], channels: [], friendRequests: [] };
+    if (policy.suppressedBy) return { conversations: [], channels: [], friendRequests: [] };
 
     const memberships = await ctx.db
       .query("conversationMembers")
@@ -169,7 +195,11 @@ export const feed = query({
             // For the desktop toast's icon — a notification is easier to
             // place at a glance from a face than from a name.
             authorImageUrl: author?.imageUrl,
-            text: lastMessage.text ?? "",
+            // Readable rather than stored: a toast has nowhere to draw a
+            // custom emoji, so `<:jeff:id>` becomes `:jeff:` — the same
+            // flattening every notification body gets.
+            text: await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+            attachment: await attachmentSummary(ctx, "messageAttachments", lastMessage._id),
             createdAt: lastMessage._creationTime,
           };
         })
@@ -191,6 +221,7 @@ export const feed = query({
       authorName: string;
       authorImageUrl?: string;
       text: string;
+      attachment: AttachmentSummary;
       createdAt: number;
     }[] = [];
 
@@ -228,7 +259,12 @@ export const feed = query({
           authorId: lastMessage.authorId,
           authorName: author?.name ?? "Someone",
           authorImageUrl: author?.imageUrl,
-          text: lastMessage.text ?? "",
+          text: await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+          attachment: await attachmentSummary(
+            ctx,
+            "channelMessageAttachments",
+            lastMessage._id
+          ),
           createdAt: lastMessage._creationTime,
         });
       }

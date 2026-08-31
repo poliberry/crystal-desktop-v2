@@ -95,6 +95,10 @@ export const list = query({
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
+          /** The idempotency key of the send that created this row, when it
+           * came through the outbox — how a client matches its own pending
+           * optimistic row to the real one (see src/lib/outbox-overlay.ts). */
+          clientId: message.clientId ?? null,
           /** Set when the message came from the "wish them a happy birthday"
            * prompt: the cakes fall for everyone in the conversation when one
            * of these arrives. */
@@ -139,10 +143,26 @@ export const send = mutation({
      * what makes cakes rain down other people's windows, so it can't be
      * something a client just asserts. */
     birthdayWish: v.optional(v.boolean()),
+    /** Idempotency key from the durable send outbox. A retry after a lost ack
+     * carries the same value; when a row with this `clientId` already exists we
+     * hand back its id rather than inserting a second copy. See
+     * src/lib/outbox.ts. */
+    clientId: v.optional(v.string()),
   },
-  handler: async (ctx, { conversationId, text, attachments, birthdayWish }) => {
+  handler: async (
+    ctx,
+    { conversationId, text, attachments, birthdayWish, clientId },
+  ) => {
     const me = await getCurrentUserOrThrow(ctx);
     const membership = await requireMembership(ctx, conversationId, me._id);
+
+    if (clientId) {
+      const existing = await ctx.db
+        .query("messages")
+        .withIndex("by_client_id", (q) => q.eq("clientId", clientId))
+        .unique();
+      if (existing) return existing._id;
+    }
 
     const trimmed = text?.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
@@ -180,6 +200,7 @@ export const send = mutation({
       authorId: me._id,
       text: trimmed || undefined,
       birthdayWish: isWish || undefined,
+      clientId: clientId || undefined,
     });
 
     for (const attachment of attachments ?? []) {
@@ -249,6 +270,9 @@ export const update = mutation({
 
     const trimmed = text.trim();
     if (!trimmed) throw new Error("Message can't be empty.");
+    // No-op when the text is already what we'd write — makes an outbox retry
+    // of the same edit converge instead of bumping `editedAt` again.
+    if (message.text === trimmed) return;
     await ctx.db.patch(messageId, { text: trimmed, editedAt: Date.now() });
   },
 });
@@ -279,8 +303,15 @@ export const remove = mutation({
 });
 
 export const toggleReaction = mutation({
-  args: { messageId: v.id("messages"), emoji: v.string() },
-  handler: async (ctx, { messageId, emoji }) => {
+  args: {
+    messageId: v.id("messages"),
+    emoji: v.string(),
+    /** When set, converge to this end state rather than flipping — so an
+     * outbox retry of "add 👍" can't land as a double-toggle. Absent keeps the
+     * old flip behaviour for any caller that hasn't been migrated. */
+    desired: v.optional(v.union(v.literal("add"), v.literal("remove"))),
+  },
+  handler: async (ctx, { messageId, emoji, desired }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
@@ -292,9 +323,10 @@ export const toggleReaction = mutation({
         q.eq("messageId", messageId).eq("userId", me._id).eq("emoji", emoji),
       )
       .unique();
-    if (existing) {
+    const shouldExist = desired ? desired === "add" : !existing;
+    if (existing && !shouldExist) {
       await ctx.db.delete(existing._id);
-    } else {
+    } else if (!existing && shouldExist) {
       await ctx.db.insert("messageReactions", {
         messageId,
         userId: me._id,

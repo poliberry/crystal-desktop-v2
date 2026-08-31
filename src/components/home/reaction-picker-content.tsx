@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
+import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
@@ -175,8 +176,7 @@ export function ReactionPickerContent({
       onClick={() => onSelect(`:${emoji.name}:`, emoji)}
       onPreview={() => setPreview({ shortcode: `:${emoji.name}:`, imageUrl: emoji.imageUrl })}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={emoji.imageUrl} alt={emoji.name} className="size-6 object-contain" />
+      <CustomEmojiImage src={emoji.imageUrl} name={emoji.name} className="size-6 object-contain" />
     </EmojiButton>
   );
 
@@ -294,8 +294,11 @@ export function ReactionPickerContent({
           {preview ? (
             <>
               {preview.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={preview.imageUrl} alt="" className="size-5 shrink-0 object-contain" />
+                <CustomEmojiImage
+                  src={preview.imageUrl}
+                  name={preview.shortcode.replace(/:/g, "")}
+                  className="size-5 shrink-0 object-contain"
+                />
               ) : (
                 <span className="shrink-0 text-lg leading-none">{preview.emoji}</span>
               )}

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-import { readCache, writeCache } from "@/lib/persistent-cache";
+import { readCache, useCacheHydration, writeCache } from "@/lib/persistent-cache";
 
 /**
  * Last known first page of messages, per channel and conversation.
@@ -77,6 +77,9 @@ export function useCachedFirstPage<T>(
   results: readonly T[],
   loading: boolean
 ): readonly T[] {
+  // Re-renders this once IndexedDB hydration lands — see persistent-cache.ts.
+  useCacheHydration();
+
   useEffect(() => {
     if (!loading) rememberFirstPage(key, results);
   }, [key, loading, results]);

@@ -4,7 +4,7 @@ import { useQuery } from "convex/react";
 import type { FunctionReference } from "convex/server";
 import { useEffect } from "react";
 
-import { readCache, writeCache } from "@/lib/persistent-cache";
+import { readCache, useCacheHydration, writeCache } from "@/lib/persistent-cache";
 
 /**
  * `useQuery`, but the last known answer stands in until the live one arrives.
@@ -27,6 +27,10 @@ export function useCachedQuery<Query extends FunctionReference<"query">>(
   cacheKey: string | null
 ): Query["_returnType"] | undefined {
   const live = useQuery(query, args);
+  // Re-renders this the moment IndexedDB hydration lands, which is the only
+  // thing that can change what `readCache` below returns without `live`
+  // having changed too — see the module doc in persistent-cache.ts.
+  useCacheHydration();
 
   useEffect(() => {
     if (cacheKey && live !== undefined) writeCache(cacheKey, live);

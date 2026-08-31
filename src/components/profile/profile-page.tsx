@@ -17,6 +17,7 @@ import {
   MemberProfileCard,
   type MemberProfileMember,
 } from "@/components/community/member-profile-card";
+import { CachedBackground } from "@/components/cached-background";
 import { ProfileBoard } from "@/components/profile/profile-board";
 import {
   ProfileCssLayer,
@@ -161,18 +162,21 @@ function ProfilePageBody({
     <div
       data-slot="profile-page"
       {...profileCssAttributes(profileCss, member.userId)}
-      className="fixed inset-0 z-50 flex flex-col bg-background mt-9"
+      className="fixed inset-0 z-50 flex flex-col mt-10"
+      style={{
+        background: member.borderGradientStart ? `linear-gradient(to bottom, rgba(0,0,0,0.6), rgba(0,0,0,0.6)), linear-gradient(to bottom, ${member.borderGradientStart}, ${member.borderGradientEnd})` : `var(--background)`
+      }}
     >
       <ProfileCssLayer css={profileCss} scopeId={member.userId} />
       {/* The banner bleeds a tint across the whole page, as it did across the
           dialog — at this size it's what stops a wide layout reading as an
           empty grey sheet. */}
       {member.bannerUrl && (
-        <div
+        <CachedBackground
+          url={member.bannerUrl}
           aria-hidden
           data-slot="profile-page-backdrop"
-          className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-20 blur-3xl"
-          style={{ backgroundImage: `url(${member.bannerUrl})` }}
+          className="fade-mask-b pointer-events-none absolute inset-0 bg-cover bg-center h-[40%] opacity-20"
         />
       )}
 
@@ -200,13 +204,12 @@ function ProfilePageBody({
 
       <div
         data-slot="profile-page-body"
-        className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[380px_1fr]"
+        className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[450px_1fr]"
       >
-        <div data-slot="profile-page-card-column" className="min-h-0">
-          <ScrollArea className="h-full">
+        <div data-slot="profile-page-card-column" className="h-full justify-end">
             {/* The card reserves its own room for the frame — see
                 MemberProfileCard. */}
-            <div className="px-3 pb-6">
+            <div className="px-3 pb-6 h-[120%]">
               {/* `expandable={false}`: this *is* the expanded view. */}
               <MemberProfileCard
                 member={member}
@@ -214,10 +217,9 @@ function ProfilePageBody({
                 communityName={communityName}
                 expandable={false}
                 expanded
-                showActivity={false}
+                showActivity={true}
               />
             </div>
-          </ScrollArea>
         </div>
 
         <div data-slot="profile-page-panel" className="flex min-h-0 flex-col">

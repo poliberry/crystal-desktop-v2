@@ -3,6 +3,7 @@
 import { Smile, X } from "lucide-react";
 import { useState } from "react";
 
+import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
@@ -35,11 +36,10 @@ export function EmojiGlyph({
   if (custom) {
     const emoji = byId.get(custom.id);
     if (emoji) {
-      // eslint-disable-next-line @next/next/no-img-element
       return (
-        <img
+        <CustomEmojiImage
           src={emoji.imageUrl}
-          alt={`:${emoji.name}:`}
+          name={emoji.name}
           className={cn("size-[1em] shrink-0 object-contain", className)}
         />
       );

@@ -1,15 +1,26 @@
 "use client";
 
+import { ArrowDown, ArrowUp, Copy, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { LayerContent } from "@/components/profile/layer-content";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  endLine,
+  endYFromLine,
   LAYER_LIMITS,
   layerCentreY,
   layerHeight,
-  layerObjectFit,
   layerYFromCentre,
   patchLayer,
   resolveLayer,
+  twoEndedStretch,
   type CosmeticLayer,
 } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
@@ -37,9 +48,19 @@ import { cn } from "@/lib/utils";
  * scale it. So a corner drag is done in the layer's own turned frame: the
  * pointer is rotated back by the layer's angle, the size is measured there, and
  * the centre is recomputed from the corner that isn't moving.
+ *
+ * ## Multi-select
+ *
+ * A move drag can carry more than one layer at once. The snap search still
+ * anchors on whichever layer was actually grabbed — that is the one the pointer
+ * is over, so it is the one whose edges make sense to line up — and the offset
+ * that snap produces is then applied to everything else being moved, so the
+ * group keeps its own shape rather than every layer separately hunting for its
+ * own line.
  */
 
-/** Snap targets, in percent of stage width: the stage's own edges and middle. */
+/** How close a dragged edge has to land on a target before it snaps, in
+ * percent of stage width. */
 const SNAP_TOLERANCE = 1.6;
 
 /** Nudge per arrow key, and with shift held. */
@@ -85,13 +106,25 @@ export interface StageGeometry {
 
 interface Drag {
   handle: Handle;
+  /** The layer actually grabbed — the pointer is over this one, so it is the
+   * one snapping is measured against. */
   layerId: string;
-  /** The layer as it was when the drag started — every frame is computed from
-   * this rather than from the last frame, so rounding can't accumulate. */
-  start: CosmeticLayer;
-  startHeight: number;
+  /** Every layer this drag moves. More than one only for a `"move"` with
+   * several layers selected; a resize or rotation always affects just the
+   * layer grabbed, since "resize the group" has no single honest answer once
+   * rotation is involved. */
+  affected: string[];
+  /** Each affected layer as drawn when the drag started, so every frame is
+   * computed from that rather than from the last frame — rounding can't
+   * accumulate, and a snap can't rachet. */
+  starts: Record<string, CosmeticLayer>;
+  startHeights: Record<string, number>;
   pointerX: number;
   pointerY: number;
+  /** A plain click on an already-multi-selected layer keeps the group intact
+   * for the drag that might follow, but should still collapse to just that
+   * layer if nothing was ever dragged — this is what remembers to do that. */
+  collapseTo: string | null;
 }
 
 const rotate = (x: number, y: number, degrees: number) => {
@@ -107,10 +140,15 @@ const clamp = (value: number, min: number, max: number) =>
 export function LayerCanvas({
   layers,
   stage,
-  selectedId,
+  selectedIds,
   onSelect,
   onChange,
   onCommit,
+  onDelete,
+  onDuplicate,
+  onReorder,
+  onUndo,
+  onRedo,
   /** Ratios by url, so a layer that keeps its own proportions still gets
    * handles in the right place. Measured by the caller as images load. */
   ratios,
@@ -119,19 +157,28 @@ export function LayerCanvas({
   onZoomChange,
   pan,
   onPanChange,
+  active = true,
+  onActivate,
   resolveSrc,
   children,
   className,
+  style,
 }: {
   layers: CosmeticLayer[];
   stage: StageGeometry;
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  selectedIds: string[];
+  onSelect: (ids: string[]) => void;
   /** Called continuously through a drag. */
   onChange: (layers: CosmeticLayer[]) => void;
   /** Called once when a drag or a key press finishes, which is when the result
    * is worth a round trip. */
   onCommit: (layers: CosmeticLayer[]) => void;
+  onDelete: (ids: string[]) => void;
+  onDuplicate: (ids: string[]) => void;
+  /** Bring forward (1) or send back (-1) one layer in the stack. */
+  onReorder: (id: string, direction: -1 | 1) => void;
+  onUndo: () => void;
+  onRedo: () => void;
   ratios: Record<string, number>;
   /** Which shape of card is on the canvas. Layers are drawn as that shape's
    * placement, and edits are written back to it — see `patchLayer`. */
@@ -142,12 +189,19 @@ export function LayerCanvas({
    * by the editor so its "reset view" can put it back. */
   pan: { x: number; y: number };
   onPanChange: (pan: { x: number; y: number }) => void;
+  /** Whether this canvas is the one the keyboard and wheel belong to. The frame
+   * editor mounts one per card shape at once, and an arrow-key nudge or a
+   * wheel-zoom must move only the shape being looked at, not all of them. */
+  active?: boolean;
+  /** Ask to become the active canvas — fired on any pointer-down inside it. */
+  onActivate?: () => void;
   /** A layer's stored url to the picture to draw for it. Identity for a frame,
    * where a url is a url; the decoration editor passes the one that also knows
    * how to draw a preset key. */
   resolveSrc: (url: string) => string;
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -199,22 +253,83 @@ export function LayerCanvas({
     [layers, variant],
   );
 
+  /** Apply the same kind of edit to every selected layer at once, each worked
+   * out from its own placement — used by the keyboard, where a nudge or a
+   * resize is a whole gesture rather than something to wait on. */
+  const patchEach = useCallback(
+    (ids: string[], fn: (layer: CosmeticLayer) => Partial<CosmeticLayer>) => {
+      let next = layers;
+      for (const id of ids) {
+        const layer = placed.find((l) => l.id === id);
+        if (!layer) continue;
+        const edit = fn(layer);
+        next = next.map((l) => (l.id === id ? patchLayer(l, edit, variant) : l));
+      }
+      return next;
+    },
+    [layers, placed, variant],
+  );
+
   // --- Dragging ------------------------------------------------------------
 
   const beginDrag = (event: React.PointerEvent, handle: Handle, layer: CosmeticLayer) => {
     event.preventDefault();
     event.stopPropagation();
+    onActivate?.();
     (event.target as Element).setPointerCapture?.(event.pointerId);
-    onSelect(layer.id);
+
+    let nextSelection = selectedIds;
+    let collapseTo: string | null = null;
+
+    if (handle === "move") {
+      const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+      if (additive) {
+        nextSelection = selectedIds.includes(layer.id)
+          ? selectedIds.filter((id) => id !== layer.id)
+          : [...selectedIds, layer.id];
+        onSelect(nextSelection);
+        // Just removed itself from the selection — nothing here to drag.
+        if (!nextSelection.includes(layer.id)) return;
+      } else if (selectedIds.includes(layer.id) && selectedIds.length > 1) {
+        // Grabbing one of several already selected keeps the group together
+        // for the drag, but a plain click that never moves should still
+        // narrow down to just this one — see `collapseTo` below.
+        collapseTo = layer.id;
+      } else {
+        nextSelection = [layer.id];
+        onSelect(nextSelection);
+      }
+    } else if (selectedIds.length !== 1 || selectedIds[0] !== layer.id) {
+      // A resize or rotation always means one layer, whatever was selected
+      // before — a corner handle only appears on the sole selected layer
+      // anyway, but the rotate handle at least is reachable from a group.
+      nextSelection = [layer.id];
+      onSelect(nextSelection);
+    }
+
+    const affected =
+      handle === "move" && nextSelection.length > 1 && nextSelection.includes(layer.id)
+        ? nextSelection
+        : [layer.id];
+
+    const starts: Record<string, CosmeticLayer> = {};
+    const startHeights: Record<string, number> = {};
+    for (const id of affected) {
+      const resolved = placed.find((l) => l.id === id);
+      if (!resolved) continue;
+      starts[id] = resolved;
+      startHeights[id] = heightOf(resolved);
+    }
+
     setDrag({
       handle,
       layerId: layer.id,
-      // The placement as drawn, so a drag starts from where the artwork
-      // actually is rather than from where the default shape would put it.
-      start: resolveLayer(layer, variant),
-      startHeight: heightOf(layer),
+      affected,
+      starts,
+      startHeights,
       pointerX: event.clientX,
       pointerY: event.clientY,
+      collapseTo,
     });
   };
 
@@ -225,7 +340,8 @@ export function LayerCanvas({
       const dx = (event.clientX - drag.pointerX) / scale;
       const dy = (event.clientY - drag.pointerY) / scale;
       const snapping = !event.shiftKey;
-      const { start } = drag;
+      const start = drag.starts[drag.layerId];
+      if (!start) return;
 
       /** Draw it, and remember it as the thing to save when this ends. */
       const apply = (next: CosmeticLayer[]) => {
@@ -244,13 +360,25 @@ export function LayerCanvas({
         const nextGuides: { x?: number; y?: number } = {};
 
         if (snapping) {
-          // The three lines worth landing on: the stage's left edge, its
-          // middle and its right edge, matched against the layer's own centre
-          // and its two edges so a frame can be lined up by whichever of them
-          // the artwork actually reaches.
-          const height = drag.startHeight;
+          const height = drag.startHeights[drag.layerId] ?? 0;
+          // The stage's own edges and middle, plus every other layer's edges
+          // and middle — a frame lines up with the stage or with a neighbour,
+          // whichever it happens to be near.
+          const xTargets = [0, 50, 100];
+          const yTargets = [0, stageHeightPercent / 2, stageHeightPercent];
+          for (const other of placed) {
+            if (drag.affected.includes(other.id)) continue;
+            const otherHeight = heightOf(other);
+            const otherCentre = layerCentreY(other, stageHeightPercent);
+            xTargets.push(other.x - other.width / 2, other.x, other.x + other.width / 2);
+            yTargets.push(
+              otherCentre - otherHeight / 2,
+              otherCentre,
+              otherCentre + otherHeight / 2,
+            );
+          }
           for (const offset of [0, -start.width / 2, start.width / 2]) {
-            for (const target of [0, 50, 100]) {
+            for (const target of xTargets) {
               if (Math.abs(x + offset - target) < SNAP_TOLERANCE) {
                 x = target - offset;
                 nextGuides.x = target;
@@ -258,7 +386,7 @@ export function LayerCanvas({
             }
           }
           for (const offset of [0, -height / 2, height / 2]) {
-            for (const target of [0, stageHeightPercent / 2, stageHeightPercent]) {
+            for (const target of yTargets) {
               if (Math.abs(centre + offset - target) < SNAP_TOLERANCE) {
                 centre = target - offset;
                 nextGuides.y = target;
@@ -267,12 +395,55 @@ export function LayerCanvas({
           }
         }
         setGuides(nextGuides);
-        apply(
-          patch(start.id, {
-            x,
-            y: layerYFromCentre(start.anchor, centre, stageHeightPercent),
-          }),
-        );
+
+        // The distance the grabbed layer actually moved, once snapping has had
+        // its say — applied to everything else in the drag so the group keeps
+        // its own shape instead of every layer hunting for its own line.
+        const movedX = x - start.x;
+        const movedCentre = centre - layerCentreY(start, stageHeightPercent);
+
+        let next = layers;
+        for (const id of drag.affected) {
+          const layerStart = drag.starts[id];
+          if (!layerStart) continue;
+          const ends = twoEndedStretch(layerStart);
+          next = next.map((l) => {
+            if (l.id !== id) return l;
+            if (ends) {
+              // Both pinned ends slide by the same amount, each converted back
+              // into its own anchor's units — so a locked end stays a
+              // percentage and an edge end stays an offset.
+              const shiftEnd = (end: (typeof ends)["top"]) => ({
+                anchor: end.anchor,
+                y: endYFromLine(
+                  end.anchor,
+                  endLine(end, stageHeightPercent) + movedCentre,
+                  stageHeightPercent,
+                ),
+              });
+              return patchLayer(
+                l,
+                {
+                  x: layerStart.x + movedX,
+                  stretchTop: shiftEnd(ends.top),
+                  stretchBottom: shiftEnd(ends.bottom),
+                },
+                variant,
+              );
+            }
+            const nextCentre =
+              layerCentreY(layerStart, stageHeightPercent) + movedCentre;
+            return patchLayer(
+              l,
+              {
+                x: layerStart.x + movedX,
+                y: layerYFromCentre(layerStart.anchor, nextCentre, stageHeightPercent),
+              },
+              variant,
+            );
+          });
+        }
+        apply(next);
         return;
       }
 
@@ -304,8 +475,42 @@ export function LayerCanvas({
       const spec = HANDLES.find((h) => h.handle === drag.handle);
       if (!spec) return;
       const rotation = start.rotation ?? 0;
-      const height = drag.startHeight;
+      const height = drag.startHeights[drag.layerId] ?? 0;
       const local = rotate(dx, dy, -rotation);
+
+      // A two-ended stretch has no height box to resize: the north handle drags
+      // its top end and the south handle its bottom, each kept in its own
+      // anchor's units. East/west still set the width, holding the far edge
+      // still. The corners aren't offered for these (see the render).
+      const stretchEnds = twoEndedStretch(start);
+      if (stretchEnds) {
+        if (drag.handle === "n" || drag.handle === "s") {
+          const key = drag.handle === "n" ? "stretchTop" : "stretchBottom";
+          const end = drag.handle === "n" ? stretchEnds.top : stretchEnds.bottom;
+          const nextLine = endLine(end, stageHeightPercent) + local.y;
+          apply(
+            patch(start.id, {
+              [key]: {
+                anchor: end.anchor,
+                y: endYFromLine(end.anchor, nextLine, stageHeightPercent),
+              },
+            }),
+          );
+          return;
+        }
+        const nextWidth = clamp(
+          start.width + local.x * Math.sign(spec.fx) * 2,
+          LAYER_LIMITS.size.min,
+          LAYER_LIMITS.size.max,
+        );
+        apply(
+          patch(start.id, {
+            width: nextWidth,
+            x: start.x + ((nextWidth - start.width) / 2) * Math.sign(spec.fx),
+          }),
+        );
+        return;
+      }
 
       let width = start.width;
       let nextHeight: number | undefined = start.height;
@@ -333,8 +538,6 @@ export function LayerCanvas({
 
       // Keep the fixed corner where it was: the centre moves by half of
       // whatever the box grew, in the direction of the handle.
-      // Half of whatever it grew, in the direction of the handle: that is the
-      // move that leaves the opposite corner where it was.
       const shift = rotate(
         ((width - start.width) / 2) * Math.sign(spec.fx),
         (((nextHeight ?? height) - height) / 2) * Math.sign(spec.fy),
@@ -363,8 +566,13 @@ export function LayerCanvas({
     const end = () => {
       setDrag(null);
       setGuides({});
-      // Nothing moved — a click that selected something, not a drag.
-      if (pending.current) onCommit(pending.current);
+      if (pending.current) {
+        onCommit(pending.current);
+      } else if (drag.collapseTo) {
+        // Nothing moved — a plain click on one of several selected layers,
+        // which narrows the selection down to just that one.
+        onSelect([drag.collapseTo]);
+      }
       pending.current = null;
     };
 
@@ -376,7 +584,21 @@ export function LayerCanvas({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [drag, layers, onChange, onCommit, patch, scale, stage.width, stageHeightPercent, variant, zoom]);
+  }, [
+    drag,
+    heightOf,
+    layers,
+    onChange,
+    onCommit,
+    onSelect,
+    patch,
+    placed,
+    scale,
+    stage.width,
+    stageHeightPercent,
+    variant,
+    zoom,
+  ]);
 
   // --- Panning -------------------------------------------------------------
 
@@ -391,6 +613,7 @@ export function LayerCanvas({
    */
   const beginPan = (event: React.PointerEvent) => {
     if (event.button !== 0 && event.button !== 1) return;
+    onActivate?.();
     setPanFrom({ x: event.clientX, y: event.clientY, pan, moved: false });
   };
 
@@ -406,7 +629,7 @@ export function LayerCanvas({
     };
     const end = () => {
       // A click on the background with no drag in it means "nothing selected".
-      if (!panFrom.moved) onSelect(null);
+      if (!panFrom.moved) onSelect([]);
       setPanFrom(null);
     };
     window.addEventListener("pointermove", move);
@@ -429,7 +652,7 @@ export function LayerCanvas({
    */
   useEffect(() => {
     const node = rootRef.current;
-    if (!node) return;
+    if (!node || !active) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
@@ -444,12 +667,13 @@ export function LayerCanvas({
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-  }, [onPanChange, onZoomChange, pan.x, pan.y, zoom]);
+  }, [active, onPanChange, onZoomChange, pan.x, pan.y, zoom]);
 
   /** Space is the hold-to-pan key everywhere else, so it is here too — but only
    * while the pointer is over the canvas, or it would swallow the space bar
    * from every button in the dialog. */
   useEffect(() => {
+    if (!active) return;
     const down = (event: KeyboardEvent) => {
       if (event.code !== "Space" || !rootRef.current?.matches(":hover")) return;
       event.preventDefault();
@@ -464,28 +688,64 @@ export function LayerCanvas({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, []);
+  }, [active]);
 
-  // --- Keyboard ------------------------------------------------------------
+  // --- Keyboard --------------------------------------------------------------
 
   useEffect(() => {
-    if (!selectedId) return;
     const onKey = (event: KeyboardEvent) => {
+      // Only the active canvas answers the keyboard — several are mounted at
+      // once in the frame editor.
+      if (!active) return;
       const target = event.target as HTMLElement | null;
       // Never while something is being typed into — the inspector's number
       // fields are one tab away from here.
       if (target?.matches("input, textarea, [contenteditable]")) return;
 
-      const layer = placed.find((l) => l.id === selectedId);
-      if (!layer) return;
+      const mod = event.ctrlKey || event.metaKey;
+
+      // Undo/redo and select-all make sense with nothing selected at all, so
+      // they are checked before anything below that needs a selection.
+      if (mod && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) onRedo();
+        else onUndo();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        onRedo();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        onSelect(placed.map((l) => l.id));
+        return;
+      }
+      if (event.key === "Escape") {
+        onSelect([]);
+        return;
+      }
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.length > 0) {
+        event.preventDefault();
+        onDelete(selectedIds);
+        return;
+      }
+      if (mod && event.key.toLowerCase() === "d" && selectedIds.length > 0) {
+        event.preventDefault();
+        onDuplicate(selectedIds);
+        return;
+      }
+
+      if (selectedIds.length === 0) return;
 
       /** Draw and save in one go: a key press is a whole gesture, unlike a
        * drag, so there is nothing to wait for. */
-      const apply = (next: Partial<CosmeticLayer>) => {
+      const apply = (fn: (layer: CosmeticLayer) => Partial<CosmeticLayer>) => {
         event.preventDefault();
-        const layers = patch(selectedId, next);
-        onChange(layers);
-        onCommit(layers);
+        const next = patchEach(selectedIds, fn);
+        onChange(next);
+        onCommit(next);
       };
 
       const step = event.shiftKey ? NUDGE_FAST : NUDGE;
@@ -502,14 +762,14 @@ export function LayerCanvas({
         // percentage of the stage's height, and adding half a percent of its
         // *width* to that would move it by whatever the card's shape happened
         // to be.
-        apply({
+        apply((layer) => ({
           x: layer.x + delta[0],
           y: layerYFromCentre(
             layer.anchor,
             layerCentreY(layer, stageHeightPercent) + delta[1],
             stageHeightPercent,
           ),
-        });
+        }));
         return;
       }
 
@@ -525,7 +785,9 @@ export function LayerCanvas({
       switch (event.key.toLowerCase()) {
         case "a":
         case "d": {
-          apply({ width: size(layer.width + (event.key.toLowerCase() === "d" ? pixel : -pixel)) });
+          apply((layer) => ({
+            width: size(layer.width + (event.key.toLowerCase() === "d" ? pixel : -pixel)),
+          }));
           return;
         }
         case "w":
@@ -534,24 +796,28 @@ export function LayerCanvas({
           // so this starts from whatever it is *currently* as tall as — from
           // the artwork's shape or from the card it stretches to — and takes it
           // from there, the same as dragging the handle would.
-          const current = heightOf(layer);
-          apply({
-            height: size(current + (event.key.toLowerCase() === "w" ? pixel : -pixel)),
-            stretchY: undefined,
+          apply((layer) => {
+            const current = heightOf(layer);
+            return {
+              height: size(current + (event.key.toLowerCase() === "w" ? pixel : -pixel)),
+              stretchY: undefined,
+            };
           });
           return;
         }
         case "q":
         case "e": {
-          const rotation =
-            (layer.rotation ?? 0) + (event.key.toLowerCase() === "e" ? turn : -turn);
-          apply({
-            rotation:
-              clamp(
-                ((rotation + 180) % 360) - 180,
-                LAYER_LIMITS.rotation.min,
-                LAYER_LIMITS.rotation.max,
-              ) || undefined,
+          apply((layer) => {
+            const rotation =
+              (layer.rotation ?? 0) + (event.key.toLowerCase() === "e" ? turn : -turn);
+            return {
+              rotation:
+                clamp(
+                  ((rotation + 180) % 360) - 180,
+                  LAYER_LIMITS.rotation.min,
+                  LAYER_LIMITS.rotation.max,
+                ) || undefined,
+            };
           });
           return;
         }
@@ -560,31 +826,42 @@ export function LayerCanvas({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
+    active,
     heightOf,
     placed,
     onChange,
     onCommit,
-    patch,
-    selectedId,
+    onDelete,
+    onDuplicate,
+    onRedo,
+    onSelect,
+    onUndo,
+    patchEach,
+    selectedIds,
     stage.width,
     stageHeightPercent,
   ]);
 
   // --- Render --------------------------------------------------------------
 
-  const selected = placed.find((layer) => layer.id === selectedId) ?? null;
+  const singleSelected =
+    selectedIds.length === 1 ? placed.find((layer) => layer.id === selectedIds[0]) ?? null : null;
 
   return (
     <div
       className={cn(
         // The checkerboard says "transparent" the way every image editor does,
         // which matters here: almost every frame is mostly nothing.
-        "relative flex items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]",
+        "relative flex items-center justify-center overflow-hidden rounded-md border bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]",
+        active ? "border-primary/70" : "border-border/50",
         className,
       )}
       ref={rootRef}
       onPointerDown={beginPan}
-      style={{ cursor: panFrom?.moved ? "grabbing" : spaceHeld ? "grab" : undefined }}
+      style={{
+        cursor: panFrom?.moved ? "grabbing" : spaceHeld ? "grab" : undefined,
+        ...style,
+      }}
     >
       <div
         ref={stageRef}
@@ -610,7 +887,7 @@ export function LayerCanvas({
 
         {placed.map((layer) => {
           const height = heightOf(layer);
-          const isSelected = layer.id === selectedId;
+          const isSelected = selectedIds.includes(layer.id);
           const box = {
             left: ((layer.x - layer.width / 2) / 100) * stage.width * zoom,
             top:
@@ -619,52 +896,96 @@ export function LayerCanvas({
             height: (height / 100) * stage.width * zoom,
           };
           return (
-            <div
-              key={layer.id}
-              // The whole layer is the move handle. A frame is mostly
-              // transparent, so hit-testing the picture itself would mean
-              // hunting for a pixel of it to grab.
-              onPointerDown={(event) => beginDrag(event, "move", layer)}
-              className={cn(
-                "absolute cursor-move",
-                isSelected ? "outline-2 outline-primary" : "hover:outline-1 hover:outline-primary/50",
-              )}
-              style={{
-                ...box,
-                transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
-                opacity: layer.opacity ?? 1,
-              }}
-            >
-              <img
-                src={resolveSrc(layer.url)}
-                alt=""
-                draggable={false}
-                className="pointer-events-none size-full select-none"
-                style={{ objectFit: layerObjectFit(layer) }}
-              />
+            <ContextMenu key={layer.id}>
+              <ContextMenuTrigger asChild>
+                <div
+                  // The whole layer is the move handle. A frame is mostly
+                  // transparent, so hit-testing the picture itself would mean
+                  // hunting for a pixel of it to grab.
+                  onPointerDown={(event) => beginDrag(event, "move", layer)}
+                  onContextMenu={() => {
+                    if (!selectedIds.includes(layer.id)) onSelect([layer.id]);
+                  }}
+                  className={cn(
+                    "absolute cursor-move",
+                    isSelected
+                      ? "outline-2 outline-primary"
+                      : "hover:outline-1 hover:outline-primary/50",
+                  )}
+                  style={{
+                    ...box,
+                    transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
+                    opacity: layer.opacity ?? 1,
+                  }}
+                >
+                  {/* The same renderer the card uses, so what you arrange here
+                      is what everybody else sees — an editor with its own
+                      drawing code is an editor that quietly disagrees with the
+                      thing it is editing. */}
+                  <div className="pointer-events-none size-full select-none [container-type:size]">
+                    <LayerContent layer={layer} resolveSrc={resolveSrc} />
+                  </div>
 
-              {isSelected && (
-                <>
-                  {HANDLES.map((spec) => (
-                    <span
-                      key={spec.handle}
-                      onPointerDown={(event) => beginDrag(event, spec.handle, layer)}
-                      style={{
-                        cursor: spec.cursor,
-                        left: `calc(${(spec.fx + 0.5) * 100}% - 5px)`,
-                        top: `calc(${(spec.fy + 0.5) * 100}% - 5px)`,
-                      }}
-                      className="absolute size-2.5 rounded-[2px] border border-primary bg-background"
-                    />
-                  ))}
-                  <span
-                    onPointerDown={(event) => beginDrag(event, "rotate", layer)}
-                    style={{ left: "calc(50% - 6px)", top: -26 }}
-                    className="absolute size-3 cursor-grab rounded-full border border-primary bg-background"
-                  />
-                </>
-              )}
-            </div>
+                  {isSelected && singleSelected?.id === layer.id && (
+                    <>
+                      {(twoEndedStretch(layer)
+                        ? // A two-ended stretch is dragged by its ends and its
+                          // width — a corner would be resizing a height it
+                          // doesn't have.
+                          HANDLES.filter((spec) =>
+                            ["n", "s", "e", "w"].includes(spec.handle),
+                          )
+                        : HANDLES
+                      ).map((spec) => (
+                        <span
+                          key={spec.handle}
+                          onPointerDown={(event) => beginDrag(event, spec.handle, layer)}
+                          style={{
+                            cursor: spec.cursor,
+                            left: `calc(${(spec.fx + 0.5) * 100}% - 5px)`,
+                            top: `calc(${(spec.fy + 0.5) * 100}% - 5px)`,
+                          }}
+                          className="absolute size-2.5 rounded-[2px] border border-primary bg-background"
+                        />
+                      ))}
+                      <span
+                        onPointerDown={(event) => beginDrag(event, "rotate", layer)}
+                        style={{ left: "calc(50% - 6px)", top: -26 }}
+                        className="absolute size-3 cursor-grab rounded-full border border-primary bg-background"
+                      />
+                    </>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onSelect={() => onReorder(layer.id, 1)}>
+                  <ArrowUp className="size-3.5" />
+                  Bring forward
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => onReorder(layer.id, -1)}>
+                  <ArrowDown className="size-3.5" />
+                  Send backward
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() =>
+                    onDuplicate(selectedIds.includes(layer.id) ? selectedIds : [layer.id])
+                  }
+                >
+                  <Copy className="size-3.5" />
+                  Duplicate
+                </ContextMenuItem>
+                <ContextMenuItem
+                  variant="destructive"
+                  onSelect={() =>
+                    onDelete(selectedIds.includes(layer.id) ? selectedIds : [layer.id])
+                  }
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           );
         })}
 
@@ -689,9 +1010,14 @@ export function LayerCanvas({
           Add an image to start
         </p>
       )}
-      {selected && (
+      {singleSelected && (
         <p className="pointer-events-none absolute right-2 bottom-2 rounded bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
-          {Math.round(selected.width)}% × {Math.round(heightOf(selected))}%
+          {Math.round(singleSelected.width)}% × {Math.round(heightOf(singleSelected))}%
+        </p>
+      )}
+      {selectedIds.length > 1 && (
+        <p className="pointer-events-none absolute right-2 bottom-2 rounded bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+          {selectedIds.length} selected
         </p>
       )}
     </div>

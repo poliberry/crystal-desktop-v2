@@ -137,6 +137,9 @@ export const list = query({
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
+          /** Idempotency key of the send that made this row — see the twin in
+           * convex/messages.ts and src/lib/outbox-overlay.ts. */
+          clientId: message.clientId ?? null,
           author: author
             ? {
                 id: author._id,
@@ -198,11 +201,22 @@ export const send = mutation({
         })
       )
     ),
+    /** Idempotency key from the durable send outbox — see convex/messages.ts
+     * and src/lib/outbox.ts. */
+    clientId: v.optional(v.string()),
   },
-  handler: async (ctx, { channelId, text, attachments }) => {
+  handler: async (ctx, { channelId, text, attachments, clientId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
     await requireNotTimedOut(ctx, channelId, me._id);
+
+    if (clientId) {
+      const existing = await ctx.db
+        .query("channelMessages")
+        .withIndex("by_client_id", (q) => q.eq("clientId", clientId))
+        .unique();
+      if (existing) return existing._id;
+    }
 
     const trimmed = text?.trim();
     if (!trimmed && (!attachments || attachments.length === 0)) {
@@ -224,6 +238,7 @@ export const send = mutation({
       channelId,
       authorId: me._id,
       text: trimmed || undefined,
+      clientId: clientId || undefined,
     });
 
     for (const attachment of attachments ?? []) {
@@ -314,6 +329,9 @@ export const update = mutation({
 
     const trimmed = text.trim();
     if (!trimmed) throw new Error("Message can't be empty.");
+    // Converge rather than re-stamp `editedAt` when an outbox retry replays the
+    // same edit.
+    if (message.text === trimmed) return;
     await ctx.db.patch(messageId, { text: trimmed, editedAt: Date.now() });
   },
 });
@@ -346,8 +364,14 @@ export const remove = mutation({
 });
 
 export const toggleReaction = mutation({
-  args: { messageId: v.id("channelMessages"), emoji: v.string() },
-  handler: async (ctx, { messageId, emoji }) => {
+  args: {
+    messageId: v.id("channelMessages"),
+    emoji: v.string(),
+    /** Converge to this end state instead of flipping — see the twin in
+     * convex/messages.ts. */
+    desired: v.optional(v.union(v.literal("add"), v.literal("remove"))),
+  },
+  handler: async (ctx, { messageId, emoji, desired }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
@@ -359,9 +383,10 @@ export const toggleReaction = mutation({
         q.eq("messageId", messageId).eq("userId", me._id).eq("emoji", emoji)
       )
       .unique();
-    if (existing) {
+    const shouldExist = desired ? desired === "add" : !existing;
+    if (existing && !shouldExist) {
       await ctx.db.delete(existing._id);
-    } else {
+    } else if (!existing && shouldExist) {
       await ctx.db.insert("channelMessageReactions", { messageId, userId: me._id, emoji });
     }
   },

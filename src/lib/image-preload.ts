@@ -1,9 +1,11 @@
 import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations";
+import { preloadIntoCache } from "@/lib/image-cache";
 import { frameLayersFrom } from "@/lib/profile-cosmetics";
 import type { CosmeticLayer } from "@/lib/cosmetic-layers";
 
 /**
- * Warming the browser's image cache for artwork that isn't on screen yet.
+ * Warming the caches for artwork that isn't on screen yet — the browser's,
+ * and our own IndexedDB one (see src/lib/image-cache.ts).
  *
  * Cosmetics are the one kind of image in this app that arrives at the worst
  * possible moment. A decoration, a frame and an effect are all fetched when a
@@ -12,10 +14,10 @@ import type { CosmeticLayer } from "@/lib/cosmetic-layers";
  * those files is already known before the card is opened: they come down with
  * the member list.
  *
- * So they are fetched early and thrown away. A request whose response goes
- * nowhere still lands in the HTTP cache, which is where the `<img>` that gets
- * rendered later will find it — no bookkeeping, no cache of our own, and
- * nothing to invalidate.
+ * So they are fetched early. The `<img>` warm-up's response goes nowhere but
+ * the HTTP cache — no bookkeeping, no cache of our own, and nothing to
+ * invalidate. The IndexedDB one is fetched properly and kept, which is what
+ * makes it (unlike the HTTP cache) still there the next time the app opens.
  */
 
 /**
@@ -23,8 +25,8 @@ import type { CosmeticLayer } from "@/lib/cosmetic-layers";
  *
  * The whole point of this module is that it can be called from a render pass
  * over a list of two hundred members without doing two hundred things. A url
- * asked for twice is asked for once; a url already in the browser's cache
- * costs a lookup that the browser was going to do anyway.
+ * asked for twice is asked for once; a url already in either cache costs a
+ * lookup that would have happened anyway.
  */
 const requested = new Set<string>();
 
@@ -38,6 +40,7 @@ export function preloadImage(url: string | undefined | null): void {
   image.decoding = "async";
   image.fetchPriority = "low";
   image.src = url;
+  void preloadIntoCache(url);
 }
 
 /** What a profile is wearing, in whichever of the fields it happens to carry

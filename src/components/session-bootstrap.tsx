@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../../convex/_generated/api";
 import { useSyncMyAvatarAccent } from "@/hooks/use-avatar-accent";
 import { usePresenceHeartbeat } from "@/hooks/use-presence";
+import { useAppBadge } from "@/hooks/use-app-badge";
 import { useMessageSound } from "@/hooks/use-message-sound";
 import { useRichPresenceReporter } from "@/hooks/use-rich-presence";
 import { useSyncNotifications } from "@/hooks/use-sync-notifications";
@@ -28,6 +29,7 @@ export function SessionBootstrap() {
   useRichPresenceReporter();
   useMessageSound();
   useSyncNotifications();
+  useAppBadge();
 
   return null;
 }

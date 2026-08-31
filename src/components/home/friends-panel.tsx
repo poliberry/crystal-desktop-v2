@@ -15,6 +15,17 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import type { RichPresenceActivity } from "@/types/desktop-api";
+import {
+  ClockIcon,
+  InboxIcon,
+  MessageCircleMoreIcon,
+  MessageSquareDotIcon,
+  MessageSquareIcon,
+  SendIcon,
+  UserPlusIcon,
+  UserRoundXIcon,
+  UsersIcon,
+} from "@animateicons/react/lucide";
 
 interface FriendsPanelProps {
   search: string;
@@ -28,15 +39,28 @@ function matches(search: string, ...fields: string[]) {
 }
 
 function EmptyState({ message }: { message: string }) {
-  return <p className="px-2 py-8 text-center text-sm text-muted-foreground">{message}</p>;
+  return (
+    <p className="px-2 py-8 text-center text-sm text-muted-foreground">
+      {message}
+    </p>
+  );
 }
 
 export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
-  const friends = useCachedQuery(api.friends.listFriends, {}, "friends.listFriends") ?? [];
+  const friends =
+    useCachedQuery(api.friends.listFriends, {}, "friends.listFriends") ?? [];
   const incoming =
-    useCachedQuery(api.friends.listIncomingRequests, {}, "friends.listIncomingRequests") ?? [];
+    useCachedQuery(
+      api.friends.listIncomingRequests,
+      {},
+      "friends.listIncomingRequests",
+    ) ?? [];
   const outgoing =
-    useCachedQuery(api.friends.listOutgoingRequests, {}, "friends.listOutgoingRequests") ?? [];
+    useCachedQuery(
+      api.friends.listOutgoingRequests,
+      {},
+      "friends.listOutgoingRequests",
+    ) ?? [];
 
   // Everyone here has a card one click away — warm what it draws.
   usePreloadedCosmetics(friends);
@@ -52,194 +76,246 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
     onMessageFriend(conversationId);
   };
 
-  const filteredFriends = friends.filter((f) => matches(search, f.name, f.username));
+  const filteredFriends = friends.filter((f) =>
+    matches(search, f.name, f.username),
+  );
   const onlineFriends = filteredFriends.filter((f) => f.status !== "offline");
-  const filteredIncoming = incoming.filter((r) => matches(search, r.user.name, r.user.username));
-  const filteredOutgoing = outgoing.filter((r) => matches(search, r.user.name, r.user.username));
+  const filteredIncoming = incoming.filter((r) =>
+    matches(search, r.user.name, r.user.username),
+  );
+  const filteredOutgoing = outgoing.filter((r) =>
+    matches(search, r.user.name, r.user.username),
+  );
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold">Friends</h1>
-        </div>
-        <AddFriendDialog />
-      </div>
-
       <Tabs defaultValue="online" className="min-h-0 flex-1">
-        <TabsList className="w-full">
-          <TabsTrigger value="online">Online</TabsTrigger>
-          <TabsTrigger value="pending" className="gap-1.5">
-            Pending
-            {incoming.length > 0 && (
-              <Badge variant="destructive" className="h-4 min-w-4 rounded-full px-1">
-                {incoming.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="all">All</TabsTrigger>
-        </TabsList>
+        <div className="flex min-w-0 flex-1 flex-col p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex flex-row items-center gap-6">
+              <h1 className="text-lg font-semibold">Friends</h1>
+              <TabsList className="w-fit" variant="line">
+                <TabsTrigger value="online">
+                  <MessageCircleMoreIcon duration={0.8} /> Online
+                </TabsTrigger>
+                <TabsTrigger value="pending" className="gap-1.5">
+                  <ClockIcon duration={0.8} />
+                  Pending
+                  {incoming.length > 0 && (
+                    <Badge
+                      variant="destructive"
+                      className="h-4 min-w-4 rounded-full px-1"
+                    >
+                      {incoming.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="all">
+                  <UsersIcon duration={0.8} /> All
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-        <TabsContent value="online" className="min-h-0">
-          <ScrollArea className="h-full">
-            {onlineFriends.length === 0 ? (
-              <EmptyState message="No friends online right now." />
-            ) : (
-              onlineFriends.map((friend) => (
-                <FriendRow
-                  key={friend.id}
-                  name={friend.name}
-                  username={friend.username}
-                  imageUrl={friend.imageUrl}
-                  status={friend.status}
-                  customStatus={friend.customStatus}
-                  activities={friend.activities as RichPresenceActivity[]}
-                  nameplateUrl={friend.nameplateUrl}
-                  avatarDecoration={friend.avatarDecoration}
-                  isBirthday={friend.isBirthday}
-                  actions={
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        onClick={() => void handleMessage(friend.id)}
-                      >
-                        <MessageSquare className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void removeFriend({ friendId: friend.id })}
-                      >
-                        Remove
-                      </Button>
-                    </>
-                  }
-                />
-              ))
-            )}
-          </ScrollArea>
-        </TabsContent>
+            <AddFriendDialog />
+          </div>
 
-        <TabsContent value="pending" className="min-h-0">
-          <ScrollArea className="h-full">
-            <div className="flex flex-col gap-4">
-              <div>
-                <p className="px-2 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                  Incoming — {filteredIncoming.length}
-                </p>
-                {filteredIncoming.length === 0 ? (
-                  <EmptyState message="No incoming requests." />
-                ) : (
-                  filteredIncoming.map((request) => (
-                    <FriendRow
-                      key={request.requestId}
-                      name={request.user.name}
-                      username={request.user.username}
-                      imageUrl={request.user.imageUrl}
-                      subtitle="Incoming friend request"
-                      actions={
-                        <>
-                          <Button
-                            variant="secondary"
-                            size="icon"
-                            className="size-8"
-                            onClick={() => void acceptRequest({ requestId: request.requestId })}
-                          >
-                            <Check className="size-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8"
-                            onClick={() => void declineRequest({ requestId: request.requestId })}
-                          >
-                            <X className="size-4" />
-                          </Button>
-                        </>
-                      }
-                    />
-                  ))
-                )}
-              </div>
-
-              <div>
-                <p className="px-2 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                  Outgoing — {filteredOutgoing.length}
-                </p>
-                {filteredOutgoing.length === 0 ? (
-                  <EmptyState message="No outgoing requests." />
-                ) : (
-                  filteredOutgoing.map((request) => (
-                    <FriendRow
-                      key={request.requestId}
-                      name={request.user.name}
-                      username={request.user.username}
-                      imageUrl={request.user.imageUrl}
-                      subtitle="Outgoing friend request"
-                      actions={
+          <TabsContent value="online" className="min-h-0">
+            <ScrollArea className="h-full">
+              {onlineFriends.length === 0 ? (
+                <EmptyState message="No friends online right now." />
+              ) : (
+                onlineFriends.map((friend) => (
+                  <FriendRow
+                    key={friend.id}
+                    name={friend.name}
+                    username={friend.username}
+                    imageUrl={friend.imageUrl}
+                    status={friend.status}
+                    customStatus={friend.customStatus}
+                    activities={friend.activities as RichPresenceActivity[]}
+                    nameplateUrl={friend.nameplateUrl}
+                    avatarDecoration={friend.avatarDecoration}
+                    isBirthday={friend.isBirthday}
+                    borderGradientStart={friend.borderGradientStart}
+                    actions={
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => void handleMessage(friend.id)}
+                        >
+                          <MessageSquare className="size-4" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => void cancelRequest({ requestId: request.requestId })}
+                          onClick={() =>
+                            void removeFriend({ friendId: friend.id })
+                          }
                         >
-                          Cancel
+                          Remove
                         </Button>
-                      }
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          </ScrollArea>
-        </TabsContent>
+                      </>
+                    }
+                  />
+                ))
+              )}
+            </ScrollArea>
+          </TabsContent>
 
-        <TabsContent value="all" className="min-h-0">
-          <ScrollArea className="h-full">
-            {filteredFriends.length === 0 ? (
-              <EmptyState message="No friends yet — add one to get started." />
-            ) : (
-              filteredFriends.map((friend) => (
-                <FriendRow
-                  key={friend.id}
-                  name={friend.name}
-                  username={friend.username}
-                  imageUrl={friend.imageUrl}
-                  status={friend.status}
-                  customStatus={friend.customStatus}
-                  activities={friend.activities as RichPresenceActivity[]}
-                  nameplateUrl={friend.nameplateUrl}
-                  avatarDecoration={friend.avatarDecoration}
-                  isBirthday={friend.isBirthday}
-                  actions={
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        onClick={() => void handleMessage(friend.id)}
-                      >
-                        <MessageSquare className="size-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void removeFriend({ friendId: friend.id })}
-                      >
-                        Remove
-                      </Button>
-                    </>
-                  }
-                />
-              ))
-            )}
-          </ScrollArea>
-        </TabsContent>
+          <TabsContent value="pending" className="min-h-0">
+            <Tabs defaultValue="incoming">
+              <TabsList className="w-fit" variant="line">
+                <TabsTrigger value="incoming" className="gap-1.5">
+                  <InboxIcon duration={0.8} />
+                  Incoming
+                  {filteredIncoming.length > 0 && (
+                    <Badge
+                      variant="destructive"
+                      className="h-4 min-w-4 rounded-full px-1"
+                    >
+                      {filteredIncoming.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="outgoing" className="gap-1.5">
+                  <SendIcon duration={0.8} />
+                  Outgoing
+                  {filteredOutgoing.length > 0 && (
+                    <Badge
+                      variant="destructive"
+                      className="h-4 min-w-4 rounded-full px-1"
+                    >
+                      {filteredOutgoing.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="incoming">
+                <ScrollArea className="h-full">
+                  {filteredIncoming.length === 0 ? (
+                    <EmptyState message="No incoming requests." />
+                  ) : (
+                    filteredIncoming.map((request) => (
+                      <FriendRow
+                        key={request.requestId}
+                        name={request.user.name}
+                        username={request.user.username}
+                        imageUrl={request.user.imageUrl}
+                        subtitle="Incoming friend request"
+                        actions={
+                          <>
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="size-8"
+                              onClick={() =>
+                                void acceptRequest({
+                                  requestId: request.requestId,
+                                })
+                              }
+                            >
+                              <Check className="size-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={() =>
+                                void declineRequest({
+                                  requestId: request.requestId,
+                                })
+                              }
+                            >
+                              <X className="size-4" />
+                            </Button>
+                          </>
+                        }
+                      />
+                    ))
+                  )}
+                </ScrollArea>
+              </TabsContent>
+              <TabsContent value="outgoing">
+                <ScrollArea className="h-full">
+                  {filteredOutgoing.length === 0 ? (
+                    <EmptyState message="No outgoing requests." />
+                  ) : (
+                    filteredOutgoing.map((request) => (
+                      <FriendRow
+                        key={request.requestId}
+                        name={request.user.name}
+                        username={request.user.username}
+                        imageUrl={request.user.imageUrl}
+                        subtitle="Outgoing friend request"
+                        actions={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              void cancelRequest({
+                                requestId: request.requestId,
+                              })
+                            }
+                          >
+                            Cancel
+                          </Button>
+                        }
+                      />
+                    ))
+                  )}
+                </ScrollArea>
+                </TabsContent>
+            </Tabs>
+          </TabsContent>
+
+          <TabsContent value="all" className="min-h-0">
+            <ScrollArea className="h-full">
+              {filteredFriends.length === 0 ? (
+                <EmptyState message="No friends yet — add one to get started." />
+              ) : (
+                filteredFriends.map((friend) => (
+                  <FriendRow
+                    key={friend.id}
+                    name={friend.name}
+                    username={friend.username}
+                    imageUrl={friend.imageUrl}
+                    status={friend.status}
+                    customStatus={friend.customStatus}
+                    activities={friend.activities as RichPresenceActivity[]}
+                    nameplateUrl={friend.nameplateUrl}
+                    avatarDecoration={friend.avatarDecoration}
+                    isBirthday={friend.isBirthday}
+                    borderGradientStart={friend.borderGradientStart}
+                    actions={
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          onClick={() => void handleMessage(friend.id)}
+                        >
+                          <MessageSquareIcon duration={0.8} className="size-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            void removeFriend({ friendId: friend.id })
+                          }
+                        >
+                          <UserRoundXIcon duration={0.8} className="size-4" />
+                        </Button>
+                      </>
+                    }
+                  />
+                ))
+              )}
+            </ScrollArea>
+          </TabsContent>
+        </div>
       </Tabs>
-      </div>
-
       <ActivityFeed />
     </div>
   );

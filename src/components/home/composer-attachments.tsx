@@ -29,7 +29,7 @@ export function ComposerAttachments({
     <div className="mb-2 flex flex-wrap gap-2">
       {pending.map((attachment, index) => (
         <div
-          key={`${attachment.storageId}-${index}`}
+          key={`${attachment.fileName}-${index}`}
           className="group relative flex items-center gap-2 rounded-md border bg-muted/40 p-1.5 pr-7 text-xs"
         >
           {attachment.previewUrl ? (
@@ -50,7 +50,10 @@ export function ComposerAttachments({
           )}
           <div className="min-w-0 leading-tight">
             <p className="max-w-40 truncate font-medium">{attachment.fileName}</p>
-            <p className="text-[10px] text-muted-foreground">{formatSize(attachment.fileSize)}</p>
+            <p className="text-[10px] text-muted-foreground">
+              {formatSize(attachment.fileSize)}
+              {!attachment.storageId && " · uploads on send"}
+            </p>
           </div>
           <button
             type="button"

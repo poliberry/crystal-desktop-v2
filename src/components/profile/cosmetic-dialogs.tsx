@@ -1,18 +1,26 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { useMutation } from "convex/react";
-import { Loader2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { ExternalLink, Loader2, Upload } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import {
+  MemberProfileCard,
+  type MemberProfileMember,
+} from "@/components/community/member-profile-card";
 import { GradientPicker } from "@/components/profile/gradient-picker";
 import {
   LayerEditor,
   type StageHeightOption,
 } from "@/components/profile/layer-editor";
 import { Nameplate, NAMEPLATE_ACCEPT } from "@/components/profile/nameplate";
+import { APP_TOP_CHROME_PX } from "@/components/profile/profile-popover";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { getDesktopAPI, isElectron } from "@/lib/desktop";
 import {
   Dialog,
   DialogContent,
@@ -46,7 +54,7 @@ import {
   MAX_PROFILE_ASSET_LABEL,
 } from "@/lib/upload-limits";
 import { cn } from "@/lib/utils";
-import type { ProfileScope } from "@/hooks/use-profile-scope";
+import type { ProfileScope, ProfileScopeValues } from "@/hooks/use-profile-scope";
 
 /**
  * The editors behind each tile in the profile editor's left rail.
@@ -114,6 +122,49 @@ function CosmeticDialog({
         {footer && <DialogFooter className="shrink-0">{footer}</DialogFooter>}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * "Open in its own window" — the canvas editors' escape hatch from a dialog
+ * pinned to the size of the main window.
+ *
+ * Electron-only: there's no second window to open in a browser tab, and
+ * `getDesktopAPI()` is `undefined` there, so this quietly draws nothing
+ * rather than a button that can't work. The new window is handed nothing but
+ * which profile to edit — see `DesktopAPI.editor` — because it loads
+ * `/editor` itself and gets a working Convex session for free, the same
+ * origin the main window is already signed in on.
+ */
+function PopOutButton({
+  kind,
+  scopeId,
+  scopeName,
+  onOpened,
+}: {
+  kind: "frame" | "decoration";
+  scopeId?: Id<"communities">;
+  scopeName?: string;
+  /** Closes the in-dialog editor once the window has it — editing in both
+   * places at once is two drafts racing to save last. */
+  onOpened: () => void;
+}) {
+  if (!isElectron()) return null;
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="h-7 gap-1.5 px-2 text-xs"
+      title="Open in its own window"
+      onClick={() => {
+        void getDesktopAPI()?.editor.open({ kind, scopeId, scopeName });
+        onOpened();
+      }}
+    >
+      <ExternalLink className="size-3.5" />
+      Pop out
+    </Button>
   );
 }
 
@@ -188,6 +239,73 @@ function UploadButton({
  * the geometry is in percentages of it — so an arrangement made here is the
  * same arrangement at 24 pixels in a member list.
  */
+/**
+ * The decoration editor's insides — everything but the dialog chrome, so the
+ * `/editor` pop-out window (`src/app/editor/page.tsx`) can render exactly
+ * this without dragging a `<Dialog>` it isn't inside of along with it.
+ */
+export function DecorationEditor({
+  imageUrl,
+  name,
+  current,
+  scope,
+  className,
+}: {
+  imageUrl?: string;
+  name: string;
+  /** The decoration as stored — any of its forms; `decorationLayers` unpacks
+   * the lot, so an old single-image one opens as one layer to drag. */
+  current?: string;
+  scope: ProfileScope;
+  className?: string;
+}) {
+  const layers = useMemo(() => decorationLayers(current), [current]);
+  return (
+    <LayerEditor
+      className={className}
+      layers={layers}
+      onSave={(next) => scope.setDecorationLayers(next)}
+      // One shape, and it is the default one: an avatar is a square at every
+      // size the app draws one, so there is nothing to place a decoration
+      // against twice.
+      stages={[
+        {
+          key: DEFAULT_VARIANT,
+          label: "Avatar",
+          width: AVATAR_STAGE_PX,
+          height: AVATAR_STAGE_PX,
+        },
+      ]}
+      upload={scope.uploadLayerImage}
+      uploadHint={`Transparent PNG, GIF or WebP works best. Up to ${MAX_DECORATION_LABEL} each.`}
+      presets={DECORATION_PRESETS.map((preset) => ({
+        label: preset.name,
+        // The stored form, not the picture: a layer keeps the key so a
+        // preset redrawn in a later build is redrawn for everyone wearing it.
+        url: preset.value,
+      }))}
+      resolveSrc={(url) => decorationSrc(url) ?? url}
+      renderStage={() => (
+        <div className="flex size-full items-center justify-center">
+          {imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imageUrl}
+              alt=""
+              className="size-full rounded-2xl object-cover"
+              draggable={false}
+            />
+          ) : (
+            <span className="flex size-full items-center justify-center rounded-2xl bg-muted text-2xl text-muted-foreground">
+              {name.slice(0, 2).toUpperCase()}
+            </span>
+          )}
+        </div>
+      )}
+    />
+  );
+}
+
 export function DecorationDialog({
   open,
   onOpenChange,
@@ -196,6 +314,8 @@ export function DecorationDialog({
   current,
   isAccount,
   scope,
+  scopeId,
+  scopeName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -206,6 +326,9 @@ export function DecorationDialog({
   current?: string;
   isAccount: boolean;
   scope: ProfileScope;
+  /** Which profile this is, for the pop-out window — see `PopOutButton`. */
+  scopeId?: Id<"communities">;
+  scopeName?: string;
 }) {
   const removeAvatarDecoration = useMutation(api.users.removeAvatarDecoration);
   const layers = useMemo(() => decorationLayers(current), [current]);
@@ -222,54 +345,33 @@ export function DecorationDialog({
           : "Decorations are worn by you rather than by one server identity, so this applies everywhere."
       }
       footer={
-        layers.length > 0 && (
-          <Button
-            variant="ghost"
-            className="text-destructive"
-            onClick={() => void removeAvatarDecoration()}
-          >
-            Remove all
-          </Button>
+        (isElectron() || layers.length > 0) && (
+          <>
+            <PopOutButton
+              kind="decoration"
+              scopeId={scopeId}
+              scopeName={scopeName}
+              onOpened={() => onOpenChange(false)}
+            />
+            {layers.length > 0 && (
+              <Button
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => void removeAvatarDecoration()}
+              >
+                Remove all
+              </Button>
+            )}
+          </>
         )
       }
     >
-      <LayerEditor
+      <DecorationEditor
         className="min-h-0 flex-1"
-        layers={layers}
-        onSave={(next) => scope.setDecorationLayers(next)}
-        stageWidth={AVATAR_STAGE_PX}
-        // One shape only: an avatar is a square at every size the app draws
-        // one, so there is nothing to check a decoration against but itself.
-        // One shape, and it is the default one: an avatar is a square at every
-        // size the app draws one, so there is nothing to place a decoration
-        // against twice.
-        heights={[{ key: DEFAULT_VARIANT, label: "Avatar", height: AVATAR_STAGE_PX }]}
-        upload={scope.uploadLayerImage}
-        uploadHint={`Transparent PNG, GIF or WebP works best. Up to ${MAX_DECORATION_LABEL} each.`}
-        presets={DECORATION_PRESETS.map((preset) => ({
-          label: preset.name,
-          // The stored form, not the picture: a layer keeps the key so a
-          // preset redrawn in a later build is redrawn for everyone wearing it.
-          url: preset.value,
-        }))}
-        resolveSrc={(url) => decorationSrc(url) ?? url}
-        renderStage={() => (
-          <div className="flex size-full items-center justify-center">
-            {imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imageUrl}
-                alt=""
-                className="size-full rounded-2xl object-cover"
-                draggable={false}
-              />
-            ) : (
-              <span className="flex size-full items-center justify-center rounded-2xl bg-muted text-2xl text-muted-foreground">
-                {name.slice(0, 2).toUpperCase()}
-              </span>
-            )}
-          </div>
-        )}
+        imageUrl={imageUrl}
+        name={name}
+        current={current}
+        scope={scope}
       />
     </CosmeticDialog>
   );
@@ -474,89 +576,349 @@ export function ProfileEffectDialog({
 /* -------------------------------------------------------------------------- */
 
 
+/** A placeholder line of the length real body copy tends to run, so the "bio"
+ * and "activity" shapes grow by roughly what a paragraph actually costs even
+ * when the profile being edited has no bio written yet. */
+const BIO_PLACEHOLDER =
+  "Say something about yourself here — a line or two is usually about this long, sometimes wrapping to a third.";
+
+/** A stand-in "playing something" for the `*-activity` states, so the tallest
+ * card can be arranged against without the editor's owner actually
+ * broadcasting a game. Deliberately plain — no position bar, no artwork — so
+ * it costs about what a real one does and doesn't tick a clock 12 times a
+ * second across every mounted copy. */
+const PREVIEW_ACTIVITIES: RichPresenceActivity[] = [
+  {
+    type: "playing",
+    name: "A game",
+    details: "In a match",
+    state: "Round 3 of 5",
+  },
+];
+
+/** The other states pass this so a real, live activity the owner happens to be
+ * broadcasting doesn't make the "no activity" cards taller than they should be.
+ * One shared array, so it isn't a new prop identity every render. */
+const NO_ACTIVITIES: RichPresenceActivity[] = [];
+
+/** Two roles to arrange against, for the "show roles" toggle. The ids are fake
+ * — nothing here reads them — and the colours are just so the row looks like a
+ * row of roles rather than one grey pill. */
+const PREVIEW_ROLES: NonNullable<MemberProfileMember["roles"]> = [
+  { id: "preview-mod" as Id<"roles">, name: "Moderator", color: "#5865f2" },
+  { id: "preview-supporter" as Id<"roles">, name: "Early supporter" },
+];
+
+/** Which parts of the card the frame is being arranged against. The bio and the
+ * rich-presence card are decided by the card *state* (there's a `-bio` and a
+ * `-activity` state); everything here is a part that any state can carry. */
+interface FrameElementToggles {
+  banner: boolean;
+  badges: boolean;
+  roles: boolean;
+  memberSince: boolean;
+  buttons: boolean;
+}
+
+const DEFAULT_ELEMENT_TOGGLES: FrameElementToggles = {
+  banner: true,
+  badges: true,
+  roles: true,
+  memberSince: true,
+  buttons: true,
+};
+
+const ELEMENT_TOGGLE_LABELS: { key: keyof FrameElementToggles; label: string }[] = [
+  { key: "banner", label: "Banner" },
+  { key: "badges", label: "Badges" },
+  { key: "roles", label: "Roles" },
+  { key: "memberSince", label: "Member since" },
+  { key: "buttons", label: "Buttons" },
+];
+
 /**
- * A card to arrange a frame against, at a height you choose.
+ * A real `MemberProfileCard` in one of its states, for the frame to be arranged
+ * against.
  *
- * A stand-in rather than the real `MemberProfileCard`: the real one queries
- * four things and sizes itself from what somebody has written, and neither
- * belongs in a dialog whose whole purpose is to show the *shapes* a card comes
- * in. What matters here is where the banner ends, where the avatar sits, and
- * how far down the card goes — because those are what artwork either lines up
- * with or covers.
+ * The card used to be a diagram of the real one drawn from the same Tailwind
+ * classes — which drifted the moment anyone touched a padding. This is the
+ * component itself, rendered with `frameHandledByHost` so it draws everything
+ * *but* the frame (the editor draws that), the profile's own draft values, and
+ * a fixed width so its geometry is a known number of pixels.
  *
- * The height is the point. A card grows with a long bio or a rich presence
- * card, sometimes by half again, and a frame placed against a short one is a
- * frame nobody has checked.
+ * `state` is one of `CARD_VARIANTS`: its `sizeClass` picks the popover vs
+ * full-page width and layout, and its key's suffix (`-bio` / `-activity`) turns
+ * on the bio and a stand-in rich-presence card. The `toggles` hide the parts
+ * that aren't part of that matrix — a badge row, the join date — by CSS on the
+ * `data-slot`s the card already ships, which is cheaper than a prop each.
  */
 function CardStage({
+  state,
+  toggles,
+  values,
+  userId,
+  username,
   height,
-  avatarUrl,
-  bannerUrl,
-  name,
+  measureRef,
 }: {
-  height: number;
-  avatarUrl?: string;
-  bannerUrl?: string;
-  name: string;
+  state: (typeof CARD_VARIANTS)[number];
+  toggles: FrameElementToggles;
+  values: ProfileScopeValues;
+  userId: Id<"users">;
+  username: string;
+  /** Forced, for a card on the canvas — the measured height of this state.
+   * Omitted for the off-screen copies, whose whole job is to settle on one. */
+  height?: number;
+  measureRef?: React.Ref<HTMLDivElement>;
 }) {
+  const expanded = state.sizeClass === "expanded";
+  // The full page always shows a bio and the join date (see the screenshots);
+  // the popover splits into a plain / bio / playing set.
+  const wantsBio =
+    expanded || state.key.endsWith("-bio") || state.key.endsWith("-activity");
+  const wantsActivity = state.key.endsWith("-activity");
+
+  const member: MemberProfileMember = {
+    userId,
+    name: values.name || "Your name",
+    username,
+    imageUrl: values.imageUrl,
+    bio: wantsBio ? values.bio.trim() || BIO_PLACEHOLDER : undefined,
+    bannerUrl: toggles.banner ? values.bannerUrl : undefined,
+    customStatus: values.customStatus || undefined,
+    avatarDecoration: values.avatarDecoration,
+    borderGradientStart: values.borderGradientStart,
+    borderGradientEnd: values.borderGradientEnd,
+    displayNameStyle: values.displayNameStyle,
+    status: "online",
+    roles: toggles.roles ? PREVIEW_ROLES : undefined,
+  };
+
   return (
     <div
-      className="relative overflow-hidden rounded-md border border-border/20 bg-accent shadow-lg"
-      style={{ height }}
+      ref={measureRef}
+      style={{ width: state.widthPx, ...(height === undefined ? {} : { height }) }}
+      className={cn(
+        "shrink-0",
+        height !== undefined && "h-full",
+        !toggles.badges && "[&_[data-slot=profile-badges]]:hidden",
+        !toggles.memberSince && "[&_[data-slot=profile-member-since]]:hidden",
+        !toggles.buttons && "[&_[data-slot=profile-actions]]:hidden",
+      )}
     >
-      <div
-        className="h-20 w-full bg-muted bg-cover bg-center"
-        style={bannerUrl ? { backgroundImage: `url(${bannerUrl})` } : undefined}
+      <MemberProfileCard
+        className={height === undefined ? undefined : "h-full"}
+        member={member}
+        expanded={expanded}
+        expandable={false}
+        hideMessageAction
+        frameHandledByHost
+        reserveFrameRoom={false}
+        previewActivities={wantsActivity ? PREVIEW_ACTIVITIES : NO_ACTIVITIES}
       />
-      <div className="-mt-8 px-4">
-        <div className="size-16 overflow-hidden rounded-xl bg-muted ring-4 ring-background/70">
-          {avatarUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="" className="size-full object-cover" draggable={false} />
-          )}
-        </div>
-      </div>
-      <div className="space-y-2 px-4 pt-3">
-        <p className="truncate text-lg leading-tight font-bold">{name || "Your name"}</p>
-        <div className="h-2 w-1/2 rounded bg-foreground/15" />
-        <div className="mt-4 space-y-1.5">
-          <div className="h-2 w-full rounded bg-foreground/10" />
-          <div className="h-2 w-4/5 rounded bg-foreground/10" />
-          <div className="h-2 w-2/3 rounded bg-foreground/10" />
-        </div>
-        {/* Only drawn on the taller cards, because that is what makes a card
-            taller: something else to say. */}
-        {height > 460 && (
-          <div className="mt-4 h-24 rounded-md border border-border/40 bg-muted/40" />
-        )}
-        {height > 560 && (
-          <div className="mt-3 h-20 rounded-md border border-border/40 bg-muted/40" />
-        )}
-      </div>
     </div>
   );
 }
 
 /**
- * Uploading a frame, and — the part that actually matters — arranging it.
+ * The real height each card state comes out to, measured rather than assumed.
  *
- * Frames are artwork of unknown shape, and there are several of them now: a
- * border, a badge in a corner, a shine over the top. Nothing in a PNG says
- * where it belongs, so the person who picked the files places them, against a
- * card they can make short or tall to see what happens when somebody writes a
- * long bio.
+ * One off-screen copy of `CardStage` per state, at the state's real width with
+ * nothing forcing its height, each with a `ResizeObserver` — which is what "the
+ * card's shape" has to mean once a bio can be one line or four and a rich
+ * presence card can be there or not. `CARD_VARIANTS.heightPercent` is only the
+ * value shown before the first measurement lands.
+ *
+ * `fixed` states are skipped: their height is a box, not their content (the
+ * full page sizes the card to the column), so measuring a free-standing copy
+ * would settle on the content height and miss the point. They keep the
+ * `heightPercent` fallback.
  */
+function useMeasuredCardHeights(
+  toggles: FrameElementToggles,
+  values: ProfileScopeValues | null,
+  userId: Id<"users"> | undefined,
+  username: string,
+) {
+  const [heights, setHeights] = useState<Record<string, number>>(() =>
+    Object.fromEntries(
+      CARD_VARIANTS.map((variant) => [
+        variant.key,
+        Math.round((variant.widthPx * variant.heightPercent) / 100),
+      ]),
+    ),
+  );
+
+  const measure = useCallback((key: string, node: HTMLDivElement | null) => {
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.round(
+        entry!.borderBoxSize?.[0]?.blockSize ?? entry!.contentRect.height,
+      );
+      if (next > 0) setHeights((prev) => (prev[key] === next ? prev : { ...prev, [key]: next }));
+    });
+    observer.observe(node);
+  }, []);
+
+  const offscreen =
+    values && userId ? (
+      <div
+        aria-hidden
+        className="pointer-events-none fixed -left-[9999px] top-0 -z-50 opacity-0"
+      >
+        {CARD_VARIANTS.filter((variant) => !variant.fixed).map((variant) => (
+          <CardStage
+            key={variant.key}
+            state={variant}
+            toggles={toggles}
+            values={values}
+            userId={userId}
+            username={username}
+            measureRef={(node) => measure(variant.key, node)}
+          />
+        ))}
+      </div>
+    ) : null;
+
+  return { heights, offscreen };
+}
+
+/**
+ * How tall the card is drawn on the full profile page, in CSS pixels.
+ *
+ * The page hands the card column the window less its own chrome and then draws
+ * the card at 120% of that (see profile-page.tsx) — so the card has dead space
+ * below the buttons and the frame is drawn around the whole box. This
+ * reproduces that number so the `expanded-page` stage matches what the frame
+ * lands on for real. Recomputed on resize.
+ */
+function usePageCardHeight(): number {
+  const estimate = () => {
+    if (typeof window === "undefined") return 1080;
+    // 96 for the profile page's own header row and padding above the column.
+    const column = Math.max(360, window.innerHeight - APP_TOP_CHROME_PX - 96);
+    return Math.round(column * 1.2);
+  };
+  const [height, setHeight] = useState(estimate);
+  useEffect(() => {
+    const onResize = () => setHeight(estimate());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return height;
+}
+
+/**
+ * The frame editor's insides — everything but the dialog chrome, so the
+ * `/editor` pop-out window can render exactly this without a `<Dialog>` it
+ * isn't inside of.
+ *
+ * Every card state is shown at once (see `LayerEditor`), each a real
+ * `MemberProfileCard` at its measured height, and the element toggles drive
+ * every one of them.
+ */
+export function ProfileFrameEditor({
+  scope,
+  className,
+}: {
+  scope: ProfileScope;
+  className?: string;
+}) {
+  const values = scope.values;
+  const me = useQuery(api.users.getCurrentUser);
+  const userId = me?._id;
+  const username = me?.username ?? "you";
+  const layers = useMemo(() => frameLayersFrom(values ?? {}), [values]);
+  const [toggles, setToggles] = useState(DEFAULT_ELEMENT_TOGGLES);
+  const { heights: measured, offscreen } = useMeasuredCardHeights(
+    toggles,
+    values,
+    userId,
+    username,
+  );
+  const pageCardHeight = usePageCardHeight();
+
+  const stages: StageHeightOption[] = useMemo(
+    () =>
+      CARD_VARIANTS.map((variant) => ({
+        key: variant.key,
+        label: variant.label,
+        hint: variant.hint,
+        width: variant.widthPx,
+        // A fixed state is a box, not its content — drawn at the size the real
+        // page gives it rather than at whatever a free card measured.
+        height: variant.fixed
+          ? pageCardHeight
+          : measured[variant.key] ??
+            Math.round((variant.widthPx * variant.heightPercent) / 100),
+      })),
+    [measured, pageCardHeight],
+  );
+
+  return (
+    <>
+      {/* Rendered, not shown: this is what measures every state above. */}
+      {offscreen}
+      <LayerEditor
+        className={className}
+        layers={layers}
+        onSave={(next) => scope.setFrameLayers(next)}
+        stages={stages}
+        upload={scope.uploadLayerImage}
+        uploadHint={`Transparent PNG, GIF or WebP. Up to ${MAX_PROFILE_ASSET_LABEL} each, ${MAX_LAYERS} in total.`}
+        elementToggles={
+          <div className="flex flex-col gap-1.5">
+            {ELEMENT_TOGGLE_LABELS.map(({ key, label }) => (
+              <label
+                key={key}
+                className="flex items-center justify-between gap-2 text-xs"
+              >
+                {label}
+                <Switch
+                  checked={toggles[key]}
+                  onCheckedChange={(checked) =>
+                    setToggles((prev) => ({ ...prev, [key]: checked }))
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        }
+        renderStage={(stage) => {
+          const variant = CARD_VARIANTS.find((option) => option.key === stage.key);
+          if (!variant || !values || !userId) return null;
+          return (
+            <CardStage
+              state={variant}
+              toggles={toggles}
+              values={values}
+              userId={userId}
+              username={username}
+              height={stage.height}
+            />
+          );
+        }}
+      />
+    </>
+  );
+}
+
 export function ProfileFrameDialog({
   open,
   onOpenChange,
   scope,
+  scopeId,
+  scopeName,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   scope: ProfileScope;
+  /** Which profile this is, for the pop-out window — see `PopOutButton`. */
+  scopeId?: Id<"communities">;
+  scopeName?: string;
 }) {
   const values = scope.values;
-  const layers = useMemo(() => frameLayersFrom(values ?? {}), [values]);
+  const hasFrame = !!(values?.profileFrame || (values?.profileFrameLayers?.length ?? 0) > 0);
 
   return (
     <CosmeticDialog
@@ -566,60 +928,34 @@ export function ProfileFrameDialog({
       title="Profile frame"
       description="Artwork drawn around your card. Drag it into place, and check it against a card that has grown."
       footer={
-        (values?.profileFrame || layers.length > 0) && (
-          <Button
-            variant="ghost"
-            className="text-destructive"
-            onClick={() => {
-              void scope.setFrameLayers([]);
-              void scope.removeFrame();
-            }}
-          >
-            Remove all
-          </Button>
+        (isElectron() || hasFrame) && (
+          <>
+            <PopOutButton
+              kind="frame"
+              scopeId={scopeId}
+              scopeName={scopeName}
+              onOpened={() => onOpenChange(false)}
+            />
+            {hasFrame && (
+              <Button
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => {
+                  void scope.setFrameLayers([]);
+                  void scope.removeFrame();
+                }}
+              >
+                Remove all
+              </Button>
+            )}
+          </>
         )
       }
     >
-      <LayerEditor
-        className="min-h-0 flex-1"
-        layers={layers}
-        onSave={(next) => scope.setFrameLayers(next)}
-        stageWidth={CARD_STAGE_WIDTH_PX}
-        heights={CARD_HEIGHTS}
-        upload={scope.uploadLayerImage}
-        uploadHint={`Transparent PNG, GIF or WebP. Up to ${MAX_PROFILE_ASSET_LABEL} each, ${MAX_LAYERS} in total.`}
-        renderStage={(height) => (
-          <CardStage
-            height={height}
-            avatarUrl={values?.imageUrl}
-            bannerUrl={values?.bannerUrl}
-            name={values?.name ?? ""}
-          />
-        )}
-      />
+      <ProfileFrameEditor className="min-h-0 flex-1" scope={scope} />
     </CosmeticDialog>
   );
 }
-
-/** The width a profile card is drawn at — the popover's `w-72` plus the room
- * the page gives it. Layer geometry is a percentage of this. */
-const CARD_STAGE_WIDTH_PX = 300;
-
-/**
- * The heights a card comes in, from the shapes themselves.
- *
- * Derived rather than written out, because these keys are also what a
- * per-shape placement is stored under and what the renderer matches a real
- * card against — three lists of the same three things would drift the first
- * time anybody added a fourth.
- */
-const CARD_HEIGHTS: StageHeightOption[] = CARD_VARIANTS.map((variant) => ({
-  key: variant.key,
-  label: variant.label,
-  hint: variant.hint,
-  height: Math.round((CARD_STAGE_WIDTH_PX * variant.heightPercent) / 100),
-}));
-
 
 export function NameplateDialog({
   open,

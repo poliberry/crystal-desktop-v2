@@ -8,8 +8,22 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
  * A mouse wheel arrives as a handful of large, discrete jumps — 100px a notch
  * in Chromium, three text lines in Firefox — and the browser applies each one
  * instantly, so a scroller teleports rather than moves. This intercepts those
- * notches and animates to where they add up to, which is the difference
- * between a list that jerks and one that glides.
+ * notches and pays them out over a few frames, which is the difference between
+ * a list that jerks and one that glides.
+ *
+ * ## It owes a distance, it doesn't aim at a position
+ *
+ * The only state is how far the wheel is still owed, and every frame moves the
+ * scroller by a fraction of *that* — `scrollTop += n`, never `scrollTop = n`.
+ *
+ * This is worth being strict about, because the version that aimed at a
+ * position had to keep asking who else had moved the scroller, and the answer
+ * was always "several things, legitimately": the message list jumping to a new
+ * message, the browser's scroll anchoring holding your place as an image above
+ * the viewport loads, a panel resizing. Each of those left the animation
+ * holding a coordinate from a layout that no longer existed, and the next
+ * frame applied it — which is what a lurch, or a snap back at the end of a
+ * fling, actually is. Owing a distance has no coordinate to go stale.
  *
  * Deliberately narrow, because the alternatives break things:
  *
@@ -28,11 +42,21 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
  * own sake, which is exactly what that preference is about.
  */
 
-/** Long enough to read as movement, short enough that the list still feels
- * attached to the wheel. Also comfortably inside the 400ms window
- * `use-stick-to-bottom` treats as "the reader is scrolling", so a fling that
- * ends at the bottom still re-pins. */
-const DURATION_MS = 280;
+/**
+ * The fraction of a distance still left one second after it was asked for.
+ *
+ * Which is the whole shape of the glide: a hundred-millionth left after a
+ * second works out as half the distance in 50ms, ninety percent in 130ms and
+ * the last pixel around 350ms. Long enough to read as movement, short enough
+ * that the list still feels attached to the wheel, and comfortably inside the
+ * 400ms window `use-stick-to-bottom` treats as "the reader is scrolling", so a
+ * fling that ends at the bottom still re-pins.
+ */
+const REMAINING_AFTER_A_SECOND = 1e-8;
+
+/** Below this the remainder is applied in one go: chasing a decaying fraction
+ * of half a pixel is frames of work for nothing visible. */
+const MIN_STEP_PX = 0.5;
 
 /** Firefox reports line deltas; this is what a line is worth in pixels. */
 const LINE_HEIGHT_PX = 16;
@@ -43,14 +67,6 @@ const LINE_HEIGHT_PX = 16;
  * notch clears this comfortably while a two-finger drag doesn't.
  */
 const NOTCH_THRESHOLD_PX = 40;
-
-/** How far the scroller may drift from where we last put it before we assume
- * something else moved it and stop fighting for control. */
-const DRIFT_TOLERANCE_PX = 2;
-
-function easeOutCubic(t: number): number {
-  return 1 - Math.pow(1 - t, 3);
-}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -88,58 +104,68 @@ function notchDeltaPx(event: WheelEvent): number | null {
  */
 export function attachSmoothScroll(el: HTMLElement): () => void {
   let frame = 0;
-  let from = 0;
-  let target = 0;
-  let startedAt = 0;
-  /** Where we last put the scroller, so drift from anywhere else is visible. */
-  let applied = -1;
-  /** How tall the content was when we last put it there, so a drift can be
-   * told apart from the content growing under it. */
-  let appliedHeight = -1;
+  let lastAt = 0;
+  /**
+   * Distance still owed to the wheel, in pixels.
+   *
+   * The *whole* state of the animation, deliberately: no start position, no
+   * target position, no record of where we last put the scroller. Everything
+   * this used to keep was a position in a layout that had since changed, and
+   * every bug in it was the same bug — a stale coordinate applied to a
+   * scroller that had moved on, seen as a lurch or a snap back.
+   */
+  let pending = 0;
 
   const stop = () => {
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
-    applied = -1;
-    appliedHeight = -1;
+    pending = 0;
   };
 
   const step = (now: number) => {
-    const drift = applied >= 0 ? el.scrollTop - applied : 0;
-    if (Math.abs(drift) > DRIFT_TOLERANCE_PX) {
-      if (el.scrollHeight === appliedHeight) {
-        // Something else moved this scroller mid-animation — a jump to the
-        // newest message, an anchor, a resize. Whatever it was outranks a
-        // wheel gesture.
-        stop();
-        return;
-      }
-      /**
-       * The content changed height instead, and the browser moved the scroller
-       * to keep the same thing in view — its scroll anchoring, which is a
-       * feature and the reason reading history doesn't lurch when an image
-       * three messages up finally loads.
-       *
-       * The animation's start and target are positions in the old layout, so
-       * they are moved by exactly the same amount. Abandoning here instead was
-       * what made a fling up through a channel full of images die on every
-       * image that landed, and made the way back down stutter.
-       */
-      from += drift;
-      target += drift;
-    }
+    frame = 0;
+    // Per second rather than per frame, so the glide is the same on a 60Hz
+    // panel and a 165Hz one.
+    const seconds = Math.min(0.05, Math.max(0, now - lastAt) / 1000);
+    lastAt = now;
 
-    // Re-clamped every frame: content can grow or shrink underneath a fling.
+    // Exponential decay: a fixed fraction of what's left, every frame. That's
+    // what makes it ease out, and — unlike a duration — what makes a second
+    // notch mid-glide simply add to the distance instead of restarting a
+    // timeline.
+    const move =
+      Math.abs(pending) <= MIN_STEP_PX
+        ? pending
+        : pending * (1 - Math.pow(REMAINING_AFTER_A_SECOND, seconds));
+
+    /**
+     * Relative, never absolute. This is the whole design.
+     *
+     * Anything else may move this scroller between one frame and the next: the
+     * message list jumping to a new message, the browser's scroll anchoring
+     * holding your place as an image above the viewport loads, a resize. All
+     * of them are fine and none of them need detecting, because what gets
+     * applied is a *distance* from wherever the scroller now is rather than a
+     * position decided before any of that happened.
+     */
+    el.scrollTop += move;
+    pending -= move;
+
+    // Against the end of the range, with distance still owing: it is owed
+    // against content that isn't there. Asked of the range rather than of
+    // whether the last write moved anything, because a sub-pixel write that
+    // rounds to nothing is not the same thing as a list that has run out.
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    const to = clamp(target, 0, max);
-    const progress = Math.min(1, (now - startedAt) / DURATION_MS);
+    const stuck = (pending < 0 && el.scrollTop <= 0) || (pending > 0 && el.scrollTop >= max);
 
-    el.scrollTop = from + (to - from) * easeOutCubic(progress);
-    applied = el.scrollTop;
-    appliedHeight = el.scrollHeight;
-
-    if (progress < 1) frame = requestAnimationFrame(step);
+    if (!stuck && Math.abs(pending) > MIN_STEP_PX) frame = requestAnimationFrame(step);
     else stop();
+  };
+
+  const start = () => {
+    if (frame) return;
+    lastAt = performance.now();
+    frame = requestAnimationFrame(step);
   };
 
   const onWheel = (event: WheelEvent) => {
@@ -152,14 +178,15 @@ export function attachSmoothScroll(el: HTMLElement): () => void {
 
     // Nothing left in that direction: leave the event alone so it bubbles to
     // whatever scroller is behind this one.
-    const current = frame ? target : el.scrollTop;
-    if ((delta < 0 && current <= 0) || (delta > 0 && current >= max)) return;
+    const heading = el.scrollTop + pending;
+    if ((delta < 0 && heading <= 0) || (delta > 0 && heading >= max)) return;
 
     event.preventDefault();
-    from = el.scrollTop;
-    target = clamp(current + delta, 0, max);
-    startedAt = performance.now();
-    if (!frame) frame = requestAnimationFrame(step);
+    // Capped at the distance that actually exists in that direction, so a long
+    // spin against the end of a list doesn't build up a debt that keeps the
+    // scroller moving after the wheel has stopped.
+    pending = clamp(pending + delta, -el.scrollTop, max - el.scrollTop);
+    start();
   };
 
   // Any other way of scrolling wins immediately — a scrollbar drag or a

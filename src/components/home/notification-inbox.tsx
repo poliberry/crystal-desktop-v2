@@ -6,6 +6,7 @@ import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { MessagePreview } from "@/components/message-preview";
 import { useNavigation } from "@/components/home/navigation-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -99,7 +100,7 @@ export function NotificationInbox() {
         </Tooltip>
       </TooltipProvider>
 
-      <PopoverContent align="end" className="w-88 p-0">
+      <PopoverContent align="end" sideOffset={10} className="w-88 p-0">
         <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
           <p className="mr-auto text-sm font-semibold">Inbox</p>
           {unreadCount > 0 && (
@@ -180,10 +181,14 @@ export function NotificationInbox() {
                         {moment(notification.createdAt).fromNow(true)}
                       </span>
                     </div>
+                    {/* Through the preview renderer, so a message that was
+                        mostly a custom emoji does not read as a paragraph of
+                        identifier. */}
                     {notification.body && (
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
-                        {notification.body}
-                      </p>
+                      <MessagePreview
+                        text={notification.body}
+                        className="block text-xs text-muted-foreground"
+                      />
                     )}
                     {location && (
                       <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground">

@@ -1,7 +1,12 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
-import { Image as ImageIcon, PanelRightClose, PanelRightOpen, PhoneCall } from "lucide-react";
+import { useQuery } from "convex/react";
+import {
+  Image as ImageIcon,
+  PanelRightClose,
+  PanelRightOpen,
+  PhoneCall,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -15,10 +20,7 @@ import { MessageComposer } from "@/components/home/message-composer";
 import { DmProfilePanel } from "@/components/home/dm-profile-panel";
 import { MessageList } from "@/components/home/message-list";
 import { PresenceBadge } from "@/components/presence-dot";
-import {
-  activitySummary,
-  topActivity,
-} from "@/components/rich-presence-card";
+import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import type { FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { TypingIndicator } from "@/components/typing-indicator";
@@ -31,6 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import {
   Avatar,
@@ -39,7 +42,13 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 /**
  * How recent a birthday wish has to be for the cakes to fall for it.
@@ -60,11 +69,15 @@ interface ChatViewProps {
 
 export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const conversation = useQuery(api.conversations.get, { conversationId });
-  const callParticipants = useQuery(api.calls.listParticipants, { conversationId }) ?? [];
-  const markRead = useMutation(api.conversations.markRead);
+  const callParticipants =
+    useQuery(api.calls.listParticipants, { conversationId }) ?? [];
+  // Durable + coalescing: the read marker queues in the outbox so it still
+  // lands after an offline read (see src/lib/outbox.ts).
+  const markRead = useOutboxMutation("markRead", "dm");
   const focused = useWindowFocus();
   const { activeCall } = useCall();
-  const isActiveCall = activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
+  const isActiveCall =
+    activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
   const [showMembers, setShowMembers] = useState(true);
   const [editingGroup, setEditingGroup] = useState(false);
   const [editingBackground, setEditingBackground] = useState(false);
@@ -76,7 +89,9 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
    * sent it: the two clients learn about the message the same way, so they
    * play it at the same moment without either of them being told to.
    */
-  const latestWish = useQuery(api.messages.latestBirthdayWish, { conversationId });
+  const latestWish = useQuery(api.messages.latestBirthdayWish, {
+    conversationId,
+  });
   const [raining, setRaining] = useState(false);
   const playedWish = useRef<string | null>(null);
 
@@ -117,10 +132,11 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
     : (conversation.members[0]?.name ?? "Unknown");
   const avatarUser = isGroup ? undefined : conversation.members[0];
   const activities = (avatarUser?.activities ?? []) as RichPresenceActivity[];
-  // Their own words outrank anything detected, the same order the friends list
-  // and the user card use.
-  const headerLine =
-    avatarUser?.customStatus ?? activitySummary(topActivity(activities)) ?? null;
+  // Both, when there are both — see `presenceHeadline`.
+  const headerLine = presenceHeadline(
+    avatarUser?.customStatus,
+    topActivity(activities),
+  );
   const panelName = isGroup ? "member list" : "profile";
   // Everyone in here whose birthday it is — the composer prompt is about them.
   // A plural list because a group DM can, eventually, have two.
@@ -130,17 +146,12 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
+      <ChatBackground
+        url={conversation?.backgroundUrl}
+        opacity={conversation?.backgroundOpacity}
+      />
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* The conversation's wallpaper — set by any member, since a DM has no
-            roles and two people sharing a room can share it. */}
-        <ChatBackground
-          url={conversation?.backgroundUrl}
-          opacity={conversation?.backgroundOpacity}
-        />
-        <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-          {/* For a group the whole identity block is the way into its
-              settings — the icon and name are what you'd click to change
-              them, so there's no separate button for it. */}
+        <div className="flex h-14 shrink-0 items-center justify-between border-b backdrop-blur-xl bg-accent/40 px-4">
           {isGroup ? (
             <button
               type="button"
@@ -148,7 +159,10 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               title="Group settings"
               className="flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-accent/60"
             >
-              <GroupAvatar imageUrl={conversation.imageUrl} members={conversation.members} />
+              <GroupAvatar
+                imageUrl={conversation.imageUrl}
+                members={conversation.members}
+              />
               <div>
                 <p className="text-sm font-semibold">{title}</p>
                 <p className="text-xs text-muted-foreground">
@@ -159,20 +173,25 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
           ) : (
             <div className="flex min-w-0 items-center gap-2">
               <Avatar size="default">
-                <AvatarImage src={avatarUser?.imageUrl} alt={title} />
-                <AvatarFallback>{title.slice(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarImage src={avatarUser?.imageUrl} alt={title} className="rounded-md" />
+                <AvatarFallback>
+                  {title.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
                 <AvatarDecoration value={avatarUser?.avatarDecoration} />
                 {avatarUser && (
                   <PresenceBadge
                     status={avatarUser.status as FriendStatus}
                     activities={activities}
+                    accent={avatarUser.borderGradientStart}
                     isBirthday={avatarUser.isBirthday}
-                    decorated={!!avatarUser.avatarDecoration}
+                    className={cn(!avatarUser.borderGradientStart && "ring-accent bg-accent")}
                   />
                 )}
               </Avatar>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold leading-tight">{title}</p>
+              <div className="min-w-0 flex flex-row gap-2 items-center">
+                <p className="truncate text-sm font-semibold leading-tight">
+                  {title}
+                </p>
                 {/* Their own words first, then whatever they are doing. Nothing
                     at all when there is neither: the dot on the avatar already
                     says whether they are reachable, and a line repeating it in
@@ -208,7 +227,11 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
             )}
             <Button
               size="sm"
-              variant={isActiveCall || callParticipants.length > 0 ? "default" : "secondary"}
+              variant={
+                isActiveCall || callParticipants.length > 0
+                  ? "default"
+                  : "secondary"
+              }
               className="gap-1.5"
               title="Shift-click to join without ringing anyone"
               onClick={(e) => onStartCall({ silent: e.shiftKey })}
@@ -224,7 +247,11 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon" onClick={() => setShowMembers((v) => !v)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowMembers((v) => !v)}
+                  >
                     {showMembers ? (
                       <PanelRightClose className="size-4" />
                     ) : (
@@ -253,7 +280,10 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
           <DmMemberList conversationId={conversationId} />
         ) : (
           avatarUser && (
-            <DmProfilePanel conversationId={conversationId} userId={avatarUser.id} />
+            <DmProfilePanel
+              conversationId={conversationId}
+              userId={avatarUser.id}
+            />
           )
         ))}
 

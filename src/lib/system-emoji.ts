@@ -95,6 +95,16 @@ export const SYSTEM_EMOJI_GROUPS: SystemEmojiGroup[] = (() => {
   return [...byGroup.entries()].map(([group, emojis]) => ({ group, emojis }));
 })();
 
+/** A random smiley/emotion emoji, for playful UI flourishes. Falls back to a
+ * plain slightly-smiling face if the group somehow isn't there. */
+const SMILEY_EMOJIS: string[] = (
+  SYSTEM_EMOJI_GROUPS.find((g) => g.group === "Smileys & Emotion")?.emojis ?? []
+).map((e) => e.emoji);
+
+export function randomSmiley(): string {
+  return SMILEY_EMOJIS[Math.floor(Math.random() * SMILEY_EMOJIS.length)] ?? "🙂";
+}
+
 /** Substring search across slug and name, for the picker's search box. */
 export function filterSystemEmoji(query: string, limit = 120): SystemEmoji[] {
   const needle = query.trim().toLowerCase();

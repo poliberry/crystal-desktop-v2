@@ -11,7 +11,9 @@ import {
   rememberFirstPage,
 } from "@/lib/message-cache";
 import { ownDecorationState } from "@/lib/avatar-decorations";
+import { preloadAttachmentIntoCache } from "@/lib/image-cache";
 import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
+import { usePreloadedEmojis } from "@/hooks/use-preloaded-emojis";
 import {
   getRecentViewsSnapshot,
   getServerSnapshot,
@@ -47,6 +49,21 @@ import {
 
 const PRELOAD_PAGE = { numItems: 30, cursor: null };
 
+/** Warm the attachment blob cache for the image attachments on a just-loaded
+ * message page — see src/lib/image-cache.ts. Bounded by the same budget that
+ * bounds which pages get preloaded at all. */
+function preloadPageAttachments(
+  page: readonly { attachments?: { fileType: string; url: string | null }[] }[],
+): void {
+  for (const message of page) {
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.url && attachment.fileType.startsWith("image/")) {
+        void preloadAttachmentIntoCache(attachment.url);
+      }
+    }
+  }
+}
+
 /** Ceiling on warm message histories. Comfortably more than a session moves
  * between, and bounded so a heavily-joined account doesn't open hundreds of
  * live subscriptions at launch. */
@@ -65,7 +82,9 @@ function ChannelMessagesPreloader({ channelId }: { channelId: Id<"channels"> }) 
     paginationOpts: PRELOAD_PAGE,
   });
   useEffect(() => {
-    if (result) rememberFirstPage(channelMessagesKey(channelId), result.page);
+    if (!result) return;
+    rememberFirstPage(channelMessagesKey(channelId), result.page);
+    preloadPageAttachments(result.page);
   }, [channelId, result]);
   return null;
 }
@@ -77,7 +96,9 @@ function ConversationMessagesPreloader({
 }) {
   const result = useQuery(api.messages.list, { conversationId, paginationOpts: PRELOAD_PAGE });
   useEffect(() => {
-    if (result) rememberFirstPage(conversationMessagesKey(conversationId), result.page);
+    if (!result) return;
+    rememberFirstPage(conversationMessagesKey(conversationId), result.page);
+    preloadPageAttachments(result.page);
   }, [conversationId, result]);
   return null;
 }
@@ -125,6 +146,9 @@ function AccountPreloader() {
   useQuery(api.friends.listOutgoingRequests);
   useQuery(api.communityEmojis.listAccessible);
   useQuery(api.soundboard.listAccessible);
+  // The catalogue above feeds this — pull every custom emoji's artwork into the
+  // blob cache before a message list needs it.
+  usePreloadedEmojis();
   return null;
 }
 

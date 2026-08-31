@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { Hash } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -25,6 +25,9 @@ import {
   channelMessagesKey,
   useCachedFirstPage,
 } from "@/lib/message-cache";
+import { discard, retryNow } from "@/lib/outbox";
+import { useOutboxOverlay } from "@/lib/outbox-overlay";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
@@ -78,6 +81,10 @@ interface ReactionSummary {
 
 interface MessageDoc {
   id: Id<"channelMessages">;
+  /** The client idempotency key of the send that created this row, when it came
+   * through the outbox — how a pending optimistic row is matched to its real
+   * one. */
+  clientId?: string | null;
   text: string | null;
   createdAt: number;
   editedAt: number | null;
@@ -94,6 +101,12 @@ interface MessageDoc {
   } | null;
   attachments: AttachmentSummary[];
   reactions: ReactionSummary[];
+  /** Overlay-only: a queued send not yet acked by the server. */
+  __pending?: boolean;
+  /** Overlay-only: the queued op behind this row has permanently failed. */
+  __failed?: boolean;
+  /** Overlay-only: the outbox op id, for Retry / Discard. */
+  __opId?: string;
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -103,15 +116,19 @@ function MessageRow({
   startsGroup,
   canManageMessages,
   communityId,
+  channelId,
 }: {
   message: MessageDoc;
   startsGroup: boolean;
   canManageMessages: boolean;
   communityId: Id<"communities">;
+  channelId: Id<"channels">;
 }) {
-  const updateMessage = useMutation(api.channelMessages.update);
-  const removeMessage = useMutation(api.channelMessages.remove);
-  const toggleReaction = useMutation(api.channelMessages.toggleReaction);
+  // Durable: edits/deletes/reactions queue in the outbox and render through the
+  // overlay, then flush to Convex (see src/lib/outbox.ts).
+  const updateMessage = useOutboxMutation("edit", "channel");
+  const removeMessage = useOutboxMutation("delete", "channel");
+  const toggleReaction = useOutboxMutation("react", "channel");
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text ?? "");
@@ -131,12 +148,13 @@ function MessageRow({
   const saveEdit = async () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    if (trimmed !== message.text) await updateMessage({ messageId: message.id, text: trimmed });
+    if (trimmed !== message.text)
+      await updateMessage({ channelId, messageId: message.id, text: trimmed });
     setEditing(false);
   };
 
   const requestDelete = (shiftKey: boolean) => {
-    if (shiftKey) void removeMessage({ messageId: message.id });
+    if (shiftKey) void removeMessage({ channelId, messageId: message.id });
     else setConfirmDelete(true);
   };
 
@@ -144,9 +162,12 @@ function MessageRow({
     <div
       // See the twin in message-list.tsx: a stable hook for custom CSS.
       data-slot="message-row"
+      data-pending={message.__pending ? "" : undefined}
       className={cn(
         "group relative flex gap-1 rounded px-2 py-0.5 hover:bg-accent/30",
-        startsGroup && "mt-3"
+        startsGroup && "mt-3",
+        message.__pending && !message.__failed && "opacity-60",
+        message.__failed && "border-l-2 border-destructive/60 bg-destructive/5"
       )}
     >
       <div className="w-9 mt-1 shrink-0">
@@ -236,18 +257,25 @@ function MessageRow({
             ))}
             <MessageReactions
               reactions={message.reactions}
-              onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+              onToggle={(emoji, desired) =>
+                void toggleReaction({ channelId, messageId: message.id, emoji, desired })
+              }
             />
+            {message.__failed && message.__opId && (
+              <OutboxFailedFooter opId={message.__opId} />
+            )}
           </>
         )}
       </div>
 
-      {!editing && (
+      {!editing && !message.__pending && (
         <MessageHoverActions
           canEdit={message.isMine}
           canDelete={canDelete}
           communityId={communityId}
-          onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+          onReact={(emoji) =>
+            void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
+          }
           onEdit={startEdit}
           onDelete={requestDelete}
         />
@@ -255,13 +283,21 @@ function MessageRow({
     </div>
   );
 
+  // A queued send has no server row to edit, react to or delete — skip the
+  // menus until it lands.
+  if (message.__pending) {
+    return content;
+  }
+
   return (
     <>
       <MessageContextMenu
         canEdit={message.isMine}
         canDelete={canDelete}
         communityId={communityId}
-        onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+        onReact={(emoji) =>
+          void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
+        }
         onEdit={startEdit}
         onDelete={requestDelete}
       >
@@ -270,9 +306,33 @@ function MessageRow({
       <DeleteMessageDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        onConfirm={() => void removeMessage({ messageId: message.id })}
+        onConfirm={() => void removeMessage({ channelId, messageId: message.id })}
       />
     </>
+  );
+}
+
+/** The "couldn't send" affordance under a failed optimistic row. */
+function OutboxFailedFooter({ opId }: { opId: string }) {
+  return (
+    <p className="mt-0.5 text-[11px] text-destructive">
+      Couldn&apos;t send ·{" "}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:no-underline"
+        onClick={() => retryNow(opId)}
+      >
+        Retry
+      </button>{" "}
+      ·{" "}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:no-underline"
+        onClick={() => discard(opId)}
+      >
+        Delete
+      </button>
+    </p>
   );
 }
 
@@ -309,11 +369,32 @@ export function ChannelMessageList({
   // concerned, so this is `LoadingFirstPage` on every visit even when nothing
   // has changed. Show the last page we know about meanwhile — see
   // src/lib/message-cache.ts.
+  const me = useQuery(api.users.getCurrentUser);
+  const overlayMe = useMemo(
+    () =>
+      me
+        ? {
+            _id: me._id,
+            name: me.name,
+            username: me.username,
+            imageUrl: me.imageUrl,
+            avatarDecoration: me.avatarDecoration,
+          }
+        : null,
+    [me]
+  );
   const loadingFirstPage = status === "LoadingFirstPage";
-  const messages = useCachedFirstPage<MessageDoc>(
+  const cached = useCachedFirstPage<MessageDoc>(
     channelMessagesKey(channelId),
     results,
     loadingFirstPage
+  );
+  // Splice in anything still queued in the outbox — downstream of the cache
+  // seam, so the persistent mirror only ever sees real server rows.
+  const messages = useOutboxOverlay<MessageDoc>(
+    channelMessagesKey(channelId),
+    cached,
+    overlayMe
   );
   const chronological = [...messages].reverse();
 
@@ -378,6 +459,7 @@ export function ChannelMessageList({
               startsGroup={startsGroup}
               canManageMessages={canManageMessages}
               communityId={communityId}
+              channelId={channelId}
             />
           );
         })}

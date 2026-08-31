@@ -1,7 +1,7 @@
 "use client";
 
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { useEffect, useRef, useState } from "react";
+import { usePaginatedQuery, useQuery } from "convex/react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -32,6 +32,9 @@ import {
   conversationMessagesKey,
   useCachedFirstPage,
 } from "@/lib/message-cache";
+import { discard, retryNow } from "@/lib/outbox";
+import { useOutboxOverlay } from "@/lib/outbox-overlay";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { cn } from "@/lib/utils";
 
 interface MessageListProps {
@@ -46,6 +49,10 @@ interface ReactionSummary {
 
 interface MessageDoc {
   id: Id<"messages">;
+  /** The client idempotency key of the send that created this row, when it
+   * came through the outbox — how a pending optimistic row is matched to its
+   * real one. */
+  clientId?: string | null;
   text: string | null;
   createdAt: number;
   editedAt: number | null;
@@ -60,15 +67,31 @@ interface MessageDoc {
   } | null;
   attachments: AttachmentSummary[];
   reactions: ReactionSummary[];
+  /** Overlay-only: a queued send not yet acked by the server. */
+  __pending?: boolean;
+  /** Overlay-only: the queued op behind this row has permanently failed. */
+  __failed?: boolean;
+  /** Overlay-only: the outbox op id, for Retry / Discard. */
+  __opId?: string;
 }
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 
-function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup: boolean }) {
-  const updateMessage = useMutation(api.messages.update);
-  const removeMessage = useMutation(api.messages.remove);
-  const toggleReaction = useMutation(api.messages.toggleReaction);
+function MessageRow({
+  message,
+  startsGroup,
+  conversationId,
+}: {
+  message: MessageDoc;
+  startsGroup: boolean;
+  conversationId: Id<"conversations">;
+}) {
+  // Durable: edits/deletes/reactions queue in the outbox and render through the
+  // overlay, then flush to Convex (see src/lib/outbox.ts).
+  const updateMessage = useOutboxMutation("edit", "dm");
+  const removeMessage = useOutboxMutation("delete", "dm");
+  const toggleReaction = useOutboxMutation("react", "dm");
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text ?? "");
@@ -87,12 +110,13 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
   const saveEdit = async () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    if (trimmed !== message.text) await updateMessage({ messageId: message.id, text: trimmed });
+    if (trimmed !== message.text)
+      await updateMessage({ conversationId, messageId: message.id, text: trimmed });
     setEditing(false);
   };
 
   const requestDelete = (shiftKey: boolean) => {
-    if (shiftKey) void removeMessage({ messageId: message.id });
+    if (shiftKey) void removeMessage({ conversationId, messageId: message.id });
     else setConfirmDelete(true);
   };
 
@@ -102,9 +126,12 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
       // component is edited, whereas a slot name is something a user's
       // stylesheet can rely on. See src/lib/css-snippets.ts.
       data-slot="message-row"
+      data-pending={message.__pending ? "" : undefined}
       className={cn(
         "group relative flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
-        startsGroup && "mt-3"
+        startsGroup && "mt-3",
+        message.__pending && !message.__failed && "opacity-60",
+        message.__failed && "border-l-2 border-destructive/60 bg-destructive/5"
       )}
     >
       <div className="w-9 shrink-0">
@@ -186,17 +213,24 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
             ))}
             <MessageReactions
               reactions={message.reactions}
-              onToggle={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+              onToggle={(emoji, desired) =>
+                void toggleReaction({ conversationId, messageId: message.id, emoji, desired })
+              }
             />
+            {message.__failed && message.__opId && (
+              <OutboxFailedFooter opId={message.__opId} />
+            )}
           </>
         )}
       </div>
 
-      {!editing && (
+      {!editing && !message.__pending && (
         <MessageHoverActions
           canEdit={message.isMine}
           canDelete={message.isMine}
-          onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+          onReact={(emoji) =>
+            void toggleReaction({ conversationId, messageId: message.id, emoji, desired: "add" })
+          }
           onEdit={startEdit}
           onDelete={requestDelete}
         />
@@ -204,12 +238,20 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
     </div>
   );
 
+  // A queued send has no server row to edit, react to or delete — skip the
+  // menus until it lands.
+  if (message.__pending) {
+    return content;
+  }
+
   return (
     <>
       <MessageContextMenu
         canEdit={message.isMine}
         canDelete={message.isMine}
-        onReact={(emoji) => void toggleReaction({ messageId: message.id, emoji })}
+        onReact={(emoji) =>
+          void toggleReaction({ conversationId, messageId: message.id, emoji, desired: "add" })
+        }
         onEdit={startEdit}
         onDelete={requestDelete}
       >
@@ -218,9 +260,33 @@ function MessageRow({ message, startsGroup }: { message: MessageDoc; startsGroup
       <DeleteMessageDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        onConfirm={() => void removeMessage({ messageId: message.id })}
+        onConfirm={() => void removeMessage({ conversationId, messageId: message.id })}
       />
     </>
+  );
+}
+
+/** The "couldn't send" affordance under a failed optimistic row. */
+function OutboxFailedFooter({ opId }: { opId: string }) {
+  return (
+    <p className="mt-0.5 text-[11px] text-destructive">
+      Couldn&apos;t send ·{" "}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:no-underline"
+        onClick={() => retryNow(opId)}
+      >
+        Retry
+      </button>{" "}
+      ·{" "}
+      <button
+        type="button"
+        className="underline underline-offset-2 hover:no-underline"
+        onClick={() => discard(opId)}
+      >
+        Delete
+      </button>
+    </p>
   );
 }
 
@@ -247,13 +313,34 @@ export function MessageList({ conversationId }: MessageListProps) {
     { conversationId },
     { initialNumItems: 30 }
   );
+  const me = useQuery(api.users.getCurrentUser);
+  const overlayMe = useMemo(
+    () =>
+      me
+        ? {
+            _id: me._id,
+            name: me.name,
+            username: me.username,
+            imageUrl: me.imageUrl,
+            avatarDecoration: me.avatarDecoration,
+          }
+        : null,
+    [me]
+  );
   // A revisit is a cold query as far as Convex is concerned, so show the last
   // known page while it re-resolves — see src/lib/message-cache.ts.
   const loadingFirstPage = status === "LoadingFirstPage";
-  const messages = useCachedFirstPage<MessageDoc>(
+  const cached = useCachedFirstPage<MessageDoc>(
     conversationMessagesKey(conversationId),
     results,
     loadingFirstPage
+  );
+  // Splice in anything still queued in the outbox — downstream of the cache
+  // seam, so the persistent mirror only ever sees real server rows.
+  const messages = useOutboxOverlay<MessageDoc>(
+    conversationMessagesKey(conversationId),
+    cached,
+    overlayMe
   );
   const chronological = [...messages].reverse();
 
@@ -300,7 +387,14 @@ export function MessageList({ conversationId }: MessageListProps) {
             prev.author?.id !== message.author?.id ||
             message.createdAt - prev.createdAt > GROUP_WINDOW_MS;
 
-          return <MessageRow key={message.id} message={message} startsGroup={startsGroup} />;
+          return (
+            <MessageRow
+              key={message.id}
+              message={message}
+              startsGroup={startsGroup}
+              conversationId={conversationId}
+            />
+          );
         })}
       </div>
     </div>

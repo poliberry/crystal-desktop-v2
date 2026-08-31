@@ -173,7 +173,7 @@ export function TopNav() {
   return (
     <header
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      className="relative flex h-10 shrink-0 items-center justify-between gap-2 border-b bg-accent/40 pl-3 z-[99]"
+      className="relative flex h-10 shrink-0 items-center justify-between gap-2 border-b bg-accent/40 backdrop-blur-xl pl-3 z-[99]"
     >
       <div
         className="flex shrink-0 items-center gap-1.5"

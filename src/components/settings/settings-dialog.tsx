@@ -35,12 +35,7 @@ export function SettingsDialogProvider({ children }: { children: React.ReactNode
             its own chrome down to the titlebar row. */}
         <DialogContent
           className="h-[min(90vh,720px)] w-[min(96vw,1180px)] gap-0 overflow-hidden p-0 sm:max-w-none"
-          onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <DialogTitle className="sr-only">Settings</DialogTitle>
-          <DialogDescription className="sr-only">
-            Your profile, appearance, devices and notification preferences.
-          </DialogDescription>
           <SettingsShell onRequestClose={() => setOpen(false)} />
         </DialogContent>
       </Dialog>

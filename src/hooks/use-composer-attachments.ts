@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Id } from "../../convex/_generated/dataModel";
+import { useIsOnline } from "@/hooks/use-is-online";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits";
 
 /**
@@ -11,23 +12,25 @@ import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits"
  *
  * Uploads go straight to Convex file storage as soon as a file is added, so
  * by the time the user hits Send there's nothing left to wait for — `pending`
- * already holds storage ids. `previewUrl` is a local object URL used only for
- * the thumbnail chips and is stripped before anything reaches the server (see
- * `attachmentsPayload`).
+ * already holds storage ids. When the upload can't run (offline, or it failed)
+ * the entry is kept anyway with the raw `File` and no `storageId`: the durable
+ * outbox stashes those bytes and uploads them when the flush reconnects.
+ * `previewUrl` is a local object URL used only for the thumbnail chips; the
+ * outbox strips the client-only fields before anything reaches the server.
  */
 
 export interface PendingAttachment {
-  storageId: Id<"_storage">;
+  /** Set once the eager upload lands. Absent means "bytes only, upload later" —
+   * the outbox carries the `file` and uploads it on flush. */
+  storageId?: Id<"_storage">;
+  /** Kept so the outbox can stash the bytes (offline send, or reload survival). */
+  file?: File;
   fileName: string;
   fileType: string;
   fileSize: number;
   /** Client-only object URL, for image thumbnails in the pending row. */
   previewUrl?: string;
 }
-
-/** The subset the `send` mutations accept — their validators are strict, so
- * the client-only `previewUrl` must not travel. */
-export type AttachmentPayload = Omit<PendingAttachment, "previewUrl">;
 
 /** Guard against a stray multi-hundred-file drop. */
 const MAX_FILES = 10;
@@ -50,6 +53,9 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const online = useIsOnline();
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -100,19 +106,29 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
       }
 
       setUploading(true);
+      let deferredAny = false;
       try {
         for (const [index, file] of accepted.slice(0, room).entries()) {
-          const uploadUrl = await generateUploadUrl();
-          const res = await fetch(uploadUrl, {
-            method: "POST",
-            headers: { "Content-Type": file.type || "application/octet-stream" },
-            body: file,
-          });
-          if (!res.ok) {
-            setError(`Failed to upload "${file.name || "file"}".`);
-            continue;
+          // Try to upload eagerly. Anything that stops that — offline, a failed
+          // POST, a thrown request — falls through to keeping the raw bytes so
+          // the outbox can upload them on flush.
+          let storageId: Id<"_storage"> | undefined;
+          if (onlineRef.current) {
+            try {
+              const uploadUrl = await generateUploadUrl();
+              const res = await fetch(uploadUrl, {
+                method: "POST",
+                headers: { "Content-Type": file.type || "application/octet-stream" },
+                body: file,
+              });
+              if (res.ok) {
+                ({ storageId } = (await res.json()) as { storageId: Id<"_storage"> });
+              }
+            } catch {
+              // fall through to the deferred path
+            }
           }
-          const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
+          if (!storageId) deferredAny = true;
 
           let previewUrl: string | undefined;
           if (isImage(file.type)) {
@@ -124,12 +140,22 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
             ...prev,
             {
               storageId,
+              // Keep the bytes even after a successful upload: a reload before
+              // the send flushes still needs them to rebuild the preview.
+              file,
               fileName: nameFor(file, index),
               fileType: file.type || "application/octet-stream",
               fileSize: file.size,
               previewUrl,
             },
           ]);
+        }
+        if (deferredAny) {
+          setError(
+            onlineRef.current
+              ? "Some files will finish uploading when the connection is back."
+              : "You're offline — files will upload when you reconnect."
+          );
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed.");
@@ -256,13 +282,5 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
     removeAt,
     clear,
     handlePaste,
-    /** `pending` with client-only fields stripped, for the send mutation. */
-    attachmentsPayload: (): AttachmentPayload[] =>
-      pending.map(({ storageId, fileName, fileType, fileSize }) => ({
-        storageId,
-        fileName,
-        fileType,
-        fileSize,
-      })),
   };
 }
