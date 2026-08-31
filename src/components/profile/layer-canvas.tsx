@@ -12,12 +12,15 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
+  endLine,
+  endYFromLine,
   LAYER_LIMITS,
   layerCentreY,
   layerHeight,
   layerYFromCentre,
   patchLayer,
   resolveLayer,
+  twoEndedStretch,
   type CosmeticLayer,
 } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
@@ -154,9 +157,12 @@ export function LayerCanvas({
   onZoomChange,
   pan,
   onPanChange,
+  active = true,
+  onActivate,
   resolveSrc,
   children,
   className,
+  style,
 }: {
   layers: CosmeticLayer[];
   stage: StageGeometry;
@@ -183,12 +189,19 @@ export function LayerCanvas({
    * by the editor so its "reset view" can put it back. */
   pan: { x: number; y: number };
   onPanChange: (pan: { x: number; y: number }) => void;
+  /** Whether this canvas is the one the keyboard and wheel belong to. The frame
+   * editor mounts one per card shape at once, and an arrow-key nudge or a
+   * wheel-zoom must move only the shape being looked at, not all of them. */
+  active?: boolean;
+  /** Ask to become the active canvas — fired on any pointer-down inside it. */
+  onActivate?: () => void;
   /** A layer's stored url to the picture to draw for it. Identity for a frame,
    * where a url is a url; the decoration editor passes the one that also knows
    * how to draw a preset key. */
   resolveSrc: (url: string) => string;
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -262,6 +275,7 @@ export function LayerCanvas({
   const beginDrag = (event: React.PointerEvent, handle: Handle, layer: CosmeticLayer) => {
     event.preventDefault();
     event.stopPropagation();
+    onActivate?.();
     (event.target as Element).setPointerCapture?.(event.pointerId);
 
     let nextSelection = selectedIds;
@@ -392,19 +406,42 @@ export function LayerCanvas({
         for (const id of drag.affected) {
           const layerStart = drag.starts[id];
           if (!layerStart) continue;
-          const nextCentre = layerCentreY(layerStart, stageHeightPercent) + movedCentre;
-          next = next.map((l) =>
-            l.id === id
-              ? patchLayer(
-                  l,
-                  {
-                    x: layerStart.x + movedX,
-                    y: layerYFromCentre(layerStart.anchor, nextCentre, stageHeightPercent),
-                  },
-                  variant,
-                )
-              : l,
-          );
+          const ends = twoEndedStretch(layerStart);
+          next = next.map((l) => {
+            if (l.id !== id) return l;
+            if (ends) {
+              // Both pinned ends slide by the same amount, each converted back
+              // into its own anchor's units — so a locked end stays a
+              // percentage and an edge end stays an offset.
+              const shiftEnd = (end: (typeof ends)["top"]) => ({
+                anchor: end.anchor,
+                y: endYFromLine(
+                  end.anchor,
+                  endLine(end, stageHeightPercent) + movedCentre,
+                  stageHeightPercent,
+                ),
+              });
+              return patchLayer(
+                l,
+                {
+                  x: layerStart.x + movedX,
+                  stretchTop: shiftEnd(ends.top),
+                  stretchBottom: shiftEnd(ends.bottom),
+                },
+                variant,
+              );
+            }
+            const nextCentre =
+              layerCentreY(layerStart, stageHeightPercent) + movedCentre;
+            return patchLayer(
+              l,
+              {
+                x: layerStart.x + movedX,
+                y: layerYFromCentre(layerStart.anchor, nextCentre, stageHeightPercent),
+              },
+              variant,
+            );
+          });
         }
         apply(next);
         return;
@@ -440,6 +477,40 @@ export function LayerCanvas({
       const rotation = start.rotation ?? 0;
       const height = drag.startHeights[drag.layerId] ?? 0;
       const local = rotate(dx, dy, -rotation);
+
+      // A two-ended stretch has no height box to resize: the north handle drags
+      // its top end and the south handle its bottom, each kept in its own
+      // anchor's units. East/west still set the width, holding the far edge
+      // still. The corners aren't offered for these (see the render).
+      const stretchEnds = twoEndedStretch(start);
+      if (stretchEnds) {
+        if (drag.handle === "n" || drag.handle === "s") {
+          const key = drag.handle === "n" ? "stretchTop" : "stretchBottom";
+          const end = drag.handle === "n" ? stretchEnds.top : stretchEnds.bottom;
+          const nextLine = endLine(end, stageHeightPercent) + local.y;
+          apply(
+            patch(start.id, {
+              [key]: {
+                anchor: end.anchor,
+                y: endYFromLine(end.anchor, nextLine, stageHeightPercent),
+              },
+            }),
+          );
+          return;
+        }
+        const nextWidth = clamp(
+          start.width + local.x * Math.sign(spec.fx) * 2,
+          LAYER_LIMITS.size.min,
+          LAYER_LIMITS.size.max,
+        );
+        apply(
+          patch(start.id, {
+            width: nextWidth,
+            x: start.x + ((nextWidth - start.width) / 2) * Math.sign(spec.fx),
+          }),
+        );
+        return;
+      }
 
       let width = start.width;
       let nextHeight: number | undefined = start.height;
@@ -542,6 +613,7 @@ export function LayerCanvas({
    */
   const beginPan = (event: React.PointerEvent) => {
     if (event.button !== 0 && event.button !== 1) return;
+    onActivate?.();
     setPanFrom({ x: event.clientX, y: event.clientY, pan, moved: false });
   };
 
@@ -580,7 +652,7 @@ export function LayerCanvas({
    */
   useEffect(() => {
     const node = rootRef.current;
-    if (!node) return;
+    if (!node || !active) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
@@ -595,12 +667,13 @@ export function LayerCanvas({
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-  }, [onPanChange, onZoomChange, pan.x, pan.y, zoom]);
+  }, [active, onPanChange, onZoomChange, pan.x, pan.y, zoom]);
 
   /** Space is the hold-to-pan key everywhere else, so it is here too — but only
    * while the pointer is over the canvas, or it would swallow the space bar
    * from every button in the dialog. */
   useEffect(() => {
+    if (!active) return;
     const down = (event: KeyboardEvent) => {
       if (event.code !== "Space" || !rootRef.current?.matches(":hover")) return;
       event.preventDefault();
@@ -615,12 +688,15 @@ export function LayerCanvas({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, []);
+  }, [active]);
 
   // --- Keyboard --------------------------------------------------------------
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Only the active canvas answers the keyboard — several are mounted at
+      // once in the frame editor.
+      if (!active) return;
       const target = event.target as HTMLElement | null;
       // Never while something is being typed into — the inspector's number
       // fields are one tab away from here.
@@ -750,6 +826,7 @@ export function LayerCanvas({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
+    active,
     heightOf,
     placed,
     onChange,
@@ -775,12 +852,16 @@ export function LayerCanvas({
       className={cn(
         // The checkerboard says "transparent" the way every image editor does,
         // which matters here: almost every frame is mostly nothing.
-        "relative flex items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]",
+        "relative flex items-center justify-center overflow-hidden rounded-md border bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]",
+        active ? "border-primary/70" : "border-border/50",
         className,
       )}
       ref={rootRef}
       onPointerDown={beginPan}
-      style={{ cursor: panFrom?.moved ? "grabbing" : spaceHeld ? "grab" : undefined }}
+      style={{
+        cursor: panFrom?.moved ? "grabbing" : spaceHeld ? "grab" : undefined,
+        ...style,
+      }}
     >
       <div
         ref={stageRef}
@@ -847,7 +928,15 @@ export function LayerCanvas({
 
                   {isSelected && singleSelected?.id === layer.id && (
                     <>
-                      {HANDLES.map((spec) => (
+                      {(twoEndedStretch(layer)
+                        ? // A two-ended stretch is dragged by its ends and its
+                          // width — a corner would be resizing a height it
+                          // doesn't have.
+                          HANDLES.filter((spec) =>
+                            ["n", "s", "e", "w"].includes(spec.handle),
+                          )
+                        : HANDLES
+                      ).map((spec) => (
                         <span
                           key={spec.handle}
                           onPointerDown={(event) => beginDrag(event, spec.handle, layer)}

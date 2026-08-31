@@ -35,6 +35,12 @@ const variantArgValidator = v.object({
 /** What a layer is made of. Absent is `"image"` — see src/lib/cosmetic-layers.ts. */
 const kindValidator = v.union(v.literal("image"), v.literal("text"), v.literal("shape"));
 
+/** One pinned end of a two-ended stretch — see the schema. */
+const layerEndValidator = v.object({
+  anchor: v.union(v.literal("top"), v.literal("bottom"), v.literal("locked")),
+  y: v.number(),
+});
+
 export const layerArgValidator = v.object({
   id: v.string(),
   kind: v.optional(kindValidator),
@@ -52,6 +58,8 @@ export const layerArgValidator = v.object({
   height: v.optional(v.number()),
   stretchY: v.optional(v.boolean()),
   stretchDirection: v.optional(v.union(v.literal("down"), v.literal("up"))),
+  stretchTop: v.optional(layerEndValidator),
+  stretchBottom: v.optional(layerEndValidator),
   rotation: v.optional(v.number()),
   opacity: v.optional(v.number()),
   // Text and shape layers. Each is meaningful for one kind and dropped for the
@@ -83,6 +91,8 @@ export type LayerArg = {
   height?: number;
   stretchY?: boolean;
   stretchDirection?: "down" | "up";
+  stretchTop?: LayerEndArg;
+  stretchBottom?: LayerEndArg;
   rotation?: number;
   opacity?: number;
   text?: string;
@@ -104,6 +114,11 @@ type LayerVariantArg = {
   width?: number;
   height?: number;
   rotation?: number;
+};
+
+type LayerEndArg = {
+  anchor: "top" | "bottom" | "locked";
+  y: number;
 };
 
 const clamp = (value: number, min: number, max: number) =>
@@ -132,11 +147,22 @@ export function normalizeLayers(layers: LayerArg[]): LayerArg[] {
     // which drops the flag the same way.
     stretchY: (layer.stretchY && layer.anchor !== "locked") || undefined,
     // Only stored when it isn't the default, and only when there is a stretch
-    // for it to be a direction of.
+    // for it to be a direction of. A two-ended stretch has no single direction,
+    // so it's dropped there too.
     stretchDirection:
-      layer.stretchY && layer.anchor !== "locked" && layer.stretchDirection === "up"
+      layer.stretchY &&
+      layer.anchor !== "locked" &&
+      layer.stretchDirection === "up" &&
+      !(layer.stretchTop && layer.stretchBottom)
         ? ("up" as const)
         : undefined,
+    // Both ends or neither — one alone has nothing to stretch between.
+    ...(layer.stretchTop && layer.stretchBottom
+      ? {
+          stretchTop: normalizeEnd(layer.stretchTop),
+          stretchBottom: normalizeEnd(layer.stretchBottom),
+        }
+      : { stretchTop: undefined, stretchBottom: undefined }),
     rotation: layer.rotation ? round(clamp(layer.rotation, -180, 180)) : undefined,
     opacity:
       layer.opacity === undefined || layer.opacity >= 1
@@ -145,6 +171,15 @@ export function normalizeLayers(layers: LayerArg[]): LayerArg[] {
     variants: normalizeVariants(layer.variants),
     ...normalizeContent(layer),
   }));
+}
+
+/** One end of a two-ended stretch, its offset clamped like every other
+ * position. `y` is percent of card width for an edge anchor, percent of card
+ * height for `"locked"` — the wider range covers both. */
+function normalizeEnd(end: LayerEndArg): LayerEndArg {
+  const anchor =
+    end.anchor === "bottom" || end.anchor === "locked" ? end.anchor : ("top" as const);
+  return { anchor, y: round(clamp(end.y, POSITION.min, POSITION.max)) };
 }
 
 /** Text: capped at a length, and everything a shape would have dropped. */

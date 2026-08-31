@@ -9,6 +9,10 @@ import { ConvexProviderWithClerk } from "convex/react-clerk";
 
 import { getDesktopAPI } from "@/lib/desktop";
 import { pruneExpired, setCacheNamespace } from "@/lib/persistent-cache";
+import { pruneAttachmentCache, pruneImageCache } from "@/lib/image-cache";
+import { setOutboxUser } from "@/lib/outbox";
+import { OutboxFlusher } from "@/components/outbox-flusher";
+import { OutboxStatus } from "@/components/outbox-status";
 import { AccessibilityProvider } from "@/components/accessibility-provider";
 import { AudioPreferencesProvider } from "@/components/audio-provider";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -66,9 +70,14 @@ function AuthCallbackHandler() {
 function CacheScope() {
   const { userId } = useAuth();
   setCacheNamespace(userId);
+  // Point the durable send outbox at the same account, for the same reason —
+  // an account switch must not flush one user's queued messages as another.
+  setOutboxUser(userId);
 
   useEffect(() => {
     pruneExpired();
+    pruneImageCache();
+    pruneAttachmentCache();
   }, []);
 
   return null;
@@ -89,6 +98,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   <CacheScope />
                   <AuthCallbackHandler />
                   <DataPreloader />
+                  <OutboxFlusher />
+                  <OutboxStatus />
                   <FileDropGuard />
                   {/* All inside Convex/Clerk: each of these renders something
                       that queries the current user.

@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { MessageSquarePlus, Plus } from "lucide-react";
-import { useState } from "react";
+import { X } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -18,8 +18,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MAX_GROUP_MEMBERS } from "@/lib/group-limits";
+import { MessageSquarePlusIcon } from "@animateicons/react/lucide";
 
 interface NewDmDialogProps {
   onCreated: (conversationId: Id<"conversations">) => void;
@@ -32,8 +34,24 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
 
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<Id<"users">>>(new Set());
+  const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const filteredFriends = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return friends;
+    return friends.filter(
+      (friend) =>
+        friend.name.toLowerCase().includes(q) ||
+        friend.username.toLowerCase().includes(q),
+    );
+  }, [friends, query]);
+
+  const selectedFriends = useMemo(
+    () => friends.filter((friend) => selected.has(friend.id)),
+    [friends, selected],
+  );
 
   // A group holds MAX_GROUP_MEMBERS including you, so the picker stops one
   // short of it. Enforced again in the mutation — see createGroup.
@@ -50,6 +68,7 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
 
   const reset = () => {
     setSelected(new Set());
+    setQuery("");
     setError(null);
   };
 
@@ -83,7 +102,7 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
     >
       <DialogTrigger asChild>
         <Button variant="ghost" size="icon" className="size-7">
-          <Plus className="size-4" />
+          <MessageSquarePlusIcon duration={0.8} className="size-4" />
         </Button>
       </DialogTrigger>
       <DialogContent>
@@ -95,6 +114,12 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
+        <Input
+          placeholder="Search friends…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+
         <ScrollArea className="h-72">
           <div className="flex flex-col gap-1 pr-3">
             {friends.length === 0 && (
@@ -102,7 +127,12 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
                 Add some friends first.
               </p>
             )}
-            {friends.map((friend) => (
+            {friends.length > 0 && filteredFriends.length === 0 && (
+              <p className="px-2 py-8 text-center text-sm text-muted-foreground">
+                No friends match “{query.trim()}”.
+              </p>
+            )}
+            {filteredFriends.map((friend) => (
               <label
                 key={friend.id}
                 className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-accent/60"
@@ -127,8 +157,38 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <DialogFooter>
-          <Button disabled={selected.size === 0 || creating} onClick={() => void handleCreate()}>
+        <DialogFooter className="sm:items-center sm:justify-between">
+          {selectedFriends.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedFriends.map((friend) => (
+                <span
+                  key={friend.id}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-accent py-0.5 pr-1 pl-1 text-xs font-medium"
+                >
+                  <Avatar className="size-5">
+                    <AvatarImage src={friend.imageUrl} alt={friend.name} />
+                    <AvatarFallback className="text-[9px]">
+                      {friend.name.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {friend.name}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${friend.name}`}
+                    className="rounded-full p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                    onClick={() => toggle(friend.id)}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <Button
+            className="sm:ml-auto"
+            disabled={selected.size === 0 || creating}
+            onClick={() => void handleCreate()}
+          >
             {creating
               ? "Starting…"
               : selected.size > 1

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { IconType } from "react-icons";
 
+import { useCachedImageSrc } from "@/lib/image-cache";
 import { cachedReactIcon, loadReactIcon } from "@/lib/react-icons";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ export function BadgeIcon({
   const [Glyph, setGlyph] = useState<IconType | null>(() =>
     icon ? (cachedReactIcon(icon) ?? null) : null
   );
+  const cachedImageUrl = useCachedImageSrc(imageUrl);
 
   useEffect(() => {
     if (!icon || imageUrl) return;
@@ -47,7 +49,7 @@ export function BadgeIcon({
   if (imageUrl) {
     return (
       <img
-        src={imageUrl}
+        src={cachedImageUrl ?? imageUrl}
         alt={label}
         title={label}
         draggable={false}

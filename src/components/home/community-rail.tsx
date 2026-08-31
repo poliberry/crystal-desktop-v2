@@ -47,6 +47,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useCachedQuery } from "@/hooks/use-cached-query";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { parseInviteCode } from "@/lib/invites";
 import { cn } from "@/lib/utils";
 import { useNavigation } from "@/components/home/navigation-context";
@@ -182,11 +183,6 @@ function DiscoverDialog({
 
         <ScrollArea className="h-72">
           <div className="flex flex-col gap-1 pr-3">
-            {discoverable.length === 0 && (
-              <p className="px-2 py-8 text-center text-sm text-muted-foreground">
-                No new communities to join.
-              </p>
-            )}
             {discoverable.map((community) => (
               <div
                 key={community.id}
@@ -254,7 +250,8 @@ function badgeText(count: number): string {
 function UnreadDirectMessages() {
   const nav = useNavigation();
   const conversations = useCachedQuery(api.conversations.listMine, {}, "conversations.listMine") ?? [];
-  const markRead = useMutation(api.conversations.markRead);
+  // Durable + coalescing, like the chat views (see src/lib/outbox.ts).
+  const markRead = useOutboxMutation("markRead", "dm");
   const unread = conversations.filter((c) => c.unread);
 
   return (
@@ -589,8 +586,8 @@ export function CommunityRail({
 
   return (
     <div className={cn(
-      `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 py-3`,
-      activeCall && screenSharing ? `mb-52` : activeCall ? `mb-42` : `mb-18`
+      `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 backdrop-blur-xl py-3`,
+      activeCall && screenSharing ? `pb-54` : activeCall ? `pb-44` : `pb-20`
     )}>
       <RailButton
         label="Direct messages"

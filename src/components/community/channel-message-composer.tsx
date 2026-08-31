@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import {
   ComposerAttachments,
   ComposerDropOverlay,
@@ -19,6 +20,7 @@ import {
 } from "@/components/home/emoji-text-input";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import { useComposerAttachments } from "@/hooks/use-composer-attachments";
+import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { formatCustomEmoji, matchInProgressShortcode } from "@/lib/custom-emoji";
 import { searchSystemEmoji } from "@/lib/system-emoji";
@@ -61,7 +63,9 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
   const textareaRef = useRef<EmojiTextInputHandle>(null);
 
   const generateUploadUrl = useMutation(api.channelMessages.generateUploadUrl);
-  const sendMessage = useMutation(api.channelMessages.send);
+  // Durable: the send lands in the IndexedDB outbox first and is drawn by the
+  // channel list's overlay, then flushed to Convex (see src/lib/outbox.ts).
+  const sendMessage = useOutboxMutation("send", "channel");
   const {
     pending,
     uploading,
@@ -75,7 +79,6 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
     clear: clearAttachments,
     handlePaste,
     dropZoneRef,
-    attachmentsPayload,
   } = useComposerAttachments(generateUploadUrl);
   const startTyping = useMutation(api.typing.start);
   const stopTyping = useMutation(api.typing.stop);
@@ -124,7 +127,9 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
             .map((e) => ({
               key: e.id,
               label: `:${e.name}:`,
-              preview: <img src={e.imageUrl} alt={e.name} className="size-4 object-contain" />,
+              preview: (
+                <CustomEmojiImage src={e.imageUrl} name={e.name} className="size-4 object-contain" />
+              ),
               insert: formatCustomEmoji(e),
             }));
           const remaining = 8 - customMatches.length;
@@ -167,7 +172,7 @@ export function ChannelMessageComposer({ channelId, communityId }: ChannelMessag
       await sendMessage({
         channelId,
         text: trimmed ? encodeCustomEmojiShortcodes(trimmed, (name) => customEmojiByName.get(name)) : undefined,
-        attachments: pending.length ? attachmentsPayload() : undefined,
+        attachments: pending.length ? pending : undefined,
       });
       setText("");
       clearAttachments();

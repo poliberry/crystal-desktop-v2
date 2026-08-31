@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
 
+import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { InviteEmbedCard } from "@/components/home/invite-embed-card";
 import { LinkEmbedCard } from "@/components/home/link-embed-card";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
@@ -133,13 +134,12 @@ export function MessageContent({ text, suffix, communityId }: MessageContentProp
                 const serverEmoji = serverEmojiById.get(id);
                 if (serverEmoji) {
                   return (
-                    <img
+                    // `align-middle` with a matched line-height keeps the image
+                    // sitting on the text baseline instead of pushing the line
+                    // box around.
+                    <CustomEmojiImage
                       src={serverEmoji.imageUrl}
-                      alt={`:${serverEmoji.name}:`}
-                      title={`:${serverEmoji.name}:`}
-                      // `align-middle` with a matched line-height keeps the
-                      // image sitting on the text baseline instead of pushing
-                      // the line box around.
+                      name={serverEmoji.name}
                       className="inline-block size-6 align-middle object-contain"
                     />
                   );

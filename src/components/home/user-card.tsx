@@ -61,6 +61,7 @@ import { MemberProfileCard } from "../community/member-profile-card";
 import { useEffect, useRef, useState } from "react";
 import { useUiPreferences } from "../ui-preferences-provider";
 import { cn } from "@/lib/utils";
+import { MicIcon, MicOffIcon, HeadphonesIcon, HeadphoneOffIcon, SettingsIcon, ChevronUpIcon } from "@animateicons/react/lucide";
 
 export let USER_CARD_HEIGHT: number = 0;
 
@@ -144,9 +145,9 @@ export function UserCard() {
               onClick={toggleMuted}
             >
               {muted ? (
-                <MicOff className="size-4" />
+                <MicOffIcon duration={0.8} className="size-4" />
               ) : (
-                <Mic className="size-4" />
+                <MicIcon duration={0.8} className="size-4" />
               )}
             </Button>
           </TooltipTrigger>
@@ -171,9 +172,9 @@ export function UserCard() {
               onClick={toggleDeafened}
             >
               {deafened ? (
-                <HeadphoneOff className="size-4" />
+                <HeadphoneOffIcon duration={0.8} className="size-4" />
               ) : (
-                <Headphones className="size-4" />
+                <HeadphonesIcon duration={0.8} className="size-4" />
               )}
             </Button>
           </TooltipTrigger>
@@ -183,38 +184,28 @@ export function UserCard() {
         </Tooltip>
 
         <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0 hover:bg-black/10"
-                >
-                  <ChevronUp className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="top">Audio devices</TooltipContent>
-          </Tooltip>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 hover:bg-black/10"
+            >
+              <ChevronUpIcon duration={0.8} className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="end" className="w-64">
             <AudioDeviceMenuItems />
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-7 shrink-0 hover:bg-black/10"
-              onClick={openSettings}
-            >
-              <Settings className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="top">Settings</TooltipContent>
-        </Tooltip>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 hover:bg-black/10"
+          onClick={openSettings}
+        >
+          <SettingsIcon duration={0.8} className="size-4" />
+        </Button>
       </div>
     </TooltipProvider>
   );
@@ -405,7 +396,8 @@ export function UserCard() {
                     status={status}
                     activities={activities}
                     accent={me.borderGradientStart}
-                    isBirthday={isBirthday}                  />
+                    isBirthday={isBirthday}
+                  />
                 </Avatar>
               </PopoverTrigger>
               {/* The same transparent host every other profile card gets: the

@@ -1,5 +1,6 @@
 "use client";
 
+import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import { TAG_OR_SHORTCODE_RE, type ServerEmoji } from "@/lib/custom-emoji";
 import { findSystemEmojiBySlug } from "@/lib/system-emoji";
@@ -41,19 +42,20 @@ export function MessagePreview({
       {prefix ? `${prefix} ` : null}
       {segments(text, byId, byName).map((segment, index) =>
         segment.kind === "emoji" ? (
-          <img
-            // Index is a fine key: this list is rebuilt whole whenever the text
-            // changes, and nothing in it holds state.
-            key={index}
-            src={segment.url}
-            alt={`:${segment.name}:`}
-            // The name, for an emoji from a server this reader has since left —
-            // the tag still resolves to nothing, and `:jeff:` is a better
-            // answer than a broken image.
-            title={`:${segment.name}:`}
-            className={EMOJI_CLASS}
-            draggable={false}
-          />
+          segment.url ? (
+            <CustomEmojiImage
+              // Index is a fine key: this list is rebuilt whole whenever the
+              // text changes, and nothing in it holds state.
+              key={index}
+              src={segment.url}
+              name={segment.name}
+              className={EMOJI_CLASS}
+            />
+          ) : (
+            // Emoji from a server this reader has since left — `:jeff:` beats a
+            // broken image.
+            <span key={index}>{`:${segment.name}:`}</span>
+          )
         ) : (
           <span key={index}>{segment.text}</span>
         ),

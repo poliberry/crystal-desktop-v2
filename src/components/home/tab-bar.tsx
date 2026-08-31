@@ -25,7 +25,7 @@ function DmTabLabel({ conversationId }: { conversationId: Id<"conversations"> })
       {isGroup ? (
         <GroupAvatar size="sm" imageUrl={conversation.imageUrl} members={conversation.members} />
       ) : (
-        <Avatar size="sm" className="size-4 rounded-md">
+        <Avatar size="sm" className="size-3 rounded-md">
           <AvatarImage src={conversation.members[0]?.imageUrl} alt={title} className="rounded-md" />
           <AvatarFallback className="text-[8px]">{title.slice(0, 2).toUpperCase()}</AvatarFallback>
         </Avatar>
@@ -94,7 +94,7 @@ function TabButton({ tab }: { tab: Tab }) {
       <button
         type="button"
         onClick={() => activateTab(tab.id)}
-        className="flex min-w-0 flex-1 items-center gap-1.5"
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-2"
       >
         <TabLabel tab={tab} />
       </button>

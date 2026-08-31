@@ -41,6 +41,25 @@
 
 export type LayerAnchor = "top" | "center" | "bottom" | "locked";
 
+/** Which of the anchors a single stretched *end* can use. No `"center"` — an
+ * end is a line, and "the middle, plus an offset" is what `"locked"` already
+ * says more directly. */
+export type LayerEndAnchor = "top" | "bottom" | "locked";
+
+/**
+ * One pinned end of a two-ended stretch.
+ *
+ * `anchor` says which reference line on the card `y` is measured from:
+ * `"top"`/`"bottom"` are edge-relative and `y` is a percent of the card's
+ * *width* (negative reaches past the edge, the same as a layer's own `y`);
+ * `"locked"` makes `y` a percent of the card's *height*, 0 the top edge and
+ * 100 the bottom.
+ */
+export interface LayerEnd {
+  anchor: LayerEndAnchor;
+  y: number;
+}
+
 /**
  * What a layer *is*.
  *
@@ -97,6 +116,22 @@ export interface CosmeticLayer {
    * either end of a middle-pinned layer can be the one that gives.
    */
   stretchDirection?: "down" | "up";
+  /**
+   * A stretch pinned at *both* ends. When both are set the layer runs between
+   * `stretchTop` and `stretchBottom` and grows to keep both as the card's
+   * height changes — which `stretchDirection` can't do, since one of its ends
+   * is always a bare card edge.
+   *
+   * This is the answer for a full-card border on a card whose drawn height
+   * isn't its content's: the full profile page draws the card taller than its
+   * content and scrolls, so "grow to the bottom edge" overshoots. Pinning the
+   * bottom end to a locked percentage instead keeps the border on the card.
+   *
+   * Both or neither. While it's on, `anchor` / `y` / `height` / `stretchDirection`
+   * no longer place the layer vertically.
+   */
+  stretchTop?: LayerEnd;
+  stretchBottom?: LayerEnd;
   rotation?: number;
   /** 0–1. */
   opacity?: number;
@@ -146,65 +181,138 @@ export interface LayerVariant {
   rotation?: number;
 }
 
+/** The two widths a profile card is drawn at: the compact popover / DM panel /
+ * member list card, and the expanded full-profile-page card. A layer's geometry
+ * is a percentage of whichever one it's on, so the same frame scales between
+ * them — but where somebody wants a piece of artwork is a different answer on a
+ * card half again as wide, which is why the two are separate states here. */
+export type CardSizeClass = "compact" | "expanded";
+
 /**
- * The shapes a profile card comes in, tallest last.
+ * The states a profile card comes in — a width class crossed with how much the
+ * owner has written under their name.
  *
  * Named after their cause rather than their size, because that is how somebody
- * picks one: the question is "what happens when I write a long bio", not "what
- * happens at 156% of the width". The heights are proportions of the card's
- * width for the same reason everything else here is — a card is drawn at
- * several widths and only its shape is constant.
+ * picks one: the question is "what happens on the full page with a long bio",
+ * not "what happens at 165% of the width". The heights are proportions of the
+ * card's own width, for the same reason everything else here is — a card is
+ * drawn at two widths and only its shape at each is constant — and they are a
+ * *fallback*: the editor measures a real card for each state and the renderer
+ * measures the one it is actually on.
  *
- * Shared by the editor, which draws a card at each of these, and by the
- * renderer, which measures the card it is actually on and picks the one it
- * matches. Two lists would drift the first time anybody added a shape.
+ * Shared by the editor, which draws a card in each of these states, and by the
+ * renderer, which knows its own width class and measures its height to pick the
+ * content level. Two lists would drift the first time anybody added a state.
  */
 export const CARD_VARIANTS: {
   key: string;
   label: string;
   hint: string;
-  /** Card height as a percentage of its width. */
+  sizeClass: CardSizeClass;
+  /** The card's drawn width in CSS pixels — 288 for the popover, 450 for the
+   * full profile page. Only the editor's off-screen measuring needs it. */
+  widthPx: number;
+  /** Card height as a percentage of its width — the pre-measurement fallback. */
   heightPercent: number;
+  /**
+   * This state's height is a *fixed box*, not its content — so the editor draws
+   * it at `heightPercent` rather than measuring a real card, which would settle
+   * on the content height and miss the point.
+   *
+   * The full profile page is the only one: it sizes the card to the column
+   * (`h-[120%]` of the viewport, see profile-page.tsx), so there's dead space
+   * below the buttons and the frame is drawn against that whole box regardless
+   * of how much is written.
+   */
+  fixed?: boolean;
 }[] = [
   {
-    key: "plain",
-    label: "Plain",
-    hint: "A name and not much else.",
+    key: "compact-plain",
+    label: "Popover",
+    hint: "The card in a popover or the DM panel — a name and not much else.",
+    sizeClass: "compact",
+    widthPx: 288,
     heightPercent: 127,
   },
   {
-    key: "bio",
-    label: "With a bio",
+    key: "compact-bio",
+    label: "Popover · bio",
     hint: "A few lines written about you.",
+    sizeClass: "compact",
+    widthPx: 288,
     heightPercent: 157,
   },
   {
-    key: "activity",
-    label: "Playing something",
-    hint: "A rich presence card under the bio — the tallest a card usually gets.",
+    key: "compact-activity",
+    label: "Popover · playing",
+    hint: "A rich presence card under the bio — the tallest the popover gets.",
+    sizeClass: "compact",
+    widthPx: 288,
     heightPercent: 200,
+  },
+  {
+    key: "expanded-page",
+    label: "Full page",
+    hint: "The card on the full profile page — sized to the column, with room below the buttons and the frame drawn around all of it.",
+    sizeClass: "expanded",
+    widthPx: 450,
+    heightPercent: 240,
+    fixed: true,
   },
 ];
 
-/** The first shape is the one everything falls back to: edits made against it
- * are edits to the layer itself rather than to one card's worth of it. */
-export const DEFAULT_VARIANT = CARD_VARIANTS[0]!.key;
+/**
+ * The keys a layer's `variants` map used before `expanded` became a single
+ * fixed-box state. The three content sub-variants measured content height,
+ * which is not what the frame is ever drawn against on the full page — so a
+ * placement made for one of them is carried onto the one state that replaces
+ * them rather than kept as geometry that never applied.
+ */
+const LEGACY_EXPANDED_KEYS = ["expanded-plain", "expanded-bio", "expanded-activity"];
+
+/** The state everything falls back to: edits made against it are edits to the
+ * layer itself rather than to one card's worth of it. The compact popover is
+ * the card people see most, so it's the one a frame is arranged for first. */
+export const DEFAULT_VARIANT = "compact-plain";
+
+/** The states for one width class, shortest first. */
+export function variantsForSize(sizeClass: CardSizeClass) {
+  return CARD_VARIANTS.filter((variant) => variant.sizeClass === sizeClass);
+}
 
 /**
- * Which shape a card of this height counts as.
+ * Which state a card of this width class and height counts as.
  *
- * The tallest variant it has reached, so a card between two of them keeps the
- * placement made for the shorter one until it actually grows into the next —
- * artwork that jumps as somebody types would be worse than artwork slightly
- * early.
+ * The tallest state of that width class the card has reached, so a card between
+ * two of them keeps the placement made for the shorter one until it actually
+ * grows into the next — artwork that jumps as somebody types would be worse than
+ * artwork slightly early.
  */
-export function variantForHeight(heightPercent: number): string {
-  let match = DEFAULT_VARIANT;
-  for (const variant of CARD_VARIANTS) {
+export function variantFor(sizeClass: CardSizeClass, heightPercent: number): string {
+  const options = [...variantsForSize(sizeClass)].sort(
+    (a, b) => a.heightPercent - b.heightPercent,
+  );
+  let match = options[0]?.key ?? DEFAULT_VARIANT;
+  for (const variant of options) {
     if (heightPercent >= variant.heightPercent - 1) match = variant.key;
   }
   return match;
 }
+
+/**
+ * The keys a layer's `variants` map used before the card model changed shape.
+ *
+ * `plain`/`bio`/`activity` predate the width class and are the compact states
+ * now; the three `expanded-*` content sub-variants predate the full page
+ * becoming one fixed-box state (see `LEGACY_EXPANDED_KEYS`). Either way a stored
+ * placement is carried onto its successor rather than dropped as unrecognised.
+ */
+const LEGACY_VARIANT_KEYS: Record<string, string> = {
+  plain: "compact-plain",
+  bio: "compact-bio",
+  activity: "compact-activity",
+  ...Object.fromEntries(LEGACY_EXPANDED_KEYS.map((key) => [key, "expanded-page"])),
+};
 
 /**
  * A layer as it should be drawn on one shape of card: its own numbers, with
@@ -256,13 +364,18 @@ export function patchLayer(
         rotation: resolved.rotation,
       },
     },
-    // The things a variant has no opinion about are still the layer's.
+    // The things a variant has no opinion about are still the layer's. The
+    // stretch ends are among them: where a full-card border's edges are pinned
+    // is a fact about the border, not about one shape of card.
     anchor: patch.anchor ?? layer.anchor,
     stretchY: patch.stretchY !== undefined ? patch.stretchY : layer.stretchY,
     stretchDirection:
       patch.stretchDirection !== undefined
         ? patch.stretchDirection
         : layer.stretchDirection,
+    stretchTop: "stretchTop" in patch ? patch.stretchTop : layer.stretchTop,
+    stretchBottom:
+      "stretchBottom" in patch ? patch.stretchBottom : layer.stretchBottom,
     opacity: patch.opacity !== undefined ? patch.opacity : layer.opacity,
   };
 }
@@ -281,6 +394,19 @@ export function clearVariant(layer: CosmeticLayer, variant: string): CosmeticLay
 /** Every anchor, in the order the editor offers them. */
 export const ANCHORS: LayerAnchor[] = ["top", "center", "bottom", "locked"];
 
+/** The anchors a stretched end can use, in the order the editor offers them. */
+export const END_ANCHORS: LayerEndAnchor[] = ["top", "bottom", "locked"];
+
+/** The two ends of a two-ended stretch, or `null` if the layer isn't one.
+ * Both-or-nothing: one end alone has nothing to stretch between. */
+export function twoEndedStretch(
+  layer: Pick<CosmeticLayer, "stretchTop" | "stretchBottom">,
+): { top: LayerEnd; bottom: LayerEnd } | null {
+  return layer.stretchTop && layer.stretchBottom
+    ? { top: layer.stretchTop, bottom: layer.stretchBottom }
+    : null;
+}
+
 /**
  * Where a layer's centre sits, measured down from the card's top edge in
  * percent of the card's width.
@@ -289,15 +415,53 @@ export const ANCHORS: LayerAnchor[] = ["top", "center", "bottom", "locked"];
  * depending on the anchor. Everything that has to reason about a layer in the
  * card's own coordinates — the canvas, the headroom, switching anchors — asks
  * here rather than repeating the arithmetic and getting one of the three wrong.
+ *
+ * A two-ended stretch has no `y` of its own: its centre is the midpoint of the
+ * two ends, each resolved the same way.
  */
 export function layerCentreY(
-  layer: Pick<CosmeticLayer, "anchor" | "y">,
+  layer: Pick<CosmeticLayer, "anchor" | "y" | "stretchTop" | "stretchBottom">,
   stageHeightPercent: number,
 ): number {
+  const ends = twoEndedStretch(layer);
+  if (ends) {
+    return (
+      (endLine(ends.top, stageHeightPercent) +
+        endLine(ends.bottom, stageHeightPercent)) /
+      2
+    );
+  }
   if (layer.anchor === "center") return stageHeightPercent / 2 + layer.y;
   if (layer.anchor === "bottom") return stageHeightPercent + layer.y;
   if (layer.anchor === "locked") return (layer.y / 100) * stageHeightPercent;
   return layer.y;
+}
+
+/**
+ * Where one stretched end sits, measured down from the card's top edge in
+ * percent of the card's width — the same units `layerCentreY` returns.
+ *
+ * The end anchors are a subset of the layer anchors and mean the same things,
+ * so this is `layerCentreY` for a `{ anchor, y }` that can't be `"center"`.
+ */
+export function endLine(end: LayerEnd, stageHeightPercent: number): number {
+  if (end.anchor === "bottom") return stageHeightPercent + end.y;
+  if (end.anchor === "locked") return (end.y / 100) * stageHeightPercent;
+  return end.y;
+}
+
+/** The inverse of `endLine`: a line in card coordinates back to the `y` this
+ * end anchor would store for it. */
+export function endYFromLine(
+  anchor: LayerEndAnchor,
+  line: number,
+  stageHeightPercent: number,
+): number {
+  if (anchor === "bottom") return line - stageHeightPercent;
+  if (anchor === "locked") {
+    return stageHeightPercent > 0 ? (line / stageHeightPercent) * 100 : 0;
+  }
+  return line;
 }
 
 /** The inverse: a centre in card coordinates back to the `y` this anchor would
@@ -338,6 +502,10 @@ export function reanchorLayer(
   anchor: LayerAnchor,
   heightPercentOf: (variant: string) => number,
 ): CosmeticLayer {
+  // A two-ended stretch has no single anchor — each end carries its own. The
+  // editor hides the control for these, so this only guards a stale call.
+  if (twoEndedStretch(layer)) return { ...layer, anchor };
+
   const convert = (source: Pick<CosmeticLayer, "anchor" | "y">, variant: string) => {
     const height = heightPercentOf(variant);
     return layerYFromCentre(anchor, layerCentreY(source, height), height);
@@ -398,6 +566,16 @@ export function layerKind(layer: Pick<CosmeticLayer, "kind">): LayerKind {
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 
+/** One stretched end, its anchor checked and its offset brought inside the
+ * position limits — the same range whether `y` is a percent of width or, for a
+ * `"locked"` end, a percent of height. */
+function normalizeEnd(end: LayerEnd): LayerEnd {
+  return {
+    anchor: END_ANCHORS.includes(end.anchor) ? end.anchor : "top",
+    y: round(clamp(end.y, LAYER_LIMITS.position.min, LAYER_LIMITS.position.max)),
+  };
+}
+
 /** Round to a hundredth of a percent. A card is around 300 pixels wide, so
  * that is a third of a pixel — fine enough that a number typed in pixels comes
  * back as the pixel that was typed, and coarse enough that stored documents
@@ -427,9 +605,19 @@ export function normalizeLayer(layer: CosmeticLayer): CosmeticLayer {
     // than carried as something that will never be read.
     stretchY: (layer.stretchY && layer.anchor !== "locked") || undefined,
     stretchDirection:
-      layer.stretchY && layer.anchor !== "locked" && layer.stretchDirection === "up"
+      layer.stretchY &&
+      layer.anchor !== "locked" &&
+      layer.stretchDirection === "up" &&
+      !twoEndedStretch(layer)
         ? "up"
         : undefined,
+    // Both ends or neither — one alone has nothing to stretch between.
+    ...(layer.stretchTop && layer.stretchBottom
+      ? {
+          stretchTop: normalizeEnd(layer.stretchTop),
+          stretchBottom: normalizeEnd(layer.stretchBottom),
+        }
+      : { stretchTop: undefined, stretchBottom: undefined }),
     rotation: layer.rotation
       ? round(clamp(layer.rotation, LAYER_LIMITS.rotation.min, LAYER_LIMITS.rotation.max))
       : undefined,
@@ -522,7 +710,10 @@ function normalizeVariants(
 ): Record<string, LayerVariant> | undefined {
   if (!variants) return undefined;
   const out: Record<string, LayerVariant> = {};
-  for (const [key, variant] of Object.entries(variants)) {
+  for (const [rawKey, variant] of Object.entries(variants)) {
+    // Placements stored under the old `plain`/`bio`/`activity` keys are the
+    // compact states now — carried over rather than lost.
+    const key = LEGACY_VARIANT_KEYS[rawKey] ?? rawKey;
     // A key no build recognises is dropped: it can only have come from a
     // shape of card that no longer exists, and keeping it would mean carrying
     // it in every query for ever.
@@ -577,17 +768,28 @@ export function layerStyle(layer: CosmeticLayer): React.CSSProperties {
   };
 
   const shifts: string[] = [];
+  const ends = twoEndedStretch(layer);
   const stretched =
-    layer.height === undefined && !!layer.stretchY && layer.anchor !== "locked";
+    !ends &&
+    layer.height === undefined &&
+    !!layer.stretchY &&
+    layer.anchor !== "locked";
 
-  // Three ways a layer gets its height, and each places itself differently.
+  // Four ways a layer gets its height, and each places itself differently.
   //
+  //  two-ended the box runs between two pinned lines, either of which can be a
+  //            card edge or a locked fraction of the height — placed by both
   //  stretched the box runs between a fixed line and one of the card's edges,
   //            so it is placed by two edges and has no centre to speak of
   //  fixed     the box is known, so its centre can be positioned exactly
   //  auto      the browser knows the box and this file doesn't — hence the
   //            translate, which centres it without anyone measuring anything
-  if (stretched) {
+  if (ends) {
+    const top = endCss(ends.top);
+    const bottom = endCss(ends.bottom);
+    style.top = top;
+    style.height = `max(0px, calc((${bottom}) - (${top})))`;
+  } else if (stretched) {
     const edge = stretchEdge(layer);
     if (layer.stretchDirection === "up") {
       // Top edge on the card's, bottom edge on the fixed line: the card grows
@@ -629,6 +831,14 @@ function layerCentreCss(layer: CosmeticLayer): string {
   return `${layer.y}cqw`;
 }
 
+/** One stretched end as a CSS length down from the card's top — `layerCentreCss`
+ * for the three anchors an end can have. */
+function endCss(end: LayerEnd): string {
+  if (end.anchor === "locked") return `${end.y}cqh`;
+  if (end.anchor === "bottom") return `calc(100cqh + ${end.y}cqw)`;
+  return `${end.y}cqw`;
+}
+
 /** `stretchEdge` as a number, in percent of the card's width from its top. */
 function stretchEdgePercent(
   layer: Pick<CosmeticLayer, "anchor" | "y">,
@@ -661,7 +871,9 @@ function stretchEdge(layer: CosmeticLayer): string {
  * thing.
  */
 export function layerObjectFit(layer: CosmeticLayer): "fill" | "contain" {
-  return layer.height !== undefined || layer.stretchY ? "fill" : "contain";
+  return layer.height !== undefined || layer.stretchY || !!twoEndedStretch(layer)
+    ? "fill"
+    : "contain";
 }
 
 /**
@@ -679,6 +891,13 @@ export function layerHeight(
   ratio: number | undefined,
   stageHeightPercent: number,
 ): number {
+  const ends = twoEndedStretch(layer);
+  if (ends) {
+    return Math.max(
+      0,
+      endLine(ends.bottom, stageHeightPercent) - endLine(ends.top, stageHeightPercent),
+    );
+  }
   if (layer.height !== undefined) return layer.height;
   // Text and shapes are created with a height and keep one; a missing one can
   // only be a hand-written document, and a square is a better guess than a
@@ -743,8 +962,16 @@ export function layersHeadroom(layers: CosmeticLayer[]): {
       // that begins exactly on the card's top edge.
       const stretches =
         !!variant.stretchY && variant.height === undefined && variant.anchor !== "locked";
+      const ends = twoEndedStretch(variant);
 
-      if (stretches) {
+      if (ends) {
+        // The box is exactly the two pinned lines — whatever sticks out past a
+        // card edge is the overhang, nothing more.
+        const t = endLine(ends.top, shape.heightPercent);
+        const b = endLine(ends.bottom, shape.heightPercent);
+        top = Math.max(top, -t);
+        bottom = Math.max(bottom, b - shape.heightPercent);
+      } else if (stretches) {
         const edge = stretchEdgePercent(variant, shape.heightPercent);
         if (variant.stretchDirection === "up") {
           bottom = Math.max(bottom, edge - shape.heightPercent);

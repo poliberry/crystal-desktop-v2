@@ -17,7 +17,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 
 import { LayerCanvas } from "@/components/profile/layer-canvas";
-import { LayerContent } from "@/components/profile/layer-content";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -27,19 +26,23 @@ import {
   clearVariant,
   defaultShapeLayer,
   defaultTextLayer,
+  END_ANCHORS,
+  endLine,
+  endYFromLine,
   layerKind,
   MAX_TEXT_LENGTH,
   DEFAULT_VARIANT,
   LAYER_LIMITS,
-  layerCentreY,
   layerHeight,
   MAX_LAYERS,
   newLayerId,
   patchLayer,
   reanchorLayer,
   resolveLayer,
+  twoEndedStretch,
   type CosmeticLayer,
   type LayerAnchor,
+  type LayerEnd,
 } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
 
@@ -50,9 +53,11 @@ import { cn } from "@/lib/utils";
  *
  * One component for the profile frame and the avatar decoration because the
  * two are the same problem at different scales — place some pictures against
- * something. What differs is the backdrop and how tall it can be, which is why
- * both arrive as props: `renderStage` draws the thing being decorated, and
- * `heights` says which shapes of it are worth checking against.
+ * something. What differs is the backdrop and the shapes it comes in, which is
+ * why both arrive as props: `renderStage` draws the thing being decorated, and
+ * `stages` lists every shape of it worth arranging against — a decoration has
+ * one, a frame has a card at each width and content level. They are all shown
+ * at once; dragging on one edits that one.
  *
  * ## Editing is local, saving is not
  *
@@ -68,6 +73,10 @@ import { cn } from "@/lib/utils";
  * are what anybody lining artwork up with an edge is actually thinking in. */
 export type SizeUnit = "percent" | "px";
 
+/** A shared "not panned" value, so every un-panned canvas reads the same object
+ * rather than a fresh `{ x: 0, y: 0 }` each render. */
+const ZERO_PAN = { x: 0, y: 0 };
+
 /** What each anchor is called in the interface. "Locked" is the odd one out and
  * says so: the other three name an edge, and it names what it does. */
 const ANCHOR_LABELS: Record<LayerAnchor, string> = {
@@ -80,6 +89,9 @@ const ANCHOR_LABELS: Record<LayerAnchor, string> = {
 export interface StageHeightOption {
   key: string;
   label: string;
+  /** Width of the stage in CSS pixels, at zoom 1 — the ruler every layer's
+   * percentage geometry is a percentage of on this shape. */
+  width: number;
   /** Height of the stage in CSS pixels, at zoom 1. */
   height: number;
   hint?: string;
@@ -89,34 +101,37 @@ export function LayerEditor({
   layers: stored,
   onSave,
   renderStage,
-  stageWidth,
-  heights,
+  stages,
   upload,
   uploadHint,
   presets,
+  elementToggles,
   resolveSrc = (url) => url,
   className,
 }: {
   layers: CosmeticLayer[];
   onSave: (layers: CosmeticLayer[]) => void | Promise<unknown>;
-  /** The thing being decorated, drawn at `stageWidth` by the given height. */
-  renderStage: (height: number) => React.ReactNode;
-  stageWidth: number;
+  /** The thing being decorated, drawn at the stage's width and height. */
+  renderStage: (stage: StageHeightOption) => React.ReactNode;
   /**
-   * The shapes the backdrop is worth seeing at.
+   * Every shape the backdrop is worth arranging against, all shown at once.
    *
    * A profile card has no one height — a long bio or a rich presence card makes
-   * it grow — so a frame placed against a short card has to be checked against
-   * a tall one. That is what these are: the same artwork, the same numbers, a
-   * different card underneath.
+   * it grow — and no one width, since the full profile page is wider than a
+   * popover. Each of these is a real card in one of those states; a layer can be
+   * placed differently on each, and dragging on one edits that one.
    */
-  heights: StageHeightOption[];
+  stages: StageHeightOption[];
   /** Puts a picked file in storage and hands back what a layer needs. */
   upload: (file: File) => Promise<{ url: string; storageId?: string }>;
   uploadHint: string;
   /** Artwork that needs no upload — the built-in decoration presets. Their
    * `url` is the *stored* form (a preset key), which is what a layer keeps. */
   presets?: { label: string; url: string }[];
+  /** Checkboxes for hiding parts of the backdrop — the frame editor's "show the
+   * bio / badges / …" controls. Rendered in the side panel; owned by the caller
+   * because the same state also drives what `renderStage` draws. */
+  elementToggles?: React.ReactNode;
   /** A stored url to the picture to draw for it. Only the decoration editor
    * needs one, because only decorations have artwork that isn't a file. */
   resolveSrc?: (url: string) => string;
@@ -125,12 +140,16 @@ export function LayerEditor({
   const [draft, setDraft] = useState<CosmeticLayer[]>(stored);
   const [selectedIds, setSelectedIds] = useState<string[]>(stored[0] ? [stored[0].id] : []);
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  /** One pan per shape — the shapes are shown together, and nudging the view of
+   * one is not a reason to move the others. */
+  const [pans, setPans] = useState<Record<string, { x: number; y: number }>>({});
   /** Percent of the card, or pixels at the size it is drawn here. The stored
    * number is the percentage either way — this only decides which one you type
    * into, and pixels are what somebody matching artwork to a card edge wants. */
   const [unit, setUnit] = useState<SizeUnit>("percent");
-  const [heightKey, setHeightKey] = useState(heights[0]?.key ?? "");
+  /** Which shape the keyboard, the inspector and a preset drop belong to — the
+   * last one touched. Edits to the first shape are edits to the layer itself. */
+  const [activeKey, setActiveKey] = useState(stages[0]?.key ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -171,8 +190,12 @@ export function LayerEditor({
     }
   }, [draft, ratios, resolveSrc]);
 
-  const stageHeight =
-    heights.find((option) => option.key === heightKey)?.height ?? heights[0]?.height ?? stageWidth;
+  const activeStage =
+    stages.find((option) => option.key === activeKey) ?? stages[0];
+  /** The width the active shape is drawn at — what a percent is a percent of for
+   * the inspector's pixel readouts and for a preset dropped onto the canvas. */
+  const stageWidth = activeStage?.width ?? 100;
+  const stageHeight = activeStage?.height ?? stageWidth;
 
   /**
    * Undo/redo, as a stack of drafts rather than of edits.
@@ -252,8 +275,8 @@ export function LayerEditor({
 
   const selectedStored =
     selectedIds.length === 1 ? draft.find((layer) => layer.id === selectedIds[0]) ?? null : null;
-  /** The selected layer as it is drawn on the shape currently on the canvas. */
-  const selected = selectedStored ? resolveLayer(selectedStored, heightKey) : null;
+  /** The selected layer as it is drawn on the active shape. */
+  const selected = selectedStored ? resolveLayer(selectedStored, activeKey) : null;
 
   /**
    * A slider fires per pixel of travel, so the two are separate: the draft
@@ -264,20 +287,24 @@ export function LayerEditor({
    */
   const patchLive = (id: string, patch: Partial<CosmeticLayer>) =>
     setDraft((prev) =>
-      prev.map((layer) => (layer.id === id ? patchLayer(layer, patch, heightKey) : layer)),
+      prev.map((layer) => (layer.id === id ? patchLayer(layer, patch, activeKey) : layer)),
     );
   const patchSaved = (id: string, patch: Partial<CosmeticLayer>) =>
     commit(
-      draft.map((layer) => (layer.id === id ? patchLayer(layer, patch, heightKey) : layer)),
+      draft.map((layer) => (layer.id === id ? patchLayer(layer, patch, activeKey) : layer)),
     );
 
-  /** How tall each shape on offer is, in percent of the stage's width — the
-   * unit every layer is stored in, and what re-anchoring converts against. */
+  /** How tall each shape is, in percent of *its own* width — the unit every
+   * layer is stored in, and what re-anchoring converts against. Each shape has
+   * its own width now (a popover is narrower than the full page). */
   const heightPercentOf = useCallback(
-    (key: string) =>
-      (((heights.find((option) => option.key === key)?.height ?? stageHeight) / stageWidth) *
-        100),
-    [heights, stageHeight, stageWidth],
+    (key: string) => {
+      const shape = stages.find((option) => option.key === key);
+      const height = shape?.height ?? stageHeight;
+      const width = shape?.width ?? stageWidth;
+      return (height / width) * 100;
+    },
+    [stages, stageHeight, stageWidth],
   );
 
   /**
@@ -296,6 +323,39 @@ export function LayerEditor({
           : layer,
       ),
     );
+  };
+
+  /**
+   * Set — or clear — the selected layer's two stretched ends.
+   *
+   * Direct to the layer like `reanchor`, not through `patchSaved`: where a
+   * full-card border's edges are pinned is a fact about the border, the same on
+   * every shape of card, so routing it to the shape on screen would be wrong.
+   *
+   * Live and saved, like the sliders elsewhere — dragging the "locked %" slider
+   * fires per pixel and only the release is worth a write.
+   */
+  const withEnds = (
+    layer: CosmeticLayer,
+    ends: { top: LayerEnd; bottom: LayerEnd } | null,
+  ): CosmeticLayer => ({
+    ...layer,
+    stretchTop: ends?.top,
+    stretchBottom: ends?.bottom,
+    // Turning ends on is a kind of stretching, and it can't share the box with a
+    // fixed height.
+    stretchY: ends ? true : layer.stretchY,
+    height: ends ? undefined : layer.height,
+  });
+  const setStretchEndsLive = (ends: { top: LayerEnd; bottom: LayerEnd } | null) => {
+    if (!selectedStored) return;
+    const id = selectedStored.id;
+    setDraft((prev) => prev.map((layer) => (layer.id === id ? withEnds(layer, ends) : layer)));
+  };
+  const setStretchEndsSaved = (ends: { top: LayerEnd; bottom: LayerEnd } | null) => {
+    if (!selectedStored) return;
+    const id = selectedStored.id;
+    commit(draft.map((layer) => (layer.id === id ? withEnds(layer, ends) : layer)));
   };
 
   /** Put a ready-made layer on the canvas and select it, which is what makes
@@ -377,10 +437,22 @@ export function LayerEditor({
     commit(next);
   };
 
-  const stageOptions = useMemo(
-    () => heights.filter((option) => option.height > 0),
-    [heights],
+  const stageList = useMemo(
+    () => stages.filter((option) => option.height > 0 && option.width > 0),
+    [stages],
   );
+  /** A common box width for every canvas, so the narrow popover and the wide
+   * full-page card line up down the middle and each has room for a frame that
+   * hangs off its edges. */
+  const maxStageWidth = useMemo(
+    () => stageList.reduce((max, option) => Math.max(max, option.width), 0),
+    [stageList],
+  );
+
+  const resetView = () => {
+    setZoom(1);
+    setPans({});
+  };
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-3", className)}>
@@ -388,29 +460,57 @@ export function LayerEditor({
         {/* The canvas. Left alone by the panel beside it: this is the part
             being looked at, so it gets the room. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          <LayerCanvas
-            layers={draft}
-            stage={{ width: stageWidth, height: stageHeight }}
-            selectedIds={selectedIds}
-            onSelect={setSelectedIds}
-            onChange={setDraft}
-            onCommit={commit}
-            onDelete={deleteLayers}
-            onDuplicate={duplicateLayers}
-            onReorder={move}
-            onUndo={undo}
-            onRedo={redo}
-            ratios={ratios}
-            variant={heightKey}
-            zoom={zoom}
-            onZoomChange={setZoom}
-            pan={pan}
-            onPanChange={setPan}
-            resolveSrc={resolveSrc}
-            className="min-h-0 flex-1"
-          >
-            {renderStage(stageHeight)}
-          </LayerCanvas>
+          {/* Every card shape at once, one under the other — a frame that only
+              works on the short popover is caught by seeing it on the tall
+              page too. The shape last touched is "active": it answers the
+              keyboard and the inspector's numbers are its. */}
+          <div className="flex min-h-0 flex-1 flex-row items-center gap-5 overflow-auto rounded-md border border-border/50 bg-background/30 p-4">
+            {stageList.map((stage) => (
+              <div key={stage.key} className="flex shrink-0 flex-col items-center gap-1">
+                <LayerCanvas
+                  layers={draft}
+                  stage={{ width: stage.width, height: stage.height }}
+                  selectedIds={selectedIds}
+                  onSelect={setSelectedIds}
+                  onChange={setDraft}
+                  onCommit={commit}
+                  onDelete={deleteLayers}
+                  onDuplicate={duplicateLayers}
+                  onReorder={move}
+                  onUndo={undo}
+                  onRedo={redo}
+                  ratios={ratios}
+                  variant={stage.key}
+                  zoom={zoom}
+                  onZoomChange={setZoom}
+                  pan={pans[stage.key] ?? ZERO_PAN}
+                  onPanChange={(next) =>
+                    setPans((prev) => ({ ...prev, [stage.key]: next }))
+                  }
+                  active={stage.key === activeKey}
+                  onActivate={() => setActiveKey(stage.key)}
+                  resolveSrc={resolveSrc}
+                  style={{
+                    width: maxStageWidth * zoom + 96,
+                    height: stage.height * zoom + 96,
+                  }}
+                >
+                  {renderStage(stage)}
+                </LayerCanvas>
+                <span
+                  className={cn(
+                    "text-[11px]",
+                    stage.key === activeKey
+                      ? "font-medium text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                  title={stage.hint}
+                >
+                  {stage.label}
+                </span>
+              </div>
+            ))}
+          </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1">
@@ -439,56 +539,19 @@ export function LayerEditor({
               </Button>
               {/* Only offered once the view has actually been moved — a button
                   that undoes nothing is a button in the way. */}
-              {(zoom !== 1 || pan.x !== 0 || pan.y !== 0) && (
+              {(zoom !== 1 || Object.keys(pans).length > 0) && (
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
                   className="h-7 px-2 text-xs"
                   title="Back to 100% and centred"
-                  onClick={() => {
-                    setZoom(1);
-                    setPan({ x: 0, y: 0 });
-                  }}
+                  onClick={resetView}
                 >
                   Reset view
                 </Button>
               )}
             </div>
-
-            {/* The shapes the backdrop comes in, shown together rather than
-                named on a row of buttons — a card grows with what's written on
-                it, and seeing all three at once is how you notice a frame that
-                only works on the short one. Clicking one makes it the shape
-                the big canvas edits. */}
-            {stageOptions.length > 1 && (
-              <div className="flex items-center gap-1.5">
-                {stageOptions.map((option) => (
-                  <button
-                    key={option.key}
-                    type="button"
-                    title={option.hint}
-                    onClick={() => setHeightKey(option.key)}
-                    className={cn(
-                      "flex flex-col items-center gap-0.5 rounded-md border p-1 transition-colors",
-                      heightKey === option.key
-                        ? "border-primary bg-accent/60"
-                        : "border-transparent hover:bg-accent/40",
-                    )}
-                  >
-                    <ShapePreview
-                      height={option.height}
-                      stageWidth={stageWidth}
-                      renderStage={renderStage}
-                      layers={draft}
-                      variant={option.key}
-                      resolveSrc={resolveSrc}
-                    />
-                    <span className="text-[10px] text-muted-foreground">{option.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
 
             <div className="ml-auto flex items-center gap-2">
               <input
@@ -549,6 +612,13 @@ export function LayerEditor({
           ref={smoothRef}
           className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto"
         >
+          {elementToggles && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Show on the card</Label>
+              {elementToggles}
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label className="text-xs">Artwork</Label>
             {draft.length === 0 ? (
@@ -681,19 +751,22 @@ export function LayerEditor({
               pxPerPercent={stageWidth / 100}
               stageHeightPercent={(stageHeight / stageWidth) * 100}
               onAnchorChange={reanchor}
+              ends={twoEndedStretch(selected)}
+              onEndsChange={setStretchEndsLive}
+              onEndsCommit={setStretchEndsSaved}
               variantLabel={
-                heightKey === DEFAULT_VARIANT
+                activeKey === DEFAULT_VARIANT
                   ? undefined
-                  : (heights.find((option) => option.key === heightKey)?.label ??
-                    heightKey)
+                  : (stages.find((option) => option.key === activeKey)?.label ??
+                    activeKey)
               }
-              overridden={!!selectedStored?.variants?.[heightKey]}
+              overridden={!!selectedStored?.variants?.[activeKey]}
               onMatchDefault={() =>
                 selectedStored &&
                 commit(
                   draft.map((layer) =>
                     layer.id === selectedStored.id
-                      ? clearVariant(layer, heightKey)
+                      ? clearVariant(layer, activeKey)
                       : layer,
                   ),
                 )
@@ -728,6 +801,9 @@ function LayerInspector({
   pxPerPercent,
   stageHeightPercent,
   onAnchorChange,
+  ends,
+  onEndsChange,
+  onEndsCommit,
   variantLabel,
   overridden,
   onMatchDefault,
@@ -749,6 +825,12 @@ function LayerInspector({
   stageHeightPercent: number;
   /** Change what the layer is pinned to, everywhere at once. */
   onAnchorChange: (anchor: LayerAnchor) => void;
+  /** The layer's two pinned ends, or `null` if it isn't a two-ended stretch. */
+  ends: { top: LayerEnd; bottom: LayerEnd } | null;
+  /** Live, for a slider mid-drag. `null` goes back to a one-ended stretch. */
+  onEndsChange: (ends: { top: LayerEnd; bottom: LayerEnd } | null) => void;
+  /** Saved, for the release and for the one-click anchor buttons. */
+  onEndsCommit: (ends: { top: LayerEnd; bottom: LayerEnd } | null) => void;
   /** Set when the canvas is showing a shape of card other than the default, in
    * which case the numbers below belong to that shape alone. */
   variantLabel?: string;
@@ -764,7 +846,8 @@ function LayerInspector({
   onRemove: () => void;
 }) {
   const locked = layer.anchor === "locked";
-  const stretching = !!layer.stretchY && layer.height === undefined && !locked;
+  const stretching =
+    !!ends || (!!layer.stretchY && layer.height === undefined && !locked);
   const kind = layerKind(layer);
 
   return (
@@ -945,33 +1028,37 @@ function LayerInspector({
         </div>
       )}
 
-      <div className="space-y-1.5">
-        <Label className="text-xs">Pinned to</Label>
-        <div className="grid grid-cols-4 gap-1">
-          {ANCHORS.map((anchor) => (
-            <Button
-              key={anchor}
-              type="button"
-              size="sm"
-              variant={layer.anchor === anchor ? "secondary" : "ghost"}
-              className="h-7 px-1 text-[11px]"
-              // Not one of the patches above: an anchor belongs to the layer
-              // rather than to the shape on screen, and changing it has to
-              // rewrite every shape's position at once — see `reanchorLayer`.
-              onClick={() => onAnchorChange(anchor)}
-            >
-              {ANCHOR_LABELS[anchor]}
-            </Button>
-          ))}
+      {/* A layer pinned at both ends carries its edges' anchors instead, so the
+          single "Pinned to" question doesn't apply to it. */}
+      {!ends && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Pinned to</Label>
+          <div className="grid grid-cols-4 gap-1">
+            {ANCHORS.map((anchor) => (
+              <Button
+                key={anchor}
+                type="button"
+                size="sm"
+                variant={layer.anchor === anchor ? "secondary" : "ghost"}
+                className="h-7 px-1 text-[11px]"
+                // Not one of the patches above: an anchor belongs to the layer
+                // rather than to the shape on screen, and changing it has to
+                // rewrite every shape's position at once — see `reanchorLayer`.
+                onClick={() => onAnchorChange(anchor)}
+              >
+                {ANCHOR_LABELS[anchor]}
+              </Button>
+            ))}
+          </div>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            {locked
+              ? "Held the same distance down the card, whatever its height."
+              : "Which edge it stays with when the card grows."}
+          </p>
         </div>
-        <p className="text-[10px] leading-snug text-muted-foreground">
-          {locked
-            ? "Held the same distance down the card, whatever its height."
-            : "Which edge it stays with when the card grows."}
-        </p>
-      </div>
+      )}
 
-      {!locked && (
+      {(!locked || ends) && (
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <Label className="text-xs">Grow with the card</Label>
@@ -982,18 +1069,64 @@ function LayerInspector({
           <Switch
             checked={stretching}
             onCheckedChange={(checked) =>
-              onCommit({ stretchY: checked || undefined, height: undefined })
+              onCommit({
+                stretchY: checked || undefined,
+                height: undefined,
+                // Turning it off takes both pinned ends with it.
+                stretchTop: undefined,
+                stretchBottom: undefined,
+              })
             }
           />
         </div>
       )}
 
-      {/* Which end of a stretched layer gives. Only worth asking once it is
-          stretching — and worth asking at all because a band across the middle
-          of a card and a border drawn around the whole of it want opposite
-          answers: one keeps its place and lets the space above it grow, the
-          other keeps its top and follows the card down. */}
+      {/* Pin each end to its own line on the card and let the layer grow
+          between them — the answer for a full-card border on a card whose drawn
+          height isn't its content's (the full profile page). */}
       {stretching && (
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <Label className="text-xs">Pin both ends</Label>
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              Its top and bottom each hold a spot; it stretches to fit.
+            </p>
+          </div>
+          <Switch
+            checked={!!ends}
+            onCheckedChange={(checked) =>
+              onEndsCommit(
+                checked
+                  ? { top: { anchor: "top", y: 0 }, bottom: { anchor: "bottom", y: 0 } }
+                  : null,
+              )
+            }
+          />
+        </div>
+      )}
+
+      {ends && (
+        <div className="space-y-3 rounded-md border border-border/60 bg-muted/30 p-2">
+          {(["top", "bottom"] as const).map((which) => (
+            <StretchEndRow
+              key={which}
+              label={which === "top" ? "Top edge" : "Bottom edge"}
+              end={ends[which]}
+              unit={unit}
+              pxPerPercent={pxPerPercent}
+              stageHeightPercent={stageHeightPercent}
+              onChange={(next) => onEndsChange({ ...ends, [which]: next })}
+              onCommit={(next) => onEndsCommit({ ...ends, [which]: next })}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Which end of a one-ended stretch gives. A band across the middle of a
+          card and a border drawn around the whole of it want opposite answers:
+          one keeps its place and lets the space above it grow, the other keeps
+          its top and follows the card down. */}
+      {stretching && !ends && (
         <div className="space-y-1.5">
           <Label className="text-xs">Which end gives</Label>
           <div className="grid grid-cols-2 gap-1">
@@ -1057,26 +1190,30 @@ function LayerInspector({
         onChange={(width) => onChange({ width })}
         onCommit={(width) => onCommit({ width })}
       />
-      <NumberRow
-        label="Height"
-        value={height}
-        unit={unit}
-        pxPerPercent={pxPerPercent}
-        min={LAYER_LIMITS.size.min}
-        max={LAYER_LIMITS.size.max}
-        // Typing a height is how a layer stops keeping its own proportions —
-        // the two are answers to the same question, so setting one puts the
-        // other away.
-        hint={
-          layer.height === undefined
-            ? layer.stretchY
-              ? "Following the card."
-              : "The artwork's own shape."
-            : undefined
-        }
-        onChange={(next) => onChange({ height: next, stretchY: undefined })}
-        onCommit={(next) => onCommit({ height: next, stretchY: undefined })}
-      />
+      {/* A two-ended stretch has no height of its own — it's whatever the two
+          pinned edges leave between them. */}
+      {!ends && (
+        <NumberRow
+          label="Height"
+          value={height}
+          unit={unit}
+          pxPerPercent={pxPerPercent}
+          min={LAYER_LIMITS.size.min}
+          max={LAYER_LIMITS.size.max}
+          // Typing a height is how a layer stops keeping its own proportions —
+          // the two are answers to the same question, so setting one puts the
+          // other away.
+          hint={
+            layer.height === undefined
+              ? layer.stretchY
+                ? "Following the card."
+                : "The artwork's own shape."
+              : undefined
+          }
+          onChange={(next) => onChange({ height: next, stretchY: undefined })}
+          onCommit={(next) => onCommit({ height: next, stretchY: undefined })}
+        />
+      )}
       <NumberRow
         label="Across"
         value={layer.x}
@@ -1087,20 +1224,24 @@ function LayerInspector({
         onChange={(x) => onChange({ x })}
         onCommit={(x) => onCommit({ x })}
       />
-      <NumberRow
-        label="Down"
-        value={layer.y}
-        unit={unit}
-        // A locked layer's `y` is the one measurement taken against the card's
-        // height rather than its width, so a pixel of it is a different number
-        // of percent — and typing "80px" has to mean 80 pixels either way.
-        pxPerPercent={locked ? (pxPerPercent * stageHeightPercent) / 100 : pxPerPercent}
-        min={LAYER_LIMITS.position.min}
-        max={LAYER_LIMITS.position.max}
-        hint={locked ? "Percent of the card's height." : undefined}
-        onChange={(y) => onChange({ y })}
-        onCommit={(y) => onCommit({ y })}
-      />
+      {/* A two-ended stretch is placed by its edges, in the box above — it has
+          no single "down". */}
+      {!ends && (
+        <NumberRow
+          label="Down"
+          value={layer.y}
+          unit={unit}
+          // A locked layer's `y` is the one measurement taken against the card's
+          // height rather than its width, so a pixel of it is a different number
+          // of percent — and typing "80px" has to mean 80 pixels either way.
+          pxPerPercent={locked ? (pxPerPercent * stageHeightPercent) / 100 : pxPerPercent}
+          min={LAYER_LIMITS.position.min}
+          max={LAYER_LIMITS.position.max}
+          hint={locked ? "Percent of the card's height." : undefined}
+          onChange={(y) => onChange({ y })}
+          onCommit={(y) => onCommit({ y })}
+        />
+      )}
       <NumberRow
         label="Turn"
         value={layer.rotation ?? 0}
@@ -1162,6 +1303,82 @@ function LayerInspector({
 }
 
 /**
+ * One end of a two-ended stretch: what card line it holds, and how far off it.
+ *
+ * The three anchors are the same ones a whole layer can use, minus `"center"` —
+ * `"top"`/`"bottom"` hold a card edge with an offset in percent of the card's
+ * width, `"locked"` holds a percentage of the card's height. Switching between
+ * them keeps the edge where it is on screen, the same courtesy `reanchorLayer`
+ * does for a layer.
+ */
+function StretchEndRow({
+  label,
+  end,
+  unit,
+  pxPerPercent,
+  stageHeightPercent,
+  onChange,
+  onCommit,
+}: {
+  label: string;
+  end: LayerEnd;
+  unit: SizeUnit;
+  pxPerPercent: number;
+  stageHeightPercent: number;
+  onChange: (end: LayerEnd) => void;
+  onCommit: (end: LayerEnd) => void;
+}) {
+  const lockedEnd = end.anchor === "locked";
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      <div className="grid grid-cols-3 gap-1">
+        {END_ANCHORS.map((anchor) => (
+          <Button
+            key={anchor}
+            type="button"
+            size="sm"
+            variant={end.anchor === anchor ? "secondary" : "ghost"}
+            className="h-7 px-1 text-[11px]"
+            onClick={() =>
+              onCommit({
+                anchor,
+                y: endYFromLine(
+                  anchor,
+                  endLine(end, stageHeightPercent),
+                  stageHeightPercent,
+                ),
+              })
+            }
+          >
+            {ANCHOR_LABELS[anchor]}
+          </Button>
+        ))}
+      </div>
+      <NumberRow
+        label={lockedEnd ? "Down the card" : "Off the edge"}
+        value={end.y}
+        unit={unit}
+        // A locked end's offset is a percentage of the card's height, like a
+        // locked layer's `y` — so a pixel of it converts differently.
+        pxPerPercent={
+          lockedEnd ? (pxPerPercent * stageHeightPercent) / 100 : pxPerPercent
+        }
+        min={LAYER_LIMITS.position.min}
+        max={LAYER_LIMITS.position.max}
+        hint={
+          lockedEnd
+            ? "Percent of the card's height."
+            : "Negative reaches past the edge."
+        }
+        onChange={(y) => onChange({ ...end, y })}
+        onCommit={(y) => onCommit({ ...end, y })}
+      />
+    </div>
+  );
+}
+
+/**
  * A colour, and whether there is one at all.
  *
  * The swatch is a native colour input — the OS picker is better than anything
@@ -1200,73 +1417,6 @@ function ColorRow({
         >
           <Trash2 className="size-3" />
         </Button>
-      </div>
-    </div>
-  );
-}
-
-/** The width a shape's thumbnail is drawn at — big enough to tell a border
- * from a badge, small enough that three fit beside the zoom controls. */
-const SHAPE_PREVIEW_WIDTH = 34;
-
-/**
- * A whole shape of card, small — the backdrop and every layer on it, scaled
- * down together rather than drawn twice.
- *
- * Scaling the backdrop as a picture and the layers as a second, separately
- * computed set of boxes is how a thumbnail ends up disagreeing with the
- * canvas it is a thumbnail of. Instead this is the same trick the canvas
- * itself uses for zoom: render the real backdrop at its real size, and shrink
- * the whole thing with one `transform: scale()` — proportions inside it,
- * text included, come out right for free.
- */
-function ShapePreview({
-  height,
-  stageWidth,
-  renderStage,
-  layers,
-  variant,
-  resolveSrc,
-}: {
-  height: number;
-  stageWidth: number;
-  renderStage: (height: number) => React.ReactNode;
-  layers: CosmeticLayer[];
-  variant: string;
-  resolveSrc: (url: string) => string;
-}) {
-  const scale = SHAPE_PREVIEW_WIDTH / stageWidth;
-  const stageHeightPercent = (height / stageWidth) * 100;
-  return (
-    <div
-      className="relative overflow-hidden rounded-[3px]"
-      style={{ width: SHAPE_PREVIEW_WIDTH, height: height * scale }}
-    >
-      <div
-        className="absolute top-0 left-0 origin-top-left [container-type:size]"
-        style={{ width: stageWidth, height, transform: `scale(${scale})` }}
-      >
-        {renderStage(height)}
-        {layers.map((layer) => {
-          const placed = resolveLayer(layer, variant);
-          const layerHeightPercent = layerHeight(placed, undefined, stageHeightPercent);
-          return (
-            <div
-              key={placed.id}
-              className="pointer-events-none absolute select-none"
-              style={{
-                left: `${placed.x - placed.width / 2}%`,
-                top: `${layerCentreY(placed, stageHeightPercent) - layerHeightPercent / 2}%`,
-                width: `${placed.width}%`,
-                height: `${layerHeightPercent}%`,
-                transform: placed.rotation ? `rotate(${placed.rotation}deg)` : undefined,
-                opacity: placed.opacity ?? 1,
-              }}
-            >
-              <LayerContent layer={placed} resolveSrc={resolveSrc} />
-            </div>
-          );
-        })}
       </div>
     </div>
   );

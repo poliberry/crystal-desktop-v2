@@ -1,7 +1,19 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { SearchIcon, ShoppingBag, Sparkles, Users } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import {
+  Pin,
+  PinOff,
+  Phone,
+  SearchIcon,
+  Send,
+  ShoppingBag,
+  Sparkles,
+  UserMinus,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -10,6 +22,19 @@ import { Nameplate } from "@/components/profile/nameplate";
 import { NewDmDialog } from "@/components/home/new-dm-dialog";
 import { SelectionPill } from "@/components/home/selection-pill";
 import { UserCard } from "@/components/home/user-card";
+import { useCall } from "@/components/call/call-provider";
+import { useOpenProfile } from "@/components/profile/profile-page";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { inviteUrl } from "@/lib/invites";
 import {
   Avatar,
   AvatarDecoration,
@@ -28,6 +53,7 @@ import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { cn } from "@/lib/utils";
+import { UsersIcon } from "@animateicons/react/lucide";
 
 interface NavSidebarProps {
   search: string;
@@ -63,6 +89,132 @@ function DmListSkeleton() {
   );
 }
 
+/** The other person in a one-to-one DM, as much of them as this list has. */
+interface DmFriend {
+  id: Id<"users">;
+  name: string;
+  username: string;
+  imageUrl?: string;
+  status: FriendStatus;
+}
+
+/**
+ * The right-click menu on a DM row: pin it, open the person, call them, close
+ * the DM, invite them somewhere, or drop them as a friend.
+ *
+ * The friend-only items are hidden for a group — a group has no single person
+ * to profile or unfriend.
+ */
+function DmConversationMenu({
+  conversationId,
+  pinned,
+  friend,
+  onOpen,
+}: {
+  conversationId: Id<"conversations">;
+  pinned: boolean;
+  friend?: DmFriend;
+  onOpen: () => void;
+}) {
+  const setPinned = useMutation(api.conversations.setPinned);
+  const setClosed = useMutation(api.conversations.setClosed);
+  const removeFriend = useMutation(api.friends.removeFriend);
+  const sendMessage = useMutation(api.messages.send);
+  const getOrCreateInviteCode = useMutation(api.communities.getOrCreateInviteCode);
+  const openProfile = useOpenProfile();
+  const { joinDmCall } = useCall();
+  const communities =
+    useCachedQuery(api.communities.listMine, {}, "communities.listMine") ?? [];
+
+  const inviteToServer = async (communityId: Id<"communities">) => {
+    try {
+      const code = await getOrCreateInviteCode({ communityId });
+      await sendMessage({ conversationId, text: inviteUrl(code) });
+      onOpen();
+    } catch {
+      // Missing the Create Invite permission in that server, most likely —
+      // nothing useful to say in a context menu that's already closing.
+    }
+  };
+
+  return (
+    <ContextMenuContent className="w-52">
+      <ContextMenuItem
+        onSelect={() => void setPinned({ conversationId, pinned: !pinned })}
+      >
+        {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+        {pinned ? "Unpin" : "Pin"}
+      </ContextMenuItem>
+
+      {friend && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onSelect={() =>
+              openProfile({
+                member: {
+                  userId: friend.id,
+                  name: friend.name,
+                  username: friend.username,
+                  imageUrl: friend.imageUrl,
+                  status: friend.status,
+                },
+              })
+            }
+          >
+            <UserRound className="size-4" />
+            Profile
+          </ContextMenuItem>
+        </>
+      )}
+
+      <ContextMenuItem
+        onSelect={() => void joinDmCall(conversationId, { ring: true })}
+      >
+        <Phone className="size-4" />
+        Start a call
+      </ContextMenuItem>
+
+      <ContextMenuItem onSelect={() => void setClosed({ conversationId })}>
+        <X className="size-4" />
+        Close DM
+      </ContextMenuItem>
+
+      {friend && communities.length > 0 && (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            <Send className="size-4" />
+            Invite to Server
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent className="max-h-72 overflow-y-auto">
+            {communities.map((community) => (
+              <ContextMenuItem
+                key={community.id}
+                onSelect={() => void inviteToServer(community.id)}
+              >
+                {community.name}
+              </ContextMenuItem>
+            ))}
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      )}
+
+      {friend && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            variant="destructive"
+            onSelect={() => void removeFriend({ friendId: friend.id })}
+          >
+            <UserMinus className="size-4" />
+            Remove Friend
+          </ContextMenuItem>
+        </>
+      )}
+    </ContextMenuContent>
+  );
+}
+
 export function NavSidebar({
   search,
   onSearchChange,
@@ -80,9 +232,10 @@ export function NavSidebar({
   const filtered = conversations.filter((c) =>
     matches(search, c.name ?? "", ...c.members.map((m) => m.name))
   );
+  const setClosed = useMutation(api.conversations.setClosed);
 
   return (
-    <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl shadow-md">
+    <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl bg-accent/40 shadow-md">
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
       <div className="relative">
         <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -100,7 +253,7 @@ export function NavSidebar({
           className="justify-start gap-2"
           onClick={onSelectFriends}
         >
-          <Users className="size-4" />
+          <UsersIcon duration={0.8} className="size-4" />
           Friends
         </Button>
         <Button variant="ghost" className="justify-start gap-2" disabled>
@@ -199,16 +352,37 @@ export function NavSidebar({
               const fallback =
                 (!isGroup && stale ? presenceLine : null) ?? "No messages yet";
 
+              const pinned = conversation.pinnedAt != null;
+              const friend =
+                !isGroup && otherMember
+                  ? {
+                      id: otherMember.id,
+                      name: otherMember.name,
+                      username: otherMember.username,
+                      imageUrl: otherMember.imageUrl,
+                      status: otherMember.status as FriendStatus,
+                    }
+                  : undefined;
+
               return (
-                <button
-                  key={conversation.id}
-                  onClick={() => onSelectConversation(conversation.id)}
-                  className={cn(
-                    "group relative flex items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left hover:bg-accent/60",
-                    active && "bg-accent",
-                    isOffline && !active && "opacity-60 hover:opacity-90"
-                  )}
-                >
+                <ContextMenu key={conversation.id}>
+                  <ContextMenuTrigger asChild>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSelectConversation(conversation.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectConversation(conversation.id);
+                        }
+                      }}
+                      className={cn(
+                        "group relative flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left outline-none hover:bg-accent/60 focus-visible:bg-accent/60",
+                        active && "bg-accent",
+                        isOffline && !active && "opacity-60 hover:opacity-90"
+                      )}
+                    >
                   {/* Same left-edge pill as the community rail: a stub for
                       unread, full row height for the DM you're reading. */}
                   <SelectionPill
@@ -232,7 +406,8 @@ export function NavSidebar({
                           status={otherMember.status as FriendStatus}
                           activities={activities}
                           accent={otherMember.borderGradientStart}
-                          isBirthday={otherMember.isBirthday}                          className="absolute -right-0.5 -bottom-0.5 z-10"
+                          isBirthday={otherMember.isBirthday}
+                          className="absolute -right-0.5 -bottom-0.5 z-10"
                         />
                       )}
                     </Avatar>
@@ -240,11 +415,14 @@ export function NavSidebar({
                   <div className="relative min-w-0 flex-1">
                     <p
                       className={cn(
-                        "truncate text-sm",
+                        "flex items-center gap-1 truncate text-sm",
                         conversation.unread ? "font-semibold" : "font-medium"
                       )}
                     >
-                      {title}
+                      {pinned && (
+                        <Pin className="size-3 shrink-0 -rotate-45 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{title}</span>
                     </p>
                     <p className="flex w-42 items-center gap-1 truncate text-xs text-muted-foreground">
                       {preview ? (
@@ -257,7 +435,30 @@ export function NavSidebar({
                       )}
                     </p>
                   </div>
-                </button>
+
+                  {/* Appears on hover — the quick way to clear a DM you're
+                      done with. The full set of actions is the right-click
+                      menu. */}
+                  <button
+                    type="button"
+                    aria-label={`Close ${title}`}
+                    className="absolute top-1/2 right-1.5 z-10 -translate-y-1/2 rounded bg-accent/80 p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void setClosed({ conversationId: conversation.id });
+                    }}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                    </div>
+                  </ContextMenuTrigger>
+                  <DmConversationMenu
+                    conversationId={conversation.id}
+                    pinned={pinned}
+                    friend={friend}
+                    onOpen={() => onSelectConversation(conversation.id)}
+                  />
+                </ContextMenu>
               );
             })
           )}

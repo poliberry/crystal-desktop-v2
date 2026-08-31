@@ -6,10 +6,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { LayerContent } from "@/components/profile/layer-content";
 import {
-  DEFAULT_VARIANT,
   layerStyle,
   resolveLayer,
-  variantForHeight,
+  variantFor,
+  type CardSizeClass,
   type CosmeticLayer as Layer,
 } from "@/lib/cosmetic-layers";
 import { useCachedImageSrc } from "@/lib/image-cache";
@@ -131,13 +131,20 @@ export function ProfileEffectLayer({
  */
 export function ProfileFrameLayers({
   layers,
+  sizeClass,
   animate = true,
 }: {
   layers: Layer[];
+  /** Which width the card is drawn at here — the popover/DM card is `compact`,
+   * the full profile page is `expanded`. A layer may be placed differently for
+   * each, so the renderer has to be told which one it is rather than guess it
+   * from a height ratio (a tall compact card and a short expanded one land on
+   * the same ratio). */
+  sizeClass: CardSizeClass;
   animate?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [variant, setVariant] = useState(DEFAULT_VARIANT);
+  const [variant, setVariant] = useState(() => variantFor(sizeClass, 0));
 
   /**
    * Which shape of card this is, measured rather than declared.
@@ -158,13 +165,13 @@ export function ProfileFrameLayers({
     if (!node) return;
     const measure = () => {
       const { width, height } = node.getBoundingClientRect();
-      if (width > 0) setVariant(variantForHeight((height / width) * 100));
+      if (width > 0) setVariant(variantFor(sizeClass, (height / width) * 100));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [sizeClass]);
 
   if (layers.length === 0) return null;
   return (

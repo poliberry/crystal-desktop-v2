@@ -6,11 +6,13 @@ import { Cog, Maximize2, UserPen } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { CachedBackground } from "@/components/cached-background";
 import { FriendActionButton } from "@/components/friend-action-button";
 import { StatusDialog } from "@/components/status-dialog";
 import { useOpenProfile } from "@/components/profile/profile-page";
 import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
-import { UserRichPresenceCard } from "@/components/rich-presence-card";
+import { RichPresenceCards } from "@/components/rich-presence-card";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import {
   Avatar,
   AvatarDecoration,
@@ -150,6 +152,7 @@ export function MemberProfileCard({
   hideMessageAction = false,
   frameHandledByHost = false,
   reserveFrameRoom = true,
+  previewActivities,
   className,
 }: {
   member: MemberProfileMember;
@@ -161,6 +164,10 @@ export function MemberProfileCard({
   hideMessageAction?: boolean;
   frameHandledByHost?: boolean;
   reserveFrameRoom?: boolean;
+  /** Canned rich-presence content, so the frame editor can show the taller
+   * "playing something" card without the viewer actually broadcasting. Stands
+   * in for the live activities everywhere they're read. */
+  previewActivities?: RichPresenceActivity[];
   className?: string;
 }) {
   const me = useQuery(api.users.getCurrentUser);
@@ -206,7 +213,8 @@ export function MemberProfileCard({
     profile?.displayNameStyle ?? member.displayNameStyle,
   );
   const statusBubble = (profile?.statusBubble ?? "speech") as StatusBubbleKind;
-  const activities = useUserActivities(member.userId);
+  const liveActivities = useUserActivities(member.userId);
+  const activities = previewActivities ?? liveActivities;
 
   return (
     <div
@@ -251,18 +259,14 @@ export function MemberProfileCard({
       >
         {/* Banner — always shown if set; if no banner but gradient, just top padding */}
         {member.bannerUrl ? (
-          <>
-            <div
-              data-slot="profile-banner"
-              className={cn(
-                "w-full bg-cover bg-center opacity-80",
-                expanded ? "h-40" : "h-24",
-              )}
-              style={{
-                backgroundImage: `url(${member.bannerUrl})`,
-              }}
-            />
-          </>
+          <CachedBackground
+            url={member.bannerUrl}
+            data-slot="profile-banner"
+            className={cn(
+              "w-full bg-cover bg-center opacity-80",
+              expanded ? "h-40" : "h-24",
+            )}
+          />
         ) : hasGradient ? (
           <div className="h-24 w-full bg-muted" />
         ) : (
@@ -396,9 +400,9 @@ export function MemberProfileCard({
           )}
           {/* In the dialog the activity list owns its own column, so showing
               it here too would just be the same card twice. */}
-          {showActivity && <UserRichPresenceCard userId={member.userId} />}
+          {showActivity && <RichPresenceCards activities={activities} />}
           {member.roles && member.roles.length > 0 && (
-            <div className="flex flex-wrap gap-1">
+            <div data-slot="profile-roles" className="flex flex-wrap gap-1">
               {member.roles.map((role) => (
                 <Badge
                   key={role.id}
@@ -480,7 +484,10 @@ export function MemberProfileCard({
       <ProfileEffectLayer src={profileEffect} rounded="rounded-md" />
       {!frameHandledByHost &&
         (frameLayers.length > 0 ? (
-          <ProfileFrameLayers layers={frameLayers} />
+          <ProfileFrameLayers
+            layers={frameLayers}
+            sizeClass={expanded ? "expanded" : "compact"}
+          />
         ) : (
           <ProfileFrameLayer src={profileFrame} layout={profileFrameLayout} />
         ))}

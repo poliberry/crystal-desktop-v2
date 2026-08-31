@@ -116,6 +116,16 @@ export const listMine = query({
 
         const lastMessage = await lastMessageOf(ctx, conversation._id);
         const unread = isUnread(lastMessage, membership.lastReadAt, me._id);
+
+        // A closed DM stays out of the list until it has something new to say —
+        // a message sent after it was closed, by anyone. Opening it again clears
+        // `closedAt` (see `markRead`), so this only hides the quiet ones.
+        if (
+          membership.closedAt !== undefined &&
+          (!lastMessage || lastMessage._creationTime <= membership.closedAt)
+        ) {
+          return null;
+        }
         // One indexed read per conversation, and only ever a handful of rows —
         // the composer caps how many files a message can carry.
         const lastAttachments = lastMessage
@@ -162,6 +172,9 @@ export const listMine = query({
           /** So the list can prefix the preview with "Me:" — whose turn it is
            * is most of what a one-line preview is for. */
           lastMessageMine: lastMessage?.authorId === me._id,
+          /** When this member pinned the DM, or `null`. Pinned rows sit above
+           * the rest of the list, still ordered by recency among themselves. */
+          pinnedAt: membership.pinnedAt ?? null,
           unread,
           unreadCount,
         };
@@ -170,7 +183,11 @@ export const listMine = query({
 
     return conversations
       .filter((c): c is NonNullable<typeof c> => c !== null)
-      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+      .sort(
+        (a, b) =>
+          (b.pinnedAt ? 1 : 0) - (a.pinnedAt ? 1 : 0) ||
+          b.lastMessageAt - a.lastMessageAt,
+      );
   },
 });
 
@@ -501,12 +518,70 @@ export const markRead = mutation({
       )
       .unique();
     if (!membership) return;
-    // Only write when actually behind: the open chat re-runs this every time
-    // its unread flag flips, and re-stamping a conversation with nothing new
-    // in it spends a write to say nothing.
+    // Opening a conversation is also what un-closes it — you're looking at it,
+    // it belongs in your list again.
+    const patch: { lastReadAt?: number; closedAt?: undefined } = {};
+    if (membership.closedAt !== undefined) patch.closedAt = undefined;
+    // Only stamp `lastReadAt` when actually behind: the open chat re-runs this
+    // every time its unread flag flips, and re-stamping a conversation with
+    // nothing new in it spends a write to say nothing.
     const lastMessage = await lastMessageOf(ctx, conversationId);
-    if (!lastMessage || lastMessage._creationTime <= membership.lastReadAt) return;
-    await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
+    if (lastMessage && lastMessage._creationTime > membership.lastReadAt) {
+      patch.lastReadAt = Date.now();
+    }
+    if (patch.lastReadAt !== undefined || "closedAt" in patch) {
+      await ctx.db.patch(membership._id, patch);
+    }
+  },
+});
+
+/**
+ * Pin a DM to the top of your list, or unpin it.
+ *
+ * Per-member: your pins are your arrangement of your own list, and the other
+ * person's is theirs. Pinned rows sit above the by-recency rest — see
+ * `listMine`.
+ */
+export const setPinned = mutation({
+  args: { conversationId: v.id("conversations"), pinned: v.boolean() },
+  handler: async (ctx, { conversationId, pinned }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("You're not in this conversation.");
+    await ctx.db.patch(membership._id, {
+      pinnedAt: pinned ? Date.now() : undefined,
+    });
+  },
+});
+
+/**
+ * Close a DM — hide it from your list without touching the conversation.
+ *
+ * It comes back the moment there's something new in it, or when you open it
+ * again (see `markRead`). Nothing is deleted; the other person's list is
+ * unaffected.
+ */
+export const setClosed = mutation({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const membership = await ctx.db
+      .query("conversationMembers")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!membership) throw new Error("You're not in this conversation.");
+    await ctx.db.patch(membership._id, {
+      closedAt: Date.now(),
+      // A closed DM shouldn't hold a pin slot it can't be seen in.
+      pinnedAt: undefined,
+    });
   },
 });
 
