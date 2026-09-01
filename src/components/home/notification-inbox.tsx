@@ -165,9 +165,17 @@ export function NotificationInbox() {
             {results.map((notification) => {
               const Icon = TYPE_ICON[notification.type as NotificationType] ?? Bell;
               // Where it happened, when that isn't already obvious from the
-              // title — a channel mention is worth locating, a DM isn't.
+              // title — a channel mention is worth locating, a DM isn't. Call
+              // and stream events already spell the channel/server out in the
+              // body ("joined voice in #general / My Server"), so the line
+              // would just repeat it.
+              const carriesLocationInBody =
+                notification.type === "call_started" ||
+                notification.type === "stream_started";
               const location =
-                notification.channelName && notification.communityName
+                !carriesLocationInBody &&
+                notification.channelName &&
+                notification.communityName
                   ? `${notification.communityName} · #${notification.channelName}`
                   : null;
 

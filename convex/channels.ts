@@ -427,15 +427,16 @@ export const setVoiceState = mutation({
         channelId,
         actorId: me._id,
         type: "stream_started",
-        body: "started streaming",
+        verb: "started streaming",
       });
     }
   },
 });
 
 /**
- * "<name> joined <#channel>" / "<name> started streaming" for a community
- * voice channel — but only to members who are **friends of the actor** and can
+ * "<name>" / "joined voice in #<channel> / <server>" (or "started streaming
+ * in …") for a community voice channel — but only to members who are
+ * **friends of the actor** and can
  * actually see the channel, and who aren't already in that call. A busy server
  * shouldn't light up every time a stranger channel-hops; a friend showing up
  * in voice is the thing worth a nudge. Each recipient's DND/Busy is checked by
@@ -447,7 +448,9 @@ async function notifyVoiceChannelActivity(
     channelId: Id<"channels">;
     actorId: Id<"users">;
     type: "call_started" | "stream_started";
-    body: string;
+    /** The verb phrase the notification body opens with — "joined voice" /
+     * "started streaming". The channel and server are appended here. */
+    verb: string;
   }
 ): Promise<void> {
   const channel = await ctx.db.get(params.channelId);
@@ -496,8 +499,8 @@ async function notifyVoiceChannelActivity(
     type: params.type,
     communityId: channel.communityId,
     channelId: params.channelId,
-    title: `${actor.name} · #${channel.name}`,
-    body: params.body,
+    title: actor.name,
+    body: `${params.verb} in #${channel.name} / ${community.name}`,
   });
 }
 
@@ -539,7 +542,7 @@ export const recordVoiceJoin = internalMutation({
       channelId,
       actorId: userId,
       type: "call_started",
-      body: "joined voice",
+      verb: "joined voice",
     });
   },
 });

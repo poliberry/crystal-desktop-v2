@@ -12,6 +12,18 @@ import {
 import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
+/**
+ * `" in <group name>"` for a named group call, `""` otherwise — the suffix that
+ * puts a "joined the call" / "started streaming" notification in context. A DM
+ * needs none: the notification's title is already the other person, and an
+ * unnamed group has nothing to point at.
+ */
+function callLocationSuffix(conversation: Doc<"conversations"> | null): string {
+  return conversation?.type === "group" && conversation.name
+    ? ` in ${conversation.name}`
+    : "";
+}
+
 export const listParticipants = query({
   args: { conversationId: v.id("conversations") },
   handler: async (ctx, { conversationId }) => {
@@ -80,7 +92,7 @@ export const recordJoin = internalMutation({
       .collect();
     if (participants.length <= 1) return;
 
-    const [joiner, members, rings] = await Promise.all([
+    const [joiner, members, rings, conversation] = await Promise.all([
       ctx.db.get(userId),
       ctx.db
         .query("conversationMembers")
@@ -90,6 +102,7 @@ export const recordJoin = internalMutation({
         .query("callRings")
         .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
         .collect(),
+      ctx.db.get(conversationId),
     ]);
     if (!joiner) return;
     const rung = new Set(rings.map((r) => r.recipientId));
@@ -100,7 +113,7 @@ export const recordJoin = internalMutation({
       type: "call_started",
       conversationId,
       title: joiner.name,
-      body: "joined the call",
+      body: `joined the call${callLocationSuffix(conversation)}`,
     });
   },
 });
@@ -128,17 +141,20 @@ export const setStreamState = mutation({
     await ctx.db.patch(row._id, { streaming });
     if (!streaming) return;
 
-    const members = await ctx.db
-      .query("conversationMembers")
-      .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
-      .collect();
+    const [members, conversation] = await Promise.all([
+      ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+        .collect(),
+      ctx.db.get(conversationId),
+    ]);
     await notifyUsers(ctx, {
       userIds: members.map((m) => m.userId),
       actorId: me._id,
       type: "stream_started",
       conversationId,
       title: me.name,
-      body: "started streaming",
+      body: `started streaming${callLocationSuffix(conversation)}`,
     });
   },
 });
