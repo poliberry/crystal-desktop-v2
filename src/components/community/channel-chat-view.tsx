@@ -22,6 +22,7 @@ import { ChannelBanner, ChatBackground } from "@/components/chat-decoration";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
+import type { ReplyDraft } from "@/lib/reply";
 import { ChevronLeftIcon, ChevronRightIcon } from "@animateicons/react/lucide";
 
 interface ChannelChatViewProps {
@@ -38,6 +39,10 @@ export function ChannelChatView({
   topic,
 }: ChannelChatViewProps) {
   const [showMembers, setShowMembers] = useState(true);
+  const [replyingTo, setReplyingTo] = useState<ReplyDraft | null>(null);
+  useEffect(() => {
+    setReplyingTo(null);
+  }, [channelId]);
   // Durable + coalescing: the read marker queues in the outbox so it still
   // lands after an offline read (see src/lib/outbox.ts).
   const markRead = useOutboxMutation("markRead", "channel");
@@ -167,9 +172,15 @@ export function ChannelChatView({
           communityId={communityId}
           canManageMessages={canManageMessages}
           onAtBottomChange={setAtBottom}
+          onReply={setReplyingTo}
         />
         <TypingIndicator channelId={channelId} />
-        <ChannelMessageComposer channelId={channelId} communityId={communityId} />
+        <ChannelMessageComposer
+          channelId={channelId}
+          communityId={communityId}
+          replyingTo={replyingTo}
+          onCancelReply={() => setReplyingTo(null)}
+        />
       </div>
 
       {showMembers && <MemberList communityId={communityId} />}

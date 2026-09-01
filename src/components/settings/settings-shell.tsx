@@ -3,8 +3,10 @@
 import {
   Accessibility,
   Bell,
+  CalendarSync,
   ChevronDown,
   Code2,
+  CreditCard,
   Download,
   Info,
   KeyRound,
@@ -31,7 +33,7 @@ import { ServerProfilesTab } from "@/components/settings/tabs/server-profiles-ta
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
 import { WindowControls } from "@/components/window-controls";
-import { SignOutButton } from "@clerk/react";
+import { SignOutButton, useAuth, useUser } from "@clerk/react";
 import { Button } from "../ui/button";
 import {
   Sidebar,
@@ -65,17 +67,8 @@ import {
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "../ui/avatar";
 import { useMyPresence } from "@/hooks/use-presence";
 import { useState } from "react";
-
-const TABS = [
-  { value: "appearance", label: "Appearance", icon: Palette },
-  { value: "accessibility", label: "Accessibility", icon: Accessibility },
-  { value: "servers", label: "Servers", icon: Server },
-  { value: "account", label: "Account", icon: KeyRound },
-  { value: "voice", label: "Voice & Video", icon: Mic },
-  { value: "notifications", label: "Notifications", icon: Bell },
-  { value: "updates", label: "Updates", icon: Download },
-  { value: "about", label: "About", icon: Info },
-] as const;
+import { BillingTab } from "./tabs/billing-tab";
+import { SubscriptionsTab } from "./tabs/subcriptions-tab";
 
 /** A row that opens something instead of switching the panel. The profile
  * editor is three panes wide and belongs in its own dialog, but this is still
@@ -95,6 +88,13 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
       { value: "account", label: "Account", icon: KeyRound },
       { value: "updates", label: "Updates", icon: Download },
     ],
+  },
+  {
+    label: "Billing",
+    children: [
+      { value: "billing", label: "Billing", icon: CreditCard },
+      { value: "subscriptions", label: "Subscriptions", icon: CalendarSync },
+    ]
   },
   {
     label: "Customisation",
@@ -138,7 +138,7 @@ function SettingsSection({
     // Radix's viewport is `height: 100%` of this root, and if this root's own
     // height resolves to `auto` the viewport grows with the content instead
     // of scrolling it, and `main`'s `overflow-hidden` quietly clips the rest.
-    <ScrollArea key={section} className="min-h-0 lg:max-h-[67dvh] md:max-h-[86dvh] flex-1 p-4">
+    <ScrollArea key={section} className="max-h-[92vh] mx-auto overflow-auto flex-1 p-4">
       {children}
     </ScrollArea>
   );
@@ -153,7 +153,8 @@ export function SettingsShell({
   onRequestClose,
 }: {
   onRequestClose?: () => void;
-}) {
+  }) {
+  const {user} = useUser();
   const me = useQuery(api.users.getCurrentUser);
   const { status, manualStatus, activities } = useMyPresence();
   const openProfileEditor = useOpenProfileEditor();
@@ -298,6 +299,12 @@ export function SettingsShell({
             {section === "notifications" && <NotificationsTab />}
             {section === "updates" && <UpdatesTab />}
             {section === "about" && <AboutTab />}
+            {section === "billing" && user?.organizationMemberships?.[0]?.organization.id === "org_3IfKYp4cyTPeYWtsN12lj8VWVKc"
+              && <BillingTab />
+            }
+            {section === "subscriptions" && user?.organizationMemberships?.[0]?.organization.id === "org_3IfKYp4cyTPeYWtsN12lj8VWVKc"
+              && <SubscriptionsTab />
+            }
           </SettingsSection>
         </main>
       </SidebarProvider>

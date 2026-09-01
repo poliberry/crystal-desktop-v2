@@ -281,7 +281,7 @@ export function AccountTab() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-4xl">
       <AccountDetailsCard />
 
       <Card>

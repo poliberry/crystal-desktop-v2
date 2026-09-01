@@ -44,6 +44,7 @@ interface AudioPreferencesContextValue extends AudioPreferences {
   setStreamVolume: (volume: number) => void;
   setSoundboardVolume: (volume: number) => void;
   setUiSoundVolume: (volume: number) => void;
+  setCallParticipantSounds: (enabled: boolean) => void;
   setRichPresenceEnabled: (enabled: boolean) => void;
   /** Re-enumerate devices, prompting for microphone access first so labels
    * are populated. Called when a device dropdown is opened. */
@@ -204,6 +205,7 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       setStreamVolume: (streamVolume) => update({ streamVolume }),
       setSoundboardVolume: (soundboardVolume) => update({ soundboardVolume }),
       setUiSoundVolume: (uiSoundVolume) => update({ uiSoundVolume }),
+      setCallParticipantSounds: (callParticipantSounds) => update({ callParticipantSounds }),
       setRichPresenceEnabled: (richPresenceEnabled) => update({ richPresenceEnabled }),
       refreshDevices,
       playCue: cue,

@@ -204,12 +204,12 @@ function ProfilePageBody({
 
       <div
         data-slot="profile-page-body"
-        className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[450px_1fr]"
+        className="relative mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-1 gap-6 px-6 pb-6 lg:grid-cols-[550px_1fr]"
       >
         <div data-slot="profile-page-card-column" className="h-full justify-end">
             {/* The card reserves its own room for the frame — see
                 MemberProfileCard. */}
-            <div className="px-3 pb-6 h-[120%]">
+            <div className="px-3 pb-6 h-[140%] -mt-30">
               {/* `expandable={false}`: this *is* the expanded view. */}
               <MemberProfileCard
                 member={member}

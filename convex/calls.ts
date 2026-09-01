@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import {
   internalMutation,
@@ -9,7 +9,20 @@ import {
   query,
   type MutationCtx,
 } from "./_generated/server";
+import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+
+/**
+ * `" in <group name>"` for a named group call, `""` otherwise — the suffix that
+ * puts a "joined the call" / "started streaming" notification in context. A DM
+ * needs none: the notification's title is already the other person, and an
+ * unnamed group has nothing to point at.
+ */
+function callLocationSuffix(conversation: Doc<"conversations"> | null): string {
+  return conversation?.type === "group" && conversation.name
+    ? ` in ${conversation.name}`
+    : "";
+}
 
 export const listParticipants = query({
   args: { conversationId: v.id("conversations") },
@@ -68,6 +81,81 @@ export const recordJoin = internalMutation({
       .unique();
     if (existing) return;
     await ctx.db.insert("callParticipants", { conversationId, userId, joinedAt: Date.now() });
+
+    // "Someone joined the call" — but not for the person who started it (an
+    // empty-then-one-person call is a call beginning, which the ring already
+    // announces). Everyone else in the conversation who isn't already being
+    // rung is told; `notifyUsers` drops the actor and anyone on DND/Busy.
+    const participants = await ctx.db
+      .query("callParticipants")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+      .collect();
+    if (participants.length <= 1) return;
+
+    const [joiner, members, rings, conversation] = await Promise.all([
+      ctx.db.get(userId),
+      ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+        .collect(),
+      ctx.db
+        .query("callRings")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+        .collect(),
+      ctx.db.get(conversationId),
+    ]);
+    if (!joiner) return;
+    const rung = new Set(rings.map((r) => r.recipientId));
+
+    await notifyUsers(ctx, {
+      userIds: members.map((m) => m.userId).filter((id) => !rung.has(id)),
+      actorId: userId,
+      type: "call_started",
+      conversationId,
+      title: joiner.name,
+      body: `joined the call${callLocationSuffix(conversation)}`,
+    });
+  },
+});
+
+/**
+ * Mirror the caller's screen-share state onto their DM/group `callParticipants`
+ * row — the twin of `channels.setVoiceState` for community voice channels.
+ * Called by the connected client whenever it starts or stops sharing; a no-op
+ * for anyone without a row. Notifies the other conversation members the first
+ * time it flips on (each recipient's DND/Busy is checked by `notifyUsers`).
+ */
+export const setStreamState = mutation({
+  args: { conversationId: v.id("conversations"), streaming: v.boolean() },
+  handler: async (ctx, { conversationId, streaming }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return;
+    const row = await ctx.db
+      .query("callParticipants")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversationId).eq("userId", me._id)
+      )
+      .unique();
+    if (!row) return;
+    if ((row.streaming ?? false) === streaming) return;
+    await ctx.db.patch(row._id, { streaming });
+    if (!streaming) return;
+
+    const [members, conversation] = await Promise.all([
+      ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+        .collect(),
+      ctx.db.get(conversationId),
+    ]);
+    await notifyUsers(ctx, {
+      userIds: members.map((m) => m.userId),
+      actorId: me._id,
+      type: "stream_started",
+      conversationId,
+      title: me.name,
+      body: `started streaming${callLocationSuffix(conversation)}`,
+    });
   },
 });
 
@@ -178,6 +266,7 @@ export const ring = mutation({
     ]);
     const alreadyInCall = new Set(inCall.map((p) => p.userId));
 
+    const newlyRung: Id<"users">[] = [];
     for (const member of members) {
       if (member.userId === me._id || alreadyInCall.has(member.userId)) continue;
 
@@ -201,6 +290,24 @@ export const ring = mutation({
         { ringId }
       );
       await ctx.db.patch(ringId, { expiryJobId });
+      newlyRung.push(member.userId);
+    }
+
+    if (newlyRung.length > 0) {
+      const conversation = await ctx.db.get(conversationId);
+      const isGroup = conversation?.type === "group";
+      // The in-app IncomingCall panel already handles this in real time — this
+      // is the OS-toast / push / inbox side (so a ring lands even with the
+      // window hidden), and the row stays as call history if unanswered (see
+      // `expireRing`). Each recipient's DND/Busy is checked by `notifyUsers`.
+      await notifyUsers(ctx, {
+        userIds: newlyRung,
+        actorId: me._id,
+        type: "call_ring",
+        conversationId,
+        title: isGroup ? (conversation?.name ?? "Group call") : me.name,
+        body: isGroup ? `${me.name} is calling` : "Incoming call",
+      });
     }
   },
 });
@@ -245,6 +352,28 @@ export const expireRing = internalMutation({
     if (!ring) return;
     // The sweep is what fired, so there's no job left to cancel.
     await ctx.db.delete(ring._id);
+
+    // Leave the recipient's inbox with a "missed call" rather than a stale
+    // "incoming call". Bounded scan of their newest rows — a ring that just
+    // expired is by definition near the top.
+    const recent = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_created", (q) => q.eq("userId", ring.recipientId))
+      .order("desc")
+      .take(15);
+    const row = recent.find(
+      (n) =>
+        n.type === "call_ring" &&
+        n.conversationId === ring.conversationId &&
+        n.actorId === ring.callerId
+    );
+    if (row) {
+      const caller = await ctx.db.get(ring.callerId);
+      await ctx.db.patch(row._id, {
+        title: caller ? `Missed call from ${caller.name}` : "Missed call",
+        body: undefined,
+      });
+    }
   },
 });
 

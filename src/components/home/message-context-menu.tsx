@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Smile, Trash2 } from "lucide-react";
+import { Pencil, Reply, Smile, Trash2 } from "lucide-react";
 
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
 import { formatCustomEmoji } from "@/lib/custom-emoji";
@@ -23,18 +23,20 @@ interface MessageContextMenuProps {
   /** Channel messages only — omitted for DMs, which have no custom emoji. */
   communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
+  onReply?: () => void;
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
   onDelete: (shiftKey: boolean) => void;
 }
 
-/** Right-click equivalent of MessageHoverActions — same three actions. */
+/** Right-click equivalent of MessageHoverActions — same actions. */
 export function MessageContextMenu({
   children,
   canEdit,
   canDelete,
   communityId,
   onReact,
+  onReply,
   onEdit,
   onDelete,
 }: MessageContextMenuProps) {
@@ -53,6 +55,13 @@ export function MessageContextMenu({
             />
           </ContextMenuSubContent>
         </ContextMenuSub>
+
+        {onReply && (
+          <ContextMenuItem onClick={onReply}>
+            <Reply className="size-4" />
+            Reply
+          </ContextMenuItem>
+        )}
 
         {(canEdit || canDelete) && <ContextMenuSeparator />}
 

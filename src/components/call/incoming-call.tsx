@@ -7,6 +7,7 @@ import { useEffect, useMemo } from "react";
 import { api } from "../../../convex/_generated/api";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { useCall } from "@/components/call/call-provider";
+import { useMyPresence } from "@/hooks/use-presence";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { pickRingSound, startUiSoundLoop } from "@/lib/ui-sounds";
@@ -24,6 +25,9 @@ export function IncomingCall() {
   const dismissRing = useMutation(api.calls.dismissRing);
   const { joinDmCall, activeCall } = useCall();
   const { uiSoundVolume, outputDeviceId } = useAudioPreferences();
+  const { manualStatus } = useMyPresence();
+  // Do Not Disturb / Busy still shows the panel — it just doesn't ring out.
+  const silenced = manualStatus === "dnd" || manualStatus === "busy";
 
   const ring = rings[0];
   // Don't ring at someone who's already in that very call — they answered
@@ -35,12 +39,12 @@ export function IncomingCall() {
   const ringSound = useMemo(() => pickRingSound(), [ring?.id]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || silenced) return;
     return startUiSoundLoop(ringSound, {
       volume: uiSoundVolume,
       outputDeviceId: outputDeviceId || undefined,
     });
-  }, [active, ringSound, uiSoundVolume, outputDeviceId]);
+  }, [active, silenced, ringSound, uiSoundVolume, outputDeviceId]);
 
   if (!ring || !active) return null;
 

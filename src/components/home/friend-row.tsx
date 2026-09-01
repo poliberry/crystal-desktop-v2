@@ -67,7 +67,7 @@ export function FriendRow({
           rather than competes with it. */}
       <Nameplate url={nameplateUrl} />
       <Avatar className="relative">
-        <AvatarImage src={imageUrl} alt={name} />
+        <AvatarImage src={imageUrl} alt={name} className="rounded-md" />
         <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
         <AvatarDecoration value={avatarDecoration} />
         {status && (
@@ -75,7 +75,8 @@ export function FriendRow({
             status={status}
             activities={activities}
             isBirthday={isBirthday}
-            accent={borderGradientStart}            className="absolute -right-0.5 -bottom-0.5 z-10 size-3"
+            accent={borderGradientStart}
+            className="absolute -right-0.5 -bottom-0.5 z-10 size-4"
           />
         )}
       </Avatar>

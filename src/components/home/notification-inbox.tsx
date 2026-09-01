@@ -1,7 +1,19 @@
 "use client";
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { AtSign, Bell, Check, Hash, MessageSquare, Trash2, UserPlus } from "lucide-react";
+import {
+  AtSign,
+  Bell,
+  Check,
+  Hash,
+  MessageSquare,
+  PhoneCall,
+  PhoneIncoming,
+  Reply,
+  ScreenShare,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
 import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
@@ -32,13 +44,25 @@ const PAGE_SIZE = 25;
  * number stops being the useful part. */
 const BADGE_CAP = 99;
 
-type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
+type NotificationType =
+  | "dm_message"
+  | "channel_mention"
+  | "friend_request"
+  | "friend_accept"
+  | "call_ring"
+  | "call_started"
+  | "stream_started"
+  | "reply";
 
 const TYPE_ICON: Record<NotificationType, React.ComponentType<{ className?: string }>> = {
   dm_message: MessageSquare,
   channel_mention: AtSign,
   friend_request: UserPlus,
   friend_accept: UserPlus,
+  call_ring: PhoneIncoming,
+  call_started: PhoneCall,
+  stream_started: ScreenShare,
+  reply: Reply,
 };
 
 /**
@@ -141,9 +165,17 @@ export function NotificationInbox() {
             {results.map((notification) => {
               const Icon = TYPE_ICON[notification.type as NotificationType] ?? Bell;
               // Where it happened, when that isn't already obvious from the
-              // title — a channel mention is worth locating, a DM isn't.
+              // title — a channel mention is worth locating, a DM isn't. Call
+              // and stream events already spell the channel/server out in the
+              // body ("joined voice in #general / My Server"), so the line
+              // would just repeat it.
+              const carriesLocationInBody =
+                notification.type === "call_started" ||
+                notification.type === "stream_started";
               const location =
-                notification.channelName && notification.communityName
+                !carriesLocationInBody &&
+                notification.channelName &&
+                notification.communityName
                   ? `${notification.communityName} · #${notification.channelName}`
                   : null;
 

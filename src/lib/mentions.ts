@@ -94,6 +94,11 @@ export interface MentionNames {
   user: (id: string) => string | undefined;
   /** Name and colour for a role id. */
   role: (id: string) => { name: string; color?: string } | undefined;
+  /** Fuller identity for a user id — what the mention popover needs to render
+   * a complete card on the first frame. Absent outside a community. */
+  member?: (
+    id: string
+  ) => { name: string; username: string; imageUrl?: string } | undefined;
 }
 
 /**

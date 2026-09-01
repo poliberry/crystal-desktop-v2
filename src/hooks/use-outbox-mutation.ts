@@ -36,6 +36,14 @@ export interface OutboxSendInput {
   channelId?: string;
   text?: string;
   birthdayWish?: boolean;
+  replyToId?: string;
+  pingReply?: boolean;
+  replyToPreview?: {
+    authorName: string;
+    authorImageUrl?: string;
+    text: string | null;
+    hasAttachment: boolean;
+  };
   attachments?: ComposerAttachmentInput[];
 }
 
@@ -128,6 +136,9 @@ export function useOutboxMutation<
             channelId: send.channelId,
             text: send.text,
             birthdayWish: send.birthdayWish,
+            replyToId: send.replyToId,
+            pingReply: send.pingReply,
+            replyToPreview: send.replyToPreview,
             attachments,
           },
         });

@@ -1,7 +1,7 @@
 "use client";
 
 import { usePaginatedQuery, useQuery } from "convex/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -10,6 +10,7 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
+import { MessageReplyPreview } from "@/components/home/message-reply-preview";
 import { UserProfileContent } from "@/components/community/member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
@@ -33,12 +34,18 @@ import {
   useCachedFirstPage,
 } from "@/lib/message-cache";
 import { discard, retryNow } from "@/lib/outbox";
-import { useOutboxOverlay } from "@/lib/outbox-overlay";
+import { mentionsUserDirectly } from "@/lib/mentions";
+import { formatMessageTimestamp, isSameDay } from "@/lib/message-time";
+import { MessageDayDivider } from "@/components/home/message-day-divider";
+import { useOutboxOverlay, type OverlayReplyPreview } from "@/lib/outbox-overlay";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
+import type { ReplyDraft } from "@/lib/reply";
 import { cn } from "@/lib/utils";
 
 interface MessageListProps {
   conversationId: Id<"conversations">;
+  /** Set the composer's reply target — the "Reply" action on each message. */
+  onReply?: (draft: ReplyDraft) => void;
 }
 
 interface ReactionSummary {
@@ -67,6 +74,8 @@ interface MessageDoc {
   } | null;
   attachments: AttachmentSummary[];
   reactions: ReactionSummary[];
+  /** The message this one replies to — see convex/messages.ts `list`. */
+  replyTo?: OverlayReplyPreview | null;
   /** Overlay-only: a queued send not yet acked by the server. */
   __pending?: boolean;
   /** Overlay-only: the queued op behind this row has permanently failed. */
@@ -81,11 +90,21 @@ const GROUP_WINDOW_MS = 5 * 60 * 1000;
 function MessageRow({
   message,
   startsGroup,
+  mentionsMe,
+  highlighted,
   conversationId,
+  onReply,
+  onJumpTo,
 }: {
   message: MessageDoc;
   startsGroup: boolean;
+  /** The message pings the reader directly — tint the row. */
+  mentionsMe: boolean;
+  /** Just jumped-to from a reply preview — flash the row. */
+  highlighted: boolean;
   conversationId: Id<"conversations">;
+  onReply: (draft: ReplyDraft) => void;
+  onJumpTo: (messageId: string) => void;
 }) {
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
@@ -120,21 +139,40 @@ function MessageRow({
     else setConfirmDelete(true);
   };
 
+  const reply = () =>
+    onReply({
+      id: message.id,
+      authorName: message.author?.name ?? "Unknown",
+      authorImageUrl: message.author?.imageUrl,
+      text: message.text,
+      hasAttachment: message.attachments.length > 0,
+    });
+
   const content = (
     <div
       // A stable hook for custom CSS — utility classes get rewritten as this
       // component is edited, whereas a slot name is something a user's
       // stylesheet can rely on. See src/lib/css-snippets.ts.
       data-slot="message-row"
+      data-message-id={message.id}
       data-pending={message.__pending ? "" : undefined}
       className={cn(
-        "group relative flex gap-3 rounded px-2 py-0.5 hover:bg-accent/30",
+        "group relative flex flex-col rounded px-2 py-0.5 transition-colors",
+        mentionsMe ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent/30",
         startsGroup && "mt-3",
+        highlighted && "!bg-primary/20",
         message.__pending && !message.__failed && "opacity-60",
         message.__failed && "border-l-2 border-destructive/60 bg-destructive/5"
       )}
     >
-      <div className="w-9 shrink-0">
+      {message.replyTo && (
+        <MessageReplyPreview
+          reply={message.replyTo}
+          onJump={message.replyTo.deleted ? undefined : () => onJumpTo(message.replyTo!.id)}
+        />
+      )}
+      <div className="flex gap-1">
+      <div className="w-9 mt-1 shrink-0">
         {/* Guarded on the author here rather than inside the popover: the
             popover now needs their id to work out how much room their frame
             wants, and an avatar with nobody behind it opens nothing useful. */}
@@ -165,7 +203,7 @@ function MessageRow({
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold">{message.author?.name ?? "Unknown"}</span>
             <span className="text-[11px] text-muted-foreground">
-              {new Date(message.createdAt).toLocaleString()}
+              {formatMessageTimestamp(message.createdAt)}
             </span>
           </div>
         )}
@@ -194,14 +232,7 @@ function MessageRow({
         ) : (
           <>
             {message.text && (
-              <MessageContent
-                text={message.text}
-                suffix={
-                  message.editedAt && (
-                    <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
-                  )
-                }
-              />
+              <MessageContent text={message.text} edited={!!message.editedAt} />
             )}
             {message.attachments.map((attachment) => (
               <AttachmentView
@@ -223,6 +254,7 @@ function MessageRow({
           </>
         )}
       </div>
+      </div>
 
       {!editing && !message.__pending && (
         <MessageHoverActions
@@ -231,6 +263,7 @@ function MessageRow({
           onReact={(emoji) =>
             void toggleReaction({ conversationId, messageId: message.id, emoji, desired: "add" })
           }
+          onReply={reply}
           onEdit={startEdit}
           onDelete={requestDelete}
         />
@@ -252,6 +285,7 @@ function MessageRow({
         onReact={(emoji) =>
           void toggleReaction({ conversationId, messageId: message.id, emoji, desired: "add" })
         }
+        onReply={reply}
         onEdit={startEdit}
         onDelete={requestDelete}
       >
@@ -307,13 +341,14 @@ function MessageListSkeleton() {
   );
 }
 
-export function MessageList({ conversationId }: MessageListProps) {
+export function MessageList({ conversationId, onReply }: MessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.messages.list,
     { conversationId },
     { initialNumItems: 30 }
   );
   const me = useQuery(api.users.getCurrentUser);
+  const myUserId = me?._id as string | undefined;
   const overlayMe = useMemo(
     () =>
       me
@@ -354,6 +389,31 @@ export function MessageList({ conversationId }: MessageListProps) {
     latestIsMine: latest?.isMine ?? false,
   });
 
+  // `containerRef` is a callback ref (see useStickToBottom) — keep our own
+  // handle to the scroller so a reply preview click can find its target.
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollElRef.current = node;
+      containerRef(node);
+    },
+    [containerRef]
+  );
+
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const jumpTo = useCallback((messageId: string) => {
+    const el = scrollElRef.current?.querySelector<HTMLElement>(
+      `[data-message-id="${messageId}"]`
+    );
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightId(messageId);
+    window.setTimeout(
+      () => setHighlightId((current) => (current === messageId ? null : current)),
+      1600
+    );
+  }, []);
+
   if (loadingFirstPage && chronological.length === 0) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -363,7 +423,7 @@ export function MessageList({ conversationId }: MessageListProps) {
   }
 
   return (
-    <div ref={containerRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+    <div ref={setScrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a
@@ -382,18 +442,30 @@ export function MessageList({ conversationId }: MessageListProps) {
 
         {chronological.map((message, index) => {
           const prev = chronological[index - 1];
+          const newDay = !prev || !isSameDay(prev.createdAt, message.createdAt);
           const startsGroup =
-            !prev ||
+            newDay ||
             prev.author?.id !== message.author?.id ||
-            message.createdAt - prev.createdAt > GROUP_WINDOW_MS;
+            message.createdAt - prev.createdAt > GROUP_WINDOW_MS ||
+            // A reply always shows its own header, so the spine has an avatar
+            // to point at — like Discord.
+            !!message.replyTo;
 
           return (
-            <MessageRow
-              key={message.id}
-              message={message}
-              startsGroup={startsGroup}
-              conversationId={conversationId}
-            />
+            <Fragment key={message.id}>
+              {newDay && <MessageDayDivider ts={message.createdAt} />}
+              <MessageRow
+                message={message}
+                startsGroup={startsGroup}
+                mentionsMe={
+                  !!myUserId && mentionsUserDirectly(message.text ?? "", myUserId)
+                }
+                highlighted={highlightId === message.id}
+                conversationId={conversationId}
+                onReply={(draft) => onReply?.(draft)}
+                onJumpTo={jumpTo}
+              />
+            </Fragment>
           );
         })}
       </div>

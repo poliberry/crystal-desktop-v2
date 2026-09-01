@@ -5,6 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText } from "./lib/mentions";
+import { allowsReply, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
@@ -22,6 +23,50 @@ async function requireMembership(
     .unique();
   if (!membership) throw new Error("Not a member of this conversation.");
   return membership;
+}
+
+/** Longest a reply preview snippet gets before it's cut — a preview is one
+ * line, not the message. */
+const REPLY_SNIPPET_MAX = 140;
+
+/**
+ * The compact "you're replying to…" card shown above a message: the target's
+ * author, a one-line snippet, and whether it carried a file. A `replyToId`
+ * that no longer resolves (target deleted) comes back flagged `deleted`.
+ */
+async function resolveReplyPreview(
+  ctx: QueryCtx,
+  replyToId: Id<"messages"> | undefined,
+) {
+  if (!replyToId) return null;
+  const target = await ctx.db.get(replyToId);
+  if (!target) {
+    return {
+      id: replyToId,
+      authorName: "Unknown",
+      authorImageUrl: undefined as string | undefined,
+      text: null as string | null,
+      hasAttachment: false,
+      deleted: true,
+    };
+  }
+  const [author, firstAttachment] = await Promise.all([
+    ctx.db.get(target.authorId),
+    ctx.db
+      .query("messageAttachments")
+      .withIndex("by_message", (q) => q.eq("messageId", target._id))
+      .take(1),
+  ]);
+  return {
+    id: target._id as string,
+    authorName: author?.name ?? "Unknown",
+    authorImageUrl: author?.imageUrl,
+    text: target.text
+      ? (await renderMentionsAsText(ctx, target.text)).slice(0, REPLY_SNIPPET_MAX)
+      : null,
+    hasAttachment: firstAttachment.length > 0,
+    deleted: false,
+  };
 }
 
 async function reactionsFor(
@@ -95,6 +140,7 @@ export const list = query({
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
+          replyTo: await resolveReplyPreview(ctx, message.replyToId),
           /** The idempotency key of the send that created this row, when it
            * came through the outbox — how a client matches its own pending
            * optimistic row to the real one (see src/lib/outbox-overlay.ts). */
@@ -143,6 +189,12 @@ export const send = mutation({
      * what makes cakes rain down other people's windows, so it can't be
      * something a client just asserts. */
     birthdayWish: v.optional(v.boolean()),
+    /** The message being replied to. Dropped silently if it isn't in this
+     * conversation (stale client, deleted target) rather than failing the send. */
+    replyToId: v.optional(v.id("messages")),
+    /** Whether the reply notifies its target. Defaults to true (Discord's
+     * behaviour); the composer's "@" toggle sends false. */
+    pingReply: v.optional(v.boolean()),
     /** Idempotency key from the durable send outbox. A retry after a lost ack
      * carries the same value; when a row with this `clientId` already exists we
      * hand back its id rather than inserting a second copy. See
@@ -151,7 +203,7 @@ export const send = mutation({
   },
   handler: async (
     ctx,
-    { conversationId, text, attachments, birthdayWish, clientId },
+    { conversationId, text, attachments, birthdayWish, replyToId, pingReply, clientId },
   ) => {
     const me = await getCurrentUserOrThrow(ctx);
     const membership = await requireMembership(ctx, conversationId, me._id);
@@ -195,11 +247,23 @@ export const send = mutation({
       isWish = others.some((other) => isBirthdayNow(other));
     }
 
+    // Only honour a reply pointer that's real and in this conversation.
+    const replyTarget = replyToId ? await ctx.db.get(replyToId) : null;
+    const validReplyToId =
+      replyTarget && replyTarget.conversationId === conversationId ? replyToId : undefined;
+    // Who, if anyone, the reply itself notifies — the target's author, unless
+    // that's the sender or the "@" toggle was off.
+    const replyPingUserId =
+      validReplyToId && pingReply !== false && replyTarget && replyTarget.authorId !== me._id
+        ? replyTarget.authorId
+        : null;
+
     const messageId = await ctx.db.insert("messages", {
       conversationId,
       authorId: me._id,
       text: trimmed || undefined,
       birthdayWish: isWish || undefined,
+      replyToId: validReplyToId,
       clientId: clientId || undefined,
     });
 
@@ -210,15 +274,38 @@ export const send = mutation({
     // I've obviously "read" up to the message I just sent.
     await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
 
+    const body = trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment";
+
+    // The reply target gets the "replied to you" notification instead of a
+    // plain DM one — but only if their settings actually let a reply through.
+    // Otherwise they'd get nothing, and a reply is still a DM.
+    const replyReachesTarget =
+      replyPingUserId !== null &&
+      allowsReply(await loadNotificationPolicy(ctx, replyPingUserId));
+
     await notifyUsers(ctx, {
-      userIds: otherMembers.map((m) => m.userId),
+      userIds: otherMembers
+        .map((m) => m.userId)
+        .filter((id) => !(replyReachesTarget && id === replyPingUserId)),
       actorId: me._id,
       type: "dm_message",
       conversationId,
       messageId,
       title: me.name,
-      body: trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+      body,
     });
+
+    if (replyPingUserId && replyReachesTarget) {
+      await notifyUsers(ctx, {
+        userIds: [replyPingUserId],
+        actorId: me._id,
+        type: "reply",
+        conversationId,
+        messageId,
+        title: `${me.name} replied to you`,
+        body,
+      });
+    }
 
     return messageId;
   },

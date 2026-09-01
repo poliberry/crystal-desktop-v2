@@ -34,7 +34,7 @@ export function SettingsDialogProvider({ children }: { children: React.ReactNode
             editor inside is three panes across. `p-0` because the shell draws
             its own chrome down to the titlebar row. */}
         <DialogContent
-          className="h-[min(90vh,720px)] w-[min(96vw,1180px)] gap-0 overflow-hidden p-0 sm:max-w-none"
+          className="min-h-[calc(100vh-40px)] mt-5.25 min-w-full gap-0 rounded-none overflow-hidden p-0"
         >
           <SettingsShell onRequestClose={() => setOpen(false)} />
         </DialogContent>

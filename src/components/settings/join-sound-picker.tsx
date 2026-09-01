@@ -74,7 +74,7 @@ export function JoinSoundPicker({ communityId }: { communityId?: Id<"communities
           <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="max-h-56">
             {communityId ? (
               <SelectItem value={INHERIT}>Use my default</SelectItem>
             ) : (

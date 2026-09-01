@@ -39,6 +39,16 @@ export interface OverlayAttachment {
   url: string | null;
 }
 
+export interface OverlayReplyPreview {
+  id: string;
+  authorName: string;
+  authorImageUrl?: string;
+  text: string | null;
+  hasAttachment: boolean;
+  /** The target no longer exists — render as "original message was deleted". */
+  deleted: boolean;
+}
+
 export interface OverlayMessage {
   id: string;
   clientId?: string | null;
@@ -57,6 +67,8 @@ export interface OverlayMessage {
     | null;
   attachments: OverlayAttachment[];
   reactions: OverlayReaction[];
+  /** The message this one replies to, if any. */
+  replyTo?: OverlayReplyPreview | null;
   /** Overlay-only. A synthesised or not-yet-acked row. */
   __pending?: boolean;
   /** Overlay-only. The op backing this row has permanently failed. */
@@ -121,6 +133,7 @@ function syntheticRow(entry: OutboxEntry, me: OverlayMe): OverlayMessage {
           url: blobUrlFor(attachment.blobKey) ?? attachment.previewUrl ?? null,
         }))
       : [];
+  const replyPreview = args.kind === "send" ? args.replyToPreview : undefined;
   return {
     id: `outbox:${entry.id}`,
     clientId: entry.id,
@@ -128,6 +141,17 @@ function syntheticRow(entry: OutboxEntry, me: OverlayMe): OverlayMessage {
     createdAt: entry.createdAt,
     editedAt: null,
     isMine: true,
+    replyTo:
+      args.kind === "send" && args.replyToId && replyPreview
+        ? {
+            id: args.replyToId,
+            authorName: replyPreview.authorName,
+            authorImageUrl: replyPreview.authorImageUrl,
+            text: replyPreview.text,
+            hasAttachment: replyPreview.hasAttachment,
+            deleted: false,
+          }
+        : null,
     author: {
       id: me._id,
       name: me.name,
@@ -224,9 +248,12 @@ export function applyOutboxOverlay<T extends OverlayMessage>(
     });
   }
 
-  // Synthesised send rows, appended newest-end in seq order. Dropped the
-  // moment the live page carries the real row — matched by our `clientId`, or
-  // by the id the flush recorded on `resolvedId`.
+  // Synthesised send rows, placed at the newest end in seq order. The page is
+  // newest-first (`.order("desc")`), so that end is the *front* of the array —
+  // appending would bury them at the bottom of history, where they'd flash at
+  // the top of the rendered list until the real row landed. Dropped the moment
+  // the live page carries the real row — matched by our `clientId`, or by the
+  // id the flush recorded on `resolvedId`.
   if (me) {
     const synthetic = sends
       .filter((e) => {
@@ -234,9 +261,11 @@ export function applyOutboxOverlay<T extends OverlayMessage>(
         if (e.resolvedId && rowById.has(e.resolvedId)) return false;
         return true;
       })
-      .sort((a, b) => a.seq - b.seq)
+      // Descending seq to match the newest-first page: after the list reverses
+      // this to chronological order, the queued sends read oldest → newest.
+      .sort((a, b) => b.seq - a.seq)
       .map((e) => syntheticRow(e, me) as unknown as T);
-    result = [...result, ...synthetic];
+    result = [...synthetic, ...result];
   }
 
   return result;

@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import moment from "moment";
 
 interface CommunitySettingsGeneralTabProps {
@@ -51,6 +52,7 @@ export function CommunitySettingsGeneralTab({
   const remove = useMutation(api.communities.remove);
 
   const [name, setName] = useState("");
+  const [inviteOnly, setInviteOnly] = useState(true);
   const hydrated = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bannerFileInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +65,7 @@ export function CommunitySettingsGeneralTab({
     if (!community || hydrated.current) return;
     hydrated.current = true;
     setName(community.name);
+    setInviteOnly(community.inviteOnly);
   }, [community]);
 
   if (!community) {
@@ -121,7 +124,7 @@ export function CommunitySettingsGeneralTab({
     setSaving(true);
     setError(null);
     try {
-      await updateSettings({ communityId, name });
+      await updateSettings({ communityId, name, inviteOnly });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
@@ -243,6 +246,25 @@ export function CommunitySettingsGeneralTab({
               disabled={!canManage}
               maxLength={64}
               className="w-xl"
+            />
+          </div>
+          <Separator />
+          <div className="flex max-w-xl items-start justify-between gap-6">
+            <div className="space-y-0.5">
+              <Label htmlFor="community-settings-invite-only">
+                Invite-only
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                When on, the server is hidden from Discovery and can only be
+                joined with an invite link — including from an emoji card.
+              </p>
+            </div>
+            <Switch
+              id="community-settings-invite-only"
+              checked={inviteOnly}
+              onCheckedChange={setInviteOnly}
+              disabled={!canManage}
+              className="mt-1"
             />
           </div>
           <Separator />

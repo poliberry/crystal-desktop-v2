@@ -17,6 +17,7 @@ import {
   requireCommunityPermission,
 } from "./permissions";
 import { visibleActivities } from "./lib/activities";
+import { notifyUsers } from "./notifications";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -419,9 +420,89 @@ export const setVoiceState = mutation({
       .unique();
     if (!row) return;
     if (row.muted === muted && row.deafened === deafened && row.streaming === streaming) return;
+    const startedStreaming = streaming && !(row.streaming ?? false);
     await ctx.db.patch(row._id, { muted, deafened, streaming });
+    if (startedStreaming) {
+      await notifyVoiceChannelActivity(ctx, {
+        channelId,
+        actorId: me._id,
+        type: "stream_started",
+        verb: "started streaming",
+      });
+    }
   },
 });
+
+/**
+ * "<name>" / "joined voice in #<channel> / <server>" (or "started streaming
+ * in …") for a community voice channel — but only to members who are
+ * **friends of the actor** and can
+ * actually see the channel, and who aren't already in that call. A busy server
+ * shouldn't light up every time a stranger channel-hops; a friend showing up
+ * in voice is the thing worth a nudge. Each recipient's DND/Busy is checked by
+ * `notifyUsers`.
+ */
+async function notifyVoiceChannelActivity(
+  ctx: MutationCtx,
+  params: {
+    channelId: Id<"channels">;
+    actorId: Id<"users">;
+    type: "call_started" | "stream_started";
+    /** The verb phrase the notification body opens with — "joined voice" /
+     * "started streaming". The channel and server are appended here. */
+    verb: string;
+  }
+): Promise<void> {
+  const channel = await ctx.db.get(params.channelId);
+  if (!channel) return;
+  const community = await ctx.db.get(channel.communityId);
+  if (!community) return;
+  const [actor, friendships, members, inCall] = await Promise.all([
+    ctx.db.get(params.actorId),
+    ctx.db
+      .query("friendships")
+      .withIndex("by_owner", (q) => q.eq("ownerId", params.actorId))
+      .collect(),
+    ctx.db
+      .query("communityMembers")
+      .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
+      .collect(),
+    ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel", (q) => q.eq("channelId", params.channelId))
+      .collect(),
+  ]);
+  if (!actor) return;
+
+  const friendIds = new Set(friendships.map((f) => f.friendId));
+  const alreadyInCall = new Set(inCall.map((p) => p.userId));
+
+  const recipients: Id<"users">[] = [];
+  for (const member of members) {
+    if (member.userId === params.actorId) continue;
+    if (!friendIds.has(member.userId)) continue;
+    if (alreadyInCall.has(member.userId)) continue;
+    const perms = await getChannelPermissions(
+      ctx,
+      community,
+      params.channelId,
+      member.userId
+    );
+    if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
+    recipients.push(member.userId);
+  }
+  if (recipients.length === 0) return;
+
+  await notifyUsers(ctx, {
+    userIds: recipients,
+    actorId: params.actorId,
+    type: params.type,
+    communityId: channel.communityId,
+    channelId: params.channelId,
+    title: actor.name,
+    body: `${params.verb} in #${channel.name} / ${community.name}`,
+  });
+}
 
 // --- Voice channel join/leave plumbing (used by the "use node" action in
 // channelCalls.ts, which can't touch ctx.db directly) ------------------------
@@ -457,6 +538,12 @@ export const recordVoiceJoin = internalMutation({
       .unique();
     if (existing) return;
     await ctx.db.insert("channelCallParticipants", { channelId, userId, joinedAt: Date.now() });
+    await notifyVoiceChannelActivity(ctx, {
+      channelId,
+      actorId: userId,
+      type: "call_started",
+      verb: "joined voice",
+    });
   },
 });
 

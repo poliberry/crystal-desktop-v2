@@ -27,6 +27,14 @@ export interface NotificationPolicy {
   dmMessages: boolean;
   channelMessages: boolean;
   friendRequests: boolean;
+  /** Someone rings you in a DM/group call. */
+  incomingCalls: boolean;
+  /** Someone joins a call you're in, or a voice channel shared with a friend. */
+  callActivity: boolean;
+  /** A friend starts streaming in a call. */
+  streamActivity: boolean;
+  /** Someone replies to one of your messages. */
+  replies: boolean;
   communityLevels: Map<string, CommunityNotificationLevel>;
 }
 
@@ -39,6 +47,10 @@ const DEFAULTS = {
   dmMessages: true,
   channelMessages: true,
   friendRequests: true,
+  incomingCalls: true,
+  callActivity: true,
+  streamActivity: true,
+  replies: true,
   communityLevel: "all" as CommunityNotificationLevel,
 };
 
@@ -72,6 +84,10 @@ export async function loadNotificationPolicy(
     dmMessages: settings?.dmMessages ?? DEFAULTS.dmMessages,
     channelMessages: settings?.channelMessages ?? DEFAULTS.channelMessages,
     friendRequests: settings?.friendRequests ?? DEFAULTS.friendRequests,
+    incomingCalls: settings?.incomingCalls ?? DEFAULTS.incomingCalls,
+    callActivity: settings?.callActivity ?? DEFAULTS.callActivity,
+    streamActivity: settings?.streamActivity ?? DEFAULTS.streamActivity,
+    replies: settings?.replies ?? DEFAULTS.replies,
     communityLevels: new Map(communitySettings.map((row) => [row.communityId, row.level])),
   };
 }
@@ -90,6 +106,26 @@ export function allowsDirectMessage(policy: NotificationPolicy): boolean {
 
 export function allowsFriendRequest(policy: NotificationPolicy): boolean {
   return !policy.suppressedBy && policy.friendRequests;
+}
+
+/** Whether an incoming-call ring should notify. */
+export function allowsIncomingCall(policy: NotificationPolicy): boolean {
+  return !policy.suppressedBy && policy.incomingCalls;
+}
+
+/** Whether "someone joined a call" should notify. */
+export function allowsCallActivity(policy: NotificationPolicy): boolean {
+  return !policy.suppressedBy && policy.callActivity;
+}
+
+/** Whether "someone started streaming" should notify. */
+export function allowsStreamActivity(policy: NotificationPolicy): boolean {
+  return !policy.suppressedBy && policy.streamActivity;
+}
+
+/** Whether a reply to one of your messages should notify. */
+export function allowsReply(policy: NotificationPolicy): boolean {
+  return !policy.suppressedBy && policy.replies;
 }
 
 /**
