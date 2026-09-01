@@ -154,6 +154,8 @@ export function OutboxFlusher() {
             text: args.text,
             attachments: attachments.length ? attachments : undefined,
             birthdayWish: args.birthdayWish || undefined,
+            replyToId: args.replyToId as Id<"messages"> | undefined,
+            pingReply: args.pingReply,
             clientId: entry.id,
           });
         } else {
@@ -161,6 +163,8 @@ export function OutboxFlusher() {
             channelId: args.channelId as Id<"channels">,
             text: args.text,
             attachments: attachments.length ? attachments : undefined,
+            replyToId: args.replyToId as Id<"channelMessages"> | undefined,
+            pingReply: args.pingReply,
             clientId: entry.id,
           });
         }

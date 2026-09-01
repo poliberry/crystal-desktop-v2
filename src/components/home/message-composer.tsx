@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { Paperclip, Send, Smile, X } from "lucide-react";
+import { AtSign, Paperclip, Reply, Send, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -22,6 +22,8 @@ import { useComposerAttachments } from "@/hooks/use-composer-attachments";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { matchInProgressShortcode } from "@/lib/custom-emoji";
+import type { ReplyDraft } from "@/lib/reply";
+import { cn } from "@/lib/utils";
 import { randomSmiley, searchSystemEmoji } from "@/lib/system-emoji";
 
 interface MessageComposerProps {
@@ -30,6 +32,9 @@ interface MessageComposerProps {
    * prompt above the input is about them. Empty or omitted the rest of the
    * year, which is when the prompt isn't there at all. */
   birthdayMembers?: { name: string }[];
+  /** The message being replied to, or null. */
+  replyingTo?: ReplyDraft | null;
+  onCancelReply?: () => void;
 }
 
 /** "Ana", "Ana and Bo", "Ana, Bo and Cy". */
@@ -57,8 +62,16 @@ interface AutocompleteState {
 export function MessageComposer({
   conversationId,
   birthdayMembers,
+  replyingTo,
+  onCancelReply,
 }: MessageComposerProps) {
   const [text, setText] = useState("");
+  /** Whether the reply pings its target — Discord's "@" toggle. Re-armed
+   * whenever the reply target changes. */
+  const [pingReply, setPingReply] = useState(true);
+  useEffect(() => {
+    if (replyingTo) setPingReply(true);
+  }, [replyingTo?.id]);
   /** The prompt was used and hasn't been sent yet, so the next send is the
    * wish. Only a hint: the server checks somebody's birthday actually is today
    * before letting a message set cakes falling for everyone. */
@@ -146,10 +159,21 @@ export function MessageComposer({
           : undefined,
         attachments: pending.length ? pending : undefined,
         birthdayWish: wishArmed || undefined,
+        replyToId: replyingTo?.id,
+        pingReply: replyingTo ? pingReply : undefined,
+        replyToPreview: replyingTo
+          ? {
+              authorName: replyingTo.authorName,
+              authorImageUrl: replyingTo.authorImageUrl,
+              text: replyingTo.text,
+              hasAttachment: replyingTo.hasAttachment,
+            }
+          : undefined,
       });
       setText("");
       setWishArmed(false);
       clearAttachments();
+      onCancelReply?.();
     } finally {
       setSending(false);
       textareaRef.current?.focus();
@@ -189,6 +213,11 @@ export function MessageComposer({
         applyAutocomplete(suggestions[activeIndex]!.insert);
         return;
       }
+    }
+    if (e.key === "Escape" && replyingTo) {
+      e.preventDefault();
+      onCancelReply?.();
+      return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -266,6 +295,37 @@ export function MessageComposer({
           >
             <X className="size-3.5" />
           </Button>
+        </div>
+      )}
+
+      {replyingTo && (
+        <div className="mb-1.5 flex items-center gap-2 rounded-md border border-b-0 bg-muted/40 px-2.5 py-1 text-xs">
+          <Reply className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+            Replying to <span className="font-medium text-foreground">{replyingTo.authorName}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setPingReply((v) => !v)}
+            title={pingReply ? "Reply will notify them — click to mute" : "Reply won't notify them"}
+            className={cn(
+              "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-medium transition-colors",
+              pingReply
+                ? "bg-primary/15 text-primary hover:bg-primary/25"
+                : "text-muted-foreground hover:bg-accent"
+            )}
+          >
+            <AtSign className="size-3" />
+            {pingReply ? "ON" : "OFF"}
+          </button>
+          <button
+            type="button"
+            aria-label="Cancel reply"
+            onClick={() => onCancelReply?.()}
+            className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-accent"
+          >
+            <X className="size-3.5" />
+          </button>
         </div>
       )}
 

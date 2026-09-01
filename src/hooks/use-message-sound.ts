@@ -31,6 +31,16 @@ export function useMessageSound(): void {
 
     if (!latest || latest.id === lastSeen.current) return;
     lastSeen.current = latest.id;
+    // Call activity has its own audio — the ringtone (IncomingCall) and the
+    // join/leave chimes (CallProvider) — so the generic message chime would
+    // just double up on it.
+    if (
+      latest.type === "call_ring" ||
+      latest.type === "call_started" ||
+      latest.type === "stream_started"
+    ) {
+      return;
+    }
     playCue("message");
   }, [latest, playCue]);
 }

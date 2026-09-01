@@ -2,7 +2,7 @@
 
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { Hash } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -11,6 +11,7 @@ import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
+import { MessageReplyPreview } from "@/components/home/message-reply-preview";
 import {
   Avatar,
   AvatarDecoration,
@@ -26,8 +27,12 @@ import {
   useCachedFirstPage,
 } from "@/lib/message-cache";
 import { discard, retryNow } from "@/lib/outbox";
-import { useOutboxOverlay } from "@/lib/outbox-overlay";
+import { mentionsUserDirectly } from "@/lib/mentions";
+import { formatMessageTimestamp, isSameDay } from "@/lib/message-time";
+import { MessageDayDivider } from "@/components/home/message-day-divider";
+import { useOutboxOverlay, type OverlayReplyPreview } from "@/lib/outbox-overlay";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
+import type { ReplyDraft } from "@/lib/reply";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
@@ -48,6 +53,8 @@ interface ChannelMessageListProps {
   /** Reports whether the list is scrolled to the end, which is one of the
    * signals for "this has been read" (see ChannelChatView). */
   onAtBottomChange?: (atBottom: boolean) => void;
+  /** Set the composer's reply target — the "Reply" action on each message. */
+  onReply?: (draft: ReplyDraft) => void;
 }
 
 /** Discord-style channel-start marker — the first thing in the scrollable
@@ -59,12 +66,7 @@ interface ChannelMessageListProps {
  * (or the channel is short enough that the whole history fits on screen). */
 function ChannelWelcome({ channelName }: { channelName: string }) {
   return (
-    <div className="px-1 pt-4 pb-6">
-      <img
-        src="/icons/channel.png"
-        alt={channelName}
-        className="fade-mask-br size-30 opacity-40"
-      />
+    <div className="px-1 pt-4 pb-6 border-b">
       <h2 className="text-2xl font-bold">Welcome to #{channelName}!</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         This is the start of the #{channelName} channel.
@@ -101,6 +103,8 @@ interface MessageDoc {
   } | null;
   attachments: AttachmentSummary[];
   reactions: ReactionSummary[];
+  /** The message this one replies to — see convex/channelMessages.ts `list`. */
+  replyTo?: OverlayReplyPreview | null;
   /** Overlay-only: a queued send not yet acked by the server. */
   __pending?: boolean;
   /** Overlay-only: the queued op behind this row has permanently failed. */
@@ -114,15 +118,25 @@ const GROUP_WINDOW_MS = 5 * 60 * 1000;
 function MessageRow({
   message,
   startsGroup,
+  mentionsMe,
+  highlighted,
   canManageMessages,
   communityId,
   channelId,
+  onReply,
+  onJumpTo,
 }: {
   message: MessageDoc;
   startsGroup: boolean;
+  /** The message pings the reader directly — tint the row. */
+  mentionsMe: boolean;
+  /** Just jumped-to from a reply preview — flash the row. */
+  highlighted: boolean;
   canManageMessages: boolean;
   communityId: Id<"communities">;
   channelId: Id<"channels">;
+  onReply: (draft: ReplyDraft) => void;
+  onJumpTo: (messageId: string) => void;
 }) {
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
@@ -158,18 +172,37 @@ function MessageRow({
     else setConfirmDelete(true);
   };
 
+  const reply = () =>
+    onReply({
+      id: message.id,
+      authorName: message.author?.name ?? "Unknown",
+      authorImageUrl: message.author?.imageUrl,
+      text: message.text,
+      hasAttachment: message.attachments.length > 0,
+    });
+
   const content = (
     <div
       // See the twin in message-list.tsx: a stable hook for custom CSS.
       data-slot="message-row"
+      data-message-id={message.id}
       data-pending={message.__pending ? "" : undefined}
       className={cn(
-        "group relative flex gap-1 rounded px-2 py-0.5 hover:bg-accent/30",
+        "group relative flex flex-col rounded px-2 py-0.5 transition-colors",
+        mentionsMe ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent/30",
         startsGroup && "mt-3",
+        highlighted && "!bg-primary/20",
         message.__pending && !message.__failed && "opacity-60",
         message.__failed && "border-l-2 border-destructive/60 bg-destructive/5"
       )}
     >
+      {message.replyTo && (
+        <MessageReplyPreview
+          reply={message.replyTo}
+          onJump={message.replyTo.deleted ? undefined : () => onJumpTo(message.replyTo!.id)}
+        />
+      )}
+      <div className="flex gap-1">
       <div className="w-9 mt-1 shrink-0">
         {/* See the twin in message-list.tsx: the popover needs the author's id
             to size itself around their frame. */}
@@ -210,7 +243,7 @@ function MessageRow({
               {message.author?.name ?? "Unknown"}
             </span>
             <span className="text-[11px] text-muted-foreground">
-              {new Date(message.createdAt).toLocaleString()}
+              {formatMessageTimestamp(message.createdAt)}
             </span>
           </div>
         )}
@@ -240,11 +273,7 @@ function MessageRow({
               <MessageContent
                 text={message.text}
                 communityId={communityId}
-                suffix={
-                  message.editedAt && (
-                    <span className="ml-1 text-[10px] text-muted-foreground">(edited)</span>
-                  )
-                }
+                edited={!!message.editedAt}
               />
             )}
             {message.attachments.map((attachment) => (
@@ -267,6 +296,7 @@ function MessageRow({
           </>
         )}
       </div>
+      </div>
 
       {!editing && !message.__pending && (
         <MessageHoverActions
@@ -276,6 +306,7 @@ function MessageRow({
           onReact={(emoji) =>
             void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
           }
+          onReply={reply}
           onEdit={startEdit}
           onDelete={requestDelete}
         />
@@ -298,6 +329,7 @@ function MessageRow({
         onReact={(emoji) =>
           void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
         }
+        onReply={reply}
         onEdit={startEdit}
         onDelete={requestDelete}
       >
@@ -359,6 +391,7 @@ export function ChannelMessageList({
   communityId,
   canManageMessages,
   onAtBottomChange,
+  onReply,
 }: ChannelMessageListProps) {
   const { results, status, loadMore } = usePaginatedQuery(
     api.channelMessages.list,
@@ -370,6 +403,7 @@ export function ChannelMessageList({
   // has changed. Show the last page we know about meanwhile — see
   // src/lib/message-cache.ts.
   const me = useQuery(api.users.getCurrentUser);
+  const myUserId = me?._id as string | undefined;
   const overlayMe = useMemo(
     () =>
       me
@@ -408,6 +442,31 @@ export function ChannelMessageList({
     latestIsMine: latest?.isMine ?? false,
   });
 
+  // `containerRef` is a callback ref (see useStickToBottom) — keep our own
+  // handle so a reply preview click can scroll to its target.
+  const scrollElRef = useRef<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollElRef.current = node;
+      containerRef(node);
+    },
+    [containerRef]
+  );
+
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const jumpTo = useCallback((messageId: string) => {
+    const el = scrollElRef.current?.querySelector<HTMLElement>(
+      `[data-message-id="${messageId}"]`
+    );
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightId(messageId);
+    window.setTimeout(
+      () => setHighlightId((current) => (current === messageId ? null : current)),
+      1600
+    );
+  }, []);
+
   // Only truly cold channels get a skeleton now: anything opened before, or
   // warmed by the preloader, has a page to show.
   if (loadingFirstPage && chronological.length === 0) {
@@ -420,7 +479,7 @@ export function ChannelMessageList({
 
   return (
     <div
-      ref={containerRef}
+      ref={setScrollRef}
       // One handler for both jobs: the hook decides whether new messages should
       // still follow the reader down, and hands back the same answer this view
       // needs for its own "at the bottom" state.
@@ -447,20 +506,32 @@ export function ChannelMessageList({
 
         {chronological.map((message, index) => {
           const prev = chronological[index - 1];
+          const newDay = !prev || !isSameDay(prev.createdAt, message.createdAt);
           const startsGroup =
-            !prev ||
+            newDay ||
             prev.author?.id !== message.author?.id ||
-            message.createdAt - prev.createdAt > GROUP_WINDOW_MS;
+            message.createdAt - prev.createdAt > GROUP_WINDOW_MS ||
+            // A reply always shows its own header, so the spine has an avatar
+            // to point at — like Discord.
+            !!message.replyTo;
 
           return (
-            <MessageRow
-              key={message.id}
-              message={message}
-              startsGroup={startsGroup}
-              canManageMessages={canManageMessages}
-              communityId={communityId}
-              channelId={channelId}
-            />
+            <Fragment key={message.id}>
+              {newDay && <MessageDayDivider ts={message.createdAt} />}
+              <MessageRow
+                message={message}
+                startsGroup={startsGroup}
+                mentionsMe={
+                  !!myUserId && mentionsUserDirectly(message.text ?? "", myUserId)
+                }
+                highlighted={highlightId === message.id}
+                canManageMessages={canManageMessages}
+                communityId={communityId}
+                channelId={channelId}
+                onReply={(draft) => onReply?.(draft)}
+                onJumpTo={jumpTo}
+              />
+            </Fragment>
           );
         })}
       </div>

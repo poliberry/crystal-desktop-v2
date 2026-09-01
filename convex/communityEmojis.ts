@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 import { PERMISSIONS } from "./permissions";
-import { requireCommunity, requireMember } from "./communities";
+import { isInviteOnly, requireCommunity, requireMember } from "./communities";
 import { getCurrentUserOrThrow } from "./users";
 
 /** Maximum custom emoji slots per community. */
@@ -66,6 +66,46 @@ export const listAccessible = query({
     return groups
       .filter((g): g is NonNullable<typeof g> => g !== null)
       .sort((a, b) => a.communityName.localeCompare(b.communityName));
+  },
+});
+
+/**
+ * Everything the emoji hover card needs about one custom emoji: what it is,
+ * which community it belongs to, whether the viewer is already in that
+ * community, and whether that community can be joined without an invite.
+ *
+ * Callable for any emoji id regardless of membership — the payload is just a
+ * name and a community's public face — so a `:name:` from a server the viewer
+ * isn't in still gets a card offering to take them there.
+ */
+export const getInfo = query({
+  args: { emojiId: v.id("communityEmojis") },
+  handler: async (ctx, { emojiId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const emoji = await ctx.db.get(emojiId);
+    if (!emoji) return null;
+    const community = await ctx.db.get(emoji.communityId);
+    if (!community) return null;
+
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) =>
+        q.eq("communityId", community._id).eq("userId", me._id)
+      )
+      .unique();
+
+    return {
+      id: emoji._id,
+      name: emoji.name,
+      imageUrl: emoji.imageUrl,
+      viewerIsMember: membership !== null,
+      community: {
+        id: community._id,
+        name: community.name,
+        imageUrl: community.imageUrl,
+        inviteOnly: isInviteOnly(community),
+      },
+    };
   },
 });
 

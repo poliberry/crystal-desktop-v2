@@ -5,9 +5,13 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
+  allowsCallActivity,
   allowsChannelMessage,
   allowsDirectMessage,
   allowsFriendRequest,
+  allowsIncomingCall,
+  allowsReply,
+  allowsStreamActivity,
   loadNotificationPolicy,
   type NotificationPolicy,
 } from "./lib/notificationPolicy";
@@ -16,7 +20,15 @@ import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { markAllConversationsRead } from "./conversations";
 
-type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
+type NotificationType =
+  | "dm_message"
+  | "channel_mention"
+  | "friend_request"
+  | "friend_accept"
+  | "call_ring"
+  | "call_started"
+  | "stream_started"
+  | "reply";
 
 /** Map a notification type onto the policy question it actually asks. */
 function wants(
@@ -42,6 +54,14 @@ function wants(
       return communityId
         ? allowsChannelMessage(policy, communityId, isMention)
         : !policy.suppressedBy;
+    case "call_ring":
+      return allowsIncomingCall(policy);
+    case "call_started":
+      return allowsCallActivity(policy);
+    case "stream_started":
+      return allowsStreamActivity(policy);
+    case "reply":
+      return allowsReply(policy);
   }
 }
 
@@ -159,14 +179,50 @@ export const feed = query({
   args: {},
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
-    if (!me) return { conversations: [], channels: [], friendRequests: [] };
+    if (!me) return { conversations: [], channels: [], friendRequests: [], callEvents: [] };
 
     // Filtering here rather than in the Electron notifier keeps that process
     // dumb, and means the suppressing statuses and the per-server settings
     // hold for push and mobile too. Do Not Disturb and Busy empty the feed
     // outright.
     const policy = await loadNotificationPolicy(ctx, me._id);
-    if (policy.suppressedBy) return { conversations: [], channels: [], friendRequests: [] };
+    if (policy.suppressedBy)
+      return { conversations: [], channels: [], friendRequests: [], callEvents: [] };
+
+    // Call activity (ring / join / stream) rides along on the persisted
+    // notification rows `notifyUsers` already wrote — which are policy-filtered
+    // at write time, so nothing has to be re-derived here. The notifier diffs
+    // these by id like it does friend requests; only recent ones are worth a
+    // toast (an old row is history, not an event).
+    const CALL_EVENT_WINDOW_MS = 5 * 60_000;
+    const recentNotifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_created", (q) => q.eq("userId", me._id))
+      .order("desc")
+      .take(20);
+    const callEvents = await Promise.all(
+      recentNotifications
+        .filter(
+          (n) =>
+            (n.type === "call_ring" ||
+              n.type === "call_started" ||
+              n.type === "stream_started") &&
+            Date.now() - n.createdAt < CALL_EVENT_WINDOW_MS
+        )
+        .map(async (n) => {
+          const actor = n.actorId ? await ctx.db.get(n.actorId) : null;
+          return {
+            id: n._id,
+            type: n.type,
+            title: n.title,
+            body: n.body ?? "",
+            actorImageUrl: actor?.imageUrl,
+            conversationId: n.conversationId,
+            channelId: n.channelId,
+            communityId: n.communityId,
+          };
+        })
+    );
 
     const memberships = await ctx.db
       .query("conversationMembers")
@@ -292,6 +348,7 @@ export const feed = query({
       conversations: allowsDirectMessage(policy) ? conversations : [],
       channels,
       friendRequests,
+      callEvents,
     };
   },
 });

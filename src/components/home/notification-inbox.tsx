@@ -1,7 +1,19 @@
 "use client";
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { AtSign, Bell, Check, Hash, MessageSquare, Trash2, UserPlus } from "lucide-react";
+import {
+  AtSign,
+  Bell,
+  Check,
+  Hash,
+  MessageSquare,
+  PhoneCall,
+  PhoneIncoming,
+  Reply,
+  ScreenShare,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
 import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
@@ -32,13 +44,25 @@ const PAGE_SIZE = 25;
  * number stops being the useful part. */
 const BADGE_CAP = 99;
 
-type NotificationType = "dm_message" | "channel_mention" | "friend_request" | "friend_accept";
+type NotificationType =
+  | "dm_message"
+  | "channel_mention"
+  | "friend_request"
+  | "friend_accept"
+  | "call_ring"
+  | "call_started"
+  | "stream_started"
+  | "reply";
 
 const TYPE_ICON: Record<NotificationType, React.ComponentType<{ className?: string }>> = {
   dm_message: MessageSquare,
   channel_mention: AtSign,
   friend_request: UserPlus,
   friend_accept: UserPlus,
+  call_ring: PhoneIncoming,
+  call_started: PhoneCall,
+  stream_started: ScreenShare,
+  reply: Reply,
 };
 
 /**

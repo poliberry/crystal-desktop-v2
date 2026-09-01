@@ -44,6 +44,10 @@ export const get = query({
       dmMessages: policy.dmMessages,
       channelMessages: policy.channelMessages,
       friendRequests: policy.friendRequests,
+      incomingCalls: policy.incomingCalls,
+      callActivity: policy.callActivity,
+      streamActivity: policy.streamActivity,
+      replies: policy.replies,
       communities: communities
         .filter((c): c is NonNullable<typeof c> => c !== null)
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -57,6 +61,10 @@ export const update = mutation({
     dmMessages: v.optional(v.boolean()),
     channelMessages: v.optional(v.boolean()),
     friendRequests: v.optional(v.boolean()),
+    incomingCalls: v.optional(v.boolean()),
+    callActivity: v.optional(v.boolean()),
+    streamActivity: v.optional(v.boolean()),
+    replies: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
@@ -76,6 +84,10 @@ export const update = mutation({
       dmMessages: args.dmMessages ?? true,
       channelMessages: args.channelMessages ?? true,
       friendRequests: args.friendRequests ?? true,
+      incomingCalls: args.incomingCalls ?? true,
+      callActivity: args.callActivity ?? true,
+      streamActivity: args.streamActivity ?? true,
+      replies: args.replies ?? true,
     });
   },
 });

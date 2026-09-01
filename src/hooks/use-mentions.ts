@@ -39,13 +39,19 @@ export function useMentionNames(communityId: Id<"communities"> | undefined): Men
   const roles = useQuery(api.roles.list, communityId ? { communityId } : "skip");
 
   return useMemo(() => {
-    const userNames = new Map((members ?? []).map((m) => [m.userId as string, m.name]));
+    const membersById = new Map(
+      (members ?? []).map((m) => [
+        m.userId as string,
+        { name: m.name, username: m.username, imageUrl: m.imageUrl },
+      ])
+    );
     const roleNames = new Map(
       (roles ?? []).map((r) => [r.id as string, { name: r.name, color: r.color }])
     );
     return {
-      user: (id) => userNames.get(id),
+      user: (id) => membersById.get(id)?.name,
       role: (id) => roleNames.get(id),
+      member: (id) => membersById.get(id),
     };
   }, [members, roles]);
 }

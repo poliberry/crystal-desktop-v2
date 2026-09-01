@@ -21,12 +21,14 @@ import { AudioDeviceMenuItems } from "@/components/audio-device-menu";
 import { Nameplate } from "@/components/profile/nameplate";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { useCall } from "@/components/call/call-provider";
+import { CallParticipantStrip } from "@/components/call/call-participant-strip";
 import { ConnectionDetails } from "@/components/call/connection-details";
 import { SoundboardButton } from "@/components/call/soundboard";
 import { StatusDialog } from "@/components/status-dialog";
 import { useCallTitle } from "@/components/call/use-call-title";
 import { PresenceBadge } from "@/components/presence-dot";
 import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
+import type { RichPresenceActivity } from "@/types/desktop-api";
 import {
   Avatar,
   AvatarDecoration,
@@ -94,6 +96,18 @@ export function UserCard() {
 
   const { cameraEnabled, screenSharing, toggleCamera, toggleScreenShare } =
     controller;
+
+  // Fold a live screen share into the activities the presence dot reads, so
+  // your own avatar shows the streaming glyph — the same thing every other
+  // card does for you through `useUserActivities` / `presence.streamOf`, which
+  // this card's raw presence read doesn't go through.
+  const badgeActivities: RichPresenceActivity[] =
+    activeCall && screenSharing
+      ? [
+          { type: "streaming", name: sharedSourceName || "your screen" },
+          ...activities,
+        ]
+      : activities;
 
   // Your own card reads the raw profile, so the deadline has to be applied
   // here — everyone else sees it through a query that already has.
@@ -287,7 +301,9 @@ export function UserCard() {
             </TooltipProvider>
           </div>
 
-          <div className="mt-4 grid grid-cols-4 gap-1.5">
+          <CallParticipantStrip />
+
+          <div className="mt-3 grid grid-cols-4 gap-1.5">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -394,7 +410,7 @@ export function UserCard() {
                   <AvatarDecoration value={decoration} />
                   <PresenceBadge
                     status={status}
-                    activities={activities}
+                    activities={badgeActivities}
                     accent={me.borderGradientStart}
                     isBirthday={isBirthday}
                   />

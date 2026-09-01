@@ -29,6 +29,7 @@ import {
   requireWithinUploadLimit,
 } from "./uploadLimits";
 import {
+  action,
   internalMutation,
   internalQuery,
   mutation,
@@ -36,6 +37,10 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+import StripeSubscriptions from "@convex-dev/stripe";
+import { components } from "./_generated/api";
+
+const stripeClient = new StripeSubscriptions(components.stripe, {});
 
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
@@ -57,18 +62,6 @@ function deriveUsername(identity: { nickname?: string; email?: string; givenName
   return base.toLowerCase().replace(/[^a-z0-9_.]/g, "");
 }
 
-/**
- * Creates the Convex user row from the Clerk identity the first time someone
- * signs in. Deliberately does NOT patch an existing row's `name`/`imageUrl`
- * from Clerk on every call — once a profile exists, display name, avatar,
- * username and bio are independently editable via `updateProfile`/
- * `setAvatar` below, and re-syncing from Clerk here would silently clobber
- * whatever the user customized.
- *
- * The one thing it does re-check on every sign-in is the Poliberry Staff badge
- * (see `syncStaffBadge`), because that follows from the account's email rather
- * than from anything the user edits.
- */
 export const ensureUser = mutation({
   args: {},
   handler: async (ctx) => {
@@ -106,9 +99,25 @@ export const ensureUser = mutation({
       imageUrl,
     });
     await syncStaffBadge(ctx, userId, identity.email);
+
     return userId;
   },
 });
+
+export const createOrGetStripeUser = action({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const customer = await stripeClient.getOrCreateCustomer(ctx, {
+      userId: identity.subject,
+      email: identity.email,
+      name: identity.name,
+    })
+
+    return customer;
+  }
+})
 
 const USERNAME_RE = /^[a-z0-9_.]{3,32}$/;
 const NAME_MAX = 64;

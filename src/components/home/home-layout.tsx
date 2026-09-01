@@ -20,24 +20,15 @@ import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { UserCard } from "./user-card";
+import { useAction } from "convex/react";
+import { api } from "../../../convex/_generated/api";
+import { useUser } from "@clerk/react";
 
 export function HomeLayout() {
+  const { user } = useUser();
   const [search, setSearch] = useState("");
-  // Set the moment a community is picked (rail/popover/search) so its
-  // sidebar shows immediately, even before a channel tab exists for it —
-  // takes priority over the active tab's own community below, since it
-  // reflects the freshest click. Cleared as soon as the active tab changes
-  // to anything (its job — bridging the gap until a channel tab opens — is
-  // done at that point either way, matched or not), so it never lingers and
-  // overrides a later, unrelated tab switch.
   const [pendingCommunityId, setPendingCommunityId] = useState<Id<"communities"> | null>(null);
-  // Whether the channel tab that eventually opens for `pendingCommunityId`
-  // (via CommunitySidebar's auto-select-first-channel effect) should replace
-  // the active tab or open alongside it — set by whatever triggered the
-  // pending state (rail click, shift-click, right-click menu). A ref since
-  // it's only ever read synchronously when that tab actually opens.
   const pendingModeRef = useRef<"replace" | "new">("new");
-  // Which community's overview is being looked at, if any — see showOverview.
   const [overviewFor, setOverviewFor] = useState<Id<"communities"> | null>(null);
 
   const { activeCall, expanded, joinDmCall, joinChannelCall, expand, collapse, joinError, dismissJoinError } = useCall();
@@ -47,33 +38,21 @@ export function HomeLayout() {
 
   const browsingCommunityId: Id<"communities"> | null =
     pendingCommunityId ?? (target.type === "channel" ? target.communityId : null);
+  const getOrCreateStripeUser = useAction(api.users.createOrGetStripeUser);
 
   useEffect(() => {
     setPendingCommunityId(null);
     setOverviewFor(null);
+    if (user?.organizationMemberships?.[0]?.organization.id === "org_3IfKYp4cyTPeYWtsN12lj8VWVKc") {
+      getOrCreateStripeUser();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab.id]);
 
-  // Puts the call back in the mini player when the thing the user just
-  // clicked is behind the expanded call screen.
-  //
-  // The activeTab effect below already does this for a tab *change*, and is
-  // still the general mechanism. What it can't see is asking for the
-  // conversation you're already on: that's a no-op on tab state, so the
-  // effect never fires — which is how clicking your open DM left the call
-  // screen sitting on top of it, with no way back to the mini player short
-  // of opening something else entirely.
-  //
-  // Guarded on the stage actually showing rather than calling collapse()
-  // outright, because collapse() also abandons an in-flight join (it bumps
-  // the join generation) — and a join in flight has nothing expanded yet.
   const collapseIfCovering = () => {
     if (expanded && activeCall) collapse();
   };
 
-  // With tabs disabled, opening something new replaces whatever the other
-  // (non-Home) tab was instead of adding another one — the classic
-  // single-view behavior, since there's no tab bar to show/manage extras.
   const navigateTo = (next: TabTarget) => {
     if (!tabsEnabled) {
       for (const tab of tabs) {
@@ -84,12 +63,6 @@ export function HomeLayout() {
     openTab(next);
   };
 
-  // Going anywhere else puts the call back in the mini bar on the user card:
-  // the call itself is untouched (CallStage stays mounted, just hidden — see
-  // below), but it stops covering whatever the user just asked to look at.
-  // Keyed on the active tab rather than sprinkled through the navigation
-  // helpers so that clicking a tab in the tab bar, following a notification
-  // and using back/forward all behave the same way.
   const shownTabId = useRef(activeTab.id);
   useEffect(() => {
     if (shownTabId.current === activeTab.id) return;
@@ -107,11 +80,6 @@ export function HomeLayout() {
     navigateTo({ type: "home" });
   };
 
-  // Opens a specific channel tab. "replace" closes the active tab first
-  // (unless it's pinned, or it's Home — pinned tabs are protected from being
-  // silently swapped out); "new" just adds alongside it. Ignored (always
-  // "replace") when tabs are globally disabled, since there's nowhere for
-  // extras to go.
   const openCommunityChannel = (
     communityId: Id<"communities">,
     channelId: Id<"channels">,
@@ -145,24 +113,16 @@ export function HomeLayout() {
       activateTab(existing.id);
       return;
     }
-    // No channel tab open for this community yet — show its sidebar right
-    // away; CommunitySidebar's own auto-select-first-channel effect opens
-    // one shortly (via selectChannel below), which becomes the new tab.
-    // Collapsing here rather than waiting for that tab keeps the sidebar
-    // swap visible immediately.
+
     pendingModeRef.current = mode;
     setPendingCommunityId(id);
     collapse();
   };
 
-  /** Search results / the communities popover — matches every other DM or
-   * channel selection outside the rail: always opens a new tab. */
   const selectCommunity = (id: Id<"communities">, channelId?: Id<"channels">) => {
     openCommunity(id, channelId, "new");
   };
 
-  /** The community rail: switching servers replaces the active tab by
-   * default (like following a link), unless the caller asks otherwise. */
   const selectCommunityFromRail = (id: Id<"communities">, mode: "replace" | "new" = "replace") => {
     openCommunity(id, undefined, mode);
   };
@@ -181,10 +141,6 @@ export function HomeLayout() {
       void joinChannelCall(channelId, browsingCommunityId);
       return;
     }
-    // Only true when this fires as the direct follow-up of a rail click that
-    // hadn't picked a channel yet (see `openCommunity`) — an ordinary click
-    // on a channel row while just browsing a community's sidebar normally
-    // always opens a new tab, matching every other sidebar selection.
     const mode = pendingCommunityId === browsingCommunityId ? pendingModeRef.current : "new";
     openCommunityChannel(browsingCommunityId, channelId, mode);
     collapse();
@@ -196,12 +152,6 @@ export function HomeLayout() {
 
   const showCallStage = expanded && !!activeCall;
 
-  // Tells the Electron main process what's on screen right now, so the
-  // background notifier (electron/backgroundNotifier.ts) doesn't also pop an
-  // OS notification for the conversation/channel you're already looking at.
-  // While the call stage is expanded it covers whatever conversation/channel
-  // was selected underneath it, so this must report null there — otherwise
-  // messages in that now-hidden conversation/channel get silently suppressed.
   useEffect(() => {
     const view = showCallStage
       ? null
@@ -213,7 +163,6 @@ export function HomeLayout() {
     void getDesktopAPI()?.notifications.setActiveView(view);
   }, [showCallStage, target]);
 
-  // Clicking a background notification lands here.
   useEffect(() => {
     return getDesktopAPI()?.notifications.onNavigate((notif) => {
       if (notif.kind === "conversation") {
@@ -224,9 +173,6 @@ export function HomeLayout() {
     });
   }, [nav]);
 
-  // Communities that already have a channel tab open — the rail's
-  // right-click menu labels those "Open tab" (it focuses the existing tab)
-  // instead of "Open in new tab".
   const openCommunityIds = new Set(
     tabs.flatMap((t) => (t.target.type === "channel" ? [t.target.communityId] : []))
   );
@@ -234,16 +180,6 @@ export function HomeLayout() {
   const showCommunityPlaceholder =
     browsingCommunityId !== null && !(target.type === "channel" && target.communityId === browsingCommunityId);
 
-  /**
-   * The overview covers the channel it's opened over, rather than being a tab
-   * target of its own.
-   *
-   * A tab is a place you were reading; the overview is a glance at the server
-   * before you pick one. Making it a `TabTarget` would mean it could be
-   * pinned, restored on launch and sit in the bar as a peer of a channel,
-   * which is more than it is. Cleared whenever the tab changes, so it never
-   * survives navigating somewhere else.
-   */
   const showOverview =
     overviewFor !== null && overviewFor === browsingCommunityId;
 
@@ -281,12 +217,6 @@ export function HomeLayout() {
           onSelectConversation={openConversation}
         />
       )}
-
-      {/* Kept mounted (just hidden) for as long as a call is active, rather
-          than unmounted on collapse — CallStage/RoomView/CallGrid own the
-          audio elements and screen-share subscription state, and unmounting
-          them on every collapse/expand cycle tore down remote audio and
-          reset "watching" screen-share subscriptions back to none. */}
       {activeCall && (
         <div className={showCallStage ? "flex min-h-0 min-w-0 flex-1 flex-col" : "hidden"}>
           <CallStage />

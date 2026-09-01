@@ -112,12 +112,56 @@ export function NotificationsTab() {
             onChange={(channelMessages) => void update({ channelMessages }).catch(() => {})}
           />
           <ToggleRow
+            id="notify-replies"
+            label="Replies"
+            description="Someone replies to one of your messages. The sender can mute an individual reply."
+            checked={settings.replies}
+            disabled={!!settings.suppressedBy}
+            onChange={(replies) => void update({ replies }).catch(() => {})}
+          />
+          <ToggleRow
             id="notify-friends"
             label="Friend requests"
             description="New requests and accepted ones."
             checked={settings.friendRequests}
             disabled={!!settings.suppressedBy}
             onChange={(friendRequests) => void update({ friendRequests }).catch(() => {})}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Calls</CardTitle>
+          <CardDescription>
+            Ringing, and who&apos;s in a call. Do Not Disturb and Busy silence all of these,
+            including the incoming-call ringtone.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ToggleRow
+            id="notify-incoming-calls"
+            label="Incoming calls"
+            description="Someone rings you in a DM or group."
+            checked={settings.incomingCalls}
+            disabled={!!settings.suppressedBy}
+            onChange={(incomingCalls) => void update({ incomingCalls }).catch(() => {})}
+          />
+          <ToggleRow
+            id="notify-call-activity"
+            label="Call activity"
+            description="Someone joins a call you're in, or a friend joins a server voice channel you can see."
+            checked={settings.callActivity}
+            disabled={!!settings.suppressedBy}
+            onChange={(callActivity) => void update({ callActivity }).catch(() => {})}
+          />
+          <ToggleRow
+            id="notify-streaming"
+            label="Streaming"
+            description="Someone starts sharing their screen in a call."
+            checked={settings.streamActivity}
+            disabled={!!settings.suppressedBy}
+            onChange={(streamActivity) => void update({ streamActivity }).catch(() => {})}
           />
         </CardContent>
       </Card>

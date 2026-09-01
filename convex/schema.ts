@@ -609,6 +609,10 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
+    /** The message this one is a reply to, in the same conversation. Optional
+     * ⇒ nothing to backfill; a dangling id (target since deleted) renders as
+     * "original message was deleted". */
+    replyToId: v.optional(v.id("messages")),
     /** This message was sent from the "wish them a happy birthday" prompt.
      * Recorded on the message rather than announced some other way because
      * both people need to see the cakes fall and both are already subscribed
@@ -725,6 +729,10 @@ export default defineSchema({
     inviteCode: v.optional(v.string()),
     bannerUrl: v.optional(v.string()),
     bannerStorageId: v.optional(v.id("_storage")),
+    /** When true (the default — treat a missing value as `true`), the server
+     * can only be joined with an invite code/link: it's hidden from Discovery
+     * and the "join" button on an emoji card is replaced with a notice. */
+    inviteOnly: v.optional(v.boolean()),
   })
     .index("by_owner", ["ownerId"])
     .index("by_invite_code", ["inviteCode"]),
@@ -868,6 +876,9 @@ export default defineSchema({
     text: v.optional(v.string()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
+    /** The message this one is a reply to, in the same channel. See the twin
+     * on `messages` above. */
+    replyToId: v.optional(v.id("channelMessages")),
     /** Idempotency key for the durable send outbox — see the twin field on
      * `messages` above and src/lib/outbox.ts. */
     clientId: v.optional(v.string()),
@@ -1125,7 +1136,16 @@ export default defineSchema({
       v.literal("dm_message"),
       v.literal("channel_mention"),
       v.literal("friend_request"),
-      v.literal("friend_accept")
+      v.literal("friend_accept"),
+      /** Someone is ringing a DM/group call you're in. */
+      v.literal("call_ring"),
+      /** Someone joined a call — a DM/group you're in, or a server voice
+       * channel a friend of yours is now in. */
+      v.literal("call_started"),
+      /** Someone started screen sharing in a call/voice channel. */
+      v.literal("stream_started"),
+      /** Someone replied to one of your messages. */
+      v.literal("reply")
     ),
     actorId: v.optional(v.id("users")),
     conversationId: v.optional(v.id("conversations")),
@@ -1156,6 +1176,17 @@ export default defineSchema({
      * per-community level below. */
     channelMessages: v.boolean(),
     friendRequests: v.boolean(),
+    /** Someone rings you in a DM or group call. Optional so rows written
+     * before this field existed keep validating — the policy supplies the
+     * default (see convex/lib/notificationPolicy.ts). */
+    incomingCalls: v.optional(v.boolean()),
+    /** Someone joins a call you're in, or a server voice channel shared with
+     * a friend. */
+    callActivity: v.optional(v.boolean()),
+    /** A friend starts streaming in a call. */
+    streamActivity: v.optional(v.boolean()),
+    /** Someone replies to one of your messages. */
+    replies: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
   /** Per-server override of how much a user wants to hear from it. */

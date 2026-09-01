@@ -10,6 +10,7 @@ import { IncomingCall } from "@/components/call/incoming-call";
 import { ScreenSharePicker } from "@/components/screen-share-picker";
 import { usePipFrameStream } from "@/hooks/use-pip-frame-stream";
 import { usePipWindow } from "@/hooks/use-pip-window";
+import { useMyPresence } from "@/hooks/use-presence";
 import { useRoom, type RoomController } from "@/hooks/use-room";
 import { useStreamThumbnail } from "@/hooks/use-stream-thumbnail";
 import type { SystemAudioChoice } from "@/lib/audio-prefs";
@@ -123,7 +124,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const setVoiceState = useMutation(api.channels.setVoiceState);
   const ringConversation = useMutation(api.calls.ring);
   const cancelRings = useMutation(api.calls.cancelRings);
-  const { muted, deafened, setMuted, setDeafened, playCue } = useAudioPreferences();
+  const setStreamState = useMutation(api.calls.setStreamState);
+  const { muted, deafened, setMuted, setDeafened, playCue, callParticipantSounds } =
+    useAudioPreferences();
+  // A deliberate Do Not Disturb / Busy silences the call-activity chimes the
+  // same way it silences their notifications (see convex/lib/notificationPolicy).
+  const { manualStatus } = useMyPresence();
+  const activitySilenced = manualStatus === "dnd" || manualStatus === "busy";
 
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -199,10 +206,36 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     for (const identity of known) if (!remote.has(identity)) playCue("screenShareStop");
   }, [screenShares, controller.room, playCue]);
 
-  // Leaving a call has to forget who was sharing in it, or rejoining would
-  // diff against the last call's roster.
+  /**
+   * The join / leave chime for *other* people in the call.
+   *
+   * Your own join/leave is cued directly by joinDmCall / leaveActiveCall.
+   * Everyone else arrives as a change to `controller.participants` — diffed
+   * here rather than hooked to a LiveKit event so it can be gated on the
+   * preference and on Do Not Disturb without threading either into `useRoom`.
+   * The ref is updated before the gate, so toggling the preference (or DND)
+   * mid-call doesn't replay a backlog. Seeded on the first run: walking into a
+   * call with people already in it is not everyone joining at once.
+   */
+  const knownParticipantsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
-    if (!activeCall) knownSharesRef.current = null;
+    const current = new Set(controller.participants.map((p) => p.identity));
+    const known = knownParticipantsRef.current;
+    knownParticipantsRef.current = current;
+    if (!known) return;
+    if (!callParticipantSounds || activitySilenced) return;
+
+    for (const identity of current) if (!known.has(identity)) playCue("callJoin");
+    for (const identity of known) if (!current.has(identity)) playCue("callLeave");
+  }, [controller.participants, callParticipantSounds, activitySilenced, playCue]);
+
+  // Leaving a call has to forget who was sharing / present in it, or rejoining
+  // would diff against the last call's roster.
+  useEffect(() => {
+    if (!activeCall) {
+      knownSharesRef.current = null;
+      knownParticipantsRef.current = null;
+    }
   }, [activeCall]);
 
   // A share that ends (they stopped sharing, or left) drops out of the watch
@@ -418,6 +451,17 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       streaming: screenSharing,
     }).catch(() => {});
   }, [activeCall, status, muted, deafened, screenSharing, setVoiceState]);
+
+  // DM/group calls have no voice roster to mirror mute/deafen onto, but the
+  // screen-share flag still has to reach the server so "started streaming"
+  // notifications can fire (convex/calls.ts setStreamState).
+  useEffect(() => {
+    if (activeCall?.kind !== "dm" || status !== "connected") return;
+    void setStreamState({
+      conversationId: activeCall.conversationId,
+      streaming: screenSharing,
+    }).catch(() => {});
+  }, [activeCall, status, screenSharing, setStreamState]);
 
   // Publish stills of my own share alongside that state, so the voice channel
   // list and the activity feed can show what's on it — see useStreamThumbnail.

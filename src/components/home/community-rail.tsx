@@ -152,7 +152,8 @@ function DiscoverDialog({
         <DialogHeader>
           <DialogTitle>Discover communities</DialogTitle>
           <DialogDescription>
-            Every community is open to join for now.
+            Open communities you can join right now. Invite-only servers need a
+            link.
           </DialogDescription>
         </DialogHeader>
 
@@ -183,6 +184,11 @@ function DiscoverDialog({
 
         <ScrollArea className="h-72">
           <div className="flex flex-col gap-1 pr-3">
+            {discoverable.length === 0 && (
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                No open communities right now — join with an invite code above.
+              </p>
+            )}
             {discoverable.map((community) => (
               <div
                 key={community.id}
@@ -446,7 +452,7 @@ function CommunityTile({
                     onSelectCommunity(community.id, e.shiftKey ? "new" : "replace")
                   }
                   className={cn(
-                    "flex size-12 items-center justify-center overflow-hidden rounded-none bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
+                    "flex size-12 items-center justify-center overflow-hidden rounded-full bg-secondary transition-[border-radius] ease-in-out hover:rounded-2xl",
                     // The pill says which tile is open now, so the selected
                     // tile just holds the squircle hover settles on rather
                     // than wearing a ring saying the same thing twice.
@@ -587,7 +593,7 @@ export function CommunityRail({
   return (
     <div className={cn(
       `flex w-16 shrink-0 flex-col items-center gap-2 bg-background/60 backdrop-blur-xl py-3`,
-      activeCall && screenSharing ? `pb-54` : activeCall ? `pb-44` : `pb-20`
+      activeCall && screenSharing ? `pb-60` : activeCall ? `pb-50` : `pb-20`
     )}>
       <RailButton
         label="Direct messages"
@@ -620,11 +626,6 @@ export function CommunityRail({
               onSelectCommunity={onSelectCommunity}
             />
           ))}
-          {communities.length === 0 && (
-            <p className="mt-4 px-1 text-center text-[11px] text-muted-foreground">
-              No communities yet
-            </p>
-          )}
         </div>
       </ScrollArea>
 

@@ -67,6 +67,9 @@ export interface AudioPreferences {
   /** 0–1 multiplier applied to the app's own effects (join, mute, ringing).
    * Zero silences them entirely. */
   uiSoundVolume: number;
+  /** Play the join / leave chime when *other* people join or leave the call
+   * you're in (your own join/leave always chimes). */
+  callParticipantSounds: boolean;
   richPresenceEnabled: boolean;
 }
 
@@ -83,6 +86,7 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   streamVolume: 1,
   soundboardVolume: 0.7,
   uiSoundVolume: 0.5,
+  callParticipantSounds: true,
   richPresenceEnabled: true,
 };
 
@@ -159,6 +163,7 @@ export function readAudioPreferences(): AudioPreferences {
     streamVolume: clampVolume(stored.streamVolume, DEFAULT_AUDIO_PREFERENCES.streamVolume),
     soundboardVolume: clampVolume(stored.soundboardVolume, DEFAULT_AUDIO_PREFERENCES.soundboardVolume),
     uiSoundVolume: clampVolume(stored.uiSoundVolume, DEFAULT_AUDIO_PREFERENCES.uiSoundVolume),
+    callParticipantSounds: stored.callParticipantSounds !== false,
     richPresenceEnabled: stored.richPresenceEnabled !== false,
   };
 }

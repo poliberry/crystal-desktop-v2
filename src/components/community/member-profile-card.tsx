@@ -134,7 +134,6 @@ function ProfileBadges({ badges }: { badges: ProfileBadge[] }) {
           </TooltipTrigger>
           <TooltipContent side="top">
             <p className="font-medium">{badge.label}</p>
-            <p className="text-xs text-muted-foreground">{badge.description}</p>
           </TooltipContent>
         </Tooltip>
       ))}
@@ -253,8 +252,15 @@ export function MemberProfileCard({
         className={cn(
           "min-h-full",
           expanded ? "h-[130%]" : "h-full",
+          expanded && "px-4",
           "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/20",
           hasGradient ? "bg-background/70" : "bg-accent",
+          // Radix wraps the viewport's children in a `display: table` box that
+          // shrink-wraps to content — so a stream still (a replaced element with
+          // its own pixel width) widens the whole card past its edges. Forcing
+          // the wrapper back to `block` makes it take the viewport's width and
+          // clip the picture instead.
+          "[&_[data-slot=scroll-area-viewport]>div]:!block",
         )}
       >
         {/* Banner — always shown if set; if no banner but gradient, just top padding */}
@@ -531,7 +537,7 @@ export function UserProfileContent({
       member={{
         userId,
         name: profile?.name ?? name,
-        username,
+        username: profile?.username ?? username,
         imageUrl: profile?.imageUrl ?? imageUrl,
         roles: profile?.roles,
         isOwner: profile?.isOwner,

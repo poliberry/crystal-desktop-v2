@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Smile, Trash2 } from "lucide-react";
+import { Pencil, Reply, Smile, Trash2 } from "lucide-react";
 
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
 import { formatCustomEmoji } from "@/lib/custom-emoji";
@@ -24,23 +24,38 @@ interface MessageHoverActionsProps {
   /** Channel messages only — omitted for DMs, which have no custom emoji. */
   communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
+  onReply?: () => void;
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
   onDelete: (shiftKey: boolean) => void;
 }
 
 /** Small button group that fades in over the top-right of a message row on
- * hover — react, edit (own messages only), delete. */
+ * hover — react, reply, edit (own messages only), delete. */
 export function MessageHoverActions({
   canEdit,
   canDelete,
   communityId,
   onReact,
+  onReply,
   onEdit,
   onDelete,
 }: MessageHoverActionsProps) {
   return (
     <div className="absolute top-0 right-2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border bg-popover opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+      {onReply && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-7" onClick={onReply}>
+                <Reply className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reply</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+
       <Popover>
         <PopoverTrigger asChild>
           <Button variant="ghost" size="icon" className="size-7">

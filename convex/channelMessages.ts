@@ -41,6 +41,46 @@ async function reactionsFor(ctx: QueryCtx, messageId: Id<"channelMessages">, me:
   return Array.from(grouped.values());
 }
 
+/** Longest a reply preview snippet gets — a preview is one line. */
+const REPLY_SNIPPET_MAX = 140;
+
+/** The compact "replying to…" card for a channel message. See the twin in
+ * convex/messages.ts. */
+async function resolveReplyPreview(
+  ctx: QueryCtx,
+  replyToId: Id<"channelMessages"> | undefined
+) {
+  if (!replyToId) return null;
+  const target = await ctx.db.get(replyToId);
+  if (!target) {
+    return {
+      id: replyToId as string,
+      authorName: "Unknown",
+      authorImageUrl: undefined as string | undefined,
+      text: null as string | null,
+      hasAttachment: false,
+      deleted: true,
+    };
+  }
+  const [author, firstAttachment] = await Promise.all([
+    ctx.db.get(target.authorId),
+    ctx.db
+      .query("channelMessageAttachments")
+      .withIndex("by_message", (q) => q.eq("messageId", target._id))
+      .take(1),
+  ]);
+  return {
+    id: target._id as string,
+    authorName: author?.name ?? "Unknown",
+    authorImageUrl: author?.imageUrl,
+    text: target.text
+      ? (await renderMentionsAsText(ctx, target.text)).slice(0, REPLY_SNIPPET_MAX)
+      : null,
+    hasAttachment: firstAttachment.length > 0,
+    deleted: false,
+  };
+}
+
 /**
  * Per-community presentation for a message author: the nickname and avatar
  * from their server profile (falling back to their global profile), plus the
@@ -137,6 +177,7 @@ export const list = query({
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
+          replyTo: await resolveReplyPreview(ctx, message.replyToId),
           /** Idempotency key of the send that made this row — see the twin in
            * convex/messages.ts and src/lib/outbox-overlay.ts. */
           clientId: message.clientId ?? null,
@@ -201,11 +242,17 @@ export const send = mutation({
         })
       )
     ),
+    /** The message being replied to. Dropped silently unless it's in this
+     * channel. */
+    replyToId: v.optional(v.id("channelMessages")),
+    /** Whether the reply notifies its target — defaults to true, the "@"
+     * toggle sends false. */
+    pingReply: v.optional(v.boolean()),
     /** Idempotency key from the durable send outbox — see convex/messages.ts
      * and src/lib/outbox.ts. */
     clientId: v.optional(v.string()),
   },
-  handler: async (ctx, { channelId, text, attachments, clientId }) => {
+  handler: async (ctx, { channelId, text, attachments, replyToId, pingReply, clientId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
     await requireNotTimedOut(ctx, channelId, me._id);
@@ -234,10 +281,19 @@ export const send = mutation({
       );
     }
 
+    const replyTarget = replyToId ? await ctx.db.get(replyToId) : null;
+    const validReplyToId =
+      replyTarget && replyTarget.channelId === channelId ? replyToId : undefined;
+    const replyPingUserId =
+      validReplyToId && pingReply !== false && replyTarget && replyTarget.authorId !== me._id
+        ? replyTarget.authorId
+        : null;
+
     const messageId = await ctx.db.insert("channelMessages", {
       channelId,
       authorId: me._id,
       text: trimmed || undefined,
+      replyToId: validReplyToId,
       clientId: clientId || undefined,
     });
 
@@ -294,6 +350,8 @@ export const send = mutation({
         const others: Id<"users">[] = [];
         for (const member of members) {
           if (member.userId === me._id || mentionedSet.has(member.userId)) continue;
+          // The reply target gets the `reply` notification below instead.
+          if (member.userId === replyPingUserId) continue;
           const perms = await getChannelPermissions(ctx, community, channelId, member.userId);
           if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
           others.push(member.userId);
@@ -312,6 +370,30 @@ export const send = mutation({
             isMention: false,
           });
         }
+      }
+    }
+
+    // The reply ping — even for an attachment-only reply, and regardless of
+    // the target's per-server "all messages" setting (a direct reply is
+    // addressed to them). Skipped when they were also @-mentioned: that
+    // notification is the more specific one.
+    if (channel && replyPingUserId) {
+      const mentionedReplyTarget =
+        trimmed &&
+        (await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id)).includes(
+          replyPingUserId
+        );
+      if (!mentionedReplyTarget) {
+        await notifyUsers(ctx, {
+          userIds: [replyPingUserId],
+          actorId: me._id,
+          type: "reply",
+          channelId,
+          communityId: channel.communityId,
+          channelMessageId: messageId,
+          title: `${me.name} replied to you in #${channel.name}`,
+          body: trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+        });
       }
     }
 

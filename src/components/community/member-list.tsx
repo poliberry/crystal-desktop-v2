@@ -154,8 +154,7 @@ export function MemberList({ communityId }: MemberListProps) {
             {groups.map((group) => (
               <div key={group.key}>
                 <p
-                  className="px-2 text-xs font-semibold tracking-wide uppercase text-muted-foreground"
-                  style={group.color ? { color: group.color } : undefined}
+                  className="px-2 text-xs font-semibold tracking-wide text-muted-foreground"
                 >
                   {group.label} — {group.members.length}
                 </p>
@@ -196,7 +195,8 @@ export function MemberList({ communityId }: MemberListProps) {
                                 status={member.status}
                                 activities={member.activities}
                                 accent={member.borderGradientStart}
-                                isBirthday={member.isBirthday}                              />
+                                isBirthday={member.isBirthday}
+                              />
                             </Avatar>
                             <div className="min-w-0 flex-1">
                               <p

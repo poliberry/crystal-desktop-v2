@@ -156,12 +156,19 @@ function MediaBody({ activity }: { activity: RichPresenceActivity }) {
       <div className="flex items-center gap-3">
         <Artwork activity={activity} size="lg" />
         <div className="min-w-0 flex-1 leading-tight">
-          <p className="truncate text-sm font-semibold">{activity.details ?? activity.name}</p>
+          {/* `line-clamp-*`, not `truncate`: a Radix ScrollArea wraps its
+              viewport children in a `display: table` box that shrink-wraps to
+              content, so a `white-space: nowrap` line (what `truncate` sets)
+              stretches the whole card to the title's full width instead of
+              being clipped. Clamping still wraps, so the card keeps its width. */}
+          <p className="line-clamp-2 text-sm font-semibold">
+            {activity.details ?? activity.name}
+          </p>
           {activity.state && (
-            <p className="truncate text-xs text-muted-foreground">{activity.state}</p>
+            <p className="line-clamp-1 text-xs text-muted-foreground">{activity.state}</p>
           )}
           {activity.album && (
-            <p className="truncate text-xs text-muted-foreground/80">{activity.album}</p>
+            <p className="line-clamp-1 text-xs text-muted-foreground/80">{activity.album}</p>
           )}
         </div>
       </div>
@@ -205,15 +212,15 @@ function GameBody({ activity }: { activity: RichPresenceActivity }) {
     <div className="flex items-center gap-2.5">
       <Artwork activity={activity} size="sm" />
       <div className="min-w-0 flex-1 leading-tight">
-        <p className="truncate text-sm font-semibold">{activity.name}</p>
+        <p className="line-clamp-2 text-sm font-semibold">{activity.name}</p>
         {activity.details && (
-          <p className="truncate text-xs text-muted-foreground">{activity.details}</p>
+          <p className="line-clamp-1 text-xs text-muted-foreground">{activity.details}</p>
         )}
         {activity.state && (
-          <p className="truncate text-xs text-muted-foreground">{activity.state}</p>
+          <p className="line-clamp-1 text-xs text-muted-foreground">{activity.state}</p>
         )}
         {activity.startedAt && !activity.state && (
-          <p className="truncate text-xs tabular-nums text-muted-foreground">
+          <p className="line-clamp-1 text-xs tabular-nums text-muted-foreground">
             {formatClock(now - activity.startedAt)} elapsed
           </p>
         )}
@@ -266,7 +273,7 @@ export function RichPresenceCard({
         className
       )}
     >
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <p className="mb-1.5 line-clamp-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         {ACTIVITY_VERB[activity.type]}
         {(isMedia || isStream) && activity.name ? ` · ${activity.name}` : ""}
       </p>

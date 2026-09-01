@@ -42,6 +42,19 @@ export interface SendArgs {
   channelId?: string;
   text?: string;
   birthdayWish?: boolean;
+  /** The message this send is a reply to. */
+  replyToId?: string;
+  /** Whether the reply notifies its target — the composer's "@" toggle. */
+  pingReply?: boolean;
+  /** A snapshot of the reply target, stashed at enqueue so the optimistic row
+   * can render its reply preview offline (never sent to the server — the
+   * `list` query re-resolves the real preview once the row lands). */
+  replyToPreview?: {
+    authorName: string;
+    authorImageUrl?: string;
+    text: string | null;
+    hasAttachment: boolean;
+  };
   attachments: OutboxAttachmentInput[];
 }
 

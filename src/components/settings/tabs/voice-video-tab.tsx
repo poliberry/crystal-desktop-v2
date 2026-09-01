@@ -91,6 +91,8 @@ export function VoiceVideoTab() {
     setSoundboardVolume,
     uiSoundVolume,
     setUiSoundVolume,
+    callParticipantSounds,
+    setCallParticipantSounds,
     richPresenceEnabled,
     setRichPresenceEnabled,
   } = useAudioPreferences();
@@ -455,29 +457,47 @@ export function VoiceVideoTab() {
             turn them off entirely.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex items-center gap-3">
-          <Slider
-            value={[Math.round(uiSoundVolume * 100)]}
-            min={0}
-            max={100}
-            step={5}
-            onValueChange={([value]) => setUiSoundVolume((value ?? 0) / 100)}
-          />
-          <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
-            {Math.round(uiSoundVolume * 100)}%
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              playUiSound("callJoin", {
-                volume: uiSoundVolume,
-                outputDeviceId: outputDeviceId || undefined,
-              })
-            }
-          >
-            Preview
-          </Button>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Slider
+              value={[Math.round(uiSoundVolume * 100)]}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={([value]) => setUiSoundVolume((value ?? 0) / 100)}
+            />
+            <span className="w-10 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+              {Math.round(uiSoundVolume * 100)}%
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                playUiSound("callJoin", {
+                  volume: uiSoundVolume,
+                  outputDeviceId: outputDeviceId || undefined,
+                })
+              }
+            >
+              Preview
+            </Button>
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="call-participant-sounds" className="text-sm font-normal">
+                Others joining or leaving a call
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Play the join and leave chime when other people come and go from a call you&apos;re
+                in. Your own join and leave always chime. Silenced by Do Not Disturb.
+              </p>
+            </div>
+            <Switch
+              id="call-participant-sounds"
+              checked={callParticipantSounds}
+              onCheckedChange={setCallParticipantSounds}
+            />
+          </div>
         </CardContent>
       </Card>
 

@@ -80,6 +80,8 @@ export const create = mutation({
       name: trimmed,
       ownerId: me._id,
       createdAt: Date.now(),
+      // New servers are invite-only until the owner opts into Discovery.
+      inviteOnly: true,
     });
 
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: Date.now() });
@@ -261,7 +263,8 @@ export const listMineActivity = query({
   },
 });
 
-/** Communities the user hasn't joined yet — every community is open-join for now. */
+/** Communities the user could join right now — not already a member, and not
+ * invite-only. Invite-only servers are reachable only through an invite link. */
 export const listDiscoverable = query({
   args: {},
   handler: async (ctx) => {
@@ -274,7 +277,7 @@ export const listDiscoverable = query({
     const joined = new Set(memberships.map((m) => m.communityId));
     const all = await ctx.db.query("communities").collect();
     return all
-      .filter((c) => !joined.has(c._id))
+      .filter((c) => !joined.has(c._id) && !isInviteOnly(c))
       .map((c) => ({ id: c._id, name: c.name, imageUrl: c.imageUrl }));
   },
 });
@@ -299,6 +302,7 @@ export const get = query({
       ownerId: community.ownerId,
       isOwner: community.ownerId === me._id,
       createdAt: community.createdAt,
+      inviteOnly: isInviteOnly(community),
     };
   },
 });
@@ -307,7 +311,7 @@ export const join = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    await requireCommunity(ctx, communityId);
+    const community = await requireCommunity(ctx, communityId);
 
     const ban = await ctx.db
       .query("communityBans")
@@ -322,9 +326,23 @@ export const join = mutation({
       .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .unique();
     if (existing) return;
+
+    // Open-join path only. An invite code (`joinByInviteCode`) is explicit
+    // permission and bypasses this — see `isInviteOnly`.
+    if (isInviteOnly(community)) {
+      throw new Error("This server is invite-only — you need an invite link to join.");
+    }
+
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: Date.now() });
   },
 });
+
+/** Missing `inviteOnly` counts as invite-only: it's the default, and every
+ * community that predates the field should stay private until its owner opts
+ * into Discovery. */
+export function isInviteOnly(community: Doc<"communities">): boolean {
+  return community.inviteOnly ?? true;
+}
 
 export const leave = mutation({
   args: { communityId: v.id("communities") },
@@ -346,8 +364,12 @@ export const leave = mutation({
 });
 
 export const updateSettings = mutation({
-  args: { communityId: v.id("communities"), name: v.optional(v.string()) },
-  handler: async (ctx, { communityId, name }) => {
+  args: {
+    communityId: v.id("communities"),
+    name: v.optional(v.string()),
+    inviteOnly: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { communityId, name, inviteOnly }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
@@ -356,6 +378,9 @@ export const updateSettings = mutation({
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Community name can't be empty.");
       await ctx.db.patch(communityId, { name: trimmed });
+    }
+    if (inviteOnly !== undefined) {
+      await ctx.db.patch(communityId, { inviteOnly });
     }
   },
 });
@@ -509,6 +534,34 @@ export const listMembers = query({
     ]);
     const roleById = new Map(roles.map((r) => [r._id, r]));
 
+    // Who's screen sharing in one of this community's voice channels right now.
+    // Folded into the member's activity list below so the member list shows the
+    // same streaming glyph the profile card does (which gets it from
+    // `presence.streamOf` — see `useUserActivities`).
+    const communityChannels = await ctx.db
+      .query("channels")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .collect();
+    const streamers = new Map<string, { where: string; thumbnailUrl?: string }>();
+    await Promise.all(
+      communityChannels
+        .filter((channel) => channel.type === "voice")
+        .map(async (channel) => {
+          const rows = await ctx.db
+            .query("channelCallParticipants")
+            .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+            .collect();
+          for (const row of rows) {
+            if (row.streaming) {
+              streamers.set(row.userId, {
+                where: `#${channel.name}`,
+                thumbnailUrl: row.streamThumbnailUrl,
+              });
+            }
+          }
+        })
+    );
+
     return Promise.all(
       members.map(async (member) => {
         const [user, serverProfile, presence] = await Promise.all([
@@ -525,6 +578,11 @@ export const listMembers = query({
             .unique(),
         ]);
         const roleIds = memberRoles.filter((mr) => mr.userId === member.userId).map((mr) => mr.roleId);
+        const activities = visibleActivities(presence, user);
+        const stream =
+          presence?.effective !== "offline"
+            ? streamers.get(member.userId)
+            : undefined;
         return {
           userId: member.userId,
           name: serverProfile?.displayName ?? user?.name ?? "Unknown",
@@ -556,7 +614,16 @@ export const listMembers = query({
           isOwner: community.ownerId === member.userId,
           timeoutUntil: member.timeoutUntil,
           status: presence?.effective ?? "offline",
-          activities: visibleActivities(presence, user),
+          activities: stream
+            ? [
+                {
+                  type: "streaming" as const,
+                  name: stream.where,
+                  imageUrl: stream.thumbnailUrl,
+                },
+                ...activities,
+              ]
+            : activities,
           roles: roleIds
             .map((id) => roleById.get(id))
             .filter((r): r is Doc<"roles"> => !!r)

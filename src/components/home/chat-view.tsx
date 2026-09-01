@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { useWindowFocus } from "@/hooks/use-window-focus";
+import type { ReplyDraft } from "@/lib/reply";
 import {
   Avatar,
   AvatarDecoration,
@@ -81,6 +82,11 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const [showMembers, setShowMembers] = useState(true);
   const [editingGroup, setEditingGroup] = useState(false);
   const [editingBackground, setEditingBackground] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ReplyDraft | null>(null);
+  // A reply target belongs to the conversation it was picked in.
+  useEffect(() => {
+    setReplyingTo(null);
+  }, [conversationId]);
   /**
    * A birthday wish landing in this conversation — for either person, sender
    * or recipient — sets the cakes off.
@@ -267,11 +273,13 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
           </div>
         </div>
 
-        <MessageList conversationId={conversationId} />
+        <MessageList conversationId={conversationId} onReply={setReplyingTo} />
         <TypingIndicator conversationId={conversationId} />
         <MessageComposer
           conversationId={conversationId}
           birthdayMembers={birthdayMembers}
+          replyingTo={replyingTo}
+          onCancelReply={() => setReplyingTo(null)}
         />
       </div>
 

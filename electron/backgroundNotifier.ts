@@ -69,10 +69,22 @@ interface FeedFriendRequest {
   fromImageUrl?: string;
 }
 
+interface FeedCallEvent {
+  id: string;
+  type: "call_ring" | "call_started" | "stream_started";
+  title: string;
+  body: string;
+  actorImageUrl?: string;
+  conversationId?: string;
+  channelId?: string;
+  communityId?: string;
+}
+
 interface Feed {
   conversations: FeedConversation[];
   channels: FeedChannel[];
   friendRequests: FeedFriendRequest[];
+  callEvents: FeedCallEvent[];
 }
 
 export type ActiveView = { kind: "conversation" | "channel"; id: string } | null;
@@ -93,6 +105,7 @@ let seeded = false;
 const lastConversationMessage = new Map<string, string>();
 const lastChannelMessage = new Map<string, string>();
 const seenFriendRequests = new Set<string>();
+const seenCallEvents = new Set<string>();
 
 let activeView: ActiveView = null;
 let getMainWindow: (() => BrowserWindow | null) | null = null;
@@ -117,6 +130,7 @@ function teardown(): void {
   lastConversationMessage.clear();
   lastChannelMessage.clear();
   seenFriendRequests.clear();
+  seenCallEvents.clear();
 }
 
 export function configure(url: string, token: string | null, userId: string | null): void {
@@ -206,6 +220,7 @@ function handleFeed(feed: Feed): void {
     for (const c of feed.conversations) lastConversationMessage.set(c.conversationId, c.messageId);
     for (const c of feed.channels) lastChannelMessage.set(c.channelId, c.messageId);
     for (const r of feed.friendRequests) seenFriendRequests.add(r.requestId);
+    for (const e of feed.callEvents) seenCallEvents.add(e.id);
     seeded = true;
     return;
   }
@@ -248,6 +263,27 @@ function handleFeed(feed: Feed): void {
       `${r.fromName} sent you a friend request`,
       () => {},
       r.fromImageUrl
+    );
+  }
+
+  for (const e of feed.callEvents) {
+    if (seenCallEvents.has(e.id)) continue;
+    seenCallEvents.add(e.id);
+    // Not for a call you're already looking at — the roster in front of you
+    // already shows it.
+    if (e.conversationId && isFocusedOn("conversation", e.conversationId)) continue;
+    if (e.channelId && isFocusedOn("channel", e.channelId)) continue;
+    void notify(
+      e.title,
+      e.body,
+      () => {
+        if (e.conversationId) {
+          onNavigate?.({ kind: "conversation", conversationId: e.conversationId });
+        } else if (e.communityId && e.channelId) {
+          onNavigate?.({ kind: "channel", communityId: e.communityId, channelId: e.channelId });
+        }
+      },
+      e.actorImageUrl
     );
   }
 }
