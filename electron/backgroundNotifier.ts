@@ -162,10 +162,12 @@ function isFocusedOn(kind: "conversation" | "channel", id: string): boolean {
  *
  * Avatar URLs are content-addressed, so an entry can never go stale — a new
  * picture is a new URL. Bounded anyway: a busy server's worth of distinct
- * senders shouldn't accumulate in the main process forever.
+ * senders shouldn't accumulate in the main process forever. Cut 50→30; each
+ * 64×64 NativeImage is ~16KB + overhead and main process has no GC pressure
+ * release for them.
  */
 const iconCache = new Map<string, NativeImage>();
-const ICON_CACHE_LIMIT = 50;
+const ICON_CACHE_LIMIT = 30;
 
 /**
  * The sender's avatar as a native image, or undefined if it can't be had.

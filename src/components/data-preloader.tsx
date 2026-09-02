@@ -179,6 +179,13 @@ export function DataPreloader() {
   return <PreloadEverything />;
 }
 
+/** Cap on how many community structures stay warm at once. Was unbounded
+ * (every joined community). With 8+ communities that's 40+ list/members/roles
+ * subscriptions + 2 per channel (often 150+ subs) → ~200-400MB extra. 3 covers
+ * current + 2 recent, which is all that needs to feel instant; the rest is
+ * still hot server-side via Redis. */
+const STRUCTURE_COMMUNITY_BUDGET = 3;
+
 function PreloadEverything() {
   const communities = useQuery(api.communities.listMine) ?? [];
   const conversations = useQuery(api.conversations.listMine) ?? [];
@@ -194,6 +201,22 @@ function PreloadEverything() {
   const currentCommunityChannels =
     useQuery(api.channels.list, currentCommunityId ? { communityId: currentCommunityId } : "skip") ??
     [];
+
+  // --- bounded community structure preloads ---
+  const communityIdsToPreload = useMemo(() => {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    const add = (id: string | undefined) => {
+      if (!id || seen.has(id) || ordered.length >= STRUCTURE_COMMUNITY_BUDGET) return;
+      seen.add(id);
+      ordered.push(id);
+    };
+    add(currentCommunityId as string | undefined);
+    for (const v of recent) if (v.type === "channel") add(v.communityId as string);
+    // Fill remaining slots with most recently joined (tail of listMine is newest)
+    for (let i = communities.length - 1; i >= 0; i--) add((communities[i] as any).id);
+    return ordered as Id<"communities">[];
+  }, [currentCommunityId, recent, communities]);
 
   const conversationIds = conversations.map((c: any) => c.id);
   const currentChannelIds = currentCommunityChannels
@@ -223,15 +246,29 @@ function PreloadEverything() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recent, conversationIds.join(","), currentChannelIds.join(",")]);
 
+  // DM structure is cheap vs community channels, but still bound: recent DMs
+  // + 4 most recent conversations covers the working set without 50 subs.
+  const conversationIdsToPreload = useMemo(() => {
+    const ids = (conversations as any[]).map((c) => c.id as string);
+    if (ids.length <= 8) return ids as Id<"conversations">[];
+    const recentDmIds = new Set((recent.filter((v) => v.type === "dm") as any[]).map((v) => v.conversationId as string));
+    const ordered: string[] = [];
+    for (const v of recent) if (v.type === "dm") ordered.push((v as any).conversationId);
+    for (const id of ids) if (!ordered.includes(id) && ordered.length < 8) ordered.push(id);
+    // keep fast-path: if we trimmed, still include any with unread via recent
+    void recentDmIds;
+    return ordered.slice(0, 8) as Id<"conversations">[];
+  }, [conversations, recent]);
+
   return (
     <>
       <AccountPreloader />
 
-      {communities.map((c: any) => (
-        <CommunityPreloader key={c.id} communityId={c.id} />
+      {communityIdsToPreload.map((id) => (
+        <CommunityPreloader key={id} communityId={id} />
       ))}
-      {conversations.map((c: any) => (
-        <ConversationPreloader key={c.id} conversationId={c.id} />
+      {conversationIdsToPreload.map((id) => (
+        <ConversationPreloader key={id} conversationId={id as Id<"conversations">} />
       ))}
 
       {messageTargets.map((target) =>

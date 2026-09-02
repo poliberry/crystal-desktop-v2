@@ -185,14 +185,21 @@ function createBlobCache(config: CacheConfig) {
   }
 
   /** One object URL per url, reused by every consumer. Bounded + revocable
-   * to avoid the 1GB-RAM leak: we keep at most 80 live handles and revoke
-   * the LRU when over. Electron frees them on window close anyway. */
+   * to avoid the 1GB-RAM leak: we keep at most 40 live handles and revoke
+   * the LRU when over (each handle pins the decoded blob in renderer RAM).
+   * Electron frees them on window close anyway. */
   const objectUrls = new Map<string, string>();
-  const MAX_OBJECT_URLS = 80;
+  const MAX_OBJECT_URLS = 40;
 
   function objectUrlFor(url: string, blob: Blob): string {
     const existing = objectUrls.get(url);
-    if (existing) return existing;
+    if (existing) {
+      // Move to end so LRU eviction keeps hot urls (was FIFO before → hot
+      // avatars could be evicted while cold ones stayed).
+      objectUrls.delete(url);
+      objectUrls.set(url, existing);
+      return existing;
+    }
     // Evict LRU if over cap — revoke so bytes are actually freed.
     if (objectUrls.size >= MAX_OBJECT_URLS) {
       const oldest = objectUrls.keys().next().value as string | undefined;
@@ -361,15 +368,15 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const imageCache = createBlobCache({
   dbName: "crystal-image-cache",
   ttlMs: THREE_DAYS_MS,
-  maxEntries: 300,
-  maxBytes: 20 * 1024 * 1024,
+  maxEntries: 200,
+  maxBytes: 12 * 1024 * 1024,
 });
 
 const attachmentCache = createBlobCache({
   dbName: "crystal-attachment-cache",
   ttlMs: WEEK_MS,
-  maxEntries: 150,
-  maxBytes: 40 * 1024 * 1024,
+  maxEntries: 80,
+  maxBytes: 20 * 1024 * 1024,
 });
 
 // --- Small artwork (avatars, cosmetics, emoji, banners, badges) -------------

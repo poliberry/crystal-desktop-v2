@@ -3,14 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { ParticipantEvent, Track, type Participant } from "livekit-client";
 
-/** How often (ms) to capture and stream a frame to the pop-out window. Modest
- * on purpose — it's a small window, not the primary view, and every frame is a
- * JPEG data URL sent over IPC. */
-const FRAME_INTERVAL_MS = 1000 / 12;
+/** How often (ms) to capture and stream a frame to the pop-out window. 8fps
+ * is enough for a small pop-out preview; 12fps + 0.85 quality was ~1.2 MB/s
+ * of JPEG data URLs over IPC → GC pressure + RSS creep. */
+const FRAME_INTERVAL_MS = 1000 / 8;
 
 /** Hard ceiling regardless of how big the user resizes the pop-out window to
- * (e.g. maximized on a large display) — keeps frame size/IPC bandwidth sane. */
-const MAX_CAPTURE_WIDTH = 1920;
+ * (e.g. maximized on a large display) — 1280 covers a maximized pip on 1080p
+ * without capturing full-HD and then JPEG-encoding it 8×/s. */
+const MAX_CAPTURE_WIDTH = 1280;
 
 /**
  * Feed the pop-out window (`src/app/pip/page.tsx`) with frames of a
@@ -116,7 +117,10 @@ export function usePipFrameStream({
         canvas.height = h;
       }
       ctx.drawImage(offscreen, 0, 0, w, h);
-      sendFrame(canvas.toDataURL("image/jpeg", 0.85));
+      // Visibility pause: if the main window is occluded/minimized, skip
+      // frames entirely rather than encoding JPEGs nobody sees.
+      if (typeof document !== "undefined" && document.hidden) return;
+      sendFrame(canvas.toDataURL("image/jpeg", 0.6));
     };
     rafId = requestAnimationFrame(loop);
 

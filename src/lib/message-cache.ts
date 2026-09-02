@@ -27,10 +27,10 @@ import { readCache, useCacheHydration, writeCache } from "@/lib/persistent-cache
  * Entries past their TTL are treated as absent (see src/lib/persistent-cache.ts).
  */
 
-/** Was 50 — cut to 12 to bound RAM. 12 covers the active working set;
- * older channels reload from persistent-cache or network (still fast with
- * Convex + Redis hot path). */
-const MAX_ENTRIES = 12;
+/** Was 50 — cut to 8 to bound RAM further. 8 covers the active working
+ * set (recent views + current server); older channels reload from
+ * persistent-cache or network (still fast with Convex + Redis hot path). */
+const MAX_ENTRIES = 8;
 
 /** Insertion-ordered, so the oldest key is the first one `keys()` yields. */
 const pages = new Map<string, readonly unknown[]>();

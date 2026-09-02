@@ -43,8 +43,9 @@ const NON_GAMES_URL = "https://cdn.discordapp.com/detectables/non-games.json";
 /** How long a downloaded detectable catalog stays fresh on disk. */
 const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** How often the process scan runs. */
-const SCAN_INTERVAL_MS = 15_000;
+/** How often the process scan runs. Raised 15→30s: tasklist/ps spawn is
+ * not free, and presence changing second-to-second is not important. */
+const SCAN_INTERVAL_MS = 30_000;
 
 /** Highest `discord-ipc-N` index to try before giving up. */
 const MAX_IPC_SLOTS = 10;
