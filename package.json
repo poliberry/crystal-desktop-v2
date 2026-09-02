@@ -1,6 +1,6 @@
 {
   "name": "crystal-desktop",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "private": true,
   "description": "Simple voice & video chat desktop app powered by LiveKit, Next.js and shadcn/ui",
   "author": "Crystal",
