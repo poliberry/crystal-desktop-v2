@@ -49,13 +49,18 @@ export default function HomePage() {
       let previous = "";
 
       while (!cancelled) {
+        // Pause typing animation when tab is hidden/signed-in view is up —
+        // avoids waking the renderer every 30-50ms for a hidden component.
+        if (typeof document !== "undefined" && document.hidden) {
+          await sleep(1000);
+          continue;
+        }
         const saying = getRandomSaying(previous);
         previous = saying;
 
         // Type
         for (let i = 0; i <= saying.length; i++) {
           if (cancelled) return;
-
           setText(saying.slice(0, i));
           await sleep(50);
         }
@@ -66,7 +71,6 @@ export default function HomePage() {
         // Delete
         for (let i = saying.length; i >= 0; i--) {
           if (cancelled) return;
-
           setText(saying.slice(0, i));
           await sleep(30);
         }

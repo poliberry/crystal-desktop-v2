@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   compress: true,
   productionBrowserSourceMaps: false,
   poweredByHeader: false,
-  // Tree-shake large packages per route
+  // Tree-shake large packages per route — less JS parsed = less heap
   experimental: {
     optimizePackageImports: [
       "lucide-react",
@@ -15,9 +15,16 @@ const nextConfig: NextConfig = {
       "framer-motion",
       "@radix-ui/react-dialog",
       "@radix-ui/react-tooltip",
+      "@radix-ui/react-select",
+      "@radix-ui/react-scroll-area",
+      "@radix-ui/react-slider",
+      "@radix-ui/react-switch",
       "@dnd-kit/core",
       "@dnd-kit/sortable",
+      "@dnd-kit/utilities",
       "livekit-client",
+      "sonner",
+      "react-syntax-highlighter",
     ],
   },
 };

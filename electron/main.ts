@@ -28,13 +28,18 @@ const isDev = !!process.env.ELECTRON_START_URL;
  * `whenReady`.
  */
 app.commandLine.appendSwitch("enable-smooth-scrolling");
-// Memory/performance: cap renderer heap, disable expensive Blink features idle
-// tabs don't need. `--js-flags=--max-old-space-size=256` keeps the renderer
-// from growing unbounded (was ~1GB). Lower BG throttling is restored below
-// only while in a call (see createWindow).
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256");
-app.commandLine.appendSwitch("disable-renderer-backgrounding");
-app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+// Memory/performance: cap renderer heap (was unbounded → ~1GB). `--expose-gc`
+// lets the `app:gc` IPC hint actually call global.gc. We intentionally do
+// NOT set `disable-renderer-backgrounding` — that would defeat
+// `backgroundThrottling:true` on the BrowserWindow and keep hidden-window
+// timers + Convex subscriptions hot (200-400MB extra). Background throttling
+// is only disabled briefly during a call via `call:active` (see createWindow).
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256 --expose-gc");
+app.commandLine.appendSwitch("disable-features", "Translate");
+// Keep renderer count bounded — one renderer process covers main+pip+editor
+// (same origin/session). Without this Chromium may spawn a second renderer
+// for the pop-out/editor → ~120MB extra baseline.
+app.commandLine.appendSwitch("renderer-process-limit", "1");
 
 /**
  * Which build this is: Stable, PTB, Canary or Development (see
@@ -304,6 +309,8 @@ function createWindow(): void {
       // hardware where hidden-window timers + Convex subscriptions otherwise
       // keep the renderer hot.
       backgroundThrottling: true,
+      spellcheck: false,
+      enableWebSQL: false,
     },
   });
 
@@ -418,6 +425,8 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      backgroundThrottling: true,
+      spellcheck: false,
     },
   });
 
@@ -1046,10 +1055,24 @@ app.whenReady().then(async () => {
   });
 
   // Memory pressure hint from renderer (e.g. after large image flood)
+  // `global.gc` exists because --expose-gc is set above. Also drop unused
+  // icon handles that accumulate in the main-process notification cache.
   ipcMain.handle("app:gc", () => {
-    if (global.gc) global.gc();
+    try { if (global.gc) global.gc(); } catch { /* ignore */ }
+    // Hint Chromium's Blink GC as well: ask windows to collect.
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.invalidate(); } catch { /* ignore */ }
+    }
     return true;
   });
+
+  // Periodic GC while idle — renderer is throttled but V8 heap can stay
+  // high after a burst (image flood, long scroll). 90s is infrequent enough
+  // to cost nothing, often enough to pull RSS back down.
+  setInterval(() => {
+    const idle = !BrowserWindow.getAllWindows().some((w) => w.isFocused());
+    if (idle && global.gc) try { global.gc(); } catch { /* ignore */ }
+  }, 90_000).unref();
 
   createWindow();
 

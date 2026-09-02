@@ -26,14 +26,32 @@ import type { CosmeticLayer } from "@/lib/cosmetic-layers";
  * The whole point of this module is that it can be called from a render pass
  * over a list of two hundred members without doing two hundred things. A url
  * asked for twice is asked for once; a url already in either cache costs a
- * lookup that would have happened anyway.
+ * lookup that would have happened anyway. Bounded to 400 so a long session
+ * with many distinct avatars/cosmetics doesn't grow without bound (each entry
+ * is a cheap string, but the Image objects they created stay in HTTP cache).
  */
-const requested = new Set<string>();
+const requested = new Map<string, number>();
+const MAX_REQUESTED = 400;
 
-/** Ask for one file, at most once per session. */
+function markRequested(url: string): boolean {
+  if (requested.has(url)) {
+    // Move to end for LRU
+    requested.delete(url);
+    requested.set(url, Date.now());
+    return false;
+  }
+  requested.set(url, Date.now());
+  if (requested.size > MAX_REQUESTED) {
+    const oldest = requested.keys().next().value as string | undefined;
+    if (oldest) requested.delete(oldest);
+  }
+  return true;
+}
+
+/** Ask for one file, at most once per session (bounded LRU). */
 export function preloadImage(url: string | undefined | null): void {
-  if (!url || typeof window === "undefined" || requested.has(url)) return;
-  requested.add(url);
+  if (!url || typeof window === "undefined") return;
+  if (!markRequested(url)) return;
   const image = new Image();
   // Nothing is waiting on this, so it should never be in front of anything
   // that is — decoding off the main thread, and at the browser's convenience.

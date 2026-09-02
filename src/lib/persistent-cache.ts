@@ -47,8 +47,11 @@ import { useSyncExternalStore } from "react";
  */
 export const CACHE_TTL_MS = 15 * 60 * 1000;
 
-/** Hard cap on in-memory entries — evict LRU beyond this. */
-export const MAX_MEMO_ENTRIES = 100;
+/** Hard cap on in-memory entries — evict LRU beyond this. Cut from 100
+ * to 60: each entry can be a full channel list or member array (~50-200KB
+ * JSON). 60 covers the working set; older entries reload from IndexedDB
+ * (still faster than the websocket) or Redis. */
+export const MAX_MEMO_ENTRIES = 60;
 
 const PREFIX = "crystal.cache.v1.";
 
