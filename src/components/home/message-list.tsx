@@ -1,7 +1,7 @@
 "use client";
 
 import { usePaginatedQuery, useQuery } from "convex/react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -87,7 +87,7 @@ interface MessageDoc {
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 
-function MessageRow({
+const MessageRow = memo(function MessageRow({
   message,
   startsGroup,
   mentionsMe,
@@ -164,6 +164,14 @@ function MessageRow({
         message.__pending && !message.__failed && "opacity-60",
         message.__failed && "border-l-2 border-destructive/60 bg-destructive/5"
       )}
+      // Browser-native virtualization: offscreen rows skip layout/paint until
+      // near the viewport, keeping scroll at 60fps even with hundreds of
+      // heavy rows (markdown, code blocks, images). `containIntrinsicSize`
+      // reserves space so the scrollbar stays honest.
+      style={{
+        contentVisibility: "auto",
+        containIntrinsicSize: "auto 72px",
+      } as React.CSSProperties}
     >
       {message.replyTo && (
         <MessageReplyPreview
@@ -298,7 +306,7 @@ function MessageRow({
       />
     </>
   );
-}
+});
 
 /** The "couldn't send" affordance under a failed optimistic row. */
 function OutboxFailedFooter({ opId }: { opId: string }) {
@@ -423,7 +431,12 @@ export function MessageList({ conversationId, onReply }: MessageListProps) {
   }
 
   return (
-    <div ref={setScrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+    <div
+      ref={setScrollRef}
+      onScroll={onScroll}
+      className="min-h-0 flex-1 overflow-y-auto px-4 py-2 [scrollbar-gutter:stable] overscroll-contain"
+      style={{ willChange: "scroll-position" } as React.CSSProperties}
+    >
       {/* min-h-full + justify-end pins short conversations to the bottom of
           the scroll area (like a normal chat) instead of leaving them
           stranded at the top; once content overflows this behaves like a
