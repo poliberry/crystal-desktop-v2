@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { AtSign, Paperclip, Reply, Send, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -77,6 +77,7 @@ export function ChannelMessageComposer({
   const textareaRef = useRef<EmojiTextInputHandle>(null);
 
   const generateUploadUrl = useMutation(api.channelMessages.generateUploadUrl);
+  const convexClient = useConvex();
   // Durable: the send lands in the IndexedDB outbox first and is drawn by the
   // channel list's overlay, then flushed to Convex (see src/lib/outbox.ts).
   const sendMessage = useOutboxMutation("send", "channel");
@@ -93,7 +94,7 @@ export function ChannelMessageComposer({
     clear: clearAttachments,
     handlePaste,
     dropZoneRef,
-  } = useComposerAttachments(generateUploadUrl);
+  } = useComposerAttachments(generateUploadUrl, { convex: convexClient as never, kind: "attachments" });
   const startTyping = useMutation(api.typing.start);
   const stopTyping = useMutation(api.typing.stop);
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);

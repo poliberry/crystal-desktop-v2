@@ -29,6 +29,8 @@ export interface OutboxAttachmentInput {
   fileSize: number;
   /** Set when the bytes are already in Convex storage (the online path). */
   storageId?: string;
+  cdnKey?: string;
+  cdnUrl?: string;
   /** Set when the bytes are stashed in the outbox `blobs` store and still need
    * uploading during the flush (the offline path). Key is `"<opId>:<index>"`. */
   blobKey?: string;

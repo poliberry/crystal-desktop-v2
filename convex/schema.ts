@@ -636,7 +636,9 @@ export default defineSchema({
 
   messageAttachments: defineTable({
     messageId: v.id("messages"),
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     fileName: v.string(),
     fileType: v.string(),
     fileSize: v.number(),
@@ -896,7 +898,9 @@ export default defineSchema({
 
   channelMessageAttachments: defineTable({
     messageId: v.id("channelMessages"),
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     fileName: v.string(),
     fileType: v.string(),
     fileSize: v.number(),
@@ -1208,4 +1212,46 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_token", ["expoPushToken"]),
+
+  /** R2 asset metadata — one row per file in Cloudflare R2, so we can fetch by
+   * path, track owner, hash, and handle canvas-editor layers + server profiles.
+   * Migrated Convex `_storage` files live under `migrated/<storageId>`; new
+   * uploads use structured paths:
+   *  attachments/<channelOrUserId>/<name>.<ext>
+   *  avatars/<userId>/<hash>.webp
+   *  avatar-decorations/<userId>/<hash>.webp
+   *  avatar-frames/<userId>/<hash>.webp
+   *  icons/<communityId>/<hash>.webp
+   *  banners/<communityOrUserId>/<hash>.webp
+   *  nameplates/<userId>/<hash>.webp
+   * Frames/decorations canvas layers and server-profile overrides store their
+   * own rows with communityId/userId so we can list/replace per scope. */
+  r2Assets: defineTable({
+    key: v.string(), // full R2 key, e.g. avatars/<userId>/<hash>.webp
+    kind: v.union(
+      v.literal("attachments"),
+      v.literal("avatars"),
+      v.literal("avatar-decorations"),
+      v.literal("avatar-frames"),
+      v.literal("icons"),
+      v.literal("banners"),
+      v.literal("nameplates")
+    ),
+    ownerId: v.string(), // channelId / userId / communityId that owns the path
+    communityId: v.optional(v.id("communities")), // for server-profile scoped assets
+    userId: v.id("users"), // uploader
+    fileName: v.string(),
+    ext: v.string(),
+    hash: v.string(),
+    size: v.optional(v.number()),
+    contentType: v.optional(v.string()),
+    // For canvas-editor layers: which layer index / frame set it belongs to
+    layerId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_key", ["key"])
+    .index("by_owner", ["ownerId"])
+    .index("by_user", ["userId"])
+    .index("by_community", ["communityId"])
+    .index("by_kind", ["kind"]),
 });

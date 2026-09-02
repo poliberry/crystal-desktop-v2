@@ -18,6 +18,7 @@ import {
   FRAME_MODES,
   resolveProfileAsset,
 } from "./lib/profileCosmetics";
+import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
 import {
   dropUnusedLayerAssets,
   layerArgValidator,
@@ -269,34 +270,51 @@ export const updateProfileExtended = mutation({
 /** As `setAvatar`, for the profile banner. */
 export const setBanner = mutation({
   args: {
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     originalStorageId: v.optional(v.id("_storage")),
+    originalCdnKey: v.optional(v.string()),
+    originalCdnUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { storageId, originalStorageId }) => {
+  handler: async (ctx, { storageId, cdnKey, cdnUrl, originalStorageId, originalCdnKey, originalCdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Banner upload failed.");
-    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+    let url: string | null = null;
+    let originalUrl: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? (cdnKey ? r2PublicUrlForKey(cdnKey) : null);
+      originalUrl = originalCdnUrl ?? (originalCdnKey ? r2PublicUrlForKey(originalCdnKey) : null);
+      if (!url) throw new Error("Banner upload failed.");
+    } else {
+      if (!storageId) throw new Error("Banner upload failed: missing storageId/cdnKey");
+      url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Banner upload failed.");
+      originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+    }
 
     const previous = me.bannerStorageId;
     const previousOriginal = me.bannerOriginalStorageId;
+    const previousUrl = me.bannerUrl;
+    const previousOriginalUrl = me.bannerOriginalUrl;
     await ctx.db.patch(me._id, {
       bannerUrl: url,
-      bannerStorageId: storageId,
-      ...(originalStorageId
-        ? { bannerOriginalStorageId: originalStorageId, bannerOriginalUrl: originalUrl ?? undefined }
+      bannerStorageId: storageId ?? undefined,
+      ...(originalStorageId || originalCdnKey || originalCdnUrl
+        ? { bannerOriginalStorageId: originalStorageId ?? undefined, bannerOriginalUrl: originalUrl ?? undefined }
         : {}),
     });
-    if (
-      originalStorageId &&
-      previousOriginal &&
-      previousOriginal !== originalStorageId &&
-      previousOriginal !== storageId
-    ) {
-      await ctx.storage.delete(previousOriginal);
-    }
-    if (previous && previous !== storageId && previous !== me.bannerOriginalStorageId) {
-      await ctx.storage.delete(previous);
+    if (isR2) {
+      if (previousUrl) await r2DeleteByUrl(previousUrl);
+      if (previousOriginalUrl && previousOriginalUrl !== url) await r2DeleteByUrl(previousOriginalUrl);
+    } else {
+      if (originalStorageId && previousOriginal && previousOriginal !== originalStorageId && previousOriginal !== storageId) {
+        await ctx.storage.delete(previousOriginal);
+      }
+      if (previous && previous !== storageId && previous !== me.bannerOriginalStorageId) {
+        await ctx.storage.delete(previous);
+      }
     }
     return url;
   },
@@ -308,14 +326,18 @@ export const removeBanner = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.bannerStorageId;
     const previousOriginal = me.bannerOriginalStorageId;
+    const previousUrl = me.bannerUrl;
+    const previousOriginalUrl = me.bannerOriginalUrl;
     await ctx.db.patch(me._id, {
       bannerUrl: undefined,
       bannerStorageId: undefined,
       bannerOriginalUrl: undefined,
       bannerOriginalStorageId: undefined,
     });
-    if (previous && previous !== previousOriginal) await ctx.storage.delete(previous);
-    if (previousOriginal) await ctx.storage.delete(previousOriginal);
+    if (previousUrl) await r2DeleteByUrl(previousUrl);
+    if (previousOriginalUrl) await r2DeleteByUrl(previousOriginalUrl);
+    if (previous && previous !== previousOriginal) await ctx.storage.delete(previous).catch(() => {});
+    if (previousOriginal) await ctx.storage.delete(previousOriginal).catch(() => {});
   },
 });
 
@@ -328,20 +350,26 @@ export const removeBanner = mutation({
  * src/components/profile/nameplate.tsx.
  */
 export const setNameplate = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: { storageId: v.optional(v.id("_storage")), cdnKey: v.optional(v.string()), cdnUrl: v.optional(v.string()) },
+  handler: async (ctx, { storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    await requireWithinUploadLimit(
-      ctx,
-      storageId,
-      MAX_PROFILE_ASSET_BYTES,
-      "Nameplates"
-    );
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Nameplate upload failed.");
+    let url: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Nameplate upload failed.");
+    } else {
+      if (!storageId) throw new Error("Nameplate upload failed: missing storageId/cdnKey");
+      await requireWithinUploadLimit(ctx, storageId, MAX_PROFILE_ASSET_BYTES, "Nameplates");
+      url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Nameplate upload failed.");
+    }
     const previous = me.nameplateStorageId;
-    await ctx.db.patch(me._id, { nameplateUrl: url, nameplateStorageId: storageId });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    const previousUrl = me.nameplateUrl;
+    await ctx.db.patch(me._id, { nameplateUrl: url, nameplateStorageId: storageId ?? undefined });
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    else if (previous && previous !== storageId) await ctx.storage.delete(previous);
     return url;
   },
 });
@@ -391,18 +419,26 @@ export const setAvatarDecoration = mutation({
  * frame is drawn at a fixed size around the picture, so what the file has to
  * be is square and transparent, which cropping can't produce. */
 export const setCustomAvatarDecoration = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: { storageId: v.optional(v.id("_storage")), cdnKey: v.optional(v.string()), cdnUrl: v.optional(v.string()) },
+  handler: async (ctx, { storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    await requireWithinUploadLimit(ctx, storageId, MAX_DECORATION_BYTES, "Avatar decorations");
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Decoration upload failed.");
+    let url: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Decoration upload failed.");
+    } else {
+      if (!storageId) throw new Error("Decoration upload failed: missing storageId/cdnKey");
+      await requireWithinUploadLimit(ctx, storageId, MAX_DECORATION_BYTES, "Avatar decorations");
+      url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Decoration upload failed.");
+    }
     const previous = me.avatarDecorationStorageId;
-    await ctx.db.patch(me._id, {
-      avatarDecoration: url,
-      avatarDecorationStorageId: storageId,
-    });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    const previousUrl = me.avatarDecoration as string | undefined;
+    await ctx.db.patch(me._id, { avatarDecoration: url, avatarDecorationStorageId: storageId ?? undefined });
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    else if (previous && previous !== storageId) await ctx.storage.delete(previous);
     return url;
   },
 });
@@ -412,11 +448,10 @@ export const removeAvatarDecoration = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.avatarDecorationStorageId;
-    await ctx.db.patch(me._id, {
-      avatarDecoration: undefined,
-      avatarDecorationStorageId: undefined,
-    });
-    if (previous) await ctx.storage.delete(previous);
+    const previousUrl = me.avatarDecoration as string | undefined;
+    await ctx.db.patch(me._id, { avatarDecoration: undefined, avatarDecorationStorageId: undefined });
+    if (previousUrl) await r2DeleteByUrl(previousUrl);
+    if (previous) await ctx.storage.delete(previous).catch(() => {});
   },
 });
 
@@ -445,16 +480,24 @@ export const setDisplayNameStyle = mutation({
 });
 
 export const setProfileEffect = mutation({
-  args: { storageId: v.id("_storage") },
-  handler: async (ctx, { storageId }) => {
+  args: { storageId: v.optional(v.id("_storage")), cdnKey: v.optional(v.string()), cdnUrl: v.optional(v.string()) },
+  handler: async (ctx, { storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const url = await resolveProfileAsset(ctx, storageId, "Profile effects");
+    let url: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Profile effect upload failed.");
+    } else {
+      if (!storageId) throw new Error("Profile effect upload failed: missing storageId/cdnKey");
+      url = await resolveProfileAsset(ctx, storageId, "Profile effects");
+    }
     const previous = me.profileEffectStorageId;
-    await ctx.db.patch(me._id, {
-      profileEffect: url,
-      profileEffectStorageId: storageId,
-    });
-    await dropProfileAsset(ctx, previous, storageId);
+    const previousUrl = me.profileEffect as string | undefined;
+    await ctx.db.patch(me._id, { profileEffect: url, profileEffectStorageId: storageId ?? undefined });
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    else await dropProfileAsset(ctx, previous, storageId!);
     return url;
   },
 });
@@ -464,10 +507,9 @@ export const removeProfileEffect = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.profileEffectStorageId;
-    await ctx.db.patch(me._id, {
-      profileEffect: undefined,
-      profileEffectStorageId: undefined,
-    });
+    const previousUrl = me.profileEffect as string | undefined;
+    await ctx.db.patch(me._id, { profileEffect: undefined, profileEffectStorageId: undefined });
+    if (previousUrl) await r2DeleteByUrl(previousUrl);
     await dropProfileAsset(ctx, previous);
   },
 });
@@ -477,19 +519,28 @@ export const removeProfileEffect = mutation({
  * knows which kind it is — nothing in the pixels says. */
 export const setProfileFrame = mutation({
   args: {
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     mode: v.optional(v.union(v.literal("wrap"), v.literal("overlay"))),
   },
-  handler: async (ctx, { storageId, mode }) => {
+  handler: async (ctx, { storageId, cdnKey, cdnUrl, mode }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const url = await resolveProfileAsset(ctx, storageId, "Profile frames");
+    let url: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Profile frame upload failed.");
+    } else {
+      if (!storageId) throw new Error("Profile frame upload failed: missing storageId/cdnKey");
+      url = await resolveProfileAsset(ctx, storageId, "Profile frames");
+    }
     const previous = me.profileFrameStorageId;
-    await ctx.db.patch(me._id, {
-      profileFrame: url,
-      profileFrameStorageId: storageId,
-      profileFrameMode: mode ?? me.profileFrameMode ?? "wrap",
-    });
-    await dropProfileAsset(ctx, previous, storageId);
+    const previousUrl = me.profileFrame as string | undefined;
+    await ctx.db.patch(me._id, { profileFrame: url, profileFrameStorageId: storageId ?? undefined, profileFrameMode: mode ?? me.profileFrameMode ?? "wrap" });
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    else await dropProfileAsset(ctx, previous, storageId!);
     return url;
   },
 });
@@ -721,51 +772,74 @@ async function isReferencedByAttachment(ctx: MutationCtx, storageId: Id<"_storag
  */
 export const setAvatar = mutation({
   args: {
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     /** The uncropped upload this crop came from. Omitted when re-cropping an
      * image already on the profile. */
     originalStorageId: v.optional(v.id("_storage")),
+    originalCdnKey: v.optional(v.string()),
+    originalCdnUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { storageId, originalStorageId }) => {
+  handler: async (ctx, { storageId, cdnKey, cdnUrl, originalStorageId, originalCdnKey, originalCdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Avatar upload failed.");
-    const originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+    let url: string | null = null;
+    let originalUrl: string | null = null;
+    let resolvedStorageId: typeof storageId | undefined = storageId;
+    let resolvedOriginalStorageId: typeof originalStorageId | undefined = originalStorageId;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? (cdnKey ? r2PublicUrlForKey(cdnKey) : null);
+      originalUrl = originalCdnUrl ?? (originalCdnKey ? r2PublicUrlForKey(originalCdnKey) : null);
+      // R2 uploads don't use Convex storage ids — clear them so old storage objects get deleted
+      resolvedStorageId = undefined;
+      resolvedOriginalStorageId = undefined;
+      if (!url) throw new Error("Avatar upload failed.");
+    } else {
+      if (!storageId) throw new Error("Avatar upload failed: missing storageId/cdnKey");
+      url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Avatar upload failed.");
+      originalUrl = originalStorageId ? await ctx.storage.getUrl(originalStorageId) : null;
+    }
 
     const previous = me.avatarStorageId;
     const previousOriginal = me.avatarOriginalStorageId;
-    // Drop the cached accent colour: it describes the old picture. The
-    // client re-samples and calls `setAvatarAccent` with the new one.
+    const previousUrl = me.imageUrl;
+    const previousOriginalUrl = me.avatarOriginalUrl;
     await ctx.db.patch(me._id, {
       imageUrl: url,
-      avatarStorageId: storageId,
+      avatarStorageId: resolvedStorageId,
       avatarAccent: undefined,
       avatarAccentUrl: undefined,
-      ...(originalStorageId
-        ? { avatarOriginalStorageId: originalStorageId, avatarOriginalUrl: originalUrl ?? undefined }
+      ...(originalStorageId || originalCdnKey || originalCdnUrl
+        ? {
+            avatarOriginalStorageId: resolvedOriginalStorageId,
+            avatarOriginalUrl: originalUrl ?? undefined,
+          }
         : {}),
     });
-    if (
-      originalStorageId &&
-      previousOriginal &&
-      previousOriginal !== originalStorageId &&
-      previousOriginal !== storageId &&
-      !(await isReferencedByAttachment(ctx, previousOriginal))
-    ) {
-      await ctx.storage.delete(previousOriginal);
-    }
-    if (
-      previous &&
-      previous !== storageId &&
-      // The old crop can be the original itself, for an avatar uploaded
-      // before cropping existed — deleting it would take the source with it.
-      previous !== me.avatarOriginalStorageId &&
-      !(await isReferencedByAttachment(ctx, previous))
-    ) {
-      // Not caught: a failed delete should abort the whole mutation (Convex
-      // mutations are all-or-nothing) rather than silently commit the avatar
-      // change while leaving the old object undeleted-but-unreferenced.
-      await ctx.storage.delete(previous);
+    // Delete old R2 file if replaced
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousOriginalUrl && previousOriginalUrl !== url) await r2DeleteByUrl(previousOriginalUrl);
+    if (!isR2) {
+      if (
+        originalStorageId &&
+        previousOriginal &&
+        previousOriginal !== originalStorageId &&
+        previousOriginal !== storageId &&
+        !(await isReferencedByAttachment(ctx, previousOriginal))
+      ) {
+        await ctx.storage.delete(previousOriginal);
+      }
+      if (
+        previous &&
+        previous !== storageId &&
+        previous !== me.avatarOriginalStorageId &&
+        !(await isReferencedByAttachment(ctx, previous))
+      ) {
+        await ctx.storage.delete(previous);
+      }
     }
     return url;
   },

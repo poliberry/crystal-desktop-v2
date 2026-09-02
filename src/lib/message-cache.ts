@@ -27,9 +27,10 @@ import { readCache, useCacheHydration, writeCache } from "@/lib/persistent-cache
  * Entries past their TTL are treated as absent (see src/lib/persistent-cache.ts).
  */
 
-/** Enough for any plausible session's worth of switching around, bounded so
- * a long-lived window doesn't accumulate every channel it ever opened. */
-const MAX_ENTRIES = 50;
+/** Was 50 — cut to 12 to bound RAM. 12 covers the active working set;
+ * older channels reload from persistent-cache or network (still fast with
+ * Convex + Redis hot path). */
+const MAX_ENTRIES = 12;
 
 /** Insertion-ordered, so the oldest key is the first one `keys()` yields. */
 const pages = new Map<string, readonly unknown[]>();

@@ -10,6 +10,12 @@ import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
 
+function cdnUrlForStorageId(storageId: string): string | null {
+  const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
+  if (!base) return null;
+  return `${base.replace(/\/$/, "")}/migrated/${storageId}`;
+}
+
 async function requireMembership(
   ctx: QueryCtx,
   conversationId: Id<"conversations">,
@@ -104,6 +110,17 @@ export const list = query({
     const me = await getCurrentUserOrThrow(ctx);
     await requireMembership(ctx, conversationId, me._id);
 
+    // Redis cache for first page only (hot path) — pagination cursor = null
+    const isFirstPage = !paginationOpts.cursor;
+    const cacheKey = `dm:${conversationId}:messages:${paginationOpts.numItems}`;
+    if (isFirstPage) {
+      try {
+        const { cacheGetJson } = await import("./cache");
+        const cached = await cacheGetJson<any>(cacheKey);
+        if (cached) return cached;
+      } catch {}
+    }
+
     const page = await ctx.db
       .query("messages")
       .withIndex("by_conversation", (q) =>
@@ -120,13 +137,20 @@ export const list = query({
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
           .collect();
         const attachments = await Promise.all(
-          attachmentRows.map(async (attachment) => ({
-            id: attachment._id,
-            fileName: attachment.fileName,
-            fileType: attachment.fileType,
-            fileSize: attachment.fileSize,
-            url: await ctx.storage.getUrl(attachment.storageId),
-          })),
+          attachmentRows.map(async (attachment) => {
+            const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
+            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? cdnUrlForStorageId(anyAtt.cdnKey) : null);
+            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
+            const cdnUrl = directCdn ?? migratedCdn;
+            const url = cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null);
+            return {
+              id: attachment._id,
+              fileName: attachment.fileName,
+              fileType: attachment.fileType,
+              fileSize: attachment.fileSize,
+              url,
+            };
+          }),
         );
         const authorPresence = await ctx.db
           .query("presence")
@@ -166,7 +190,14 @@ export const list = query({
       }),
     );
 
-    return { ...page, page: messages };
+    const result = { ...page, page: messages };
+    if (isFirstPage) {
+      try {
+        const { cacheSetJson } = await import("./cache");
+        await cacheSetJson(cacheKey, result, 30);
+      } catch {}
+    }
+    return result;
   },
 });
 
@@ -177,7 +208,9 @@ export const send = mutation({
     attachments: v.optional(
       v.array(
         v.object({
-          storageId: v.id("_storage"),
+          storageId: v.optional(v.id("_storage")),
+          cdnKey: v.optional(v.string()),
+          cdnUrl: v.optional(v.string()),
           fileName: v.string(),
           fileType: v.string(),
           fileSize: v.number(),
@@ -222,14 +255,11 @@ export const send = mutation({
     }
 
     for (const attachment of attachments ?? []) {
-      // Only reachable once the bytes are in storage, so it can't stop an
-      // oversized upload — but it does stop it from becoming a message.
-      await requireWithinUploadLimit(
-        ctx,
-        attachment.storageId,
-        MAX_ATTACHMENT_BYTES,
-        "Attachments"
-      );
+      if (attachment.storageId) {
+        await requireWithinUploadLimit(ctx, attachment.storageId, MAX_ATTACHMENT_BYTES, "Attachments");
+      } else if (!attachment.cdnKey && !attachment.cdnUrl) {
+        throw new Error("Attachment missing storageId/cdnKey");
+      }
     }
 
     const otherMembers = (
@@ -306,6 +336,18 @@ export const send = mutation({
         body,
       });
     }
+
+    // Invalidate Redis cache for DMs (hot path) — messages, conversations
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`dm:${conversationId}:messages:30`, `dm:${conversationId}:messages:50`, `dm:${conversationId}:messages:20`, `dm:${conversationId}:messages:25`);
+      await cacheInvalidateKeys(`user:${me._id}:conversations`);
+    } catch {}
+    // Also schedule internal invalidation for any prefix scan if needed
+    try {
+      const { internal } = await import("./_generated/api");
+      await ctx.scheduler.runAfter(0, internal.cache.invalidateDmCache, { conversationId });
+    } catch {}
 
     return messageId;
   },
@@ -522,15 +564,21 @@ export const listAttachments = query({
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
           .collect();
         return Promise.all(
-          rows.map(async (attachment) => ({
-            id: attachment._id,
-            messageId: message._id,
-            fileName: attachment.fileName,
-            fileType: attachment.fileType,
-            fileSize: attachment.fileSize,
-            url: await ctx.storage.getUrl(attachment.storageId),
-            createdAt: message._creationTime,
-          })),
+          rows.map(async (attachment) => {
+            const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
+            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? cdnUrlForStorageId(anyAtt.cdnKey) : null);
+            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
+            const cdnUrl = directCdn ?? migratedCdn;
+            return {
+              id: attachment._id,
+              messageId: message._id,
+              fileName: attachment.fileName,
+              fileType: attachment.fileType,
+              fileSize: attachment.fileSize,
+              url: cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null),
+              createdAt: message._creationTime,
+            };
+          }),
         );
       }),
     );

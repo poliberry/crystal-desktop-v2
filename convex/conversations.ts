@@ -5,6 +5,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
@@ -104,6 +105,12 @@ export const listMine = query({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
+    const cacheKey = `user:${me._id}:conversations`;
+    try {
+      const { cacheGetJson } = await import("./cache");
+      const cached = await cacheGetJson<any>(cacheKey);
+      if (cached) return cached;
+    } catch {}
     const memberships = await ctx.db
       .query("conversationMembers")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
@@ -181,13 +188,18 @@ export const listMine = query({
       })
     );
 
-    return conversations
+    const result = conversations
       .filter((c): c is NonNullable<typeof c> => c !== null)
       .sort(
         (a, b) =>
           (b.pinnedAt ? 1 : 0) - (a.pinnedAt ? 1 : 0) ||
           b.lastMessageAt - a.lastMessageAt,
       );
+    try {
+      const { cacheSetJson } = await import("./cache");
+      await cacheSetJson(cacheKey, result, 60);
+    } catch {}
+    return result;
   },
 });
 
@@ -196,6 +208,12 @@ export const get = query({
   handler: async (ctx, { conversationId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
+    const cacheKey = `conversation:${conversationId}:user:${me._id}:data`;
+    try {
+      const { cacheGetJson } = await import("./cache");
+      const cached = await cacheGetJson<any>(cacheKey);
+      if (cached) return cached;
+    } catch {}
     const membership = await ctx.db
       .query("conversationMembers")
       .withIndex("by_conversation_user", (q) =>
@@ -207,24 +225,25 @@ export const get = query({
     const conversation = await ctx.db.get(conversationId);
     if (!conversation) return null;
 
-    return {
+    const result = {
       id: conversation._id,
       type: conversation.type,
       name: conversation.name,
       imageUrl: conversation.imageUrl,
-      // Carried by the read the chat view already does, so the wallpaper is
-      // there on the first frame rather than fading in a beat later.
       backgroundUrl: conversation.backgroundUrl,
       backgroundOpacity: conversation.backgroundOpacity,
       members: await otherMembers(ctx, conversationId, me._id),
-      /** Live, so the open chat can catch a message that arrives while
-       * you're sitting in it rather than leaving the rail lit behind you. */
       unread: isUnread(
         await lastMessageOf(ctx, conversationId),
         membership.lastReadAt,
         me._id
       ),
     };
+    try {
+      const { cacheSetJson } = await import("./cache");
+      await cacheSetJson(cacheKey, result, 60);
+    } catch {}
+    return result;
   },
 });
 
@@ -471,6 +490,11 @@ export const createGroup = mutation({
         lastReadAt: 0,
       });
     }
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:conversations`);
+      for (const id of uniqueMemberIds) await cacheInvalidateKeys(`user:${id}:conversations`);
+    } catch {}
     return conversationId;
   },
 });
@@ -600,10 +624,12 @@ export const setConversationBackground = mutation({
   args: {
     conversationId: v.id("conversations"),
     storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     opacity: v.optional(v.number()),
     clear: v.optional(v.boolean()),
   },
-  handler: async (ctx, { conversationId, storageId, opacity, clear }) => {
+  handler: async (ctx, { conversationId, storageId, cdnKey, cdnUrl, opacity, clear }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const membership = await ctx.db
       .query("conversationMembers")
@@ -617,11 +643,13 @@ export const setConversationBackground = mutation({
 
     if (clear) {
       const previous = conversation.backgroundStorageId;
+      const previousUrl = (conversation as unknown as { backgroundUrl?: string }).backgroundUrl;
       await ctx.db.patch(conversationId, {
         backgroundUrl: undefined,
         backgroundStorageId: undefined,
         backgroundOpacity: undefined,
       });
+      if (previousUrl) await r2DeleteByUrl(previousUrl);
       if (previous) await ctx.storage.delete(previous).catch(() => {});
       return;
     }
@@ -632,13 +660,13 @@ export const setConversationBackground = mutation({
       backgroundOpacity?: number;
     } = {};
 
-    if (storageId) {
-      await requireWithinUploadLimit(
-        ctx,
-        storageId,
-        MAX_PROFILE_ASSET_BYTES,
-        "Chat backgrounds"
-      );
+    if (cdnKey || cdnUrl) {
+      const url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Background upload failed.");
+      patch.backgroundUrl = url;
+      patch.backgroundStorageId = undefined;
+    } else if (storageId) {
+      await requireWithinUploadLimit(ctx, storageId, MAX_PROFILE_ASSET_BYTES, "Chat backgrounds");
       const url = await ctx.storage.getUrl(storageId);
       if (!url) throw new Error("Background upload failed.");
       patch.backgroundUrl = url;
@@ -650,10 +678,13 @@ export const setConversationBackground = mutation({
     if (Object.keys(patch).length === 0) return;
 
     const previous = conversation.backgroundStorageId;
+    const previousUrl = (conversation as unknown as { backgroundUrl?: string }).backgroundUrl;
     await ctx.db.patch(conversationId, patch);
+    if ((cdnKey || cdnUrl) && previousUrl) await r2DeleteByUrl(previousUrl);
     if (storageId && previous && previous !== storageId) {
       await ctx.storage.delete(previous).catch(() => {});
     }
+    if (cdnKey && previous && !cdnUrl) await ctx.storage.delete(previous).catch(() => {});
   },
 });
 

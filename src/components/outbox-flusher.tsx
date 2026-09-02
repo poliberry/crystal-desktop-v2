@@ -120,27 +120,42 @@ export function OutboxFlusher() {
 
       if (args.kind === "send") {
         const attachments: {
-          storageId: Id<"_storage">;
+          storageId?: Id<"_storage">;
+          cdnKey?: string;
+          cdnUrl?: string;
           fileName: string;
           fileType: string;
           fileSize: number;
         }[] = [];
         for (const attachment of args.attachments) {
-          let storageId = attachment.storageId;
-          if (!storageId && attachment.blobKey) {
+          let storageId = attachment.storageId as string | undefined;
+          let cdnKey = (attachment as { cdnKey?: string }).cdnKey;
+          let cdnUrl = (attachment as { cdnUrl?: string }).cdnUrl;
+          if (!storageId && !cdnKey && attachment.blobKey) {
             const stored = await loadBlob(attachment.blobKey);
             if (!stored) throw new Error("Attachment bytes are missing.");
-            const uploadUrl = await convex.mutation(
-              dm
-                ? api.messages.generateUploadUrl
-                : api.channelMessages.generateUploadUrl,
-              {},
-            );
-            storageId = await uploadToStorage(uploadUrl, stored.blob);
+            // Prefer R2 when configured
+            try {
+              const { tryUploadViaR2 } = await import("@/lib/r2-client");
+              const r2 = await tryUploadViaR2(convex as never, new File([stored.blob], attachment.fileName, { type: attachment.fileType }), "attachments");
+              if (r2) {
+                cdnKey = r2.cdnKey;
+                cdnUrl = r2.cdnUrl;
+              }
+            } catch {}
+            if (!cdnKey) {
+              const uploadUrl = await convex.mutation(
+                dm ? api.messages.generateUploadUrl : api.channelMessages.generateUploadUrl,
+                {},
+              );
+              storageId = await uploadToStorage(uploadUrl, stored.blob);
+            }
           }
-          if (!storageId) throw new Error("Attachment never uploaded.");
+          if (!storageId && !cdnKey) throw new Error("Attachment never uploaded.");
           attachments.push({
-            storageId: storageId as Id<"_storage">,
+            ...(storageId ? { storageId: storageId as Id<"_storage"> } : {}),
+            ...(cdnKey ? { cdnKey } : {}),
+            ...(cdnUrl ? { cdnUrl } : {}),
             fileName: attachment.fileName,
             fileType: attachment.fileType,
             fileSize: attachment.fileSize,

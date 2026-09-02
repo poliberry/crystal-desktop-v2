@@ -23,6 +23,11 @@ publish:
 # BrowserWindow icon at runtime (electron/main.ts) — mainly for Linux, where
 # window managers don't derive the taskbar/window icon from the packaged app
 # the way Windows/macOS do.
+compression: maximum
+asar: true
+# Keep file sets minimal — `out/` already contains the static export; don't
+# bundle source maps or duplicate sounds. Use maximum compression (lzma for
+# nsis via electron-builder default) to cut the 1GB installer.
 extraResources:
   - from: build/icon.png
     to: icon.png
@@ -48,6 +53,9 @@ files:
   - node_modules/debug/**
   - node_modules/sax/**
   - node_modules/ms/**
+  # Exclude heavy dev-only assets that bloat the asar
+  - "!out/**/*.map"
+  - "!**/*.tsbuildinfo"
 asarUnpack:
   - resources/**
 # Register crystal:// as a custom URL scheme so the OS routes OAuth callbacks

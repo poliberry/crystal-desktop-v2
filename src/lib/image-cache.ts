@@ -65,6 +65,15 @@ interface CacheConfig {
 
 const STORE = "blobs";
 
+function isCdnUrl(url: string): boolean {
+  const cdn = process.env.NEXT_PUBLIC_R2_PUBLIC_URL ?? process.env.NEXT_PUBLIC_CDN_URL ?? "";
+  if (cdn && url.startsWith(cdn.replace(/\/$/, ""))) return true;
+  if (url.includes("crystal-cdn.poliberry.com")) return true;
+  if (url.includes(".r2.cloudflarestorage.com")) return true;
+  if (url.includes("/migrated/")) return true;
+  return false;
+}
+
 function createBlobCache(config: CacheConfig) {
   let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -155,11 +164,12 @@ function createBlobCache(config: CacheConfig) {
   const inflight = new Map<string, Promise<Blob | undefined>>();
 
   async function fetchAndCache(url: string): Promise<Blob | undefined> {
+    if (isCdnUrl(url)) return undefined; // CDN is the cache — <img src> loads directly, no CORS blob fetch
     const existing = inflight.get(url);
     if (existing) return existing;
     const promise = (async () => {
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, { mode: "cors", credentials: "omit" });
         if (!response.ok) return undefined;
         const blob = await response.blob();
         void putEntry(url, blob);
@@ -174,16 +184,33 @@ function createBlobCache(config: CacheConfig) {
     return promise;
   }
 
-  /** One object URL per url, reused by every consumer — see the module doc for
-   * why these are never revoked. */
+  /** One object URL per url, reused by every consumer. Bounded + revocable
+   * to avoid the 1GB-RAM leak: we keep at most 80 live handles and revoke
+   * the LRU when over. Electron frees them on window close anyway. */
   const objectUrls = new Map<string, string>();
+  const MAX_OBJECT_URLS = 80;
 
   function objectUrlFor(url: string, blob: Blob): string {
     const existing = objectUrls.get(url);
     if (existing) return existing;
+    // Evict LRU if over cap — revoke so bytes are actually freed.
+    if (objectUrls.size >= MAX_OBJECT_URLS) {
+      const oldest = objectUrls.keys().next().value as string | undefined;
+      if (oldest) {
+        const oldUrl = objectUrls.get(oldest)!;
+        try { URL.revokeObjectURL(oldUrl); } catch { /* ignore */ }
+        objectUrls.delete(oldest);
+      }
+    }
     const created = URL.createObjectURL(blob);
     objectUrls.set(url, created);
     return created;
+  }
+
+  /** Revoke all — called on logout / memory pressure. */
+  function revokeAll(): void {
+    for (const u of objectUrls.values()) { try { URL.revokeObjectURL(u); } catch { /* ignore */ } }
+    objectUrls.clear();
   }
 
   /**
@@ -264,6 +291,7 @@ function createBlobCache(config: CacheConfig) {
    * already cached and still fresh.
    */
   async function preload(url: string): Promise<void> {
+    if (isCdnUrl(url)) return; // let browser HTTP cache + CDN edge handle it
     const entry = await getEntry(url);
     if (entry && Date.now() - entry.at < config.ttlMs) return;
     await fetchAndCache(url);
@@ -283,13 +311,14 @@ function createBlobCache(config: CacheConfig) {
    * network re-checked either way.
    */
   function useCachedSrc(url: string | undefined): string | undefined {
+    if (url && isCdnUrl(url)) return url; // CDN: direct <img src>, no blob/cache, no CORS fetch
     const [cached, setCached] = useState<string | undefined>(() =>
       url ? objectUrls.get(url) : undefined,
     );
 
     useEffect(() => {
-      if (!url) {
-        setCached(undefined);
+      if (!url || isCdnUrl(url)) {
+        if (url) setCached(undefined);
         return;
       }
       const already = objectUrls.get(url);
@@ -317,24 +346,30 @@ function createBlobCache(config: CacheConfig) {
     return cached ?? url;
   }
 
-  return { preload, seed, prune, useCachedSrc };
+  // Kick a prune shortly after load so old week/month entries get evicted
+  // under the new tighter caps without waiting for a quota error.
+  if (typeof window !== "undefined") {
+    setTimeout(() => void prune(), 5000);
+  }
+
+  return { preload, seed, prune, useCachedSrc, revokeAll };
 }
 
+const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 const imageCache = createBlobCache({
   dbName: "crystal-image-cache",
-  ttlMs: WEEK_MS,
-  maxEntries: 1500,
-  maxBytes: 75 * 1024 * 1024,
+  ttlMs: THREE_DAYS_MS,
+  maxEntries: 300,
+  maxBytes: 20 * 1024 * 1024,
 });
 
 const attachmentCache = createBlobCache({
   dbName: "crystal-attachment-cache",
-  ttlMs: MONTH_MS,
-  maxEntries: 600,
-  maxBytes: 300 * 1024 * 1024,
+  ttlMs: WEEK_MS,
+  maxEntries: 150,
+  maxBytes: 40 * 1024 * 1024,
 });
 
 // --- Small artwork (avatars, cosmetics, emoji, banners, badges) -------------

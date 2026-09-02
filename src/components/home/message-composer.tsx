@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { AtSign, Paperclip, Reply, Send, Smile, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -94,6 +94,7 @@ export function MessageComposer({
   const textareaRef = useRef<EmojiTextInputHandle>(null);
 
   const generateUploadUrl = useMutation(api.messages.generateUploadUrl);
+  const convexClient = useConvex();
   const {
     pending,
     uploading,
@@ -107,7 +108,7 @@ export function MessageComposer({
     clear: clearAttachments,
     handlePaste,
     dropZoneRef,
-  } = useComposerAttachments(generateUploadUrl);
+  } = useComposerAttachments(generateUploadUrl, { convex: convexClient as never, kind: "attachments" });
   // Durable: the send lands in the IndexedDB outbox first and is drawn by the
   // message list's overlay, then flushed to Convex (see src/lib/outbox.ts).
   const sendMessage = useOutboxMutation("send", "dm");

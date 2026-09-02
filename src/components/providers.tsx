@@ -69,10 +69,15 @@ function AuthCallbackHandler() {
  */
 function CacheScope() {
   const { userId } = useAuth();
+  // Cache namespace is safe to set during render (idempotent string assign).
   setCacheNamespace(userId);
-  // Point the durable send outbox at the same account, for the same reason —
-  // an account switch must not flush one user's queued messages as another.
-  setOutboxUser(userId);
+
+  useEffect(() => {
+    // Outbox switch triggers notify() -> useSyncExternalStore update on
+    // OutboxFlusher. Doing it during render = "Cannot update OutboxFlusher
+    // while rendering CacheScope" (react.dev/link/setstate-in-render).
+    setOutboxUser(userId);
+  }, [userId]);
 
   useEffect(() => {
     pruneExpired();
