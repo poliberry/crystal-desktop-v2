@@ -50,10 +50,10 @@ interface MessageContentProps {
 function MediaEmbed({ url }: { url: string }) {
   const kind = classifyUrl(url);
   if (kind === "image") {
-    return <img src={url} alt="" className="max-h-96 max-w-full rounded-md border" />;
+    return <img src={url} alt="" className="max-h-96 max-w-full rounded-md border" loading="lazy" decoding="async" />;
   }
   if (kind === "video") {
-    return <video src={url} controls className="max-h-96 max-w-full rounded-md border" />;
+    return <video src={url} controls preload="metadata" className="max-h-96 max-w-full rounded-md border" />;
   }
   return null;
 }
@@ -260,7 +260,13 @@ const MessageMarkdown = memo(function MessageMarkdown({
               );
             }
             return (
-              <img src={typeof src === "string" && src.length > 1 ? src : undefined} alt={alt ?? ""} className="max-h-80 max-w-full rounded-md" />
+              <img
+                src={typeof src === "string" && src.length > 1 ? src : undefined}
+                alt={alt ?? ""}
+                className="max-h-80 max-w-full rounded-md"
+                loading="lazy"
+                decoding="async"
+              />
             );
           },
           p: ({ children }) => {

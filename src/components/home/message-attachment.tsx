@@ -44,7 +44,13 @@ function ImageAttachment({
         className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={cachedSrc ?? attachment.url} alt={attachment.fileName} className="max-h-80 max-w-full" />
+        <img
+          src={cachedSrc ?? attachment.url}
+          alt={attachment.fileName}
+          className="max-h-80 max-w-full"
+          loading="lazy"
+          decoding="async"
+        />
       </button>
       <ImageLightbox
         open={open}
