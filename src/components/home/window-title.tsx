@@ -47,7 +47,7 @@ function DmWindowTitle({
     if (!conversation) return;
     const label =
       conversation.type === "group"
-        ? conversation.name || conversation.members.map((m) => m.name).join(", ")
+        ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
         : `@${conversation.members[0]?.username ?? "unknown"}`;
     document.title = `${label} - ${APP_NAME}${titleSuffix(unread)}`;
   }, [conversation, unread]);

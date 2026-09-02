@@ -280,18 +280,18 @@ export const migrateOne = action({
  * Batch migrate attachments. Processes `limit` most recent attachments per call.
  * Call repeatedly until `done` is true.
  */
-export const migrateAllAttachments = action({
+export const migrateAllAttachments: any = action({
   args: { limit: v.optional(v.number()), cursor: v.optional(v.union(v.string(), v.number())) },
-  handler: async (ctx, { limit = 25, cursor }) => {
+  handler: async (ctx: any, { limit = 25, cursor }: any): Promise<any> => {
     if (!isR2Configured()) throw new Error("R2 not configured — set R2_* env vars");
-    const { page: batch, isDone, continueCursor, total } = await ctx.runQuery(
+    const { page: batch, isDone, continueCursor, total }: any = await ctx.runQuery(
       internal.cdnInternal.listUnmigratedAttachments,
       { limit, cursor: cursor != null ? String(cursor) : undefined },
     );
-    const results = [];
+    const results: any[] = [];
     for (const { storageId } of batch as Array<{ storageId: string }>) {
       try {
-        const r = await ctx.runAction(internal.cdnInternal.migrateOneInternal, {
+        const r: any = await ctx.runAction(internal.cdnInternal.migrateOneInternal, {
           storageId: storageId as any,
         });
         results.push({ storageId, ...(r as object), ok: true });
@@ -312,7 +312,7 @@ export const migrateAll = action({
     const all: unknown[] = [];
     let total = 0;
     do {
-      const page: { page: Array<{ storageId: string }>; isDone: boolean; continueCursor: string | null; total: number } =
+      const page: { page: Array<{ storageId: any }>; isDone: boolean; continueCursor: string | null; total: number } =
         await ctx.runQuery(internal.cdnInternal.listUnmigratedAttachments, {
           limit: batchSize,
           cursor: cursor ?? undefined,

@@ -28,7 +28,7 @@ export function ServerProfilesTab() {
 
   const selectedCommunity =
     selectedCommunityId != null
-      ? (communities ?? []).find((c) => c.id === selectedCommunityId)
+      ? (communities ?? []).find((c: any) => c.id === selectedCommunityId)
       : undefined;
 
   return (
@@ -47,7 +47,7 @@ export function ServerProfilesTab() {
             </p>
           ) : (
             <ul className="divide-y">
-              {communities.map((community) => (
+              {communities.map((community: any) => (
                 <li
                   key={community.id}
                   className="flex items-center gap-3 py-3 cursor-pointer hover:bg-muted/40 rounded-md px-2 -mx-2 transition-colors"

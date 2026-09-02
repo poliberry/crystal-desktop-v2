@@ -187,7 +187,7 @@ function DmConversationMenu({
             Invite to Server
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="max-h-72 overflow-y-auto">
-            {communities.map((community) => (
+            {communities.map((community: any) => (
               <ContextMenuItem
                 key={community.id}
                 onSelect={() => void inviteToServer(community.id)}
@@ -229,8 +229,8 @@ export function NavSidebar({
     "conversations.listMine"
   );
   const conversations = rawConversations ?? [];
-  const filtered = conversations.filter((c) =>
-    matches(search, c.name ?? "", ...c.members.map((m) => m.name))
+  const filtered = conversations.filter((c: any) =>
+    matches(search, c.name ?? "", ...c.members.map((m: any) => m.name))
   );
   const setClosed = useMutation(api.conversations.setClosed);
 
@@ -286,10 +286,10 @@ export function NavSidebar({
           ) : filtered.length === 0 ? (
             <p className="px-2 py-4 text-center text-xs text-muted-foreground">No conversations yet.</p>
           ) : (
-            filtered.map((conversation) => {
+            filtered.map((conversation: any) => {
               const isGroup = conversation.type === "group";
               const title = isGroup
-                ? conversation.name || conversation.members.map((m) => m.name).join(", ")
+                ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
                 : (conversation.members[0]?.name ?? "Unknown");
               const avatarUser = isGroup ? undefined : conversation.members[0];
               const active = conversation.id === activeConversationId;

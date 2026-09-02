@@ -111,7 +111,7 @@ export function FriendActionButton({
       variant: "default" as const,
       onClick: () => run(() => sendRequest({ username })),
     },
-  }[relationship.kind];
+  }[(relationship as any).kind as string] as any;
 
   // After the config, not before: `relationship.kind` is the only thing that
   // says whether this would have been the Message button at all. Only that

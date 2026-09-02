@@ -109,7 +109,7 @@ function CommunitiesPopover() {
                 Communities
               </p>
               <div className="grid grid-cols-3 gap-1">
-                {communities.map((community) => (
+                {communities.map((community: any) => (
                   <button
                     type="button"
                     key={community.id}

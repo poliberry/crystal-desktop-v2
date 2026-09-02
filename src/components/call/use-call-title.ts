@@ -21,7 +21,7 @@ export function useCallTitle(activeCall: ActiveCall | null): string {
   if (activeCall.kind === "dm") {
     if (!conversation) return "Call";
     return conversation.type === "group"
-      ? conversation.name || conversation.members.map((m) => m.name).join(", ")
+      ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
       : (conversation.members[0]?.name ?? "Call");
   }
 
