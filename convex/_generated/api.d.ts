@@ -9,8 +9,11 @@
  */
 
 import type * as badges from "../badges.js";
+import type * as cache from "../cache.js";
 import type * as callTokens from "../callTokens.js";
 import type * as calls from "../calls.js";
+import type * as cdn from "../cdn.js";
+import type * as cdnInternal from "../cdnInternal.js";
 import type * as channelCalls from "../channelCalls.js";
 import type * as channelCategories from "../channelCategories.js";
 import type * as channelMessages from "../channelMessages.js";
@@ -32,6 +35,7 @@ import type * as lib_liveKitWebhook from "../lib/liveKitWebhook.js";
 import type * as lib_mentions from "../lib/mentions.js";
 import type * as lib_notificationPolicy from "../lib/notificationPolicy.js";
 import type * as lib_profileCosmetics from "../lib/profileCosmetics.js";
+import type * as lib_r2 from "../lib/r2.js";
 import type * as lib_richEmbeds from "../lib/richEmbeds.js";
 import type * as linkPreviews from "../linkPreviews.js";
 import type * as maintenance from "../maintenance.js";
@@ -42,6 +46,7 @@ import type * as permissions from "../permissions.js";
 import type * as presence from "../presence.js";
 import type * as profileWidgets from "../profileWidgets.js";
 import type * as push from "../push.js";
+import type * as redisCloud from "../redisCloud.js";
 import type * as roles from "../roles.js";
 import type * as search from "../search.js";
 import type * as serverProfiles from "../serverProfiles.js";
@@ -59,8 +64,11 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   badges: typeof badges;
+  cache: typeof cache;
   callTokens: typeof callTokens;
   calls: typeof calls;
+  cdn: typeof cdn;
+  cdnInternal: typeof cdnInternal;
   channelCalls: typeof channelCalls;
   channelCategories: typeof channelCategories;
   channelMessages: typeof channelMessages;
@@ -82,6 +90,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mentions": typeof lib_mentions;
   "lib/notificationPolicy": typeof lib_notificationPolicy;
   "lib/profileCosmetics": typeof lib_profileCosmetics;
+  "lib/r2": typeof lib_r2;
   "lib/richEmbeds": typeof lib_richEmbeds;
   linkPreviews: typeof linkPreviews;
   maintenance: typeof maintenance;
@@ -92,6 +101,7 @@ declare const fullApi: ApiFromModules<{
   presence: typeof presence;
   profileWidgets: typeof profileWidgets;
   push: typeof push;
+  redisCloud: typeof redisCloud;
   roles: typeof roles;
   search: typeof search;
   serverProfiles: typeof serverProfiles;

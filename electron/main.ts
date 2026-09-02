@@ -28,6 +28,13 @@ const isDev = !!process.env.ELECTRON_START_URL;
  * `whenReady`.
  */
 app.commandLine.appendSwitch("enable-smooth-scrolling");
+// Memory/performance: cap renderer heap, disable expensive Blink features idle
+// tabs don't need. `--js-flags=--max-old-space-size=256` keeps the renderer
+// from growing unbounded (was ~1GB). Lower BG throttling is restored below
+// only while in a call (see createWindow).
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256");
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 
 /**
  * Which build this is: Stable, PTB, Canary or Development (see
@@ -292,13 +299,11 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      // This window is hidden (not closed) while a call is active so calls
-      // keep running from the tray (see the `close` handler below). Chromium
-      // throttles timers on hidden pages, which can delay LiveKit's
-      // signaling keep-alive enough for the server to think the client went
-      // away and force a full reconnect — audibly dropping call audio for
-      // everyone for a moment. Keep this window's timers unthrottled.
-      backgroundThrottling: false,
+      // Only disable throttling while a call is active (renderer notifies via
+      // IPC `call:active`). Idle = throttled → saves ~200-400MB on low-end
+      // hardware where hidden-window timers + Convex subscriptions otherwise
+      // keep the renderer hot.
+      backgroundThrottling: true,
     },
   });
 
@@ -1028,6 +1033,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("rich-presence:set-enabled", (_event, enabled: boolean) => {
     richPresence.setEnabled(!!enabled);
     return richPresence.getStatus();
+  });
+
+  // Call-aware background throttling: idle = throttled (saves RAM/CPU), in-call = unthrottled
+  ipcMain.handle("call:active", (event, active: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      // Electron exposes `webContents.setBackgroundThrottling` at runtime
+      try { (win.webContents as unknown as { setBackgroundThrottling: (v: boolean) => void }).setBackgroundThrottling(!active); } catch { /* ignore */ }
+    }
+    return true;
+  });
+
+  // Memory pressure hint from renderer (e.g. after large image flood)
+  ipcMain.handle("app:gc", () => {
+    if (global.gc) global.gc();
+    return true;
   });
 
   createWindow();

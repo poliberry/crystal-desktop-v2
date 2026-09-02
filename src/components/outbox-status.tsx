@@ -12,6 +12,7 @@ import { getEntries, useOutboxTick } from "@/lib/outbox";
  * almost always.
  */
 export function OutboxStatus() {
+  if (process.env.NODE_ENV === "production") return null;
   useOutboxTick();
   const online = useIsOnline();
   const connection = useConvexConnectionState();

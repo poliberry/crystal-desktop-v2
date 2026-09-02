@@ -40,11 +40,15 @@ import { useSyncExternalStore } from "react";
 /**
  * How long an entry may be served before it's treated as absent.
  *
- * An hour is far longer than the sub-second it takes a subscription to
- * replace it; the bound is about not painting something wildly out of date
- * after the app has been shut for a weekend, not about freshness during use.
+ * Was 60 min — cut to 15 min to bound RAM/disk and avoid painting stale
+ * membership/channel state after a long idle. Live Convex subscriptions still
+ * replace it in <1s during use; this only matters after a cold start or
+ * long background.
  */
-export const CACHE_TTL_MS = 60 * 60 * 1000;
+export const CACHE_TTL_MS = 15 * 60 * 1000;
+
+/** Hard cap on in-memory entries — evict LRU beyond this. */
+export const MAX_MEMO_ENTRIES = 100;
 
 const PREFIX = "crystal.cache.v1.";
 
@@ -85,7 +89,13 @@ export function readCache<T>(key: string): T | undefined {
 
 export function writeCache<T>(key: string, data: T): void {
   const entry: Entry<T> = { at: Date.now(), data };
+  // LRU cap: evict oldest first. Re-insert moves key to end (most recent).
+  if (memo.has(key)) memo.delete(key);
   memo.set(key, entry);
+  if (memo.size > MAX_MEMO_ENTRIES) {
+    const oldest = memo.keys().next().value as string | undefined;
+    if (oldest) memo.delete(oldest);
+  }
   notify();
   void putEntry(storageKey(key), entry);
 }

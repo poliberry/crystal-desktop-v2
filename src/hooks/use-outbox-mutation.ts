@@ -24,6 +24,8 @@ import type {
  * path. */
 export interface ComposerAttachmentInput {
   storageId?: string;
+  cdnKey?: string;
+  cdnUrl?: string;
   file?: File;
   fileName: string;
   fileType: string;
@@ -104,8 +106,7 @@ export function useOutboxMutation<
           // still has to happen (no `storageId` yet), or it's an image whose
           // preview object URL must survive a reload. A file that's already
           // uploaded and isn't shown inline doesn't need a local copy.
-          const needsBytes =
-            !attachment.storageId || attachment.fileType.startsWith("image/");
+          const needsBytes = (!attachment.storageId && !attachment.cdnKey) || attachment.fileType.startsWith("image/");
           if (attachment.file && needsBytes) {
             blobKey = `${id}:${index}`;
             const ok = await stashBlob(blobKey, {
@@ -122,6 +123,8 @@ export function useOutboxMutation<
             fileType: attachment.fileType,
             fileSize: attachment.fileSize,
             storageId: attachment.storageId,
+            cdnKey: (attachment as { cdnKey?: string }).cdnKey,
+            cdnUrl: (attachment as { cdnUrl?: string }).cdnUrl,
             blobKey,
             previewUrl: attachment.previewUrl,
           });

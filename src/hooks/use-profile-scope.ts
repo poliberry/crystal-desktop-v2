@@ -7,6 +7,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { getAvatarColor } from "@/lib/avatar-color";
 import { uploadToStorage } from "@/lib/storage-upload";
+import { useConvex } from "convex/react";
 import type {
   ProfileFrameLayout,
   ProfileFrameMode,
@@ -253,18 +254,25 @@ export function useProfileScope(
     };
   }, [me, serverProfile, isAccount]);
 
-  /** Upload a blob to whichever scope's URL generator, and hand back the id. */
+  const convex = useConvex();
+  /** Upload a blob to R2 when configured, else Convex storage. Returns storageId or cdnKey. */
   const put = useCallback(
     async (
       data: Blob,
-      generator: "generic" | "avatar" | "banner" | "nameplate"
-    ): Promise<Id<"_storage">> => {
+      generator: "generic" | "avatar" | "banner" | "nameplate",
+      kind: "avatars" | "banners" | "backgrounds" | "attachments" = generator === "avatar" ? "avatars" : generator === "banner" ? "banners" : "backgrounds"
+    ): Promise<{ storageId?: Id<"_storage">; cdnKey?: string; cdnUrl?: string }> => {
+      // Try R2 first
+      try {
+        const { tryUploadViaR2 } = await import("@/lib/r2-client");
+        const r2Kind = kind as "avatars" | "banners" | "attachments" | "backgrounds";
+        const file = data instanceof File ? data : new File([data], "upload", { type: (data as Blob).type });
+        const r2 = await tryUploadViaR2(convex as never, file, r2Kind);
+        if (r2) return r2;
+      } catch {}
       if (isAccount) {
-        const url =
-          generator === "avatar"
-            ? await generateAvatarUploadUrl()
-            : await generateUploadUrl();
-        return (await uploadToStorage(url, data)) as Id<"_storage">;
+        const url = generator === "avatar" ? await generateAvatarUploadUrl() : await generateUploadUrl();
+        return { storageId: (await uploadToStorage(url, data)) as Id<"_storage"> };
       }
       const cid = communityId as Id<"communities">;
       const url =
@@ -275,17 +283,9 @@ export function useProfileScope(
             : generator === "nameplate"
               ? await generateServerNameplateUploadUrl({ communityId: cid })
               : await generateUploadUrl();
-      return (await uploadToStorage(url, data)) as Id<"_storage">;
+      return { storageId: (await uploadToStorage(url, data)) as Id<"_storage"> };
     },
-    [
-      isAccount,
-      communityId,
-      generateAvatarUploadUrl,
-      generateUploadUrl,
-      generateServerAvatarUploadUrl,
-      generateServerBannerUploadUrl,
-      generateServerNameplateUploadUrl,
-    ]
+    [isAccount, communityId, convex, generateAvatarUploadUrl, generateUploadUrl, generateServerAvatarUploadUrl, generateServerBannerUploadUrl, generateServerNameplateUploadUrl]
   );
 
   const cid = communityId as Id<"communities">;
@@ -297,32 +297,39 @@ export function useProfileScope(
       label: isAccount ? "your main profile" : `your ${communityName ?? "server"} profile`,
 
       setAvatar: async (crop, original) => {
-        const storageId = await put(crop, "avatar");
-        const originalStorageId = original
-          ? await put(original, "avatar")
-          : undefined;
+        const res = await put(crop, "avatar", "avatars");
+        const orig = original ? await put(original, "avatar", "avatars") : undefined;
         if (isAccount) {
-          const url = await setAvatarM({ storageId, originalStorageId });
-          // Sampled once here rather than by every call tile that later shows
-          // this avatar — see `useAvatarAccent`.
+          const url = await setAvatarM({
+            storageId: res.storageId,
+            cdnKey: res.cdnKey,
+            cdnUrl: res.cdnUrl,
+            originalStorageId: orig?.storageId,
+            originalCdnKey: orig?.cdnKey,
+            originalCdnUrl: orig?.cdnUrl,
+          } as never);
           const accent = await getAvatarColor(url);
           if (accent) await setAvatarAccent({ accent, sourceUrl: url });
           return;
         }
         const url = await setServerAvatar({
           communityId: cid,
-          storageId,
-          originalStorageId,
-        });
+          storageId: res.storageId,
+          cdnKey: res.cdnKey,
+          cdnUrl: res.cdnUrl,
+          originalStorageId: orig?.storageId,
+          originalCdnKey: orig?.cdnKey,
+          originalCdnUrl: orig?.cdnUrl,
+        } as never);
         const accent = await getAvatarColor(url);
         if (accent) await setServerAvatarAccent({ communityId: cid, accent, sourceUrl: url });
       },
 
       setBanner: async (crop, original) => {
-        const storageId = await put(crop, "banner");
-        const originalStorageId = original ? await put(original, "banner") : undefined;
-        if (isAccount) await setBannerM({ storageId, originalStorageId });
-        else await setServerBanner({ communityId: cid, storageId, originalStorageId });
+        const res = await put(crop, "banner", "banners");
+        const orig = original ? await put(original, "banner", "banners") : undefined;
+        if (isAccount) await setBannerM({ storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl, originalStorageId: orig?.storageId, originalCdnKey: orig?.cdnKey, originalCdnUrl: orig?.cdnUrl } as never);
+        else await setServerBanner({ communityId: cid, storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl, originalStorageId: orig?.storageId, originalCdnKey: orig?.cdnKey, originalCdnUrl: orig?.cdnUrl } as never);
       },
       removeBanner: async () => {
         if (isAccount) await removeBannerM();
@@ -330,9 +337,9 @@ export function useProfileScope(
       },
 
       setNameplate: async (file) => {
-        const storageId = await put(file, "nameplate");
-        if (isAccount) await setNameplateM({ storageId });
-        else await setServerNameplate({ communityId: cid, storageId });
+        const res = await put(file, "nameplate", "backgrounds");
+        if (isAccount) await setNameplateM({ storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl } as never);
+        else await setServerNameplate({ communityId: cid, storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl } as never);
       },
       removeNameplate: async () => {
         if (isAccount) await removeNameplateM();
@@ -360,9 +367,9 @@ export function useProfileScope(
       },
 
       setEffect: async (file) => {
-        const storageId = await put(file, "generic");
-        if (isAccount) await setProfileEffectM({ storageId });
-        else await setServerProfileEffect({ communityId: cid, storageId });
+        const res = await put(file, "generic", "backgrounds");
+        if (isAccount) await setProfileEffectM({ storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl } as never);
+        else await setServerProfileEffect({ communityId: cid, storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl } as never);
       },
       removeEffect: async () => {
         if (isAccount) await removeProfileEffectM();
@@ -370,9 +377,9 @@ export function useProfileScope(
       },
 
       setFrame: async (file, mode) => {
-        const storageId = await put(file, "generic");
-        if (isAccount) await setProfileFrameM({ storageId, mode });
-        else await setServerProfileFrame({ communityId: cid, storageId, mode });
+        const res = await put(file, "generic", "backgrounds");
+        if (isAccount) await setProfileFrameM({ storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl, mode } as never);
+        else await setServerProfileFrame({ communityId: cid, storageId: res.storageId, cdnKey: res.cdnKey, cdnUrl: res.cdnUrl, mode } as never);
       },
       setFrameMode: async (mode) => {
         if (isAccount) await setProfileFrameModeM({ mode });

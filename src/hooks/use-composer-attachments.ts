@@ -23,6 +23,8 @@ export interface PendingAttachment {
   /** Set once the eager upload lands. Absent means "bytes only, upload later" —
    * the outbox carries the `file` and uploads it on flush. */
   storageId?: Id<"_storage">;
+  cdnKey?: string;
+  cdnUrl?: string;
   /** Kept so the outbox can stash the bytes (offline send, or reload survival). */
   file?: File;
   fileName: string;
@@ -48,7 +50,10 @@ function nameFor(file: File, index: number): string {
   return `Pasted image ${stamp}${index > 0 ? `-${index + 1}` : ""}.${extension}`;
 }
 
-export function useComposerAttachments(generateUploadUrl: () => Promise<string>) {
+export function useComposerAttachments(
+  generateUploadUrl: () => Promise<string>,
+  opts?: { convex?: unknown; kind?: "attachments" | "avatars" | "banners" | "emoji" | "sounds" | "backgrounds" }
+) {
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,26 +114,37 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
       let deferredAny = false;
       try {
         for (const [index, file] of accepted.slice(0, room).entries()) {
-          // Try to upload eagerly. Anything that stops that — offline, a failed
-          // POST, a thrown request — falls through to keeping the raw bytes so
-          // the outbox can upload them on flush.
+          // Try to upload eagerly: prefer R2 (direct-to-CDN via cdn:createUploadUrl) when configured,
+          // fallback to Convex storage. Anything that stops that — offline, failed POST — keeps raw bytes for outbox flush.
           let storageId: Id<"_storage"> | undefined;
+          let cdnKey: string | undefined;
+          let cdnUrl: string | undefined;
           if (onlineRef.current) {
             try {
-              const uploadUrl = await generateUploadUrl();
-              const res = await fetch(uploadUrl, {
-                method: "POST",
-                headers: { "Content-Type": file.type || "application/octet-stream" },
-                body: file,
-              });
-              if (res.ok) {
-                ({ storageId } = (await res.json()) as { storageId: Id<"_storage"> });
+              if (opts?.convex) {
+                const { tryUploadViaR2 } = await import("@/lib/r2-client");
+                const r2 = await tryUploadViaR2(opts.convex as never, file, opts.kind ?? "attachments");
+                if (r2) {
+                  cdnKey = r2.cdnKey;
+                  cdnUrl = r2.cdnUrl;
+                }
+              }
+              if (!cdnKey) {
+                const uploadUrl = await generateUploadUrl();
+                const res = await fetch(uploadUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": file.type || "application/octet-stream" },
+                  body: file,
+                });
+                if (res.ok) {
+                  ({ storageId } = (await res.json()) as { storageId: Id<"_storage"> });
+                }
               }
             } catch {
               // fall through to the deferred path
             }
           }
-          if (!storageId) deferredAny = true;
+          if (!storageId && !cdnKey) deferredAny = true;
 
           let previewUrl: string | undefined;
           if (isImage(file.type)) {
@@ -140,8 +156,8 @@ export function useComposerAttachments(generateUploadUrl: () => Promise<string>)
             ...prev,
             {
               storageId,
-              // Keep the bytes even after a successful upload: a reload before
-              // the send flushes still needs them to rebuild the preview.
+              cdnKey,
+              cdnUrl,
               file,
               fileName: nameFor(file, index),
               fileType: file.type || "application/octet-stream",

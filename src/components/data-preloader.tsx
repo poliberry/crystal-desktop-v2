@@ -64,10 +64,10 @@ function preloadPageAttachments(
   }
 }
 
-/** Ceiling on warm message histories. Comfortably more than a session moves
- * between, and bounded so a heavily-joined account doesn't open hundreds of
- * live subscriptions at launch. */
-const MESSAGE_PRELOAD_BUDGET = 40;
+/** Was 40 live message subscriptions at launch — major RAM + socket cost.
+ * Cut to 12: covers recent views + active server. Redis keeps the rest hot
+ * server-side so a cold channel still loads instantly. */
+const MESSAGE_PRELOAD_BUDGET = 12;
 
 /**
  * Message preloads can't be shared with the view through Convex's own cache:

@@ -8,6 +8,7 @@ import {
   query,
   type MutationCtx,
 } from "./_generated/server";
+import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
 import { requireCommunity, requireMember } from "./communities";
 import {
   PERMISSIONS,
@@ -39,6 +40,14 @@ export const list = query({
       .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .unique();
     if (!membership) return [];
+    // Redis cache per-user (permission-filtered) — short TTL, explicit invalidate on channel create/reorder
+    try {
+      const { cacheGetJson } = await import("./cache");
+      const key = `community:${communityId}:user:${me._id}:channels`;
+      const cached = await cacheGetJson<any>(key);
+      if (cached) return cached;
+    } catch {}
+    // fetch below, will cache after
 
     const channels = await ctx.db
       .query("channels")
@@ -63,9 +72,15 @@ export const list = query({
       })
     );
 
-    return visible
+    const result = visible
       .filter((c): c is NonNullable<typeof c> => c !== null)
       .sort((a, b) => a.position - b.position);
+    try {
+      const { cacheSetJson } = await import("./cache");
+      const key = `community:${communityId}:user:${me._id}:channels`;
+      await cacheSetJson(key, result, 60);
+    } catch {}
+    return result;
   },
 });
 
@@ -119,7 +134,7 @@ export const create = mutation({
       .collect();
     const position = existing.reduce((max, c) => Math.max(max, c.position), -1) + 1;
 
-    return ctx.db.insert("channels", {
+    const channelId = await ctx.db.insert("channels", {
       communityId,
       name: trimmed,
       type,
@@ -127,6 +142,11 @@ export const create = mutation({
       position,
       createdAt: Date.now(),
     });
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`community:${communityId}:user:${me._id}:channels`, `community:${communityId}:channels`);
+    } catch {}
+    return channelId;
   },
 });
 
@@ -150,6 +170,10 @@ export const update = mutation({
     }
     if (topic !== undefined) patch.topic = topic;
     if (Object.keys(patch).length > 0) await ctx.db.patch(channelId, patch);
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`community:${channel.communityId}:user:${me._id}:channels`, `channel:${channelId}:meta`);
+    } catch {}
   },
 });
 
@@ -175,6 +199,10 @@ export const reorder = mutation({
         await ctx.db.patch(orderedChannelIds[i], { position: i, categoryId: categoryId ?? undefined });
       }
     }
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`community:${communityId}:user:${me._id}:channels`);
+    } catch {}
   },
 });
 
@@ -211,6 +239,10 @@ export const remove = mutation({
     for (const overwrite of overwrites) await ctx.db.delete(overwrite._id);
     for (const participant of voiceParticipants) await ctx.db.delete(participant._id);
     await ctx.db.delete(channelId);
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`community:${community.communityId}:user:${me._id}:channels`, `channel:${channelId}:meta`, `channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`);
+    } catch {}
   },
 });
 
@@ -762,10 +794,12 @@ export const setBackground = mutation({
   args: {
     channelId: v.id("channels"),
     storageId: v.optional(v.id("_storage")),
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     opacity: v.optional(v.number()),
     clear: v.optional(v.boolean()),
   },
-  handler: async (ctx, { channelId, storageId, opacity, clear }) => {
+  handler: async (ctx, { channelId, storageId, cdnKey, cdnUrl, opacity, clear }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const channel = await requireChannel(ctx, channelId);
     const community = await requireCommunity(ctx, channel.communityId);
@@ -773,11 +807,13 @@ export const setBackground = mutation({
 
     if (clear) {
       const previous = channel.backgroundStorageId;
+      const previousUrl = channel.backgroundUrl;
       await ctx.db.patch(channelId, {
         backgroundUrl: undefined,
         backgroundStorageId: undefined,
         backgroundOpacity: undefined,
       });
+      if (previousUrl) await r2DeleteByUrl(previousUrl);
       if (previous) await ctx.storage.delete(previous).catch(() => {});
       return;
     }
@@ -788,13 +824,13 @@ export const setBackground = mutation({
       backgroundOpacity?: number;
     } = {};
 
-    if (storageId) {
-      await requireWithinUploadLimit(
-        ctx,
-        storageId,
-        MAX_PROFILE_ASSET_BYTES,
-        "Channel backgrounds"
-      );
+    if (cdnKey || cdnUrl) {
+      const url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Background upload failed.");
+      patch.backgroundUrl = url;
+      patch.backgroundStorageId = undefined;
+    } else if (storageId) {
+      await requireWithinUploadLimit(ctx, storageId, MAX_PROFILE_ASSET_BYTES, "Channel backgrounds");
       const url = await ctx.storage.getUrl(storageId);
       if (!url) throw new Error("Background upload failed.");
       patch.backgroundUrl = url;
@@ -809,10 +845,15 @@ export const setBackground = mutation({
     if (Object.keys(patch).length === 0) return;
 
     const previous = channel.backgroundStorageId;
+    const previousUrl = channel.backgroundUrl;
     await ctx.db.patch(channelId, patch);
+    // Delete old R2 file if we just replaced it with a new R2 upload
+    if ((cdnKey || cdnUrl) && previousUrl) await r2DeleteByUrl(previousUrl);
     if (storageId && previous && previous !== storageId) {
       await ctx.storage.delete(previous).catch(() => {});
     }
+    // If we switched from R2 to Convex or vice versa, clean the other store's old file too
+    if (cdnKey && previous && !cdnUrl) await ctx.storage.delete(previous).catch(() => {});
   },
 });
 

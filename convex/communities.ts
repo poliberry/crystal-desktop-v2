@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
 import {
   DEFAULT_EVERYONE_PERMISSIONS,
   PERMISSIONS,
@@ -109,6 +110,10 @@ export const create = mutation({
       createdAt: Date.now(),
     });
 
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`);
+    } catch {}
     return communityId;
   },
 });
@@ -118,23 +123,31 @@ export const listMine = query({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
+    const cacheKey = `user:${me._id}:communities`;
+    try {
+      const { cacheGetJson } = await import("./cache");
+      const cached = await cacheGetJson<any>(cacheKey);
+      if (cached) return cached;
+    } catch {}
     const memberships = await ctx.db
       .query("communityMembers")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
       .collect();
     const communities = await Promise.all(memberships.map((m) => ctx.db.get(m.communityId)));
-    return communities
+    const result = communities
       .filter((c): c is Doc<"communities"> => c !== null)
       .map((c) => ({
         id: c._id,
         name: c.name,
         imageUrl: c.imageUrl,
         ownerId: c.ownerId,
-        // Resolved here rather than compared client-side: the rail's right-click
-        // menu needs it for every server at once (an owner can't leave their
-        // own), and it's already in hand.
         isOwner: c.ownerId === me._id,
       }));
+    try {
+      const { cacheSetJson } = await import("./cache");
+      await cacheSetJson(cacheKey, result, 60);
+    } catch {}
+    return result;
   },
 });
 
@@ -287,6 +300,12 @@ export const get = query({
   handler: async (ctx, { communityId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
+    const cacheKey = `community:${communityId}:user:${me._id}:data`;
+    try {
+      const { cacheGetJson } = await import("./cache");
+      const cached = await cacheGetJson<any>(cacheKey);
+      if (cached) return cached;
+    } catch {}
     const community = await ctx.db.get(communityId);
     if (!community) return null;
     const membership = await ctx.db
@@ -294,7 +313,7 @@ export const get = query({
       .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .unique();
     if (!membership) return null;
-    return {
+    const result = {
       id: community._id,
       name: community.name,
       imageUrl: community.imageUrl,
@@ -304,6 +323,11 @@ export const get = query({
       createdAt: community.createdAt,
       inviteOnly: isInviteOnly(community),
     };
+    try {
+      const { cacheSetJson } = await import("./cache");
+      await cacheSetJson(cacheKey, result, 60);
+    } catch {}
+    return result;
   },
 });
 
@@ -334,6 +358,10 @@ export const join = mutation({
     }
 
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: Date.now() });
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
+    } catch {}
   },
 });
 
@@ -360,6 +388,10 @@ export const leave = mutation({
       .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .collect();
     for (const role of roles) await ctx.db.delete(role._id);
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`, `community:${communityId}:channels`);
+    } catch {}
   },
 });
 
@@ -382,6 +414,13 @@ export const updateSettings = mutation({
     if (inviteOnly !== undefined) {
       await ctx.db.patch(communityId, { inviteOnly });
     }
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      // community data for all members — invalidate via prefix scan would be ideal, but for now TTL covers it; still bust caller's own cache
+      await cacheInvalidateKeys(`community:${communityId}:user:${me._id}:data`);
+      // also bust channels list if name affects UI
+      await cacheInvalidateKeys(`user:${me._id}:communities`);
+    } catch {}
   },
 });
 
@@ -394,17 +433,31 @@ export const generateIconUploadUrl = mutation({
 });
 
 export const setIcon = mutation({
-  args: { communityId: v.id("communities"), storageId: v.id("_storage") },
-  handler: async (ctx, { communityId, storageId }) => {
+  args: { communityId: v.id("communities"), storageId: v.optional(v.id("_storage")), cdnKey: v.optional(v.string()), cdnUrl: v.optional(v.string()) },
+  handler: async (ctx, { communityId, storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
-
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Icon upload failed.");
+    let url: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Icon upload failed.");
+    } else {
+      if (!storageId) throw new Error("Icon upload failed: missing storageId/cdnKey");
+      url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Icon upload failed.");
+    }
     const previous = community.iconStorageId;
-    await ctx.db.patch(communityId, { imageUrl: url, iconStorageId: storageId });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    const previousUrl = community.imageUrl;
+    await ctx.db.patch(communityId, { imageUrl: url, iconStorageId: storageId ?? undefined });
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    else if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
+    } catch {}
   },
 });
 
@@ -417,16 +470,31 @@ export const generateBannerUploadUrl = mutation({
 });
 
 export const setBanner = mutation({
-  args: { communityId: v.id("communities"), storageId: v.id("_storage") },
-  handler: async (ctx, { communityId, storageId }) => {
+  args: { communityId: v.id("communities"), storageId: v.optional(v.id("_storage")), cdnKey: v.optional(v.string()), cdnUrl: v.optional(v.string()) },
+  handler: async (ctx, { communityId, storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
-    const url = await ctx.storage.getUrl(storageId);
-    if (!url) throw new Error("Banner upload failed.");
+    let url: string | null = null;
+    let isR2 = false;
+    if (cdnKey || cdnUrl) {
+      isR2 = true;
+      url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Banner upload failed.");
+    } else {
+      if (!storageId) throw new Error("Banner upload failed: missing storageId/cdnKey");
+      url = await ctx.storage.getUrl(storageId);
+      if (!url) throw new Error("Banner upload failed.");
+    }
     const previous = community.bannerStorageId;
-    await ctx.db.patch(communityId, { bannerUrl: url, bannerStorageId: storageId });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    const previousUrl = community.bannerUrl;
+    await ctx.db.patch(communityId, { bannerUrl: url, bannerStorageId: storageId ?? undefined });
+    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    else if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
+    } catch {}
     return url;
   },
 });
@@ -438,8 +506,14 @@ export const removeBanner = mutation({
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
     const previous = community.bannerStorageId;
+    const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: undefined, bannerStorageId: undefined });
+    if (previousUrl) await r2DeleteByUrl(previousUrl);
     if (previous) await ctx.storage.delete(previous).catch(() => {});
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
+    } catch {}
   },
 });
 
@@ -505,7 +579,13 @@ export const remove = mutation({
     for (const member of members) await ctx.db.delete(member._id);
 
     if (community.iconStorageId) await ctx.storage.delete(community.iconStorageId).catch(() => {});
+    if (community.imageUrl) await r2DeleteByUrl(community.imageUrl).catch(() => {});
+    if (community.bannerUrl) await r2DeleteByUrl(community.bannerUrl).catch(() => {});
     await ctx.db.delete(communityId);
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`);
+    } catch {}
   },
 });
 

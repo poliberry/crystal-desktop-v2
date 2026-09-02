@@ -137,6 +137,12 @@ const api = {
     open: (options: { kind: "frame" | "decoration"; scopeId?: string; scopeName?: string }) =>
       ipcRenderer.invoke("editor:open", options),
   },
+  call: {
+    setActive: (active: boolean) => ipcRenderer.invoke("call:active", active),
+  },
+  app: {
+    gc: () => ipcRenderer.invoke("app:gc"),
+  },
 };
 
 type NavigateTarget =

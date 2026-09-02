@@ -13,6 +13,12 @@ import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
 
+function cdnUrlForStorageId(storageId: string): string | null {
+  const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
+  if (!base) return null;
+  return `${base.replace(/\/$/, "")}/migrated/${storageId}`;
+}
+
 async function requireChannelPerm(
   ctx: QueryCtx,
   channelId: Id<"channels">,
@@ -141,6 +147,16 @@ export const list = query({
     const channel = await ctx.db.get(channelId);
     if (!channel) throw new Error("Channel not found.");
 
+    const isFirstPage = !paginationOpts.cursor;
+    const cacheKey = `channel:${channelId}:messages:${paginationOpts.numItems}`;
+    if (isFirstPage) {
+      try {
+        const { cacheGetJson } = await import("./cache");
+        const cached = await cacheGetJson<any>(cacheKey);
+        if (cached) return cached;
+      } catch {}
+    }
+
     const page = await ctx.db
       .query("channelMessages")
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
@@ -163,13 +179,19 @@ export const list = query({
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
           .collect();
         const attachments = await Promise.all(
-          attachmentRows.map(async (attachment) => ({
-            id: attachment._id,
-            fileName: attachment.fileName,
-            fileType: attachment.fileType,
-            fileSize: attachment.fileSize,
-            url: await ctx.storage.getUrl(attachment.storageId),
-          }))
+          attachmentRows.map(async (attachment) => {
+            const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
+            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? cdnUrlForStorageId(anyAtt.cdnKey) : null);
+            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
+            const cdnUrl = directCdn ?? migratedCdn;
+            return {
+              id: attachment._id,
+              fileName: attachment.fileName,
+              fileType: attachment.fileType,
+              fileSize: attachment.fileSize,
+              url: cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null),
+            };
+          })
         );
         return {
           id: message._id,
@@ -204,7 +226,14 @@ export const list = query({
       })
     );
 
-    return { ...page, page: messages };
+    const result = { ...page, page: messages };
+    if (isFirstPage) {
+      try {
+        const { cacheSetJson } = await import("./cache");
+        await cacheSetJson(cacheKey, result, 30);
+      } catch {}
+    }
+    return result;
   },
 });
 
@@ -235,7 +264,9 @@ export const send = mutation({
     attachments: v.optional(
       v.array(
         v.object({
-          storageId: v.id("_storage"),
+          storageId: v.optional(v.id("_storage")),
+          cdnKey: v.optional(v.string()),
+          cdnUrl: v.optional(v.string()),
           fileName: v.string(),
           fileType: v.string(),
           fileSize: v.number(),
@@ -271,14 +302,11 @@ export const send = mutation({
     }
 
     for (const attachment of attachments ?? []) {
-      // Only reachable once the bytes are in storage, so it can't stop an
-      // oversized upload — but it does stop it from becoming a message.
-      await requireWithinUploadLimit(
-        ctx,
-        attachment.storageId,
-        MAX_ATTACHMENT_BYTES,
-        "Attachments"
-      );
+      if (attachment.storageId) {
+        await requireWithinUploadLimit(ctx, attachment.storageId, MAX_ATTACHMENT_BYTES, "Attachments");
+      } else if (!attachment.cdnKey && !attachment.cdnUrl) {
+        throw new Error("Attachment missing storageId/cdnKey");
+      }
     }
 
     const replyTarget = replyToId ? await ctx.db.get(replyToId) : null;
@@ -396,6 +424,15 @@ export const send = mutation({
         });
       }
     }
+
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:messages:20`, `channel:${channelId}:messages:25`, `channel:${channelId}:meta`);
+    } catch {}
+    try {
+      const { internal } = await import("./_generated/api");
+      await ctx.scheduler.runAfter(0, internal.cache.invalidateChannelCache, { channelId });
+    } catch {}
 
     return messageId;
   },
@@ -560,15 +597,21 @@ export const listAttachments = query({
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
           .collect();
         return Promise.all(
-          rows.map(async (attachment) => ({
-            id: attachment._id,
-            messageId: message._id,
-            fileName: attachment.fileName,
-            fileType: attachment.fileType,
-            fileSize: attachment.fileSize,
-            url: await ctx.storage.getUrl(attachment.storageId),
-            createdAt: message._creationTime,
-          }))
+          rows.map(async (attachment) => {
+            const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
+            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? cdnUrlForStorageId(anyAtt.cdnKey) : null);
+            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
+            const cdnUrl = directCdn ?? migratedCdn;
+            return {
+              id: attachment._id,
+              messageId: message._id,
+              fileName: attachment.fileName,
+              fileType: attachment.fileType,
+              fileSize: attachment.fileSize,
+              url: cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null),
+              createdAt: message._creationTime,
+            };
+          })
         );
       })
     );
