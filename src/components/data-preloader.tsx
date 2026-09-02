@@ -126,7 +126,7 @@ function CommunityPreloader({ communityId }: { communityId: Id<"communities"> })
 
   return (
     <>
-      {channels.map((ch) => (
+      {channels.map((ch: any) => (
         <ChannelPreloader key={ch.id} channelId={ch.id} voice={ch.type === "voice"} />
       ))}
     </>
@@ -195,10 +195,10 @@ function PreloadEverything() {
     useQuery(api.channels.list, currentCommunityId ? { communityId: currentCommunityId } : "skip") ??
     [];
 
-  const conversationIds = conversations.map((c) => c.id);
+  const conversationIds = conversations.map((c: any) => c.id);
   const currentChannelIds = currentCommunityChannels
-    .filter((c) => c.type === "text")
-    .map((c) => c.id);
+    .filter((c: any) => c.type === "text")
+    .map((c: any) => c.id);
 
   const messageTargets = useMemo(() => {
     const chosen: RecentView[] = [];
@@ -213,8 +213,8 @@ function PreloadEverything() {
     // Recently opened first: that's the list most likely to be revisited, and
     // it's what survives a restart.
     recent.forEach(add);
-    conversationIds.forEach((conversationId) => add({ type: "dm", conversationId }));
-    currentChannelIds.forEach((channelId) =>
+    conversationIds.forEach((conversationId: any) => add({ type: "dm", conversationId }));
+    currentChannelIds.forEach((channelId: any) =>
       add({ type: "channel", communityId: currentCommunityId ?? "", channelId })
     );
     return chosen;
@@ -227,10 +227,10 @@ function PreloadEverything() {
     <>
       <AccountPreloader />
 
-      {communities.map((c) => (
+      {communities.map((c: any) => (
         <CommunityPreloader key={c.id} communityId={c.id} />
       ))}
-      {conversations.map((c) => (
+      {conversations.map((c: any) => (
         <ConversationPreloader key={c.id} conversationId={c.id} />
       ))}
 

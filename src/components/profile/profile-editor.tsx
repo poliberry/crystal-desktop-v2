@@ -164,7 +164,7 @@ function ScopeMenu({
           <span className="flex-1">Main Profile</span>
           {!communityId && <Check className="size-4" />}
         </DropdownMenuItem>
-        {communities.map((community) => (
+        {communities.map((community: any) => (
           <DropdownMenuItem
             key={community.id}
             onClick={() => onChange(community.id, community.name)}

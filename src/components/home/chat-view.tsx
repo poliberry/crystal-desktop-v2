@@ -134,7 +134,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
 
   const isGroup = conversation.type === "group";
   const title = isGroup
-    ? conversation.name || conversation.members.map((m) => m.name).join(", ")
+    ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
     : (conversation.members[0]?.name ?? "Unknown");
   const avatarUser = isGroup ? undefined : conversation.members[0];
   const activities = (avatarUser?.activities ?? []) as RichPresenceActivity[];
@@ -147,8 +147,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   // Everyone in here whose birthday it is — the composer prompt is about them.
   // A plural list because a group DM can, eventually, have two.
   const birthdayMembers = conversation.members
-    .filter((member) => member.isBirthday)
-    .map((member) => ({ name: member.name }));
+    .filter((member: any) => member.isBirthday)
+    .map((member: any) => ({ name: member.name }));
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
@@ -319,7 +319,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
           name={conversation.name ?? null}
           imageUrl={conversation.imageUrl}
           members={conversation.members}
-          fallbackName={conversation.members.map((m) => m.name).join(", ")}
+          fallbackName={conversation.members.map((m: any) => m.name).join(", ")}
           open={editingGroup}
           onOpenChange={setEditingGroup}
         />

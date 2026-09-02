@@ -33,9 +33,9 @@ export function GlobalSearch() {
   const matchedConversations = useMemo(() => {
     if (!needle) return [];
     return conversations
-      .filter((c) => {
+      .filter((c: any) => {
         const title =
-          c.type === "group" ? c.name || c.members.map((m) => m.name).join(", ") : (c.members[0]?.name ?? "");
+          c.type === "group" ? c.name || c.members.map((m: any) => m.name).join(", ") : (c.members[0]?.name ?? "");
         return title.toLowerCase().includes(needle);
       })
       .slice(0, 5);
@@ -43,7 +43,7 @@ export function GlobalSearch() {
 
   const matchedCommunities = useMemo(() => {
     if (!needle) return [];
-    return communities.filter((c) => c.name.toLowerCase().includes(needle)).slice(0, 5);
+    return communities.filter((c: any) => c.name.toLowerCase().includes(needle)).slice(0, 5);
   }, [communities, needle]);
 
   const hasResults = matchedConversations.length > 0 || matchedCommunities.length > 0;
@@ -107,10 +107,10 @@ export function GlobalSearch() {
                 <p className="px-2 py-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                   Direct messages
                 </p>
-                {matchedConversations.map((c) => {
+                {matchedConversations.map((c: any) => {
                   const isGroup = c.type === "group";
                   const title = isGroup
-                    ? c.name || c.members.map((m) => m.name).join(", ")
+                    ? c.name || c.members.map((m: any) => m.name).join(", ")
                     : (c.members[0]?.name ?? "Unknown");
                   return (
                     <button
@@ -139,7 +139,7 @@ export function GlobalSearch() {
                 <p className="px-2 py-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                   Communities
                 </p>
-                {matchedCommunities.map((c) => (
+                {matchedCommunities.map((c: any) => (
                   <button
                     key={c.id}
                     type="button"

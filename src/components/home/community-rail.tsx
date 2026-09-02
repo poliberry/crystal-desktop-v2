@@ -258,7 +258,7 @@ function UnreadDirectMessages() {
   const conversations = useCachedQuery(api.conversations.listMine, {}, "conversations.listMine") ?? [];
   // Durable + coalescing, like the chat views (see src/lib/outbox.ts).
   const markRead = useOutboxMutation("markRead", "dm");
-  const unread = conversations.filter((c) => c.unread);
+  const unread = conversations.filter((c: any) => c.unread);
 
   return (
     <AnimatePresence initial={false}>
@@ -272,7 +272,7 @@ function UnreadDirectMessages() {
           transition={RAIL_TRANSITION}
         >
           <AnimatePresence initial={false}>
-            {unread.map((conversation) => {
+            {unread.map((conversation: any) => {
               // A group's first member stands in for it, the same shorthand
               // the DM list uses; a one-to-one DM has exactly one other
               // person.
@@ -615,7 +615,7 @@ export function CommunityRail({
             keeps the first and last tile's badges off the edge of the
             ScrollArea's overflow-hidden viewport. */}
         <div className="flex flex-col items-center gap-2 px-2 py-1">
-          {communities.map((community) => (
+          {communities.map((community: any) => (
             <CommunityTile
               key={community.id}
               community={community}

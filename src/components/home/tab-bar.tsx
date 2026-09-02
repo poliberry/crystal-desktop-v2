@@ -17,7 +17,7 @@ function DmTabLabel({ conversationId }: { conversationId: Id<"conversations"> })
 
   const isGroup = conversation.type === "group";
   const title = isGroup
-    ? conversation.name || conversation.members.map((m) => m.name).join(", ")
+    ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
     : (conversation.members[0]?.name ?? "Unknown");
 
   return (

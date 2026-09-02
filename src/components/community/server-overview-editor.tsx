@@ -399,7 +399,7 @@ export function ServerOverviewEditor({
                       see it on the card.
                     </p>
                     <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border/50 p-2">
-                      {channels.map((channel) => (
+                      {channels.map((channel: any) => (
                         <label
                           key={channel.id}
                           className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-accent/50"
@@ -447,8 +447,8 @@ export function ServerOverviewEditor({
                         </SelectTrigger>
                         <SelectContent>
                           {channels
-                            .filter((c) => c.type === "text")
-                            .map((channel) => (
+                            .filter((c: any) => c.type === "text")
+                            .map((channel: any) => (
                               <SelectItem key={channel.id} value={channel.id}>
                                 #{channel.name}
                               </SelectItem>

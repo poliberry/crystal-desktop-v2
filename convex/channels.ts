@@ -241,7 +241,7 @@ export const remove = mutation({
     await ctx.db.delete(channelId);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
-      await cacheInvalidateKeys(`community:${community.communityId}:user:${me._id}:channels`, `channel:${channelId}:meta`, `channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`);
+      await cacheInvalidateKeys(`community:${community._id}:user:${me._id}:channels`, `channel:${channelId}:meta`, `channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`);
     } catch {}
   },
 });
