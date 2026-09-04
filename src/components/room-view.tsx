@@ -98,6 +98,9 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
       imageUrl: profileByIdentity.get(participant.identity)?.imageUrl,
       name: profileByIdentity.get(participant.identity)?.name,
       accent: profileByIdentity.get(participant.identity)?.avatarAccent,
+      gradientStart: profileByIdentity.get(participant.identity)?.borderGradientStart,
+      gradientEnd: profileByIdentity.get(participant.identity)?.borderGradientEnd,
+      avatarDecoration: profileByIdentity.get(participant.identity)?.avatarDecoration,
     })),
     ...screenSharers.map((participant) => ({
       key: `screen-${participant.identity}`,

@@ -6,7 +6,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { CommunitySettingsChannelsTab } from "@/components/community/community-settings-channels-tab";
 import { CommunitySettingsEmojisTab } from "@/components/community/community-settings-emojis-tab";
 import { CommunitySettingsGeneralTab } from "@/components/community/community-settings-general-tab";
-import { CommunitySettingsMembersTab } from "@/components/community/community-settings-members-tab";
 import { CommunitySettingsRolesTab } from "@/components/community/community-settings-roles-tab";
 import { CommunitySettingsSoundboardTab } from "@/components/community/community-settings-soundboard-tab";
 import {
@@ -39,7 +38,6 @@ interface CommunitySettingsDialogProps {
   canManageRoles: boolean;
   canManageChannels: boolean;
   canManageEmojis: boolean;
-  canKick: boolean;
   isOwner: boolean;
 }
 
@@ -51,7 +49,6 @@ const data = {
         { title: "General" },
         { title: "Roles" },
         { title: "Channels" },
-        { title: "Members" },
         { title: "Emojis" },
         { title: "Soundboard" },
       ],
@@ -67,7 +64,6 @@ export function CommunitySettingsDialog({
   canManageRoles,
   canManageChannels,
   canManageEmojis,
-  canKick,
   isOwner,
 }: CommunitySettingsDialogProps) {
   const [selectedTab, setSelectedTab] = useState("General");
@@ -141,13 +137,6 @@ export function CommunitySettingsDialog({
                   <CommunitySettingsChannelsTab
                     communityId={communityId}
                     canManage={canManageChannels}
-                  />
-                )}
-                {selectedTab === "Members" && (
-                  <CommunitySettingsMembersTab
-                    communityId={communityId}
-                    canManageRoles={canManageRoles}
-                    canKick={canKick}
                   />
                 )}
                 {selectedTab === "Emojis" && (

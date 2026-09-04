@@ -40,6 +40,14 @@ export interface CallTile {
   /** Cached dominant colour of the avatar, so the tile paints its tint on
    * the first frame instead of flashing while it re-samples the image. */
   accent?: string;
+  /** The participant's profile border gradient, resolved against this call's
+   * community like the name below. Painted as the tile's backdrop; tiles
+   * without one keep the avatar accent above — see `ParticipantTile`. */
+  gradientStart?: string;
+  gradientEnd?: string;
+  /** The decoration worn around the participant's avatar, resolved against
+   * this call's community like the name below. */
+  avatarDecoration?: string;
   /** Name and avatar as this call's community sees them — a per-server
    * nickname wins over the one baked into the LiveKit token at join time
    * (see `RoomView`). Absent in DM calls, which have no server identity. */
@@ -98,6 +106,7 @@ function TileWithContextMenu({
   onVolumeChange,
   onMuteToggle,
   moderation,
+  avatarSize,
 }: {
   tile: CallTile;
   onClick: () => void;
@@ -108,6 +117,9 @@ function TileWithContextMenu({
   /** Set only in a community voice channel — a DM call has no roles to
    * moderate under. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
+  /** Passed to `ParticipantTile` — the expanded view draws the smaller
+   * avatar, in both the focused tile and the rail beside it. */
+  avatarSize?: "default" | "sm";
 }) {
   const soundboardActive = useSoundboardActivity().has(
     tile.participant.identity,
@@ -138,6 +150,10 @@ function TileWithContextMenu({
         imageUrl={tile.imageUrl}
         name={tile.name}
         accent={tile.accent}
+        gradientStart={tile.gradientStart}
+        gradientEnd={tile.gradientEnd}
+        avatarDecoration={tile.avatarDecoration}
+        avatarSize={avatarSize}
         fill
         onClick={onClick}
         localVolume={settings.volume}
@@ -416,6 +432,7 @@ function FocusedTileViewport({
         <TileWithContextMenu
           moderation={moderation}
           tile={tile}
+          avatarSize="sm"
           onClick={handleTileClick}
           watchState={watchState}
           settings={settings}
@@ -735,6 +752,7 @@ export function CallGrid({
                 <TileWithContextMenu
                   moderation={moderation}
                   tile={tile}
+                  avatarSize="sm"
                   onClick={() => setFocusedKey(tile.key)}
                   watchState={getWatchState(tile)}
                   settings={getSettings(tile)}

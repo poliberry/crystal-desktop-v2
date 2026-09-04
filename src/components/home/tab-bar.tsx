@@ -10,6 +10,7 @@ import { GroupAvatar } from "@/components/home/group-avatar";
 import { type Tab, useTabs } from "@/components/home/tabs-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { House } from "@animateicons/react/lucide";
 
 function DmTabLabel({ conversationId }: { conversationId: Id<"conversations"> }) {
   const conversation = useQuery(api.conversations.get, { conversationId });
@@ -67,7 +68,7 @@ function TabLabel({ tab }: { tab: Tab }) {
     case "home":
       return (
         <>
-          <LogoMark className="size-3.5 shrink-0" />
+          <House duration={0.5} className="size-3.5 shrink-0" />
           <span className="truncate">Home</span>
         </>
       );
@@ -87,8 +88,8 @@ function TabButton({ tab }: { tab: Tab }) {
     <div
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       className={cn(
-        "group flex h-7 max-w-56 min-w-0 items-center gap-1 rounded-md py-1 pr-1 pl-0 text-xs transition-colors",
-        isActive ? "bg-background text-foreground" : "text-muted-foreground hover:bg-accent/60"
+        "group flex h-6 max-w-56 min-w-0 items-center rounded-full gap-1 py-1 pr-1 pl-0 text-xs transition-colors",
+        isActive ? "bg-accent/40 text-foreground" : "text-muted-foreground hover:bg-accent/60"
       )}
     >
       <button
@@ -134,7 +135,7 @@ export function TabBar() {
   return (
     <div
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto"
+      className="flex min-w-0 flex-1 gap-1 items-center overflow-x-auto"
     >
       {tabs.map((tab) => (
         <TabButton key={tab.id} tab={tab} />

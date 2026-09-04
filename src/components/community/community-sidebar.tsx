@@ -26,6 +26,7 @@ import {
   FolderPlus,
   Hash,
   LayoutDashboard,
+  Users,
   Volume2,
 } from "lucide-react";
 import type { Room } from "livekit-client";
@@ -67,6 +68,7 @@ import { useCachedQuery } from "@/hooks/use-cached-query";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { LayoutDashboardIcon } from "@animateicons/react/lucide";
+import { useUiPreferences } from "../ui-preferences-provider";
 
 type ChannelRow = {
   id: Id<"channels">;
@@ -94,6 +96,8 @@ interface CommunitySidebarProps {
   /** Open the server's front page. Sits above the channel list, because
    * that's what it's a front page *to*. */
   onSelectOverview: () => void;
+  onSelectMembers: () => void;
+  membersSelected: boolean;
   /** True while the overview is what's on screen, so the row can look
    * selected the way a channel does. */
   overviewSelected: boolean;
@@ -143,8 +147,11 @@ export function CommunitySidebar({
   selectedChannelId,
   onSelectChannel,
   onSelectOverview,
+  onSelectMembers,
+  membersSelected,
   overviewSelected,
 }: CommunitySidebarProps) {
+  const { communityNavStyle } = useUiPreferences();
   const community = useQuery(api.communities.get, { communityId });
   const rawChannels = useCachedQuery(
     api.channels.list,
@@ -194,13 +201,19 @@ export function CommunitySidebar({
   );
 
   useEffect(() => {
-    if (!selectedChannelId && channels.length > 0) {
-      const firstText = [...channels]
-        .sort((a, b) => a.position - b.position)
-        .find((c) => c.type === "text");
-      if (firstText) onSelectChannel(firstText.id, "text");
-    }
-  }, [communityId, selectedChannelId, channels.length > 0]);
+    // A channel can disappear from the live query while it is still the
+    // active tab (for example, another moderator deletes it). Treat that the
+    // same as having no selection and move to the first remaining text
+    // channel. Waiting for the query itself avoids replacing a valid channel
+    // with a fallback while the list is still loading.
+    if (membersSelected || rawChannels === undefined) return;
+    if (selectedChannelId && channels.some((channel: ChannelRow) => channel.id === selectedChannelId)) return;
+
+    const firstText = [...channels]
+      .sort((a, b) => a.position - b.position)
+      .find((channel) => channel.type === "text");
+    if (firstText) onSelectChannel(firstText.id, "text");
+  }, [communityId, selectedChannelId, rawChannels, membersSelected]);
 
   if (!community) {
     return (
@@ -214,19 +227,20 @@ export function CommunitySidebar({
   }
 
   const hasBanner = !!community.bannerUrl;
+  const compact = communityNavStyle !== "rail";
 
   return (
     <SidebarCommunityContext.Provider value={communityId}>
-    <div className="flex w-64 shrink-0 flex-col border-x backdrop-blur-xl shadow-md">
+      <div className={cn(compact ? "w-80" : "w-64", "flex shrink-0 flex-col border-x border-t backdrop-blur-xl rounded-tl-xl shadow-md")}>
       <DropdownMenu>
         <div className={cn("relative shrink-0", hasBanner ? "h-32" : "h-12")}>
           {hasBanner && community.bannerUrl && (
             <>
               <CachedBackground
                 url={community.bannerUrl}
-                className="absolute inset-0 bg-cover bg-center"
+                className="absolute inset-0 bg-cover bg-center rounded-tl-xl"
               />
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-background" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 rounded-tl-xl bg-gradient-to-b from-transparent to-background" />
             </>
           )}
           <DropdownMenuTrigger asChild>
@@ -278,6 +292,25 @@ export function CommunitySidebar({
         <LayoutDashboardIcon duration={0.8} className="size-4 shrink-0" />
         Overview
       </button>
+
+      {hasPermission(myPermissions, PERMISSIONS.KICK_MEMBERS) ||
+      hasPermission(myPermissions, PERMISSIONS.BAN_MEMBERS) ||
+      hasPermission(myPermissions, PERMISSIONS.MODERATE_MEMBERS) ||
+      hasPermission(myPermissions, PERMISSIONS.MANAGE_ROLES) ? (
+        <button
+          type="button"
+          onClick={onSelectMembers}
+          className={cn(
+            "mx-2 mb-1 flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+            membersSelected
+              ? "bg-accent text-foreground"
+              : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+          )}
+        >
+          <Users className="size-4 shrink-0" />
+          Members
+        </button>
+      ) : null}
 
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -363,7 +396,6 @@ export function CommunitySidebar({
         canManageRoles={hasPermission(myPermissions, PERMISSIONS.MANAGE_ROLES)}
         canManageChannels={canManageChannels}
         canManageEmojis={canManageEmojis}
-        canKick={hasPermission(myPermissions, PERMISSIONS.KICK_MEMBERS)}
         isOwner={community.isOwner}
       />
     </div>

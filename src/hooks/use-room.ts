@@ -11,6 +11,7 @@ import {
   type Participant,
   type RemoteParticipant,
   type RemoteTrackPublication,
+  type TrackPublishOptions,
 } from "livekit-client";
 
 import { useAudioPreferences } from "@/components/audio-provider";
@@ -22,6 +23,8 @@ import {
 import { getDesktopAPI, isElectron } from "@/lib/desktop";
 import { applyNoiseSuppression, localMicrophoneTrack } from "@/lib/noise-filter";
 import {
+  resolveStreamContentHint,
+  resolveStreamEncoding,
   resolveStreamResolution,
   type StreamQuality,
   type SystemAudioChoice,
@@ -122,6 +125,51 @@ async function enableMicrophone(room: Room, enabled: boolean): Promise<void> {
     await room.switchActiveDevice("audioinput", "default", false).catch(() => {});
     await room.localParticipant.setMicrophoneEnabled(enabled);
   }
+}
+
+/**
+ * How a screen share is published, as opposed to how it is captured.
+ *
+ * Two of LiveKit's defaults are expensive on the *sharing* machine and worth
+ * overriding here:
+ *
+ *  - Simulcast is on, and for a screen share that means encoding the capture
+ *    twice — once at full size and again at half — so the SFU can drop
+ *    viewers on poor connections to the smaller layer. Both are VP8, which
+ *    Chromium encodes in software, so a 1080p share costs roughly one and a
+ *    half full-resolution software encodes on top of the capture itself. That
+ *    is the bulk of what makes a machine feel slow while sharing, and a share
+ *    is far more sensitive to the sharer's CPU than to a viewer's bandwidth —
+ *    so one layer it is, with the SFU's own bitrate estimation left to adapt
+ *    within it.
+ *  - `screenShareEncoding` defaults to 1080p capped at 15 fps whatever was
+ *    captured, so picking 30 or 60 fps in the picker used to produce frames
+ *    the encoder immediately threw away. Matching it to the capture is both
+ *    what the picker promises and less wasted work.
+ *
+ * `degradationPreference` is set explicitly to what LiveKit would pick anyway,
+ * because it matters here: under CPU pressure a share should shed frames and
+ * stay readable rather than go blurry.
+ */
+function screenSharePublishOptions(quality: StreamQuality): TrackPublishOptions {
+  return {
+    source: Track.Source.ScreenShare,
+    simulcast: false,
+    screenShareEncoding: resolveStreamEncoding(quality),
+    degradationPreference: "maintain-resolution",
+  };
+}
+
+/**
+ * Tell the encoder what kind of picture it is about to be given.
+ *
+ * Set on the underlying `MediaStreamTrack` rather than through LiveKit, which
+ * has no option for it. Costs nothing and saves a great deal: see
+ * `resolveStreamContentHint`.
+ */
+function applyContentHint(track: LocalVideoTrack, quality: StreamQuality): void {
+  const media = track.mediaStreamTrack;
+  if (media) media.contentHint = resolveStreamContentHint(quality);
 }
 
 export function useRoom() {
@@ -616,8 +664,9 @@ export function useRoom() {
       });
       const videoTrack =
         (tracks.find((t) => t.kind === Track.Kind.Video) as LocalVideoTrack | undefined) ??
-        tracks[0];
-      await local.publishTrack(videoTrack, { source: Track.Source.ScreenShare });
+        (tracks[0] as LocalVideoTrack);
+      applyContentHint(videoTrack, streamQuality);
+      await local.publishTrack(videoTrack, screenSharePublishOptions(streamQuality));
 
       screenShareSourceIdRef.current = sourceId;
       setScreenShareSourceId(sourceId);
@@ -723,7 +772,8 @@ export function useRoom() {
         existing.stop();
       }
 
-      await local.publishTrack(videoTrack, { source: Track.Source.ScreenShare });
+      applyContentHint(videoTrack, qualityRef.current);
+      await local.publishTrack(videoTrack, screenSharePublishOptions(qualityRef.current));
 
       const audioTrack = tracks.find((t) => t.kind === Track.Kind.Audio);
       if (audioTrack) {

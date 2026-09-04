@@ -1071,6 +1071,10 @@ export const getUsersByIds = query({
             avatarAccent: usingServerAvatar ? serverProfile.avatarAccent : u.avatarAccent,
             avatarDecoration: effectiveDecoration(u),
             isBirthday: isBirthdayNow(u),
+            // Profile border gradient, merged field by field like getProfile:
+            // it's a card cosmetic, not tied to which avatar won.
+            borderGradientStart: serverProfile?.borderGradientStart ?? u.borderGradientStart,
+            borderGradientEnd: serverProfile?.borderGradientEnd ?? u.borderGradientEnd,
           };
         })
     );

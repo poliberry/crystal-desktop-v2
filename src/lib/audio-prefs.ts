@@ -187,3 +187,49 @@ export function resolveStreamResolution(quality: StreamQuality): {
     STREAM_RESOLUTIONS.find((r) => r.key === quality.resolution) ?? STREAM_RESOLUTIONS[0];
   return { width: preset.width, height: preset.height, frameRate: quality.frameRate };
 }
+
+/**
+ * Bitrate ceiling (bits/s) to encode a share at, by resolution and frame rate.
+ *
+ * LiveKit's own default for a screen share is `h1080fps15` — 1080p capped at
+ * 15 fps — regardless of what was actually captured. That cap is invisible in
+ * the picker: choosing 30 or 60 fps changed the capture but not the encoder,
+ * so the extra frames were produced and then dropped. These numbers exist so
+ * the encoder is told the same thing the capture is.
+ */
+const STREAM_BITRATES: Record<StreamResolutionKey, Record<StreamFrameRate, number>> = {
+  "1080p": { 15: 2_500_000, 30: 4_000_000, 60: 6_000_000 },
+  "720p": { 15: 1_500_000, 30: 2_500_000, 60: 3_500_000 },
+  "480p": { 15: 700_000, 30: 1_200_000, 60: 1_800_000 },
+};
+
+/** Encoder settings matching the capture constraints for the same quality. */
+export function resolveStreamEncoding(quality: StreamQuality): {
+  maxBitrate: number;
+  maxFramerate: number;
+  priority: RTCPriorityType;
+} {
+  const byFps = STREAM_BITRATES[quality.resolution] ?? STREAM_BITRATES["1080p"];
+  return {
+    maxBitrate: byFps[quality.frameRate] ?? byFps[30],
+    maxFramerate: quality.frameRate,
+    priority: "medium",
+  };
+}
+
+/**
+ * The `contentHint` to stamp on a captured screen track.
+ *
+ * This is the single biggest lever on how much CPU a share costs: "detail"
+ * lets the encoder leave a static desktop almost entirely alone between
+ * frames and spend its bitrate on staying readable, while "motion" keeps the
+ * frame rate up through constant change at the cost of sharpness. Without a
+ * hint the encoder has to assume the worst of both.
+ *
+ * The frame rate the user picked is the best available signal for which they
+ * want: 60 fps is asked for to stream something moving, 15 and 30 to show
+ * someone a screen.
+ */
+export function resolveStreamContentHint(quality: StreamQuality): "detail" | "motion" {
+  return quality.frameRate >= 60 ? "motion" : "detail";
+}

@@ -137,6 +137,10 @@ const api = {
     open: (options: { kind: "frame" | "decoration"; scopeId?: string; scopeName?: string }) =>
       ipcRenderer.invoke("editor:open", options),
   },
+  clipboard: {
+    writeImage: (buffer: ArrayBuffer, mimeType: string) =>
+      ipcRenderer.invoke("clipboard:write-image", buffer, mimeType),
+  },
   call: {
     setActive: (active: boolean) => ipcRenderer.invoke("call:active", active),
   },

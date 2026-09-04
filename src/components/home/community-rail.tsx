@@ -94,7 +94,7 @@ function RailButton({
               variant={active ? "default" : "secondary"}
               size="icon"
               className={cn(
-                "size-12 rounded-none transition-[border-radius] ease-in-out hover:rounded-2xl",
+                "size-12 rounded-full transition-[border-radius] ease-in-out hover:rounded-2xl",
                 active && "rounded-2xl",
               )}
               onClick={onClick}
@@ -301,7 +301,7 @@ function UnreadDirectMessages() {
                               className="flex size-12 items-center justify-center overflow-hidden rounded-none transition-all duration-200 ease-in-out group"
                             >
                               <Avatar className="size-12">
-                                <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} className="rounded-none group-hover:rounded-2xl" />
+                                <AvatarImage src={conversation.imageUrl ?? other?.imageUrl} alt={name} className="rounded-md group-hover:rounded-2xl" />
                                 <AvatarFallback className="text-sm">
                                   {name.slice(0, 2).toUpperCase()}
                                 </AvatarFallback>

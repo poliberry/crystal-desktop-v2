@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -28,18 +28,12 @@ const isDev = !!process.env.ELECTRON_START_URL;
  * `whenReady`.
  */
 app.commandLine.appendSwitch("enable-smooth-scrolling");
-// Memory/performance: cap renderer heap (was unbounded → ~1GB). `--expose-gc`
-// lets the `app:gc` IPC hint actually call global.gc. We intentionally do
-// NOT set `disable-renderer-backgrounding` — that would defeat
-// `backgroundThrottling:true` on the BrowserWindow and keep hidden-window
-// timers + Convex subscriptions hot (200-400MB extra). Background throttling
-// is only disabled briefly during a call via `call:active` (see createWindow).
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=256 --expose-gc");
+// Memory/performance: keep a generous renderer heap ceiling while retaining
+// the explicit GC hook. A 256 MB ceiling makes Chromium spend startup time in
+// GC (and can starve first paint) on Linux when the initial app bundle and
+// signed-in data subscriptions are loaded together.
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512 --expose-gc");
 app.commandLine.appendSwitch("disable-features", "Translate");
-// Keep renderer count bounded — one renderer process covers main+pip+editor
-// (same origin/session). Without this Chromium may spawn a second renderer
-// for the pop-out/editor → ~120MB extra baseline.
-app.commandLine.appendSwitch("renderer-process-limit", "1");
 
 /**
  * Which build this is: Stable, PTB, Canary or Development (see
@@ -213,6 +207,10 @@ function wireWindowStateEvents(win: BrowserWindow): void {
 }
 
 let mainWindow: BrowserWindow | null = null;
+/** Windows in an active call must remain unthrottled while hidden so audio,
+ * video, and signalling continue. Everything else may return to Chromium's
+ * normal background throttling after it has repainted on restore. */
+const activeCallWebContents = new Set<number>();
 
 // Set right before any *real* quit path (tray "Quit", OS shutdown, Cmd+Q on
 // mac) so the main window's `close` handler below knows to let it through
@@ -363,6 +361,41 @@ function createWindow(): void {
     event.preventDefault();
     win.hide();
   });
+
+  // A throttled Chromium renderer can take several seconds to schedule its
+  // first composite after Windows restores/minimises it, particularly when
+  // several blurred surfaces must be redrawn on an integrated GPU. Ask for a
+  // fresh paint immediately and briefly lift throttling. The one-second grace
+  // period only applies to non-call windows; afterwards normal idle savings
+  // resume, including the next time the window is minimised.
+  let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  const refreshAfterRestore = () => {
+    if (win.isDestroyed()) return;
+    if (restoreTimer) clearTimeout(restoreTimer);
+    const id = win.webContents.id;
+    if (!activeCallWebContents.has(id)) {
+      try {
+        (win.webContents as unknown as { setBackgroundThrottling: (v: boolean) => void })
+          .setBackgroundThrottling(false);
+      } catch { /* ignore */ }
+    }
+    try { win.webContents.invalidate(); } catch { /* ignore */ }
+    restoreTimer = setTimeout(() => {
+      restoreTimer = null;
+      if (win.isDestroyed() || activeCallWebContents.has(id)) return;
+      try {
+        (win.webContents as unknown as { setBackgroundThrottling: (v: boolean) => void })
+          .setBackgroundThrottling(true);
+      } catch { /* ignore */ }
+    }, 1_000);
+  };
+  win.on("show", refreshAfterRestore);
+  win.on("restore", refreshAfterRestore);
+  win.on("minimize", () => {
+    if (restoreTimer) clearTimeout(restoreTimer);
+    restoreTimer = null;
+  });
+  win.on("closed", () => activeCallWebContents.delete(win.webContents.id));
 
   wireWindowStateEvents(win);
   mainWindow = win;
@@ -544,15 +577,25 @@ app.whenReady().then(async () => {
         filePath = path.join(outDir, pathname, "index.html");
       }
 
-      if (!fs.existsSync(filePath)) {
-        // Fallback to the root index (handles unknown deep-link paths)
-        filePath = path.join(outDir, "index.html");
-      }
-
       try {
-        const content = fs.readFileSync(filePath);
+        // The renderer asks for many startup chunks in parallel. Synchronous
+        // disk reads here run on Electron's main thread and turn that burst
+        // into a queue on slow disks; keep the protocol handler asynchronous
+        // so window, IPC, and the remaining resource requests stay responsive.
+        let content: Buffer;
+        try {
+          content = await fs.promises.readFile(filePath);
+        } catch {
+          // Fallback to the root index (handles unknown deep-link paths).
+          filePath = path.join(outDir, "index.html");
+          content = await fs.promises.readFile(filePath);
+        }
         const ext = path.extname(filePath).toLowerCase();
-        return new Response(content, {
+        const body = content.buffer.slice(
+          content.byteOffset,
+          content.byteOffset + content.byteLength,
+        ) as ArrayBuffer;
+        return new Response(body, {
           headers: { "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream" },
         });
       } catch {
@@ -581,7 +624,9 @@ app.whenReady().then(async () => {
   // Grant media + display capture for the renderer (LiveKit + screen share),
   // plus clipboard-write for the invite-code copy button (navigator.clipboard
   // .writeText is gated behind the "clipboard-sanitized-write" permission —
-  // without it Chromium rejects every write with NotAllowedError).
+  // without it Chromium rejects every write with NotAllowedError). Image
+  // copies via `navigator.clipboard.write([ClipboardItem])` need the broader
+  // `clipboard-read`/`clipboard-write` permissions.
   ses.setPermissionRequestHandler((_webContents, permission, callback) => {
     const allowed = [
       "media",
@@ -589,6 +634,8 @@ app.whenReady().then(async () => {
       "notifications",
       "fullscreen",
       "clipboard-sanitized-write",
+      "clipboard-read",
+      "clipboard-write",
     ];
     callback(allowed.includes(permission));
   });
@@ -597,7 +644,7 @@ app.whenReady().then(async () => {
   // before the request; without an allowlist here the check is denied and
   // the request handler above never even runs.
   ses.setPermissionCheckHandler((_webContents, permission) => {
-    return ["media", "display-capture", "fullscreen", "clipboard-sanitized-write", "notifications"].includes(permission);
+    return ["media", "display-capture", "fullscreen", "clipboard-sanitized-write", "clipboard-read", "clipboard-write", "notifications"].includes(permission);
   });
 
   // The custom screen-share picker (see ScreenSharePicker.tsx) tells us which
@@ -614,7 +661,11 @@ app.whenReady().then(async () => {
     const requestedId = pendingDisplaySourceId;
     pendingDisplaySourceId = null;
     void desktopCapturer
-      .getSources({ types: ["screen", "window"] })
+      // No thumbnails: this call only exists to turn an id back into a source
+      // handle, and the default is a 150x150 capture of *every* open window —
+      // a visible hitch at the exact moment a share starts, for pictures
+      // nothing here looks at. (The picker asks for its own, separately.)
+      .getSources({ types: ["screen", "window"], thumbnailSize: { width: 0, height: 0 } })
       .then((sources) => {
         const primaryId = String(screen.getPrimaryDisplay().id);
         const selected =
@@ -745,6 +796,17 @@ app.whenReady().then(async () => {
       fs.writeFileSync(file, "", "utf8");
     }
     shell.showItemInFolder(file);
+    return true;
+  });
+
+  // Clipboard: copy an image from main via nativeImage so it works even when
+  // the web Clipboard API is unavailable or blocked (e.g. stricter permission
+  // config). Renderer sends the raw bytes it fetched; main writes them.
+  ipcMain.handle("clipboard:write-image", (_event, buffer: ArrayBuffer, _mimeType?: string) => {
+    const raw = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer as ArrayBuffer);
+    const img = nativeImage.createFromBuffer(raw);
+    if (img.isEmpty()) throw new Error("Failed to decode image for clipboard");
+    clipboard.writeImage(img);
     return true;
   });
 
@@ -1048,6 +1110,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("call:active", (event, active: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
+      const id = win.webContents.id;
+      if (active) activeCallWebContents.add(id);
+      else activeCallWebContents.delete(id);
       // Electron exposes `webContents.setBackgroundThrottling` at runtime
       try { (win.webContents as unknown as { setBackgroundThrottling: (v: boolean) => void }).setBackgroundThrottling(!active); } catch { /* ignore */ }
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { HeadphoneOff, MicOff } from "lucide-react";
 import {
   ParticipantEvent,
@@ -10,6 +10,12 @@ import {
   type TrackPublication,
 } from "livekit-client";
 
+import {
+  Avatar,
+  AvatarDecoration,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { useAvatarAccent } from "@/hooks/use-avatar-accent";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
@@ -23,6 +29,21 @@ interface ParticipantTileProps {
   name?: string;
   /** Cached dominant colour of `imageUrl`. Sampled locally when absent. */
   accent?: string;
+  /** The profile border gradient this call's community sees — a server
+   * profile's pair wins over the global one (see `getUsersByIds`). Painted as
+   * the tile's backdrop behind the avatar; with either end missing the tile
+   * falls back to the avatar's accent tint above. */
+  gradientStart?: string;
+  gradientEnd?: string;
+  /** The decoration worn around the avatar, resolved the same way the name
+   * and gradient are (see `getUsersByIds`). Drawn only when there's no video
+   * — a camera covers the avatar it would be worn on. */
+  avatarDecoration?: string;
+  /** How large the avatar placeholder is drawn. `"sm"` is the expanded view's
+   * size — used by the focused tile and the thumbnail rail beside it, where
+   * the tile is either far bigger than the avatar needs to be or too small to
+   * hold the full-size one. */
+  avatarSize?: "default" | "sm";
   /** Fill the parent's box exactly (grid/focused view) instead of the
    * default fixed 16:9 card (bottom rail thumbnails). */
   fill?: boolean;
@@ -40,7 +61,22 @@ interface ParticipantTileProps {
  * additionally routed to the hardware sink (Linux) so the app never
  * accidentally re-captures itself.
  */
-export function ParticipantTile({ participant, isLocal = false, imageUrl, name, accent, fill = false, onClick, localVolume, localMuted, soundboardActive = false }: ParticipantTileProps) {
+export function ParticipantTile({
+  participant,
+  isLocal = false,
+  imageUrl,
+  name,
+  accent,
+  gradientStart,
+  gradientEnd,
+  avatarDecoration,
+  avatarSize = "default",
+  fill = false,
+  onClick,
+  localVolume,
+  localMuted,
+  soundboardActive = false,
+}: ParticipantTileProps) {
   const displayName = name || participant.name || participant.identity;
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
@@ -48,7 +84,9 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, name, 
   const [micMuted, setMicMuted] = useState(true);
   // Mirrored from the participant's own attributes — see `useRoom`, which
   // publishes it whenever the local deafen state changes.
-  const [deafened, setDeafened] = useState(participant.attributes?.deafened === "1");
+  const [deafened, setDeafened] = useState(
+    participant.attributes?.deafened === "1",
+  );
   const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
   const avatarBg = useAvatarAccent(imageUrl, accent);
 
@@ -85,7 +123,8 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, name, 
       // A muted camera shows a black frame; drop to the initials placeholder
       // instead. Applies to the first publish too (local tracks fire
       // `LocalTrackPublished`, not `TrackUnmuted`).
-      const isVideo = track?.kind === Track.Kind.Video || pub?.kind === Track.Kind.Video;
+      const isVideo =
+        track?.kind === Track.Kind.Video || pub?.kind === Track.Kind.Video;
       if (isVideo && pub && track && !pub.isMuted) {
         track.attach(el);
         setHasVideo(true);
@@ -117,14 +156,20 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, name, 
     };
 
     const onTrackSubscribed = (track: { source?: Track.Source }) => {
-      if (track.source === Track.Source.Camera || track.source === Track.Source.Microphone) {
+      if (
+        track.source === Track.Source.Camera ||
+        track.source === Track.Source.Microphone
+      ) {
         refresh();
       }
     };
     const onTrackUnsubscribed = () => refresh();
     const onLocalTrackPublished = () => refresh();
     const onTrackMuted = (pub: { source?: Track.Source }) => {
-      if (pub.source === Track.Source.Camera || pub.source === Track.Source.Microphone) {
+      if (
+        pub.source === Track.Source.Camera ||
+        pub.source === Track.Source.Microphone
+      ) {
         refresh();
       }
     };
@@ -169,20 +214,34 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, name, 
   const showVideo = hasVideo;
   const initials = (displayName || "?").slice(0, 2).toUpperCase();
 
+  // The profile gradient takes the place of the avatar's sampled tint when
+  // there's one to draw. Both ends are needed — half a gradient is just a
+  // colour, and not the one the user chose.
+  const gradient =
+    gradientStart && gradientEnd
+      ? `linear-gradient(to bottom, ${gradientStart}, ${gradientEnd})`
+      : undefined;
+  const backdrop: CSSProperties | undefined = showVideo
+    ? undefined
+    : gradient
+      ? { backgroundImage: gradient }
+      : avatarBg
+        ? { backgroundColor: avatarBg }
+        : undefined;
+
   return (
     <div
       onClick={onClick}
       className={cn(
-        "relative flex w-full items-center justify-center overflow-hidden rounded-lg border ring-2 ring-inset ring-transparent transition-[background-color,box-shadow]",
-        !avatarBg || showVideo ? "bg-muted/40" : "",
+        "relative flex w-full items-center justify-center overflow-hidden rounded-lg ring-2 ring-inset ring-transparent transition-[background-color,box-shadow]",
+        backdrop ? "" : "bg-muted/40",
         fill ? "h-full" : "aspect-video",
-        isLocal && "border-dashed",
         onClick && "cursor-pointer",
         // Soundboard wins the ring while it's active: it's the more
         // momentary of the two, so it reads as an event rather than a state.
-        soundboardActive ? "ring-sky-500" : isSpeaking && "ring-emerald-500"
+        soundboardActive ? "ring-sky-500" : isSpeaking && "ring-emerald-500",
       )}
-      style={!showVideo && avatarBg ? { backgroundColor: avatarBg } : undefined}
+      style={backdrop}
     >
       <video
         ref={videoRef}
@@ -192,30 +251,37 @@ export function ParticipantTile({ participant, isLocal = false, imageUrl, name, 
         className={cn(
           "h-full w-full object-cover",
           !showVideo && "hidden",
-          isLocal && hasVideo && "-scale-x-100"
+          isLocal && hasVideo && "-scale-x-100",
         )}
       />
 
       {!showVideo && (
-        <div className="flex size-15 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-2xl font-semibold text-foreground">
-          {imageUrl ? (
-            <img src={imageUrl} alt={displayName} className="size-full object-cover" />
-          ) : (
-            initials
-          )}
-        </div>
+        <Avatar className={avatarSize === "sm" ? "size-15 rounded-md" : "size-25 rounded-xl"}>
+          <AvatarImage src={imageUrl} alt={displayName} className="rounded-xl" />
+          <AvatarFallback className="bg-primary/30 text-2xl font-semibold text-foreground">
+            {initials}
+          </AvatarFallback>
+          {/* Placed in container units against the avatar it's worn on, so
+              one decoration fits both sizes above — see AvatarDecoration. */}
+          <AvatarDecoration value={avatarDecoration} />
+        </Avatar>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/60 to-transparent px-2 py-1.5">
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between w-fit bg-background/80 rounded-md gap-2 m-1 px-2 py-1.5">
+        {deafened ||
+          (micMuted && (
+            <span className="flex shrink-0 items-center gap-1 text-white/90">
+              {deafened && (
+                <HeadphoneOff className="size-3.5" aria-label="Deafened" />
+              )}
+              {micMuted && <MicOff className="size-3.5" aria-label="Muted" />}
+            </span>
+          ))}
         <span className="text-xs font-medium text-white drop-shadow">
           {displayName}
         </span>
         {/* Status is shown as glyphs rather than words so it reads the same
             at thumbnail size and needs no translation. */}
-        <span className="flex shrink-0 items-center gap-1 text-white/90">
-          {deafened && <HeadphoneOff className="size-3.5 text-destructive" aria-label="Deafened" />}
-          {micMuted && <MicOff className="size-3.5 text-destructive" aria-label="Muted" />}
-        </span>
       </div>
 
       <div ref={audioRef} className="hidden" aria-hidden />

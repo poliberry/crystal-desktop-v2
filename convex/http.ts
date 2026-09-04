@@ -36,6 +36,14 @@ registerRoutes(http, components.stripe, {
 // R2 upload proxy: client PUTs bytes here; we forward to R2 with service credentials
 // and return the public CDN URL. Keeps secrets server-side and lets us set
 // long immutable cache headers for attachments.
+const R2_CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "PUT, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Cache-Control, Content-Length, Authorization, X-Requested-With",
+  "Access-Control-Max-Age": "86400",
+  "Vary": "Origin",
+};
+
 http.route({
   path: "/r2/upload",
   method: "PUT",
@@ -45,11 +53,11 @@ http.route({
     const accessKey = process.env.R2_ACCESS_KEY_ID;
     const secretKey = process.env.R2_SECRET_ACCESS_KEY;
     if (!accountId || !bucket || !accessKey || !secretKey) {
-      return new Response("R2 not configured", { status: 501 });
+      return new Response("R2 not configured", { status: 501, headers: R2_CORS_HEADERS });
     }
     const url = new URL(request.url);
     const key = url.searchParams.get("key");
-    if (!key) return new Response("Missing key", { status: 400 });
+    if (!key) return new Response("Missing key", { status: 400, headers: R2_CORS_HEADERS });
     const contentType = url.searchParams.get("contentType") ?? request.headers.get("content-type") ?? "application/octet-stream";
     const body = await request.arrayBuffer();
 
@@ -75,16 +83,16 @@ http.route({
       if (!r.ok) {
         const text = await r.text().catch(() => "");
         console.error(`R2 PUT failed ${r.status} ${text.slice(0, 500)} for ${key}`);
-        return new Response(`R2 PUT failed: ${r.status} ${text.slice(0, 200)}`, { status: 502 });
+        return new Response(`R2 PUT failed: ${r.status} ${text.slice(0, 200)}`, { status: 502, headers: R2_CORS_HEADERS });
       }
       const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
       const publicUrl = base ? `${base.replace(/\/$/, "")}/${key}` : endpoint;
       return new Response(JSON.stringify({ key, publicUrl }), {
-        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=31536000, immutable" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=31536000, immutable", ...R2_CORS_HEADERS },
       });
     } catch (e) {
       console.error("R2 proxy error", String(e));
-      return new Response(`R2 proxy error: ${String(e)}`, { status: 500 });
+      return new Response(`R2 proxy error: ${String(e)}`, { status: 500, headers: R2_CORS_HEADERS });
     }
   }),
 });
@@ -94,11 +102,7 @@ http.route({
   method: "OPTIONS",
   handler: httpAction(async () => {
     return new Response(null, {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "PUT, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Cache-Control",
-      },
+      headers: R2_CORS_HEADERS,
     });
   }),
 });

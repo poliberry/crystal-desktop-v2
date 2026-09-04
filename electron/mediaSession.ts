@@ -250,11 +250,11 @@ class MediaSession {
   private async publish(raw: RawNowPlaying): Promise<void> {
     if (this.stopped) return;
 
-    // Our own playback is not "listening to music". Chromium publishes every
-    // <audio>/<video> element to the OS media layer, so a voice message, a
-    // video attachment or a soundboard clip would otherwise come straight
-    // back to us as a now-playing session and get announced as an activity.
-    if (isOwnPlayback(raw.source)) {
+    // Our own playback and browser playback are not reliable "listening to
+    // music" activities. Chromium publishes every <audio>/<video> element to
+    // the OS media layer, so a voice message, a video attachment, a soundboard
+    // clip, video tab, or advert would otherwise get announced as an activity.
+    if (isOwnPlayback(raw.source) || isBrowserPlayback(raw.source)) {
       if (this.current) {
         this.current = null;
         this.emit();
@@ -382,6 +382,44 @@ function isOwnPlayback(rawSource: string | undefined): boolean {
   }
   const key = identityKey(rawSource);
   return ownIdentityKeys.some((own) => key.includes(own));
+}
+
+/**
+ * Browsers publish every tab's media element as an MPRIS/SMTC session. The
+ * desktop media APIs do not tell us whether that tab is playing music, a
+ * video, a voice message, or an advert, so browser sessions are not reliable
+ * Rich Presence activities. Keep this separate from `isOwnPlayback`: a
+ * Chromium-based Crystal build must be excluded as our own app as well as
+ * matching the browser family catch-all.
+ */
+const BROWSER_MEDIA_IDS = new Set([
+  "brave",
+  "chromium",
+  "chrome",
+  "epiphany",
+  "falkon",
+  "firefox",
+  "floorp",
+  "googlechrome",
+  "librewolf",
+  "midori",
+  "microsoftedge",
+  "msedge",
+  "opera",
+  "operagx",
+  "qutebrowser",
+  "thorium",
+  "vivaldi",
+  "waterfox",
+  "yandexbrowser",
+]);
+
+function isBrowserPlayback(rawSource: string | undefined): boolean {
+  if (!rawSource) return false;
+  const tokens = rawSource.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const compact = identityKey(rawSource);
+  return tokens.some((token) => BROWSER_MEDIA_IDS.has(token)) ||
+    [...BROWSER_MEDIA_IDS].some((browser) => compact.startsWith(browser));
 }
 
 // --- source naming ---------------------------------------------------------
@@ -563,7 +601,21 @@ async function readLinuxNowPlaying(): Promise<RawNowPlaying> {
     "{{mpris:length}}",
     "{{position}}",
   ].join("\n");
-  const out = await run("playerctl", ["metadata", "--format", format], 4_000).catch(() => "");
+
+  // Query players individually. A browser is often the first/active MPRIS
+  // player, and querying playerctl without --player can therefore hide a
+  // legitimate Spotify/VLC session behind the browser we intentionally
+  // ignore.
+  const players = (await run("playerctl", ["-l"], 4_000).catch(() => ""))
+    .split(/\r?\n/)
+    .map((player) => player.trim())
+    .filter((player) => player && !isOwnPlayback(player) && !isBrowserPlayback(player));
+  if (players.length === 0) return { playing: false };
+
+  const snapshots = await Promise.all(
+    players.map((player) => run("playerctl", ["--player", player, "metadata", "--format", format], 4_000).catch(() => "")),
+  );
+  const out = snapshots.find((snapshot) => snapshot.trim().split("\n")[1] === "Playing") ?? "";
   const [player, status, title, artist, album, artUrl, length, position] = out.trim().split("\n");
   if (!player || status !== "Playing" || !title) return { playing: false };
 

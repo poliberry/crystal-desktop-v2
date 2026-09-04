@@ -37,7 +37,8 @@ const STREAM_ROTATE_MS = 10_000;
  *
  * A remote screen share is only a candidate if we're actually subscribed to it
  * (`watchedShares`): an unsubscribed publication has no track to render, so
- * featuring it would show a black box. Our own share is always available.
+ * featuring it would show a black box. Our *own* share is never a candidate —
+ * see `streams` below.
  */
 export function useFeaturedSource({
   room,
@@ -85,8 +86,16 @@ export function useFeaturedSource({
           ? room.localParticipant
           : (participants.find((p) => p.identity === identity) ?? null);
 
+      // Our own share is deliberately excluded. Painting it into a mini
+      // player that sits on top of the very desktop being captured is a
+      // mirror pointed at itself: the player repaints from the capture, the
+      // capture picks up the repaint, and the machine burns compositor,
+      // capture and encoder time on a desktop that isn't changing (the same
+      // reason `ScreenShareTile` doesn't preview your own share by default).
+      // There is also nothing in it for the viewer — they are looking at the
+      // screen it is a picture of.
       const streams = screenShares.filter(
-        (identity) => identity === localIdentity || watchedShares.includes(identity)
+        (identity) => identity !== localIdentity && watchedShares.includes(identity)
       );
       const speakers = participants.filter((p) => p.isSpeaking);
       if (speakers.length > 0) lastSpeechRef.current = now;

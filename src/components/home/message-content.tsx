@@ -1,9 +1,8 @@
 "use client";
 
 import { memo } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
 
 import { CustomEmojiChip } from "@/components/home/custom-emoji-card";
@@ -33,6 +32,15 @@ import { findSystemEmojiBySlug } from "@/lib/system-emoji";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { UserProfileContent } from "@/components/community/member-profile-card";
+
+const MessageCodeBlock = dynamic(
+  () => import("@/components/home/message-code-block").then((module) => module.MessageCodeBlock),
+  {
+    // Keep a readable code block on screen while Prism's large language
+    // registry loads. This path is only reached for fenced code blocks.
+    loading: () => <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs">Loading code…</div>,
+  },
+);
 
 interface MessageContentProps {
   text: string;
@@ -322,14 +330,10 @@ const MessageMarkdown = memo(function MessageMarkdown({
               return <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]">{children}</code>;
             }
             return (
-              <SyntaxHighlighter
+              <MessageCodeBlock
                 language={match[1]}
-                style={oneDark}
-                PreTag="div"
-                className="rounded-md! text-xs!"
-              >
-                {String(children).replace(/\n$/, "")}
-              </SyntaxHighlighter>
+                children={String(children).replace(/\n$/, "")}
+              />
             );
           },
         }}

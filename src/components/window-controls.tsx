@@ -20,7 +20,7 @@ export function WindowControls({ className }: { className?: string }) {
         type="button"
         onClick={minimize}
         aria-label="Minimize"
-        className="flex h-8 w-10 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex h-8 w-8 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
       >
         <Minus className="size-4" />
       </button>
@@ -28,7 +28,7 @@ export function WindowControls({ className }: { className?: string }) {
         type="button"
         onClick={toggleMaximize}
         aria-label={maximized ? "Restore" : "Maximize"}
-        className="flex h-8 w-10 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="flex h-8 w-8 items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground"
       >
         {maximized ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
       </button>
@@ -36,7 +36,7 @@ export function WindowControls({ className }: { className?: string }) {
         type="button"
         onClick={close}
         aria-label="Close"
-        className="flex h-8 w-10 items-center justify-center text-muted-foreground hover:bg-destructive hover:text-white"
+        className="flex h-8 w-8 items-center justify-center text-muted-foreground hover:bg-destructive hover:text-white"
       >
         <X className="size-4" />
       </button>

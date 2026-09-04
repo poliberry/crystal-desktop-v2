@@ -88,7 +88,7 @@ export function FriendsPanel({ search, onMessageFriend }: FriendsPanelProps) {
   );
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1 border-t">
       <Tabs defaultValue="online" className="min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col p-4">
           <div className="mb-4 flex items-center justify-between gap-3">

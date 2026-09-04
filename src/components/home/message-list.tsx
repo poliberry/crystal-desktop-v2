@@ -157,22 +157,33 @@ const MessageRow = memo(function MessageRow({
       data-message-id={message.id}
       data-pending={message.__pending ? "" : undefined}
       className={cn(
-        "group relative flex flex-col rounded px-2 py-0.5 transition-colors",
+        "group relative flex flex-col rounded transition-colors",
         mentionsMe ? "bg-primary/10 hover:bg-primary/15" : "hover:bg-accent/30",
         startsGroup && "mt-3",
         highlighted && "!bg-primary/20",
         message.__pending && !message.__failed && "opacity-60",
         message.__failed && "border-l-2 border-destructive/60 bg-destructive/5"
       )}
-      // Browser-native virtualization: offscreen rows skip layout/paint until
-      // near the viewport, keeping scroll at 60fps even with hundreds of
-      // heavy rows (markdown, code blocks, images). `containIntrinsicSize`
-      // reserves space so the scrollbar stays honest.
-      style={{
-        contentVisibility: "auto",
-        containIntrinsicSize: "auto 72px",
-      } as React.CSSProperties}
     >
+      {/* Browser-native virtualization: offscreen rows skip layout/paint
+          until near the viewport, keeping scroll at 60fps even with hundreds
+          of heavy rows (markdown, code blocks, images). `containIntrinsicSize`
+          reserves space so the scrollbar stays honest.
+
+          It sits on this inner box rather than on the row, because
+          `content-visibility` paint-contains as well: on the row it clipped
+          the hover actions, which straddle its top edge, and made the row a
+          stacking context no z-index could climb out of. The row's padding
+          moved in with it, so what's clipped is exactly what was before. */}
+      <div
+        className="flex flex-col px-2 py-0.5"
+        style={
+          {
+            contentVisibility: "auto",
+            containIntrinsicSize: "auto 72px",
+          } as React.CSSProperties
+        }
+      >
       {message.replyTo && (
         <MessageReplyPreview
           reply={message.replyTo}
@@ -261,6 +272,7 @@ const MessageRow = memo(function MessageRow({
             )}
           </>
         )}
+      </div>
       </div>
       </div>
 

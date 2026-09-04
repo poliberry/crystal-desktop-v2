@@ -16,6 +16,12 @@ function cdnUrlForStorageId(storageId: string): string | null {
   return `${base.replace(/\/$/, "")}/migrated/${storageId}`;
 }
 
+function r2UrlForKey(key: string): string | null {
+  const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
+  if (!base) return null;
+  return `${base.replace(/\/$/, "")}/${key.replace(/^\//, "")}`;
+}
+
 async function requireMembership(
   ctx: QueryCtx,
   conversationId: Id<"conversations">,
@@ -139,7 +145,7 @@ export const list = query({
         const attachments = await Promise.all(
           attachmentRows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
-            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? cdnUrlForStorageId(anyAtt.cdnKey) : null);
+            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? r2UrlForKey(anyAtt.cdnKey) : null);
             const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
             const cdnUrl = directCdn ?? migratedCdn;
             const url = cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null);
@@ -566,7 +572,7 @@ export const listAttachments = query({
         return Promise.all(
           rows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
-            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? cdnUrlForStorageId(anyAtt.cdnKey) : null);
+            const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? r2UrlForKey(anyAtt.cdnKey) : null);
             const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
             const cdnUrl = directCdn ?? migratedCdn;
             return {

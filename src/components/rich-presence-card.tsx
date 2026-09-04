@@ -42,11 +42,27 @@ function formatClock(ms: number): string {
  * one timer rather than each running their own. */
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
+  const [visible, setVisible] = useState(() =>
+    typeof document === "undefined" ? true : !document.hidden,
+  );
+
   useEffect(() => {
-    if (!active) return;
+    const updateVisibility = () => {
+      const nextVisible = !document.hidden;
+      setVisible(nextVisible);
+      // Wall-clock interpolation means one update is enough to catch the
+      // counter/seek bar up after a hidden window is restored.
+      if (nextVisible) setNow(Date.now());
+    };
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => document.removeEventListener("visibilitychange", updateVisibility);
+  }, []);
+
+  useEffect(() => {
+    if (!active || !visible) return;
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, [active]);
+  }, [active, visible]);
   return now;
 }
 
