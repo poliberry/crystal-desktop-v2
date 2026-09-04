@@ -1,14 +1,25 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 
-import { ProfileEditor } from "@/components/profile/profile-editor";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+
+const ProfileEditor = dynamic(
+  () => import("@/components/profile/profile-editor").then((module) => module.ProfileEditor),
+  {
+    loading: () => (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Loading profile editor…
+      </div>
+    ),
+  },
+);
 
 /**
  * The profile editor, as a dialog of its own.

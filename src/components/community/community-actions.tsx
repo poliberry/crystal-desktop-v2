@@ -182,7 +182,6 @@ export function useCommunityActions({
           canManageRoles={hasPermission(permissions, PERMISSIONS.MANAGE_ROLES)}
           canManageChannels={hasPermission(permissions, PERMISSIONS.MANAGE_CHANNELS)}
           canManageEmojis={hasPermission(permissions, PERMISSIONS.MANAGE_EMOJIS)}
-          canKick={hasPermission(permissions, PERMISSIONS.KICK_MEMBERS)}
           isOwner={isOwner}
         />
       )}

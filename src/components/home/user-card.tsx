@@ -226,11 +226,11 @@ export function UserCard() {
 
   return (
     <div
-      className={cn("absolute bottom-0 left-0 shrink-0 p-2", compact ? "w-64" : "w-80")}
+      className={cn("absolute bottom-0 left-0 shrink-0 p-2 bg-linear-to-b from-transparent to-background", "w-80")}
     >
       {/* Screen share floating panel */}
       {activeCall && screenSharing && (
-        <div className="flex items-center gap-2 border-t border-l border-r border-border/50 bg-card px-2 py-1.5 text-sm">
+        <div className="flex items-center gap-2 border-t border-l border-r rounded-t-md border-border/50 bg-card px-2 py-1.5 text-sm">
           <MonitorUp className="size-4 shrink-0 text-primary" />
           <span className="min-w-0 flex-1 truncate font-medium">
             Sharing{sharedSourceName ? `: ${sharedSourceName}` : ""}
@@ -271,7 +271,7 @@ export function UserCard() {
       {/* Voice connected floating panel */}
       {activeCall && (
         <div
-          className={`border-t border-l border-r border-border/50 bg-card p-2 shadow-sm`}
+          className={`border-t border-l border-r border-border/50 bg-card ${activeCall && screenSharing ? "rounded-none" : "rounded-t-md"} p-2 shadow-sm`}
         >
           <div className="flex items-center gap-1">
             {/* The status line and the icon beside it are one component now:
@@ -358,7 +358,7 @@ export function UserCard() {
 
             {/* Same trigger as the full call screen's control bar; the
                 className overrides its round 48px shape for this row. */}
-            <SoundboardButton className="h-7 w-full rounded-md" />
+            <SoundboardButton variant="secondary" className="h-7 w-full rounded-md" />
 
             <TooltipProvider>
               <Tooltip>
@@ -390,16 +390,16 @@ export function UserCard() {
 
       {/* Identity card — floating pill */}
       <div
-        className={`overflow-hidden border border-border/40 bg-card shadow-md`}
+        className={`overflow-hidden border border-border/40 ${activeCall ? "rounded-b-md" : "rounded-md"} h-14 bg-card shadow-md`}
       >
         <div
           className={cn(
-            "relative flex px-3 py-2.5",
-            compact ? "flex-col gap-1.5" : "items-center gap-2",
+            "relative flex px-3 py-1.5",
+            "items-center gap-2",
           )}
         >
           <Nameplate url={me.nameplateUrl} />
-          <div className={cn("flex min-w-0 items-center gap-2", !compact && "flex-1")}>
+          <div className={cn("flex min-w-0 items-center gap-2", "flex-1")}>
             <Popover>
               <PopoverTrigger asChild>
                 <Avatar size="default" className="shrink-0 cursor-pointer">

@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { PlusIcon } from "@animateicons/react/lucide";
 
 interface CreateCommunityDialogProps {
   onCreated: (communityId: Id<"communities">) => void;
@@ -66,9 +67,9 @@ export function CreateCommunityDialog({ onCreated, open: controlledOpen, onOpenC
                 <Button
                   variant="secondary"
                   size="icon"
-                  className="size-12 rounded-none transition-[border-radius] ease-in-out hover:rounded-2xl"
+                  className="size-12 rounded-full transition-[border-radius] ease-in-out hover:rounded-2xl"
                 >
-                  <Plus />
+                  <PlusIcon duration={0.5} />
                 </Button>
               </DialogTrigger>
             </TooltipTrigger>

@@ -692,6 +692,7 @@ export const listMembers = query({
           borderGradientStart: serverProfile?.borderGradientStart ?? user?.borderGradientStart,
           borderGradientEnd: serverProfile?.borderGradientEnd ?? user?.borderGradientEnd,
           isOwner: community.ownerId === member.userId,
+          joinedAt: member.joinedAt,
           timeoutUntil: member.timeoutUntil,
           status: presence?.effective ?? "offline",
           activities: stream
@@ -711,6 +712,112 @@ export const listMembers = query({
         };
       })
     );
+  },
+});
+
+/** Moderation summary for one member. Kept behind a moderation permission so
+ * message/attachment counts are not exposed to ordinary community members. */
+export const memberModerationStats = query({
+  args: { communityId: v.id("communities"), userId: v.id("users") },
+  handler: async (ctx, { communityId, userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const community = await ctx.db.get(communityId);
+    if (!community) return null;
+    await requireMember(ctx, communityId, me._id);
+    const viewerPermissions = await getBasePermissions(ctx, community, me._id);
+    if (
+      !can(viewerPermissions, PERMISSIONS.KICK_MEMBERS) &&
+      !can(viewerPermissions, PERMISSIONS.BAN_MEMBERS) &&
+      !can(viewerPermissions, PERMISSIONS.MODERATE_MEMBERS) &&
+      !can(viewerPermissions, PERMISSIONS.MANAGE_ROLES)
+    ) {
+      throw new Error("You can't manage members in this community.");
+    }
+
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId))
+      .unique();
+    if (!membership) return null;
+
+    const channels = await ctx.db
+      .query("channels")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .collect();
+    const messages = (
+      await Promise.all(
+        channels.map((channel) =>
+          ctx.db
+            .query("channelMessages")
+            .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+            .collect()
+        )
+      )
+    ).flat().filter((message) => message.authorId === userId);
+
+    let links = 0;
+    let media = 0;
+    for (const message of messages) {
+      links += message.text?.match(/https?:\/\/[^\s<>]+/gi)?.length ?? 0;
+      const attachments = await ctx.db
+        .query("channelMessageAttachments")
+        .withIndex("by_message", (q) => q.eq("messageId", message._id))
+        .collect();
+      media += attachments.length;
+    }
+
+    const assignments = await ctx.db
+      .query("memberRoles")
+      .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId))
+      .collect();
+    const roles = await Promise.all(assignments.map((assignment) => ctx.db.get(assignment.roleId)));
+    const permissions = await getBasePermissions(ctx, community, userId);
+
+    return {
+      messages: messages.length,
+      links,
+      media,
+      permissions,
+      joinedAt: membership.joinedAt,
+      roles: roles.filter((role): role is Doc<"roles"> => !!role).map((role) => ({
+        id: role._id,
+        name: role.name,
+        color: role.color,
+      })),
+    };
+  },
+});
+
+/** Remove non-owner members whose most recent channel message is older than
+ * the requested cutoff. Membership management permission is checked here;
+ * the client-side button is only a convenience. */
+export const pruneInactiveMembers = mutation({
+  args: { communityId: v.id("communities"), inactiveDays: v.number() },
+  handler: async (ctx, { communityId, inactiveDays }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.KICK_MEMBERS);
+    const cutoff = Date.now() - Math.max(1, Math.floor(inactiveDays)) * 24 * 60 * 60 * 1000;
+    const members = await ctx.db.query("communityMembers").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect();
+    const channels = await ctx.db.query("channels").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect();
+    const lastMessageAt = new Map<string, number>();
+    await Promise.all(channels.map(async (channel) => {
+      const messages = await ctx.db.query("channelMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).collect();
+      for (const message of messages) {
+        const at = message._creationTime;
+        if (at > (lastMessageAt.get(message.authorId) ?? 0)) lastMessageAt.set(message.authorId, at);
+      }
+    }));
+    let removed = 0;
+    for (const member of members) {
+      if (member.userId === community.ownerId || member.userId === me._id) continue;
+      if ((lastMessageAt.get(member.userId) ?? member.joinedAt) < cutoff) {
+        await removeMembership(ctx, communityId, member.userId);
+        removed++;
+      }
+    }
+    return removed;
   },
 });
 

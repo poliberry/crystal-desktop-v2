@@ -41,7 +41,7 @@ export async function tryUploadViaR2(
     const { uploadUrl, key, publicUrl } = ticket as { uploadUrl: string; key: string; publicUrl: string };
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": file.type || "application/octet-stream", "Content-Length": String(file.size) },
+      headers: { "Content-Type": file.type || "application/octet-stream" },
       body: file,
     });
     if (!res.ok) return null;

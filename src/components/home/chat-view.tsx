@@ -152,10 +152,6 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <ChatBackground
-        url={conversation?.backgroundUrl}
-        opacity={conversation?.backgroundOpacity}
-      />
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex h-14 shrink-0 items-center justify-between border-b backdrop-blur-xl bg-accent/40 px-4">
           {isGroup ? (
@@ -272,6 +268,10 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
             </TooltipProvider>
           </div>
         </div>
+        <ChatBackground
+          url={conversation?.backgroundUrl}
+          opacity={conversation?.backgroundOpacity}
+        />
 
         <MessageList conversationId={conversationId} onReply={setReplyingTo} />
         <TypingIndicator conversationId={conversationId} />

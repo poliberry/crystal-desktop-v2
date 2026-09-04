@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -30,6 +32,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { Switch } from "./ui/switch";
+import { Checkbox } from "./ui/checkbox";
+import { PhoneIcon } from "@animateicons/react/lucide";
 
 interface ControlBarProps {
   cameraEnabled: boolean;
@@ -56,6 +61,7 @@ function ControlButton({
   onClick,
   disabled,
   children,
+  className,
 }: {
   label: string;
   active?: boolean;
@@ -63,17 +69,20 @@ function ControlButton({
   onClick: () => void;
   disabled?: boolean;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          variant={active ? "default" : "secondary"}
+          variant={active ? "default" : "ghost"}
           size="icon"
           className={cn(
-            "size-12 rounded-full",
+            "size-10",
             active && "bg-primary text-primary-foreground",
-            danger && "bg-destructive/15 text-destructive hover:bg-destructive/25"
+            danger &&
+              "bg-destructive/15 text-destructive hover:bg-destructive/25",
+            className,
           )}
           onClick={onClick}
           disabled={disabled}
@@ -114,94 +123,104 @@ export function ControlBar({
 
   return (
     <TooltipProvider>
-      <div className="flex items-center justify-center gap-3 rounded-full border bg-background/80 px-4 py-3 shadow-lg backdrop-blur">
+      <div className="flex items-center justify-center gap-3 px-4 py-3">
         {/* Mic, with the device picker hanging off it so switching inputs
             never means leaving the call screen. */}
-        <div className="relative">
+        <div className="flex items-center gap-2 p-1 rounded-lg border bg-card">
+          <div className="hover:bg-background/40 rounded-md">
+            <ControlButton
+              label={
+                !microphoneAvailable
+                  ? "No microphone detected"
+                  : microphoneEnabled
+                    ? "Mute microphone"
+                    : "Unmute microphone"
+              }
+              onClick={onToggleMicrophone}
+              disabled={busy || !microphoneAvailable}
+              className="rounded-l-md rounded-r-none"
+            >
+              {microphoneEnabled ? (
+                <Mic />
+              ) : (
+                <MicOff className="text-destructive" />
+              )}
+            </ControlButton>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-4 rounded-r-md rounded-l-none"
+                >
+                  <ChevronUp className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-64">
+                <AudioDeviceMenuItems />
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="justify-between">
+                  <p>Deafen</p>
+                  <Checkbox
+                    checked={deafened}
+                    onCheckedChange={onToggleDeafen}
+                    disabled={busy}
+                  />
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <ControlButton
             label={
-              !microphoneAvailable
-                ? "No microphone detected"
-                : microphoneEnabled
-                  ? "Mute microphone"
-                  : "Unmute microphone"
+              !cameraAvailable
+                ? "No camera detected"
+                : cameraEnabled
+                  ? "Turn camera off"
+                  : "Turn camera on"
             }
-            onClick={onToggleMicrophone}
-            disabled={busy || !microphoneAvailable}
+            onClick={onToggleCamera}
+            disabled={busy || !cameraAvailable}
           >
-            {microphoneEnabled ? <Mic /> : <MicOff className="text-destructive" />}
+            {cameraEnabled ? (
+              <Camera />
+            ) : (
+              <CameraOff className="text-destructive" />
+            )}
           </ControlButton>
-
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="absolute -right-1 -top-1 size-5 rounded-full border shadow-sm"
-                  >
-                    <ChevronUp className="size-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>Audio devices</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent side="top" align="start" className="w-64">
-              <AudioDeviceMenuItems />
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
 
-        <ControlButton
-          label={deafened ? "Undeafen" : "Deafen"}
-          danger={deafened}
-          onClick={onToggleDeafen}
-          disabled={busy}
-        >
-          {deafened ? <HeadphoneOff /> : <Headphones />}
-        </ControlButton>
-
-        <ControlButton
-          label={
-            !cameraAvailable
-              ? "No camera detected"
-              : cameraEnabled
-                ? "Turn camera off"
-                : "Turn camera on"
-          }
-          onClick={onToggleCamera}
-          disabled={busy || !cameraAvailable}
-        >
-          {cameraEnabled ? <Camera /> : <CameraOff className="text-destructive" />}
-        </ControlButton>
-
-        <ControlButton
-          label={screenSharing ? "Stop sharing screen" : "Share screen"}
-          onClick={onToggleScreenShare}
-          disabled={busy}
-        >
-          {screenSharing ? <ScreenShareOff /> : <MonitorUp />}
-        </ControlButton>
-
-        {screenSharing && (
-          <ControlButton label="Change screen, audio or quality" onClick={onOpenShareSettings}>
-            <MonitorCog />
+        <div className="flex items-center gap-2 p-1.25 rounded-lg border bg-card">
+          <ControlButton
+            label={screenSharing ? "Stop sharing screen" : "Share screen"}
+            onClick={onToggleScreenShare}
+            disabled={busy}
+          >
+            {screenSharing ? <ScreenShareOff /> : <MonitorUp />}
           </ControlButton>
-        )}
 
-        <SoundboardButton />
+          {screenSharing && (
+            <ControlButton
+              label="Change screen, audio or quality"
+              onClick={onOpenShareSettings}
+            >
+              <MonitorCog />
+            </ControlButton>
+          )}
+
+          <SoundboardButton />
+        </div>
 
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="destructive"
-              size="icon"
-              className="size-12 rounded-full"
+              className="h-13 w-18 rounded-md"
               onClick={handleLeave}
               disabled={busy || leaving}
             >
-              <LogOut />
+              <PhoneIcon duration={1} size={48} className="rotate-135" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Leave room</TooltipContent>

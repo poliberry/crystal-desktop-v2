@@ -6,6 +6,7 @@ import { CallPip } from "@/components/call/call-pip";
 import { CallStage } from "@/components/call/call-stage";
 import { useCall } from "@/components/call/call-provider";
 import { ChannelView } from "@/components/community/channel-view";
+import { CommunityMembersSection } from "@/components/community/community-members-section";
 import { ServerOverview } from "@/components/community/server-overview";
 import { CommunitySidebar } from "@/components/community/community-sidebar";
 import { ChatView } from "@/components/home/chat-view";
@@ -20,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { UserCard } from "./user-card";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useUser } from "@clerk/react";
 
@@ -30,6 +31,7 @@ export function HomeLayout() {
   const [pendingCommunityId, setPendingCommunityId] = useState<Id<"communities"> | null>(null);
   const pendingModeRef = useRef<"replace" | "new">("new");
   const [overviewFor, setOverviewFor] = useState<Id<"communities"> | null>(null);
+  const [membersSection, setMembersSection] = useState(false);
 
   const { activeCall, expanded, joinDmCall, joinChannelCall, expand, collapse, joinError, dismissJoinError } = useCall();
   const { tabs, activeTab, openTab, activateTab, closeTab } = useTabs();
@@ -39,10 +41,15 @@ export function HomeLayout() {
   const browsingCommunityId: Id<"communities"> | null =
     pendingCommunityId ?? (target.type === "channel" ? target.communityId : null);
   const getOrCreateStripeUser = useAction(api.users.createOrGetStripeUser);
+  const myPermissions = useQuery(
+    api.roles.myPermissions,
+    browsingCommunityId ? { communityId: browsingCommunityId } : "skip",
+  ) ?? 0;
 
   useEffect(() => {
     setPendingCommunityId(null);
     setOverviewFor(null);
+    setMembersSection(false);
     if (user?.organizationMemberships?.[0]?.organization.id === "org_3IfKYp4cyTPeYWtsN12lj8VWVKc") {
       getOrCreateStripeUser();
     }
@@ -77,6 +84,7 @@ export function HomeLayout() {
 
   const selectFriends = () => {
     setPendingCommunityId(null);
+    setMembersSection(false);
     navigateTo({ type: "home" });
   };
 
@@ -103,6 +111,7 @@ export function HomeLayout() {
     channelId: Id<"channels"> | undefined,
     mode: "replace" | "new"
   ) => {
+    setMembersSection(false);
     if (channelId) {
       openCommunityChannel(id, channelId, mode);
       return;
@@ -115,6 +124,7 @@ export function HomeLayout() {
     }
 
     pendingModeRef.current = mode;
+    setMembersSection(false);
     setPendingCommunityId(id);
     collapse();
   };
@@ -131,6 +141,7 @@ export function HomeLayout() {
     if (!browsingCommunityId) return;
     // Picking a channel is how you leave the overview.
     setOverviewFor(null);
+    setMembersSection(false);
     if (type === "voice") {
       // Already connected — just expand back to the full call stage
       if (activeCall?.kind === "channel" && activeCall.channelId === channelId) {
@@ -201,10 +212,12 @@ export function HomeLayout() {
         <CommunitySidebar
           communityId={browsingCommunityId}
           selectedChannelId={
-            target.type === "channel" && target.communityId === browsingCommunityId ? target.channelId : null
+            !membersSection && target.type === "channel" && target.communityId === browsingCommunityId ? target.channelId : null
           }
+          onSelectMembers={() => { setMembersSection(true); setOverviewFor(null); collapseIfCovering(); }}
+          membersSelected={membersSection}
           onSelectChannel={selectChannel}
-          onSelectOverview={() => setOverviewFor(browsingCommunityId)}
+          onSelectOverview={() => { setMembersSection(false); setOverviewFor(browsingCommunityId); }}
           overviewSelected={showOverview}
         />
       ) : (
@@ -218,12 +231,12 @@ export function HomeLayout() {
         />
       )}
       {activeCall && (
-        <div className={showCallStage ? "flex min-h-0 min-w-0 flex-1 flex-col" : "hidden"}>
+        <div className={showCallStage ? "flex min-h-0 min-w-0 flex-1 flex-col border-t" : "hidden"}>
           <CallStage />
         </div>
       )}
       {!showCallStage && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
           {joinError && (
             <div className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <span className="min-w-0 flex-1">{joinError}</span>
@@ -235,7 +248,12 @@ export function HomeLayout() {
 
           {/* Checked first: the overview covers whatever channel tab is
               active, and is dismissed by picking a channel. */}
-          {showOverview && browsingCommunityId ? (
+          {membersSection && browsingCommunityId ? (
+            <CommunityMembersSection
+              communityId={browsingCommunityId}
+              permissions={myPermissions}
+            />
+          ) : showOverview && browsingCommunityId ? (
             <ServerOverview
               communityId={browsingCommunityId}
               onOpenChannel={(channelId) => selectChannel(channelId, "text")}

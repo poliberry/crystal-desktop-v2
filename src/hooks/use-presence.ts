@@ -26,21 +26,17 @@ export function usePresenceHeartbeat() {
   useEffect(() => {
     const deviceId = getDeviceId();
     const isIdleRef = { current: false };
-    let idleTimer: ReturnType<typeof setTimeout>;
+    let lastActivityAt = Date.now();
 
     const beat = (isIdle: boolean) =>
       void heartbeat({ isIdle, deviceId, platform: "desktop" });
 
     const markActive = () => {
+      lastActivityAt = Date.now();
       if (isIdleRef.current) {
         isIdleRef.current = false;
         beat(false);
       }
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        isIdleRef.current = true;
-        beat(true);
-      }, IDLE_MS);
     };
 
     for (const event of ACTIVITY_EVENTS) {
@@ -48,7 +44,18 @@ export function usePresenceHeartbeat() {
     }
     markActive();
 
-    const interval = setInterval(() => beat(isIdleRef.current), HEARTBEAT_INTERVAL_MS);
+    // Activity events such as mousemove and scroll fire many times per second.
+    // Re-arming a five-minute timeout for each one needlessly allocates and
+    // wakes the renderer during normal use. The heartbeat already runs every
+    // 20 seconds, which is plenty of precision for presence and gives us one
+    // stable place to advance the idle state.
+    const tick = () => {
+      const idle = Date.now() - lastActivityAt >= IDLE_MS;
+      isIdleRef.current = idle;
+      beat(idle);
+    };
+    tick();
+    const interval = setInterval(tick, HEARTBEAT_INTERVAL_MS);
 
     // Quitting reports itself rather than waiting to be swept, so someone who
     // closes the desktop app drops offline immediately instead of a minute
@@ -62,7 +69,6 @@ export function usePresenceHeartbeat() {
       }
       window.removeEventListener("beforeunload", onUnload);
       clearInterval(interval);
-      clearTimeout(idleTimer);
     };
   }, [heartbeat, endSession]);
 }

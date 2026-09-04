@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 
 import {
   Dialog,
@@ -8,7 +9,17 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { SettingsShell } from "@/components/settings/settings-shell";
+
+const SettingsShell = dynamic(
+  () => import("@/components/settings/settings-shell").then((module) => module.SettingsShell),
+  {
+    loading: () => (
+      <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">
+        Loading settings…
+      </div>
+    ),
+  },
+);
 
 const SettingsDialogContext = createContext<(() => void) | null>(null);
 

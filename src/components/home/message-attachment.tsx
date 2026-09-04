@@ -1,11 +1,19 @@
 "use client";
 
-import { Download, File as FileIcon, Loader2 } from "lucide-react";
+import { Copy, Download, File as FileIcon, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { AudioAttachment } from "@/components/home/audio-attachment";
 import { ImageLightbox, type LightboxAuthor } from "@/components/home/image-lightbox";
 import { VideoAttachment } from "@/components/home/video-attachment";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { copyImageToClipboard } from "@/lib/clipboard-image";
 import { downloadFile, formatBytes } from "@/lib/download";
 import { useCachedAttachmentSrc } from "@/lib/image-cache";
 
@@ -30,28 +38,91 @@ function ImageAttachment({
   createdAt?: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [saving, setSaving] = useState(false);
   // Cached bytes when we have them (see src/lib/image-cache.ts); the raw url
   // meanwhile. Also what makes a just-sent attachment paint without a second
   // download once the real message row replaces the optimistic one.
   const cachedSrc = useCachedAttachmentSrc(attachment.url ?? undefined);
   if (!attachment.url) return null;
 
+  const handleCopy = async () => {
+    if (!attachment.url) return;
+    setCopying(true);
+    try {
+      await copyImageToClipboard(attachment.url);
+      toast.success("Image copied to clipboard");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to copy image");
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!attachment.url) return;
+    setSaving(true);
+    try {
+      await downloadFile(attachment.url, attachment.fileName);
+      toast.success("Image saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Download failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={cachedSrc ?? attachment.url}
-          alt={attachment.fileName}
-          className="max-h-80 max-w-full"
-          loading="lazy"
-          decoding="async"
-        />
-      </button>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            onContextMenu={(e) => e.stopPropagation()}
+            className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cachedSrc ?? attachment.url}
+              alt={attachment.fileName}
+              className="max-h-80 max-w-full"
+              loading="lazy"
+              decoding="async"
+            />
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-52">
+          <ContextMenuItem
+            disabled={copying || saving}
+            onSelect={(e) => {
+              e.preventDefault();
+              void handleCopy();
+            }}
+          >
+            {copying ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Copy className="size-4" />
+            )}
+            Copy image
+          </ContextMenuItem>
+          <ContextMenuItem
+            disabled={copying || saving}
+            onSelect={(e) => {
+              e.preventDefault();
+              void handleSave();
+            }}
+          >
+            {saving ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            Save image
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
       <ImageLightbox
         open={open}
         onOpenChange={setOpen}

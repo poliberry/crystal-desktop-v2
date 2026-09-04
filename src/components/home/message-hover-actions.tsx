@@ -42,7 +42,7 @@ export function MessageHoverActions({
   onDelete,
 }: MessageHoverActionsProps) {
   return (
-    <div className="absolute top-0 right-2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border bg-popover opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+    <div className="absolute z-999 top-0 right-2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border bg-popover opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
       {onReply && (
         <TooltipProvider>
           <Tooltip>

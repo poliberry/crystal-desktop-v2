@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/tooltip";
 import { UpdateIndicator } from "@/components/update-indicator";
 import { WindowControls } from "@/components/window-controls";
+import { Menu01Icon } from "@animateicons/react/huge";
 
 /**
  * Replays the birthday celebration.
@@ -84,11 +85,7 @@ function CommunitiesPopover() {
                   className="flex size-6 items-center pointer-events-auto justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent/60 hover:opacity-100"
                   aria-label="Communities"
                 >
-                  <img
-                    src="/icons/chat-bubbles.png"
-                    alt="Communities"
-                    className="w-7"
-                  />
+                  <Menu01Icon duration={0.5} className="size-5" />
                 </button>
               </PopoverTrigger>
             </TooltipTrigger>
@@ -173,10 +170,10 @@ export function TopNav() {
   return (
     <header
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      className="relative flex h-10 shrink-0 items-center justify-between gap-2 border-b bg-accent/40 backdrop-blur-xl pl-3 z-[99]"
+      className="relative flex h-8 shrink-0 items-center justify-between gap-2 bg-background z-[99]"
     >
       <div
-        className="flex shrink-0 items-center gap-1.5"
+        className="flex shrink-0 items-center gap-2 ml-2"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {style === "popover" && (
@@ -186,11 +183,15 @@ export function TopNav() {
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => nav.goHome()}
-                    className="flex size-5 pointer-events-auto shrink-0 items-center justify-center opacity-80 transition-opacity hover:opacity-100"
+                    className="flex size-6 pointer-events-auto shrink-0 items-center justify-center opacity-80 transition-opacity hover:opacity-100"
                     aria-label="Home"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/logo-mark.png" alt="Crystal" className="min-w-7" />
+                    <img
+                      src="/logo-mark.svg"
+                      alt="Crystal"
+                      className="min-w-4"
+                    />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Home</TooltipContent>

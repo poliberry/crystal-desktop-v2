@@ -321,6 +321,9 @@ export interface DesktopAPI {
    * `scopeId`/`scopeName` say which profile — the account's, or one
    * community's — the same way `useProfileScope` already takes them.
    */
+  clipboard?: {
+    writeImage(buffer: ArrayBuffer, mimeType: string): Promise<void>;
+  };
   editor: {
     open(options: {
       kind: "frame" | "decoration";

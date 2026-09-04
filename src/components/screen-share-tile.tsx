@@ -7,8 +7,9 @@ import {
   type Participant,
   type TrackPublication,
 } from "livekit-client";
-import { Eye, EyeOff, Plus } from "lucide-react";
+import { Eye, EyeOff, MonitorUp, Plus } from "lucide-react";
 
+import { useWindowFocus } from "@/hooks/use-window-focus";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,39 @@ export function ScreenShareTile({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
   const [hasScreen, setHasScreen] = useState(false);
+  /**
+   * Whether to render your *own* share back to you. Off unless asked for,
+   * and the single biggest thing this app can do for how a machine feels
+   * while sharing.
+   *
+   * Sharing a whole display puts Crystal's own window inside the captured
+   * region, so a live self-preview is a mirror pointed at itself: every
+   * captured frame repaints the preview, that repaint is picked up by the
+   * next capture, and the compositor, the capture pipeline and the encoder
+   * all end up running flat out on a desktop that isn't actually changing.
+   * The encoder sees constant full-frame motion and spends its whole bitrate
+   * on it, so viewers get a worse picture out of the deal too.
+   *
+   * Kept as a toggle rather than removed because previewing a shared *window*
+   * (which never contains this one) is genuinely useful, and because "is it
+   * actually going out?" deserves an answer.
+   */
+  const [previewing, setPreviewing] = useState(false);
+  /**
+   * Nobody is looking at a self-preview in a window they've clicked away
+   * from — and while sharing, clicked away is where the window spends
+   * essentially all of its time, since the whole point is to be doing
+   * something else. So the preview only runs while Crystal is the focused
+   * window, which turns "on" from a standing cost into one paid for the few
+   * seconds it is actually being read.
+   *
+   * Blur rather than `document.hidden`: a call window parked on a second
+   * monitor is visible and unfocused, and that is precisely the case worth
+   * catching. Only gates the local preview — a remote stream is the reason
+   * you're in the call, and is routinely watched from behind another window.
+   */
+  const focused = useWindowFocus();
+  const previewLive = previewing && focused;
 
   // Keep refs in sync so closures read fresh values without re-running effects
   const localVolumeRef = useRef(localVolume ?? 1);
@@ -60,12 +94,10 @@ export function ScreenShareTile({
   // watched) ---
   useEffect(() => {
     const el = videoRef.current;
-    // `canWatch` false means gating doesn't apply to this tile at all (e.g.
-    // the local user's own share, handled separately via `isLocal` below) —
-    // in that case behave as before and always attach. Otherwise only attach
-    // once the viewer has explicitly clicked "Watch".
-    const gated = !isLocal && canWatch;
-    const allowed = !gated || watching;
+    // Your own share attaches only while previewing it (see `previewing`).
+    // Someone else's attaches once you've clicked "Watch" — unless `canWatch`
+    // is false, which means gating doesn't apply to this tile at all.
+    const allowed = isLocal ? previewLive : !canWatch || !!watching;
 
     const attachVideo = (pub: TrackPublication | undefined) => {
       const track = pub?.track;
@@ -114,7 +146,7 @@ export function ScreenShareTile({
       if (el && track) track.detach(el);
       if (el) el.srcObject = null;
     };
-  }, [participant, isLocal, canWatch, watching]);
+  }, [participant, isLocal, canWatch, watching, previewLive]);
 
   // --- Audio effect (re-runs when audioEnabled changes to attach/detach) ---
   useEffect(() => {
@@ -184,7 +216,19 @@ export function ScreenShareTile({
 
       {!hasScreen && (
         <div className="flex flex-col items-center gap-1 text-muted-foreground">
-          <span className="text-sm">No screen shared</span>
+          {isLocal && !previewLive ? (
+            <>
+              <MonitorUp className="size-6" />
+              <span className="text-sm">You&apos;re sharing this screen</span>
+              <span className="max-w-[22rem] text-center text-xs">
+                {previewing
+                  ? "Preview paused while Crystal is in the background."
+                  : "The preview is off so sharing stays light on this machine."}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm">No screen shared</span>
+          )}
         </div>
       )}
 
@@ -196,6 +240,28 @@ export function ScreenShareTile({
         <span className="text-xs font-medium text-white drop-shadow">
           {name}
         </span>
+
+        {isLocal && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewing((on) => !on);
+            }}
+            title={
+              previewing
+                ? "Stop previewing your own share — it costs this machine real work"
+                : "Show what you're sharing"
+            }
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-white/80 hover:bg-white/20 hover:text-white"
+          >
+            {previewing ? (
+              <><EyeOff className="size-3" />Hide preview</>
+            ) : (
+              <><Eye className="size-3" />Show preview</>
+            )}
+          </button>
+        )}
 
         {!isLocal && canWatch && (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>

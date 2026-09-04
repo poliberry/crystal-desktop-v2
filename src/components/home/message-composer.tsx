@@ -241,7 +241,7 @@ export function MessageComposer({
   };
 
   return (
-    <div ref={dropZoneRef} className="relative shrink-0 p-3">
+    <div ref={dropZoneRef} className="relative shrink-0 p-2">
       <ComposerDropOverlay active={isDraggingOver} />
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
@@ -265,7 +265,7 @@ export function MessageComposer({
       {/* Birthday prompt. Above the box rather than in it, so it reads as
           something the app noticed rather than as text you have to clear. */}
       {birthdayNames.length > 0 && !wishDismissed && (
-        <div className="mb-2 flex items-center gap-2 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-1.5">
+        <div className="mb-2 flex items-center gap-2 rounded-t-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-1.5">
           <span aria-hidden className="text-base leading-none">
             🎂
           </span>
@@ -300,7 +300,7 @@ export function MessageComposer({
       )}
 
       {replyingTo && (
-        <div className="mb-1.5 flex items-center gap-2 rounded-md border border-b-0 bg-muted/40 px-2.5 py-1 text-xs">
+        <div className="flex items-center gap-2 rounded-t-md border border-b-0 bg-muted/40 px-2.5 py-1 text-xs">
           <Reply className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
             Replying to <span className="font-medium text-foreground">{replyingTo.authorName}</span>
@@ -342,7 +342,7 @@ export function MessageComposer({
         </button>
       )}
 
-      <div className="flex items-end gap-1 rounded-md border border-input bg-transparent px-1.5 py-1 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+      <div className={cn(replyingTo ? "rounded-b-md" : "rounded-md", "flex items-center gap-1 h-14 border border-input bg-transparent p-2 shadow-xs transition-[color,box-shadow]")}>
         <input
           ref={fileInputRef}
           type="file"
@@ -354,7 +354,7 @@ export function MessageComposer({
           type="button"
           variant="ghost"
           size="icon"
-          className="size-8 shrink-0"
+          className="size-9 shrink-0"
           disabled={uploading}
           onClick={openFilePicker}
         >
@@ -412,8 +412,6 @@ export function MessageComposer({
           <Send className="size-4" />
         </Button>
       </div>
-
-      <p className="mt-1.5 text-[11px] text-muted-foreground">Stickers coming soon.</p>
     </div>
   );
 }

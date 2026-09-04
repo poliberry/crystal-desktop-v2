@@ -49,6 +49,16 @@ import {
 
 const PRELOAD_PAGE = { numItems: 30, cursor: null };
 
+/**
+ * Attachment blobs are much larger than the metadata/message pages that make
+ * navigation feel instant. Do not let a handful of recent conversations with
+ * photo dumps compete with first paint, decoding, or the attachment cache's
+ * 20 MB budget. Visible attachments still load normally; this only limits
+ * speculative IndexedDB warming across all background message preloads.
+ */
+const MAX_BACKGROUND_ATTACHMENT_PRELOADS = 12;
+const backgroundAttachmentPreloads = new Set<string>();
+
 /** Warm the attachment blob cache for the image attachments on a just-loaded
  * message page — see src/lib/image-cache.ts. Bounded by the same budget that
  * bounds which pages get preloaded at all. */
@@ -57,7 +67,13 @@ function preloadPageAttachments(
 ): void {
   for (const message of page) {
     for (const attachment of message.attachments ?? []) {
-      if (attachment.url && attachment.fileType.startsWith("image/")) {
+      if (
+        attachment.url &&
+        attachment.fileType.startsWith("image/") &&
+        !backgroundAttachmentPreloads.has(attachment.url) &&
+        backgroundAttachmentPreloads.size < MAX_BACKGROUND_ATTACHMENT_PRELOADS
+      ) {
+        backgroundAttachmentPreloads.add(attachment.url);
         void preloadAttachmentIntoCache(attachment.url);
       }
     }
