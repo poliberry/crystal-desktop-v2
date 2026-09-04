@@ -55,7 +55,7 @@ function SoundGrid({
  * Community clips only appear in a community voice channel; a DM call has no
  * server to draw them from, so it gets the built-ins alone.
  */
-export function SoundboardButton({ variant, className }: { variant?: string; className?: string }) {
+export function SoundboardButton({ variant, className }: { variant?: "default" | "destructive" | "ghost" | "link" | "outline" | "secondary" | null | undefined; className?: string }) {
   const { activeCall, controller } = useCall();
   const { soundboardVolume, setSoundboardVolume, deafened } = useAudioPreferences();
 
