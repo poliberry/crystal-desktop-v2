@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Loader2, Plus, X } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
@@ -61,6 +61,29 @@ export function CustomActivityDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        {open && <CustomActivityForm onClose={() => onOpenChange(false)} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * The dialog's contents without its frame, so a dialog that leads here (see
+ * `StatusDialog`) can show them in place of its own instead of closing to open
+ * a second one. Seeded when it mounts, which is when it is opened.
+ */
+export function CustomActivityForm({
+  onClose,
+  onBack,
+}: {
+  /** Saved or cleared: the form is done. */
+  onClose: () => void;
+  /** Set when there is somewhere to go back to without saving. */
+  onBack?: () => void;
+}) {
   const me = useQuery(api.users.getCurrentUser);
   const setCustomActivity = useMutation(api.presence.setCustomActivity);
   const clearCustomActivity = useMutation(api.presence.clearCustomActivity);
@@ -77,11 +100,9 @@ export function CustomActivityDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Seeded when the dialog opens, not on every change to the stored activity:
-  // it stays mounted between openings, and re-seeding live would fight with
-  // whatever is being typed.
+  // Seeded once, when it mounts, not on every change to the stored activity:
+  // re-seeding live would fight with whatever is being typed.
   useEffect(() => {
-    if (!open) return;
     setType(existing?.type ?? "playing");
     setName(existing?.name ?? "");
     setDetails(existing?.details ?? "");
@@ -91,7 +112,7 @@ export function CustomActivityDialog({
     setDurationKey("never");
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, []);
 
   /** What the card will look like — the same component that renders it on a
    * profile, so there's nothing to keep in sync. */
@@ -121,7 +142,7 @@ export function CustomActivityDialog({
           .map((b) => ({ label: b.label.trim(), url: b.url.trim() })),
         durationMs: DURATION_OPTIONS.find((o) => o.key === durationKey)?.ms,
       });
-      onOpenChange(false);
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save that activity.");
     } finally {
@@ -133,15 +154,14 @@ export function CustomActivityDialog({
     setSaving(true);
     try {
       await clearCustomActivity();
-      onOpenChange(false);
+      onClose();
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+    <>
         <DialogHeader>
           <DialogTitle>Custom activity</DialogTitle>
           <DialogDescription>
@@ -293,6 +313,12 @@ export function CustomActivityDialog({
         {error && <p className="text-xs text-destructive">{error}</p>}
 
         <DialogFooter>
+          {onBack && (
+            <Button variant="ghost" disabled={saving} onClick={onBack} className="sm:mr-auto">
+              <ArrowLeft className="size-4" />
+              Back
+            </Button>
+          )}
           {existing && (
             <Button variant="ghost" disabled={saving} onClick={() => void clear()}>
               Clear activity
@@ -302,7 +328,6 @@ export function CustomActivityDialog({
             {saving ? <Loader2 className="size-4 animate-spin" /> : "Save"}
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Id } from "../../../convex/_generated/dataModel";
+import { AnimatePresence, motion } from "framer-motion";
 import { RoomEvent, Track, type Participant } from "livekit-client";
 import {
   Maximize,
@@ -106,7 +107,6 @@ function TileWithContextMenu({
   onVolumeChange,
   onMuteToggle,
   moderation,
-  avatarSize,
 }: {
   tile: CallTile;
   onClick: () => void;
@@ -117,9 +117,6 @@ function TileWithContextMenu({
   /** Set only in a community voice channel — a DM call has no roles to
    * moderate under. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
-  /** Passed to `ParticipantTile` — the expanded view draws the smaller
-   * avatar, in both the focused tile and the rail beside it. */
-  avatarSize?: "default" | "sm";
 }) {
   const soundboardActive = useSoundboardActivity().has(
     tile.participant.identity,
@@ -153,7 +150,6 @@ function TileWithContextMenu({
         gradientStart={tile.gradientStart}
         gradientEnd={tile.gradientEnd}
         avatarDecoration={tile.avatarDecoration}
-        avatarSize={avatarSize}
         fill
         onClick={onClick}
         localVolume={settings.volume}
@@ -413,7 +409,7 @@ function FocusedTileViewport({
 
   return (
     <div
-      className="relative h-full w-full overflow-hidden rounded-lg bg-black/20"
+      className="relative h-full w-full overflow-hidden rounded-2xl border border-[color:var(--glass-border)] bg-[color:var(--glass-bg)] shadow-lg shadow-black/25"
       onWheel={handleWheel}
     >
       <div
@@ -432,7 +428,6 @@ function FocusedTileViewport({
         <TileWithContextMenu
           moderation={moderation}
           tile={tile}
-          avatarSize="sm"
           onClick={handleTileClick}
           watchState={watchState}
           settings={settings}
@@ -518,7 +513,119 @@ function FocusedTileViewport({
   );
 }
 
-function GalleryGrid({
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * A bento layout: the box is cut in two, each half is cut again, down to one
+ * item per piece.
+ *
+ * Each cut goes across the longer side, so pieces stay close to square instead
+ * of degenerating into strips, and puts about half the total weight each side
+ * of it — which is what makes three tiles come out as one big and two stacked,
+ * and a screen share (weighted up) claim a large piece of its own. Items keep
+ * their order, so a tile moves only when something is added or removed around
+ * it.
+ */
+function bentoLayout(
+  items: { key: string; weight: number }[],
+  rect: Rect,
+  gap: number,
+  out: Map<string, Rect> = new Map(),
+): Map<string, Rect> {
+  if (items.length === 0) return out;
+  if (items.length === 1) {
+    out.set(items[0]!.key, rect);
+    return out;
+  }
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  let acc = 0;
+  let cut = 1;
+  let best = Infinity;
+  for (let i = 1; i < items.length; i++) {
+    acc += items[i - 1]!.weight;
+    const diff = Math.abs(acc - total / 2);
+    if (diff < best) {
+      best = diff;
+      cut = i;
+    }
+  }
+  const first = items.slice(0, cut);
+  const second = items.slice(cut);
+  const share = first.reduce((sum, item) => sum + item.weight, 0) / total;
+
+  if (rect.w >= rect.h) {
+    const w1 = (rect.w - gap) * share;
+    bentoLayout(first, { ...rect, w: w1 }, gap, out);
+    bentoLayout(second, { x: rect.x + w1 + gap, y: rect.y, w: rect.w - w1 - gap, h: rect.h }, gap, out);
+  } else {
+    const h1 = (rect.h - gap) * share;
+    bentoLayout(first, { ...rect, h: h1 }, gap, out);
+    bentoLayout(second, { x: rect.x, y: rect.y + h1 + gap, w: rect.w, h: rect.h - h1 - gap }, gap, out);
+  }
+  return out;
+}
+
+/** How much more of the room a shared screen is given than a camera tile. */
+const SCREEN_WEIGHT = 2.2;
+
+/** A tile's name as the focused view's header shows it. */
+function displayNameOf(tile: CallTile): string {
+  const name = tile.name || tile.participant.name || tile.participant.identity;
+  return tile.kind === "screen" ? `${name}'s screen` : name;
+}
+
+const TILE_SPRING = { type: "spring" as const, stiffness: 260, damping: 30, mass: 0.9 };
+
+/** Height of the strip of other tiles under a focused one, and the width each
+ * gets in it at most. */
+const RAIL_HEIGHT = 112;
+const RAIL_TILE_WIDTH = 176;
+
+/**
+ * Where every tile goes when one is focused: the focused one takes the stage and
+ * the rest line up in a strip beneath it.
+ *
+ * Returned in the same shape as `bentoLayout`, so switching between the two is
+ * just a different set of boxes for the same tiles — which is what lets them
+ * move there instead of one view being swapped for another.
+ */
+function focusedLayout(
+  focusedKey: string,
+  keys: string[],
+  rect: Rect,
+  gap: number,
+): Map<string, Rect> {
+  const out = new Map<string, Rect>();
+  const rest = keys.filter((key) => key !== focusedKey);
+  const railHeight = rest.length > 0 ? RAIL_HEIGHT : 0;
+  const mainHeight = Math.max(0, rect.h - (railHeight > 0 ? railHeight + gap : 0));
+  out.set(focusedKey, { x: rect.x, y: rect.y, w: rect.w, h: mainHeight });
+  if (rest.length > 0) {
+    // Narrowed to fit rather than scrolling: the strip is positioned, not laid
+    // out, and a scrolling container can't hold tiles that animate.
+    const width = Math.min(RAIL_TILE_WIDTH, (rect.w - gap * (rest.length - 1)) / rest.length);
+    const total = width * rest.length + gap * (rest.length - 1);
+    const startX = rect.x + (rect.w - total) / 2;
+    rest.forEach((key, index) => {
+      out.set(key, {
+        x: startX + index * (width + gap),
+        y: rect.y + mainHeight + gap,
+        w: width,
+        h: railHeight,
+      });
+    });
+  }
+  return out;
+}
+
+function TileStage({
+  focusedKey,
+  onUnfocus,
   tiles,
   pending,
   onFocus,
@@ -528,6 +635,9 @@ function GalleryGrid({
   onMuteToggle,
   moderation,
 }: {
+  /** The tile taking the stage, if any. */
+  focusedKey: string | null;
+  onUnfocus: () => void;
   tiles: CallTile[];
   pending: PendingParticipant[];
   onFocus: (key: string) => void;
@@ -552,74 +662,98 @@ function GalleryGrid({
     return () => ro.disconnect();
   }, []);
 
-  // Placeholders occupy real cells, so the grid doesn't reflow when someone
-  // answers — their card is simply swapped for a live tile.
-  const cells: ({ tile: CallTile } | { pending: PendingParticipant })[] = [
-    ...tiles.map((tile) => ({ tile })),
-    ...pending.map((p) => ({ pending: p })),
-  ];
-  const n = cells.length;
-  const cols = n <= 1 ? 1 : Math.ceil(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
+  // Placeholders occupy real cells, so the layout doesn't reshuffle when
+  // someone answers — their card is simply swapped for a live tile. Shares go
+  // first: they get the biggest piece, and the first piece is the big one.
+  const cells = useMemo(() => {
+    const live = tiles.map((tile) => ({
+      key: tile.key,
+      weight: tile.kind === "screen" ? SCREEN_WEIGHT : 1,
+      tile,
+      pending: undefined as PendingParticipant | undefined,
+    }));
+    const waiting = pending.map((p) => ({
+      key: `pending-${p.userId}`,
+      weight: 1,
+      tile: undefined as CallTile | undefined,
+      pending: p,
+    }));
+    const screens = live.filter((c) => c.tile!.kind === "screen");
+    const rest = live.filter((c) => c.tile!.kind !== "screen");
+    return [...screens, ...rest, ...waiting];
+  }, [tiles, pending]);
 
-  let tileW = 300;
-  let tileH = 169;
-
-  if (size) {
-    const maxTileW = (size.w - GAP * (cols - 1)) / cols;
-    const maxTileH = (size.h - GAP * (rows - 1)) / rows;
-    tileW = Math.max(Math.min(maxTileW, maxTileH * (16 / 9)), 80);
-    tileH = tileW * (9 / 16);
-  }
+  const focused = focusedKey !== null && tiles.some((tile) => tile.key === focusedKey);
+  const layout = useMemo(() => {
+    if (!size) return null;
+    const area = { x: 0, y: 0, w: size.w, h: size.h };
+    // Waiting-to-join placeholders have no place beside a focused tile, so they
+    // are left out of its layout (and shrink away) rather than crowding the strip.
+    if (focused) {
+      return focusedLayout(
+        focusedKey!,
+        cells.filter((cell) => !cell.pending).map((cell) => cell.key),
+        area,
+        GAP,
+      );
+    }
+    return bentoLayout(
+      cells.map(({ key, weight }) => ({ key, weight })),
+      area,
+      GAP,
+    );
+  }, [cells, size, focused, focusedKey]);
 
   return (
-    <div
-      ref={containerRef}
-      className="flex h-full w-full items-center justify-center overflow-hidden"
-    >
-      <div className="flex flex-col items-center" style={{ gap: GAP }}>
-        {Array.from({ length: rows }, (_, rowIndex) => {
-          const rowCells = cells.slice(rowIndex * cols, (rowIndex + 1) * cols);
-          return (
-            <div key={rowIndex} className="flex" style={{ gap: GAP }}>
-              {rowCells.map((cell) =>
-                "pending" in cell ? (
-                  <div
-                    key={`pending-${cell.pending.userId}`}
-                    className="shrink-0 overflow-hidden rounded-lg"
-                    style={{ width: tileW, height: tileH }}
-                  >
-                    <PendingParticipantTile
-                      name={cell.pending.name}
-                      imageUrl={cell.pending.imageUrl}
-                      ringing={cell.pending.ringing}
-                      fill
-                    />
-                  </div>
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden">
+      {layout && (
+        <AnimatePresence initial={false}>
+          {cells.map((cell) => {
+            const rect = layout.get(cell.key);
+            if (!rect) return null;
+            return (
+              <motion.div
+                key={cell.key}
+                className="absolute top-0 left-0 overflow-hidden rounded-2xl"
+                initial={{ opacity: 0, scale: 0.9, x: rect.x, y: rect.y, width: rect.w, height: rect.h }}
+                animate={{ opacity: 1, scale: 1, x: rect.x, y: rect.y, width: rect.w, height: rect.h }}
+                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+                transition={TILE_SPRING}
+              >
+                {cell.pending ? (
+                  <PendingParticipantTile
+                    name={cell.pending.name}
+                    imageUrl={cell.pending.imageUrl}
+                    ringing={cell.pending.ringing}
+                    fill
+                  />
+                ) : focused && cell.tile!.key === focusedKey ? (
+                  <FocusedTileViewport
+                    tile={cell.tile!}
+                    displayName={displayNameOf(cell.tile!)}
+                    onUnfocus={onUnfocus}
+                    watchState={getWatchState(cell.tile!)}
+                    settings={getSettings(cell.tile!)}
+                    onVolumeChange={(v) => onVolumeChange(cell.tile!, v)}
+                    onMuteToggle={() => onMuteToggle(cell.tile!)}
+                    moderation={moderation}
+                  />
                 ) : (
-                  ((tile) => (
-                    <div
-                      key={tile.key}
-                      className="shrink-0 overflow-hidden rounded-lg"
-                      style={{ width: tileW, height: tileH }}
-                    >
-                      <TileWithContextMenu
-                        moderation={moderation}
-                        tile={tile}
-                        onClick={() => onFocus(tile.key)}
-                        watchState={getWatchState(tile)}
-                        settings={getSettings(tile)}
-                        onVolumeChange={(v) => onVolumeChange(tile, v)}
-                        onMuteToggle={() => onMuteToggle(tile)}
-                      />
-                    </div>
-                  ))(cell.tile)
-                ),
-              )}
-            </div>
-          );
-        })}
-      </div>
+                  <TileWithContextMenu
+                    moderation={moderation}
+                    tile={cell.tile!}
+                    onClick={() => onFocus(cell.tile!.key)}
+                    watchState={getWatchState(cell.tile!)}
+                    settings={getSettings(cell.tile!)}
+                    onVolumeChange={(v) => onVolumeChange(cell.tile!, v)}
+                    onMuteToggle={() => onMuteToggle(cell.tile!)}
+                  />
+                )}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      )}
     </div>
   );
 }
@@ -721,54 +855,10 @@ export function CallGrid({
     );
   }
 
-  const focused = tiles.find((t) => t.key === focusedKey) ?? null;
-
-  if (focused) {
-    const rest = tiles.filter((t) => t.key !== focused.key);
-    const focusedName =
-      focused.name || focused.participant.name || focused.participant.identity;
-    return (
-      <div className="flex h-full min-h-0 flex-col gap-2">
-        <div className="min-h-0 flex-1">
-          <FocusedTileViewport
-            tile={focused}
-            displayName={
-              focused.kind === "screen"
-                ? `${focusedName}'s screen`
-                : focusedName
-            }
-            onUnfocus={() => setFocusedKey(null)}
-            watchState={getWatchState(focused)}
-            settings={getSettings(focused)}
-            onVolumeChange={(v) => updateVolume(focused, v)}
-            onMuteToggle={() => toggleMute(focused)}
-            moderation={moderation}
-          />
-        </div>
-        {rest.length > 0 && (
-          <div className="flex h-28 shrink-0 justify-center gap-2 overflow-x-auto">
-            {rest.map((tile) => (
-              <div key={tile.key} className="h-full w-44 shrink-0">
-                <TileWithContextMenu
-                  moderation={moderation}
-                  tile={tile}
-                  avatarSize="sm"
-                  onClick={() => setFocusedKey(tile.key)}
-                  watchState={getWatchState(tile)}
-                  settings={getSettings(tile)}
-                  onVolumeChange={(v) => updateVolume(tile, v)}
-                  onMuteToggle={() => toggleMute(tile)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <GalleryGrid
+    <TileStage
+      focusedKey={focusedKey}
+      onUnfocus={() => setFocusedKey(null)}
       tiles={tiles}
       pending={pending}
       onFocus={setFocusedKey}

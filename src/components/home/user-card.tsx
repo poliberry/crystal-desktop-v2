@@ -52,7 +52,7 @@ import {
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import { ownDecorationState } from "@/lib/avatar-decorations";
 import { useMyPresence, useSetPresenceStatus } from "@/hooks/use-presence";
-import { useOpenSettings } from "@/components/settings/settings-dialog";
+import { useOpenSettings } from "@/components/pages/page-context";
 import {
   STATUS_LABEL,
   type FriendStatus,
@@ -216,7 +216,7 @@ export function UserCard() {
           variant="ghost"
           size="icon"
           className="size-7 shrink-0 hover:bg-black/10"
-          onClick={openSettings}
+          onClick={() => openSettings()}
         >
           <SettingsIcon duration={0.8} className="size-4" />
         </Button>

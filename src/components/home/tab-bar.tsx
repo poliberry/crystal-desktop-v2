@@ -1,13 +1,13 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { Hash, Pin, PinOff, X } from "lucide-react";
+import { Hash, Pin, PinOff, Plus, Settings, UserPen, X } from "lucide-react";
 import { LogoMark } from "@/components/logo-mark";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GroupAvatar } from "@/components/home/group-avatar";
-import { type Tab, useTabs } from "@/components/home/tabs-context";
+import { isPageTarget, type Tab, useTabs } from "@/components/home/tabs-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { House } from "@animateicons/react/lucide";
@@ -63,6 +63,26 @@ function ChannelTabLabel({ channelId }: { channelId: Id<"channels"> }) {
   );
 }
 
+function CommunitySettingsTabLabel({ communityId }: { communityId: Id<"communities"> }) {
+  const community = useQuery(api.communities.get, { communityId });
+  const name = community?.name ?? "…";
+
+  return (
+    <>
+      <Avatar size="sm" className="size-4 shrink-0">
+        <AvatarImage src={community?.imageUrl} alt={name} className="rounded-md" />
+        <AvatarFallback className="text-[8px]">{name.slice(0, 2).toUpperCase()}</AvatarFallback>
+      </Avatar>
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="max-w-20 shrink-0 truncate text-muted-foreground">{name}</span>
+        <span className="shrink-0 text-muted-foreground/60">|</span>
+        <Settings className="size-3 shrink-0 text-muted-foreground" />
+        <span className="truncate">Settings</span>
+      </span>
+    </>
+  );
+}
+
 function TabLabel({ tab }: { tab: Tab }) {
   switch (tab.target.type) {
     case "home":
@@ -76,6 +96,29 @@ function TabLabel({ tab }: { tab: Tab }) {
       return <DmTabLabel conversationId={tab.target.conversationId} />;
     case "channel":
       return <ChannelTabLabel channelId={tab.target.channelId} />;
+    case "settings":
+      return (
+        <>
+          <Settings className="size-3.5 shrink-0" />
+          <span className="truncate">Settings</span>
+        </>
+      );
+    case "profile-editor":
+      return (
+        <>
+          <UserPen className="size-3.5 shrink-0" />
+          <span className="truncate">Edit profile</span>
+        </>
+      );
+    case "create-community":
+      return (
+        <>
+          <Plus className="size-3.5 shrink-0" />
+          <span className="truncate">New community</span>
+        </>
+      );
+    case "community-settings":
+      return <CommunitySettingsTabLabel communityId={tab.target.communityId} />;
   }
 }
 
@@ -101,17 +144,21 @@ function TabButton({ tab }: { tab: Tab }) {
       </button>
       {!isHome && (
         <>
-          <button
-            type="button"
-            onClick={() => togglePinTab(tab.id)}
-            title={tab.pinned ? "Unpin tab" : "Pin tab"}
-            className={cn(
-              "shrink-0 rounded p-0.5 hover:bg-accent",
-              tab.pinned ? "opacity-70" : "opacity-0 group-hover:opacity-100"
-            )}
-          >
-            {tab.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-          </button>
+          {/* A page is not somewhere to keep: pinning it would bring it back
+              on the next launch. */}
+          {!isPageTarget(tab.target) && (
+            <button
+              type="button"
+              onClick={() => togglePinTab(tab.id)}
+              title={tab.pinned ? "Unpin tab" : "Pin tab"}
+              className={cn(
+                "shrink-0 rounded p-0.5 hover:bg-accent",
+                tab.pinned ? "opacity-70" : "opacity-0 group-hover:opacity-100"
+              )}
+            >
+              {tab.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => closeTab(tab.id)}
@@ -126,8 +173,8 @@ function TabButton({ tab }: { tab: Tab }) {
   );
 }
 
-/** Browser-like tab bar under the top nav — each tab is a DM, a channel, or
- * the pinned Home tab. See `tabs-context.tsx` for the (client-side-only)
+/** Browser-like tab bar under the top nav — each tab is a DM, a channel, a
+ * page (Settings and the like), or the pinned Home tab. See `tabs-context.tsx` for the (client-side-only)
  * virtual routing backing this. */
 export function TabBar() {
   const { tabs } = useTabs();

@@ -37,7 +37,8 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { CachedBackground } from "@/components/cached-background";
 import { useCall } from "@/components/call/call-provider";
 import { communityActionItems } from "@/components/community/community-actions";
-import { CommunitySettingsDialog } from "@/components/community/community-settings-dialog";
+import { ReportDialog } from "@/components/reports/report-dialog";
+import { useOpenCommunitySettings } from "@/components/pages/page-context";
 import { CreateCategoryDialog } from "@/components/community/create-category-dialog";
 import { CreateChannelDialog } from "@/components/community/create-channel-dialog";
 import { EditCategoryDialog } from "@/components/community/edit-category-dialog";
@@ -179,8 +180,9 @@ export function CommunitySidebar({
   const deleteChannel = useMutation(api.channels.remove);
   const deleteCategory = useMutation(api.channelCategories.remove);
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openCommunitySettings = useOpenCommunitySettings();
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [reportingCommunity, setReportingCommunity] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
   const [createChannelFor, setCreateChannelFor] = useState<
     Id<"channelCategories"> | null | undefined
@@ -258,8 +260,9 @@ export function CommunitySidebar({
               invite: () => setInviteOpen(true),
               createChannel: () => setCreateChannelFor(null),
               createCategory: () => setCreateCategoryOpen(true),
-              communitySettings: () => setSettingsOpen(true),
+              communitySettings: () => openCommunitySettings(communityId),
               leave: () => void leaveCommunity({ communityId }),
+              report: () => setReportingCommunity(true),
             },
           }).map((item) => {
             const Icon = item.icon;
@@ -359,6 +362,10 @@ export function CommunitySidebar({
         )}
       </ContextMenu>
 
+      <ReportDialog
+        target={reportingCommunity ? { type: "community", id: communityId, label: "this community" } : null}
+        onClose={() => setReportingCommunity(false)}
+      />
       <InviteDialog
         communityId={communityId}
         open={inviteOpen}
@@ -384,19 +391,6 @@ export function CommunitySidebar({
       <EditCategoryDialog
         category={editingCategory}
         onOpenChange={(open) => !open && setEditingCategory(null)}
-      />
-      <CommunitySettingsDialog
-        communityId={communityId}
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        canManageCommunity={hasPermission(
-          myPermissions,
-          PERMISSIONS.MANAGE_COMMUNITY,
-        )}
-        canManageRoles={hasPermission(myPermissions, PERMISSIONS.MANAGE_ROLES)}
-        canManageChannels={canManageChannels}
-        canManageEmojis={canManageEmojis}
-        isOwner={community.isOwner}
       />
     </div>
     </SidebarCommunityContext.Provider>

@@ -5,6 +5,8 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ChannelChatView } from "@/components/community/channel-chat-view";
+import { SurfaceView } from "@/components/community/surfaces/surface-view";
+import type { ChannelSurface } from "@/lib/community-kinds";
 
 interface ChannelViewProps {
   channelId: Id<"channels">;
@@ -32,6 +34,18 @@ export function ChannelView({ channelId }: ChannelViewProps) {
       <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         Click &quot;{channel.name}&quot; in the sidebar to join.
       </div>
+    );
+  }
+
+  if (channel.surface) {
+    return (
+      <SurfaceView
+        surface={channel.surface as ChannelSurface}
+        channelId={channelId}
+        communityId={channel.communityId}
+        name={channel.name}
+        topic={channel.topic}
+      />
     );
   }
 

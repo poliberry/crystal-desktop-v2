@@ -31,6 +31,10 @@ export const PERMISSIONS = {
   /** Ping a role, `@everyone` or `@here`. Without it those still render as
    * mentions but notify nobody — see convex/lib/mentions.ts. */
   MENTION_EVERYONE: 1 << 17,
+  /** Connect a Pterodactyl panel and decide who may do what to its servers. */
+  MANAGE_GAME_SERVERS: 1 << 18,
+  /** Create, edit and cancel events and scrims. */
+  MANAGE_EVENTS: 1 << 19,
 } as const;
 
 export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

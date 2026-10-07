@@ -10,12 +10,6 @@ import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
 
-function cdnUrlForStorageId(storageId: string): string | null {
-  const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
-  if (!base) return null;
-  return `${base.replace(/\/$/, "")}/migrated/${storageId}`;
-}
-
 function r2UrlForKey(key: string): string | null {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
   if (!base) return null;
@@ -146,8 +140,11 @@ export const list = query({
           attachmentRows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
             const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? r2UrlForKey(anyAtt.cdnKey) : null);
-            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
-            const cdnUrl = directCdn ?? migratedCdn;
+            // Only a CDN address the attachment actually has. It used to fall back to
+            // `migrated/<storageId>` for any attachment with a Convex file, which
+            // is a guess that a copy exists — and 404s for every one not yet
+            // copied the moment the CDN is switched on.
+            const cdnUrl = directCdn;
             const url = cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null);
             return {
               id: attachment._id,
@@ -245,6 +242,7 @@ export const send = mutation({
     { conversationId, text, attachments, birthdayWish, replyToId, pingReply, clientId },
   ) => {
     const me = await getCurrentUserOrThrow(ctx);
+    if (me.clerkId === "system:crystal") throw new Error("The Crystal system account cannot compose messages.");
     const membership = await requireMembership(ctx, conversationId, me._id);
 
     if (clientId) {
@@ -573,8 +571,11 @@ export const listAttachments = query({
           rows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
             const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? r2UrlForKey(anyAtt.cdnKey) : null);
-            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
-            const cdnUrl = directCdn ?? migratedCdn;
+            // Only a CDN address the attachment actually has. It used to fall back to
+            // `migrated/<storageId>` for any attachment with a Convex file, which
+            // is a guess that a copy exists — and 404s for every one not yet
+            // copied the moment the CDN is switched on.
+            const cdnUrl = directCdn;
             return {
               id: attachment._id,
               messageId: message._id,

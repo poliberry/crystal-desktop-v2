@@ -22,7 +22,7 @@ async function hashOf(file: File): Promise<string> {
 export async function tryUploadViaR2(
   convex: ConvexReactClient,
   file: File,
-  kind: "attachments" | "avatars" | "avatar-decorations" | "avatar-frames" | "icons" | "banners" | "nameplates" | "backgrounds" | "emoji" | "sounds",
+  kind: "attachments" | "avatars" | "avatar-decorations" | "avatar-frames" | "icons" | "banners" | "nameplates" | "backgrounds" | "emoji" | "sounds" | "marketplace" | "creations",
   opts?: { ownerId?: string; communityId?: string; layerId?: string }
 ): Promise<{ cdnKey: string; cdnUrl: string } | null> {
   try {

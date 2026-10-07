@@ -76,3 +76,16 @@ export const migrateOneInternal = internalAction({
     return { key, publicUrl };
   },
 });
+
+/**
+ * Delete one object from the bucket. The only place that does, so that a
+ * mutation which drops a picture can schedule it (see `dropR2Url`) instead of
+ * trying to make a network request it isn't allowed to.
+ */
+export const deleteR2Object = internalAction({
+  args: { key: v.string() },
+  handler: async (_ctx, { key }) => {
+    const { r2DeleteByKey } = await import("./lib/r2");
+    await r2DeleteByKey(key);
+  },
+});

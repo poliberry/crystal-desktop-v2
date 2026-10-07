@@ -1079,6 +1079,252 @@ export function defaultDecorationLayer(url: string, storageId?: string): Cosmeti
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Canvas bounds — what a placed layer is allowed to do                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The two things this model is used for, which differ in how far from the
+ * thing they decorate a layer may go.
+ *
+ *  `decoration` goes around an avatar. The avatar is a square and the artwork
+ *               is meant to hang a little off it, so the canvas is the avatar
+ *               plus a margin on every side (`DECORATION_MARGIN`).
+ *  `sticker`    goes *on* a profile card. The canvas is the card, exactly:
+ *               a sticker is a thing stuck on the card, and artwork that runs
+ *               around the card's edge is a frame, which is a different
+ *               product (presets, from the marketplace) rather than something
+ *               to draw by hand.
+ *
+ * Both are enforced three times — by the canvas while you drag, by the editor
+ * for everything typed, and by the server when the list is saved (see
+ * convex/lib/cosmeticLayers.ts, which mirrors this) — because a mutation is a
+ * public endpoint and the canvas is not the only thing that can call it.
+ */
+export type CanvasKind = "decoration" | "sticker";
+
+/** How far past the avatar a decoration may reach, in percent of the avatar's
+ * width, on every side. The built-in presets hang about 13% past it; this
+ * leaves room for artwork that is bolder than they are, and no room for
+ * something to be lost three avatars away. */
+export const DECORATION_MARGIN = 30;
+
+/** The widest a sticker may be, in percent of the card's width. Wide enough
+ * for a banner of text, narrow enough that it cannot be used to cover the
+ * card — which, with the size of a card's edge, is what a frame is. */
+export const STICKER_MAX_WIDTH = 70;
+
+/** How tall the longest card is, in percent of its width — the full profile
+ * page's, which is the tallest the card is ever drawn. A sticker pinned to the
+ * top edge cannot be put further down than this. */
+export const STICKER_MAX_CARD_HEIGHT = 240;
+
+/** The card height assumed when a sticker has to be placed without one — a
+ * layer written by an older build, or one checked on the server, which has no
+ * card to measure. A short card, so a sticker is never pushed off the end of a
+ * real one. */
+const STICKER_FALLBACK_CARD_HEIGHT = 130;
+
+/**
+ * The box a layer's *whole extent* must stay inside, in the stage's own
+ * coordinates: percent of its width, measured from its top-left corner.
+ *
+ * `stageHeightPercent` is the stage's height in that same unit — 100 for an
+ * avatar, whatever the card measures for a card.
+ */
+export function canvasBounds(
+  kind: CanvasKind,
+  stageHeightPercent: number,
+): { minX: number; maxX: number; minY: number; maxY: number } {
+  if (kind === "decoration") {
+    return {
+      minX: -DECORATION_MARGIN,
+      maxX: 100 + DECORATION_MARGIN,
+      minY: -DECORATION_MARGIN,
+      maxY: 100 + DECORATION_MARGIN,
+    };
+  }
+  return { minX: 0, maxX: 100, minY: 0, maxY: stageHeightPercent };
+}
+
+/** The half-extents of a box once it has been turned: how far its corners
+ * reach from its centre on each axis. */
+function turnedHalfExtents(width: number, height: number, rotation: number | undefined) {
+  const radians = ((rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  return {
+    x: (width * cos + height * sin) / 2,
+    y: (width * sin + height * cos) / 2,
+  };
+}
+
+/**
+ * A layer brought inside the canvas: shrunk if it has outgrown it, then slid
+ * back if any of it is out.
+ *
+ * Done on the layer's *turned* extent, so a rotated sticker is held to the
+ * space it actually occupies rather than the box it started as. Shrinking comes
+ * first and is proportional — a layer that is too big is made smaller in the
+ * shape it was drawn in, not squashed to fit — and it takes the type size with
+ * it for a text layer, which has a box of its own but is sized by its letters.
+ *
+ * `heightOf` is the layer's real height in percent of the stage's width, which
+ * only the caller can know for an image that keeps its own proportions.
+ */
+export function confineLayer(
+  layer: CosmeticLayer,
+  kind: CanvasKind,
+  stageHeightPercent: number,
+  heightOf: (layer: CosmeticLayer) => number,
+): CosmeticLayer {
+  const bounds = canvasBounds(kind, stageHeightPercent);
+  const rangeX = bounds.maxX - bounds.minX;
+  const rangeY = bounds.maxY - bounds.minY;
+
+  let width = layer.width;
+  let height = heightOf(layer);
+  const maxWidth = kind === "sticker" ? STICKER_MAX_WIDTH : LAYER_LIMITS.size.max;
+
+  const extent = turnedHalfExtents(width, height, layer.rotation);
+  const scale = Math.min(
+    1,
+    rangeX / Math.max(extent.x * 2, 0.0001),
+    rangeY / Math.max(extent.y * 2, 0.0001),
+    maxWidth / Math.max(width, 0.0001),
+  );
+
+  let next = layer;
+  if (scale < 1) {
+    width *= scale;
+    height *= scale;
+    next = {
+      ...layer,
+      width: round(width),
+      // Only an explicit height is scaled: an absent one follows the width.
+      height: layer.height === undefined ? undefined : round(layer.height * scale),
+      fontSize: layer.fontSize === undefined ? undefined : round(layer.fontSize * scale),
+    };
+  }
+
+  const half = turnedHalfExtents(width, height, next.rotation);
+  const x = clamp(next.x, bounds.minX + half.x, bounds.maxX - half.x);
+  const centre = clamp(
+    layerCentreY(next, stageHeightPercent),
+    bounds.minY + half.y,
+    bounds.maxY - half.y,
+  );
+  const placed: CosmeticLayer = {
+    ...next,
+    x: round(x),
+    y: round(layerYFromCentre(next.anchor, centre, stageHeightPercent)),
+  };
+  return kind === "sticker" ? stickerLayer(placed, stageHeightPercent) : placed;
+}
+
+/**
+ * A sticker, in the one form stickers are stored in.
+ *
+ * Pinned to whichever of the card's top and bottom edges its centre is nearer —
+ * which is what makes the same placement come out right on every card. A card
+ * is the same width and a different height depending on what its owner has
+ * written; a sticker in the lower half means "near the bottom", not "this far
+ * down", and measuring from the nearer edge is how the stored number says so.
+ * The `y` is converted so nothing moves now; the anchor only decides what
+ * happens when the card grows.
+ *
+ * No variants, no stretching, no middle pin: those are the machinery of frames
+ * — artwork drawn to a card's whole shape — and a sticker is none of that.
+ */
+export function stickerLayer(layer: CosmeticLayer, stageHeightPercent: number): CosmeticLayer {
+  const centre = layerCentreY(layer, stageHeightPercent);
+  const anchor: LayerAnchor = centre <= stageHeightPercent / 2 ? "top" : "bottom";
+  return {
+    ...layer,
+    anchor,
+    y: round(layerYFromCentre(anchor, centre, stageHeightPercent)),
+    stretchY: undefined,
+    stretchDirection: undefined,
+    stretchTop: undefined,
+    stretchBottom: undefined,
+    variants: undefined,
+  };
+}
+
+/**
+ * Stickers as they should be stored, checked without a card to measure.
+ *
+ * What the editor does against a real card, done here against a short one and
+ * the tallest one: horizontally the sticker must sit inside the card, and
+ * vertically it must sit between the top edge and the longest card there is.
+ * That is looser than the editor — a sticker can be saved a little lower than
+ * a short card would hold it — but never off the card at the sides or above it,
+ * and never so far down that it is not on any card.
+ *
+ * Mirrored in convex/lib/cosmeticLayers.ts.
+ */
+export function normalizeStickerLayers(layers: CosmeticLayer[]): CosmeticLayer[] {
+  return normalizeLayers(layers).map((layer) => {
+    const width = Math.min(layer.width, STICKER_MAX_WIDTH);
+    const scale = layer.width > 0 ? width / layer.width : 1;
+    const height = layer.height === undefined ? width : layer.height * scale;
+    const half = turnedHalfExtents(width, height, layer.rotation);
+
+    // Bring whatever anchor it came with onto the top edge first, against a
+    // card of the fallback height: a centre or locked layer only has a position
+    // relative to a card that has a height.
+    const fromTop = layerCentreY(layer, STICKER_FALLBACK_CARD_HEIGHT);
+    const nearTop = fromTop <= STICKER_FALLBACK_CARD_HEIGHT / 2;
+    const anchor: LayerAnchor = nearTop ? "top" : "bottom";
+    const rawY = layerYFromCentre(anchor, fromTop, STICKER_FALLBACK_CARD_HEIGHT);
+
+    return {
+      ...layer,
+      width: round(width),
+      height: layer.height === undefined ? undefined : round(layer.height * scale),
+      fontSize: layer.fontSize === undefined ? undefined : round(layer.fontSize * scale),
+      anchor,
+      x: round(clamp(layer.x, half.x, 100 - half.x)),
+      y: round(
+        anchor === "top"
+          ? clamp(rawY, half.y, STICKER_MAX_CARD_HEIGHT - half.y)
+          : clamp(rawY, -(STICKER_MAX_CARD_HEIGHT - half.y), -half.y),
+      ),
+      stretchY: undefined,
+      stretchDirection: undefined,
+      stretchTop: undefined,
+      stretchBottom: undefined,
+      variants: undefined,
+    };
+  });
+}
+
+/**
+ * Decoration layers as they should be stored: each one's whole extent inside
+ * the avatar plus its margin. The avatar is a square at every size it is drawn,
+ * so unlike a sticker there is a real canvas to check against here, and the
+ * result is exactly what the editor would have produced.
+ */
+export function normalizeDecorationLayers(layers: CosmeticLayer[]): CosmeticLayer[] {
+  return normalizeLayers(layers).map((layer) =>
+    confineLayer({ ...layer, variants: undefined }, "decoration", 100, (l) =>
+      layerKind(l) === "image" && l.height === undefined ? l.width : (l.height ?? l.width),
+    ),
+  );
+}
+
+/** Where a new sticker lands: the middle of the card's upper third, at a size
+ * that is clearly a sticker and not a corner of one. */
+export function defaultStickerPlacement(): Pick<CosmeticLayer, "anchor" | "x" | "y" | "width"> {
+  return { anchor: "top", x: 50, y: 50, width: 36 };
+}
+
+/** The decoration equivalent: dead centre on the avatar, a little larger than
+ * it, which is how a ring or a crown comes in. */
+export function defaultDecorationPlacement(): Pick<CosmeticLayer, "anchor" | "x" | "y" | "width"> {
+  return { anchor: "center", x: 50, y: 0, width: 100 };
+}
+
 /** Short, unique enough for a list of eight, and readable in a document. */
 export function newLayerId(): string {
   return Math.random().toString(36).slice(2, 10);

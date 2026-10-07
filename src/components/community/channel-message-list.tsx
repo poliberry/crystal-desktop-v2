@@ -9,6 +9,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { DeleteMessageDialog } from "@/components/home/delete-message-dialog";
 import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
+import { ReportDialog } from "@/components/reports/report-dialog";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
 import { MessageReplyPreview } from "@/components/home/message-reply-preview";
@@ -147,6 +148,7 @@ const MessageRow = memo(function MessageRow({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reporting, setReporting] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const canDelete = message.isMine || canManageMessages;
 
@@ -352,9 +354,14 @@ const MessageRow = memo(function MessageRow({
         onReply={reply}
         onEdit={startEdit}
         onDelete={requestDelete}
+        onReport={message.isMine ? undefined : () => setReporting(true)}
       >
         {content}
       </MessageContextMenu>
+      <ReportDialog
+        target={reporting ? { type: "channelMessage", id: message.id, label: "this message" } : null}
+        onClose={() => setReporting(false)}
+      />
       <DeleteMessageDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

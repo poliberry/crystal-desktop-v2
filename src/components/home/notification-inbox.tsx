@@ -124,7 +124,10 @@ export function NotificationInbox() {
         </Tooltip>
       </TooltipProvider>
 
-      <PopoverContent align="end" sideOffset={10} className="w-88 p-0">
+      {/* To the side rather than below: the bell is in the sidebar, at the
+          window's left edge, and a panel this wide hung from it would run off
+          the screen. */}
+      <PopoverContent side="right" align="start" sideOffset={10} className="w-88 p-0">
         <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
           <p className="mr-auto text-sm font-semibold">Inbox</p>
           {unreadCount > 0 && (

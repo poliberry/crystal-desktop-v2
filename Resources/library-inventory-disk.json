@@ -1,0 +1,600 @@
+{
+  "source" : "disk",
+  "candidatePatchCount" : 57,
+  "categories" : [
+    "Acoustic Drums",
+    "Acoustic Piano",
+    "Bass",
+    "Electronic Drums",
+    "Percussion",
+    "Synthesizer"
+  ],
+  "cycleCount" : 0,
+  "folderCount" : 10,
+  "generatedAt" : "2026-10-07T03:30:29Z",
+  "leafCount" : 54,
+  "measuredSettleDelayMs" : 0,
+  "nodeCount" : 64,
+  "nonApplicablePatchCount" : 3,
+  "presetsByCategory" : {
+    "Acoustic Drums" : [
+      "Blue Ridge",
+      "Bluebird",
+      "Brooklyn",
+      "Detroit Garage",
+      "East Bay",
+      "Four on the Floor",
+      "Heavy",
+      "Liverpool",
+      "Manchester",
+      "Motown Revisited",
+      "Neo Soul",
+      "Portland",
+      "Retro Rock",
+      "Roots",
+      "Scientific Method",
+      "Slow Jam",
+      "Smash",
+      "SoCal",
+      "Speakeasy",
+      "Sunset"
+    ],
+    "Acoustic Piano" : [
+      "Studio Grand",
+      "Vintage Upright"
+    ],
+    "Bass" : [
+      "Contemporary Soul",
+      "Dancefloor",
+      "Punchy Bottom",
+      "Rock Legend",
+      "Roots Upright",
+      "Simple Foundation",
+      "Slap & Pop",
+      "Vintage Soul",
+      "Warm & Clear"
+    ],
+    "Electronic Drums" : [
+      "Absolute Zero",
+      "Analog Haze",
+      "Drum Synth Kit",
+      "Dusty Fingers",
+      "Empty Kit",
+      "Festival Drop",
+      "Flashback",
+      "Hollywood Haze",
+      "House Heads",
+      "Hyper Drop",
+      "Ibiza Tech",
+      "Platinum Cuts",
+      "Rough Riddim",
+      "Trap Heat"
+    ],
+    "Percussion" : [
+      "Coffee Shop",
+      "Latin",
+      "Studio"
+    ],
+    "Synthesizer" : [
+      "Big Stadium Bass",
+      "Chrome 808 Bass",
+      "Renegade Party",
+      "Saw Prism",
+      "Deep Majesty",
+      "Distant Dawn"
+    ]
+  },
+  "probeTimeouts" : 0,
+  "root" : {
+    "children" : [
+      {
+        "children" : [
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Blue Ridge",
+            "path" : "Acoustic Drums\/Blue Ridge"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Bluebird",
+            "path" : "Acoustic Drums\/Bluebird"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Brooklyn",
+            "path" : "Acoustic Drums\/Brooklyn"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Detroit Garage",
+            "path" : "Acoustic Drums\/Detroit Garage"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "East Bay",
+            "path" : "Acoustic Drums\/East Bay"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Four on the Floor",
+            "path" : "Acoustic Drums\/Four on the Floor"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Heavy",
+            "path" : "Acoustic Drums\/Heavy"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Liverpool",
+            "path" : "Acoustic Drums\/Liverpool"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Manchester",
+            "path" : "Acoustic Drums\/Manchester"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Motown Revisited",
+            "path" : "Acoustic Drums\/Motown Revisited"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Neo Soul",
+            "path" : "Acoustic Drums\/Neo Soul"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Portland",
+            "path" : "Acoustic Drums\/Portland"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Retro Rock",
+            "path" : "Acoustic Drums\/Retro Rock"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Roots",
+            "path" : "Acoustic Drums\/Roots"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Scientific Method",
+            "path" : "Acoustic Drums\/Scientific Method"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Slow Jam",
+            "path" : "Acoustic Drums\/Slow Jam"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Smash",
+            "path" : "Acoustic Drums\/Smash"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "SoCal",
+            "path" : "Acoustic Drums\/SoCal"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Speakeasy",
+            "path" : "Acoustic Drums\/Speakeasy"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Sunset",
+            "path" : "Acoustic Drums\/Sunset"
+          }
+        ],
+        "kind" : "folder",
+        "name" : "Acoustic Drums",
+        "path" : "Acoustic Drums"
+      },
+      {
+        "children" : [
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Studio Grand",
+            "path" : "Acoustic Piano\/Studio Grand"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Vintage Upright",
+            "path" : "Acoustic Piano\/Vintage Upright"
+          }
+        ],
+        "kind" : "folder",
+        "name" : "Acoustic Piano",
+        "path" : "Acoustic Piano"
+      },
+      {
+        "children" : [
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Contemporary Soul",
+            "path" : "Bass\/Contemporary Soul"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Dancefloor",
+            "path" : "Bass\/Dancefloor"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Punchy Bottom",
+            "path" : "Bass\/Punchy Bottom"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Rock Legend",
+            "path" : "Bass\/Rock Legend"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Roots Upright",
+            "path" : "Bass\/Roots Upright"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Simple Foundation",
+            "path" : "Bass\/Simple Foundation"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Slap & Pop",
+            "path" : "Bass\/Slap & Pop"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Vintage Soul",
+            "path" : "Bass\/Vintage Soul"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Warm & Clear",
+            "path" : "Bass\/Warm & Clear"
+          }
+        ],
+        "kind" : "folder",
+        "name" : "Bass",
+        "path" : "Bass"
+      },
+      {
+        "children" : [
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Absolute Zero",
+            "path" : "Electronic Drums\/Absolute Zero"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Analog Haze",
+            "path" : "Electronic Drums\/Analog Haze"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Drum Synth Kit",
+            "path" : "Electronic Drums\/Drum Synth Kit"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Dusty Fingers",
+            "path" : "Electronic Drums\/Dusty Fingers"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Empty Kit",
+            "path" : "Electronic Drums\/Empty Kit"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Festival Drop",
+            "path" : "Electronic Drums\/Festival Drop"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Flashback",
+            "path" : "Electronic Drums\/Flashback"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Hollywood Haze",
+            "path" : "Electronic Drums\/Hollywood Haze"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "House Heads",
+            "path" : "Electronic Drums\/House Heads"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Hyper Drop",
+            "path" : "Electronic Drums\/Hyper Drop"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Ibiza Tech",
+            "path" : "Electronic Drums\/Ibiza Tech"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Platinum Cuts",
+            "path" : "Electronic Drums\/Platinum Cuts"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Rough Riddim",
+            "path" : "Electronic Drums\/Rough Riddim"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Trap Heat",
+            "path" : "Electronic Drums\/Trap Heat"
+          }
+        ],
+        "kind" : "folder",
+        "name" : "Electronic Drums",
+        "path" : "Electronic Drums"
+      },
+      {
+        "children" : [
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Coffee Shop",
+            "path" : "Percussion\/Coffee Shop"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Latin",
+            "path" : "Percussion\/Latin"
+          },
+          {
+            "children" : [
+
+            ],
+            "kind" : "leaf",
+            "name" : "Studio",
+            "path" : "Percussion\/Studio"
+          }
+        ],
+        "kind" : "folder",
+        "name" : "Percussion",
+        "path" : "Percussion"
+      },
+      {
+        "children" : [
+          {
+            "children" : [
+              {
+                "children" : [
+
+                ],
+                "kind" : "leaf",
+                "name" : "Big Stadium Bass",
+                "path" : "Synthesizer\/Bass\/Big Stadium Bass"
+              },
+              {
+                "children" : [
+
+                ],
+                "kind" : "leaf",
+                "name" : "Chrome 808 Bass",
+                "path" : "Synthesizer\/Bass\/Chrome 808 Bass"
+              },
+              {
+                "children" : [
+
+                ],
+                "kind" : "leaf",
+                "name" : "Renegade Party",
+                "path" : "Synthesizer\/Bass\/Renegade Party"
+              }
+            ],
+            "kind" : "folder",
+            "name" : "Bass",
+            "path" : "Synthesizer\/Bass"
+          },
+          {
+            "children" : [
+              {
+                "children" : [
+
+                ],
+                "kind" : "leaf",
+                "name" : "Saw Prism",
+                "path" : "Synthesizer\/Brass\/Saw Prism"
+              }
+            ],
+            "kind" : "folder",
+            "name" : "Brass",
+            "path" : "Synthesizer\/Brass"
+          },
+          {
+            "children" : [
+              {
+                "children" : [
+
+                ],
+                "kind" : "leaf",
+                "name" : "Deep Majesty",
+                "path" : "Synthesizer\/Pad\/Deep Majesty"
+              },
+              {
+                "children" : [
+
+                ],
+                "kind" : "leaf",
+                "name" : "Distant Dawn",
+                "path" : "Synthesizer\/Pad\/Distant Dawn"
+              }
+            ],
+            "kind" : "folder",
+            "name" : "Pad",
+            "path" : "Synthesizer\/Pad"
+          }
+        ],
+        "kind" : "folder",
+        "name" : "Synthesizer",
+        "path" : "Synthesizer"
+      }
+    ],
+    "kind" : "folder",
+    "name" : "(library-root)",
+    "path" : ""
+  },
+  "scanDurationMs" : 10,
+  "scanWarnings" : [
+    "missing_bundle path=\"\/Users\/onlyasink\/Music\/Logic Pro Library.bundle\/Patches\/Instrument\"",
+    "unmapped_patch path=\"Deluxe Classic\" reason=\"non_applicable:no_panel_taxonomy_route\"",
+    "unmapped_patch path=\"Drums & Percussion\/Electronic Drums\/z01 Kit Pieces\/Template\/Empty Pad\" reason=\"non_applicable:no_panel_template_route\"",
+    "unmapped_patch path=\"Drums & Percussion\/Electronic Drums\/z01 Kit Pieces\/Template\/Empty Quick Sampler\" reason=\"non_applicable:no_panel_template_route\""
+  ],
+  "selectionRestored" : false,
+  "skippedDirectoryCount" : 0,
+  "truncatedBranches" : 0
+}

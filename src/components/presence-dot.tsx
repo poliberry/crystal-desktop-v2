@@ -34,6 +34,10 @@ interface PresenceDotProps {
    * Tailwind class, which is compiled from the source text and cannot know it.
    */
   accent?: string;
+  /** Sit where it is put, instead of being nudged toward the corner of an avatar
+   * — for a dot that stands on its own in a row of text, where the nudge reads
+   * as being out of line with the words. */
+  inline?: boolean;
   className?: string;
 }
 
@@ -133,6 +137,7 @@ export function PresenceDot({
   activities,
   isBirthday,
   accent,
+  inline = false,
   className,
 }: PresenceDotProps) {
   return (
@@ -150,7 +155,7 @@ export function PresenceDot({
         className,
         // After `className`, which is where a caller puts the dot: the offset
         // moves it from wherever that was rather than to a fixed corner.
-        DOT_OFFSET,
+        !inline && DOT_OFFSET,
       )}
     >
       {isBirthday ? <CakeGlyph /> : <PresenceGlyph kind={glyphFor(status, activities)} />}

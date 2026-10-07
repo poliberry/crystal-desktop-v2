@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useEffect, useRef, useState } from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { PanelLeftIcon } from "lucide-react"
 import { Slot } from "radix-ui"
@@ -25,12 +26,21 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 
+/** Anything of these being open means the pointer is busy with something that
+ * came from the sidebar, wherever it is on screen. */
+const PEEK_HOLD_SELECTOR =
+  '[role="dialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]'
+
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 const SIDEBAR_WIDTH = "16rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
+/** How the sidebar slides in and out: a quick start that settles into place,
+ * rather than the constant speed that made it look like it was being dragged
+ * along a rail. Shared by the gap and the container so the two never drift. */
+const SIDEBAR_SLIDE = "duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
 
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
@@ -165,6 +175,52 @@ function Sidebar({
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
 
+  // A collapsed sidebar can be peeked at: pointing at the edge of the window
+  // slides it out over the content, and moving away puts it back. Hooks come
+  // before the early returns below.
+  const peekable = state === "collapsed" && collapsible === "offcanvas" && !isMobile
+  const [peeking, setPeeking] = useState(false)
+  const pointerInside = useRef(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const hotZoneRef = useRef<HTMLDivElement>(null)
+  const showing = peekable && peeking
+
+  useEffect(() => {
+    if (!peekable) setPeeking(false)
+  }, [peekable])
+
+  useEffect(() => {
+    if (!showing) return
+    // Not simply on mouseleave: a menu or dialog opened from the sidebar is
+    // drawn elsewhere and blocks the pointer, which reads as having left — and
+    // the sidebar going away under its own open menu leaves the menu hanging
+    // off nothing. So it waits until the pointer is out *and* nothing of its
+    // own is open.
+    // Where the pointer is, by the DOM rather than by React's mouseenter and
+    // mouseleave. A dialog opened from the sidebar is rendered through a portal
+    // that React counts as part of the sidebar, so moving onto it never "left"
+    // the sidebar — and when the dialog closed with the pointer somewhere else,
+    // nothing ever said so and the sidebar stayed out. `contains` follows the
+    // real tree, in which the dialog is elsewhere.
+    const onMove = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      pointerInside.current =
+        !!target &&
+        (!!containerRef.current?.contains(target) || !!hotZoneRef.current?.contains(target))
+    }
+    document.addEventListener("mousemove", onMove)
+
+    const timer = window.setInterval(() => {
+      if (pointerInside.current) return
+      if (document.querySelector(PEEK_HOLD_SELECTOR)) return
+      setPeeking(false)
+    }, 150)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      window.clearInterval(timer)
+    }
+  }, [showing])
+
   if (collapsible === "none") {
     return (
       <div
@@ -218,7 +274,8 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+          "relative w-(--sidebar-width) bg-transparent transition-[width]",
+          SIDEBAR_SLIDE,
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
@@ -226,10 +283,52 @@ function Sidebar({
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
         )}
       />
+      {/* The strip along the window's edge that brings a collapsed sidebar out.
+          `no-drag` because the top bar is a window-drag region, which doesn't
+          deliver pointer events to the page. */}
+      {peekable && (
+        <div
+          aria-hidden
+          ref={hotZoneRef}
+          data-slot="sidebar-hot-zone"
+          className={cn(
+            "fixed inset-y-0 z-[150] w-1.5",
+            side === "left" ? "left-0" : "right-0"
+          )}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          onMouseEnter={() => {
+            pointerInside.current = true
+            setPeeking(true)
+          }}
+          // Left again before the sidebar had slid under the pointer: not
+          // inside it, and nothing else will say so.
+          onMouseLeave={() => {
+            pointerInside.current = false
+          }}
+        />
+      )}
       <div
+        ref={containerRef}
         data-slot="sidebar-container"
+        data-peek={showing ? "true" : undefined}
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width,opacity] md:flex",
+          SIDEBAR_SLIDE,
+          // Fades as it goes rather than only moving, so the edge doesn't
+          // arrive or leave as a hard cut against the window's side. Collapsed
+          // it is off-screen anyway; peeking brings it back to full.
+          "group-data-[collapsible=offcanvas]:opacity-0 data-[peek=true]:opacity-100!",
+          // Peeking: over the content rather than beside it (the gap above
+          // stays collapsed), above everything else on the page.
+          side === "left" ? "data-[peek=true]:left-0!" : "data-[peek=true]:right-0!",
+          // Over the top bar, which sits at z-99 so that its own menus and the
+          // window controls clear the page beneath it.
+          "data-[peek=true]:drop-shadow-2xl",
+          // Kept up for as long as it is collapsed, not just while peeking:
+          // dropping back to z-10 the moment the peek ends put the sidebar
+          // behind the top bar for the whole of its slide out. Collapsed, it is
+          // off-screen anyway, so the height costs nothing.
+          "group-data-[collapsible=offcanvas]:z-[150]",
           side === "left"
             ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
             : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",

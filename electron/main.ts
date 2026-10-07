@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray } from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -181,19 +181,47 @@ function trayIconImage(): Electron.NativeImage {
 }
 
 /**
- * Both windows are frameless (no native titlebar/menu — the renderer draws
- * its own, see TopNav / SettingsShell's window-controls row) but NOT
- * transparent. `transparent: true` disables the OS drop shadow and (on
+ * Both windows draw their own titlebar (see TopNav / the editor's header) and
+ * are NOT transparent. `transparent: true` disables the OS drop shadow and (on
  * Windows) `thickFrame`, so the window would render with hard edges and no
  * shadow at all; leaving the window opaque keeps the native chrome — shadow,
  * rounded corners on Win11, Aero snap — while still hiding the default
  * titlebar.
+ *
+ * On macOS the titlebar is hidden but the window keeps its frame, which keeps
+ * the system's traffic lights — the renderer draws no window buttons there, and
+ * leaves room for them (see `useWindowControls`). Everywhere else the window is
+ * frameless and the renderer draws its own. The lights are inset from the
+ * window's corner, with the sidebar's menus starting underneath them.
  */
-const FRAMELESS_WINDOW_OPTIONS = {
-  frame: false,
-  backgroundColor: "#09090b",
-  hasShadow: true,
-} as const;
+const MAC_TRAFFIC_LIGHTS = { x: 20, y: 18 } as const;
+
+const FRAMELESS_WINDOW_OPTIONS =
+  process.platform === "darwin"
+    ? ({
+        titleBarStyle: "hidden",
+        trafficLightPosition: MAC_TRAFFIC_LIGHTS,
+        backgroundColor: "#09090b",
+        hasShadow: true,
+      } as const)
+    : ({
+        frame: false,
+        backgroundColor: "#09090b",
+        hasShadow: true,
+      } as const);
+
+/**
+ * The same options for a window whose top bar isn't the main window's 48px: the
+ * traffic lights are centred on the bar they sit in, whatever its height. A light is
+ * 12px across, so its top edge is half the bar's height less six.
+ */
+function framelessFor(headerHeight: number) {
+  if (process.platform !== "darwin") return FRAMELESS_WINDOW_OPTIONS;
+  return {
+    ...FRAMELESS_WINDOW_OPTIONS,
+    trafficLightPosition: { x: MAC_TRAFFIC_LIGHTS.x, y: Math.round(headerHeight / 2 - 6) },
+  } as const;
+}
 
 /** Forwards native maximize/unmaximize so the custom titlebar's restore-vs-
  * maximize icon stays correct even when triggered by the OS (double-click
@@ -204,6 +232,14 @@ function wireWindowStateEvents(win: BrowserWindow): void {
   };
   win.on("maximize", send);
   win.on("unmaximize", send);
+
+  // The traffic lights go away in full screen, and the room the renderer left
+  // for them with them.
+  const sendFullScreen = () => {
+    if (!win.isDestroyed()) win.webContents.send("window:fullscreen-changed", win.isFullScreen());
+  };
+  win.on("enter-full-screen", sendFullScreen);
+  win.on("leave-full-screen", sendFullScreen);
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -483,6 +519,83 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
 }
 
 let editorWindow: BrowserWindow | null = null;
+let adminWindow: BrowserWindow | null = null;
+let studioWindow: BrowserWindow | null = null;
+
+function createOrFocusAdminWindow(): void {
+  if (adminWindow && !adminWindow.isDestroyed()) {
+    adminWindow.show();
+    adminWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 980,
+    minHeight: 620,
+    autoHideMenuBar: true,
+    icon: appIconPath(),
+    ...framelessFor(44),
+    webPreferences: {
+      preload: PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: true,
+      spellcheck: false,
+    },
+  });
+
+  const url = isDev
+    ? `${process.env.ELECTRON_START_URL as string}/admin`
+    : "http://crystal.localhost/admin/";
+  void win.loadURL(url);
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  wireWindowStateEvents(win);
+  win.on("closed", () => {
+    adminWindow = null;
+  });
+  adminWindow = win;
+}
+
+/** Crystal Studio: a creator's workspace, in a window of its own — a design tool
+ * wants the whole screen, and keeping it separate means closing the chat doesn't
+ * lose an open project. A singleton, like the editor and the console. */
+function createOrFocusStudioWindow(): void {
+  if (studioWindow && !studioWindow.isDestroyed()) {
+    studioWindow.show();
+    studioWindow.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1000,
+    minHeight: 640,
+    autoHideMenuBar: true,
+    icon: appIconPath(),
+    ...framelessFor(36),
+    webPreferences: {
+      preload: PRELOAD,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false,
+    },
+  });
+  void win.loadURL(isDev ? `${process.env.ELECTRON_START_URL as string}/studio` : "http://crystal.localhost/studio/");
+  // Links out of Studio (docs, a creator's own pages) open in the browser, never in this window.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https:")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  wireWindowStateEvents(win);
+  win.on("closed", () => {
+    studioWindow = null;
+  });
+  studioWindow = win;
+}
 
 /**
  * Opens the cosmetic canvas editor in its own window, or focuses it and
@@ -526,7 +639,7 @@ function createOrFocusEditorWindow(options: {
     minWidth: 760,
     minHeight: 520,
     icon: appIconPath(),
-    ...FRAMELESS_WINDOW_OPTIONS,
+    ...framelessFor(36),
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -834,6 +947,14 @@ app.whenReady().then(async () => {
       return true;
     },
   );
+  ipcMain.handle("studio:open", () => {
+    createOrFocusStudioWindow();
+    return true;
+  });
+  ipcMain.handle("admin:open", () => {
+    createOrFocusAdminWindow();
+    return true;
+  });
 
   // Custom titlebar controls — frameless windows have no native ones. Each
   // handler acts on whichever window actually sent the request, so the main
@@ -852,6 +973,50 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("window:is-maximized", (event) => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+  });
+  // The system accent colour, for the app's dynamic colour mode. macOS and
+  // Windows only — Electron has no way to ask for it anywhere else, and
+  // `null` is how the renderer knows not to offer the mode.
+  const systemAccentColor = (): string | null => {
+    if (process.platform !== "darwin" && process.platform !== "win32") return null;
+    try {
+      // `rrggbbaa`.
+      const rgba = systemPreferences.getAccentColor();
+      return rgba && rgba.length >= 6 ? `#${rgba.slice(0, 6)}` : null;
+    } catch {
+      return null;
+    }
+  };
+  ipcMain.handle("system:accent-color", () => systemAccentColor());
+  const sendAccentColor = () => {
+    const color = systemAccentColor();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send("system:accent-color-changed", color);
+    }
+  };
+  // Debounced, and read *after* the pause rather than when the notification
+  // lands: macOS announces an appearance or accent change before
+  // `getAccentColor()` has the new value, so reading on the spot sends the old
+  // colour and the app sits one change behind until the next one. A change is
+  // also usually several notifications in a row (accent and highlight, then
+  // the appearance), and one send is enough for them.
+  let accentTimer: NodeJS.Timeout | undefined;
+  const broadcastAccentColor = () => {
+    clearTimeout(accentTimer);
+    accentTimer = setTimeout(sendAccentColor, 150);
+  };
+  // Light/dark can change the accent too (Windows keeps one per mode), and it
+  // is the one change that fires this regardless of platform.
+  nativeTheme.on("updated", broadcastAccentColor);
+  if (process.platform === "win32") {
+    systemPreferences.on("accent-color-changed", broadcastAccentColor);
+  } else if (process.platform === "darwin") {
+    systemPreferences.subscribeNotification("AppleColorPreferencesChangedNotification", broadcastAccentColor);
+    systemPreferences.subscribeNotification("AppleInterfaceThemeChangedNotification", broadcastAccentColor);
+  }
+
+  ipcMain.handle("window:is-fullscreen", (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false;
   });
 
   // Settings -> Accessibility -> Zoom. Each renderer sets its own window's

@@ -15,6 +15,7 @@ import { useCall, type CallVideoKind } from "@/components/call/call-provider";
 import { useFeaturedSource } from "@/components/call/use-featured-source";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { GLASS_BASE, GLASS_DARK } from "@/components/sidebar/glass";
 import { cn } from "@/lib/utils";
 
 /** 16:9, small enough to sit over a message list without being in the way. */
@@ -236,7 +237,17 @@ export function CallPip() {
         height: PIP_HEIGHT,
         transform: `translate(${offset.x}px, ${offset.y}px)`,
       }}
-      className="group/pip fixed right-4 bottom-4 z-40 overflow-hidden rounded-xl border border-border/60 bg-black shadow-2xl"
+      className={cn(
+        // A stream is a picture and keeps the plain black frame. A call —
+        // someone's camera, or their avatar while they talk — is the same
+        // glass as the call card in the sidebar, so the two read as one thing
+        // that has come out of it.
+        featured.kind === "screen"
+          ? "overflow-hidden rounded-xl border border-border/60 bg-black shadow-2xl"
+          : cn(GLASS_BASE, GLASS_DARK, "shadow-2xl"),
+        // Last, so the glass's own `relative` can't win over `fixed`.
+        "group/pip fixed right-4 bottom-4 z-40",
+      )}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -263,7 +274,7 @@ export function CallPip() {
         participant={featured.participant}
         kind={featured.kind}
         fallback={
-          <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-muted/20">
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2">
             {featured.kind === "screen" ? (
               <MonitorUp className="size-6 text-muted-foreground" />
             ) : (

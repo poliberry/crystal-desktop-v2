@@ -27,8 +27,8 @@ export function PendingParticipantTile({
   return (
     <div
       className={cn(
-        "relative flex w-full items-center justify-center overflow-hidden rounded-lg",
-        "border border-dashed border-border/60 bg-muted/20",
+        "relative flex w-full items-center justify-center overflow-hidden rounded-2xl",
+        "border border-dashed border-[color:var(--glass-border)] bg-[color:var(--glass-bg)] bg-[image:var(--glass-glow)] shadow-lg shadow-black/25",
         fill ? "h-full" : "aspect-video"
       )}
     >

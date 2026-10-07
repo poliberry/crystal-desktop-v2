@@ -20,7 +20,14 @@ import {
 
 /** Quick-switcher dialog: search your DMs/group chats and communities by
  * name, jump straight to one. Opened from a search icon in the top bar. */
-export function GlobalSearch() {
+export function GlobalSearch({
+  trigger,
+}: {
+  /** Replaces the top bar's icon button, for a search that lives elsewhere —
+   * the sidebar draws its own field. Handed the function that opens the
+   * dialog. */
+  trigger?: (open: () => void) => React.ReactNode;
+} = {}) {
   const smoothRef = useSmoothScrollRef<HTMLDivElement>();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -61,22 +68,26 @@ export function GlobalSearch() {
 
   return (
     <>
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-              className="flex size-6 pointer-events-auto shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent/60 hover:opacity-100"
-              aria-label="Search"
-            >
-              <Search className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Search</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {trigger ? (
+        trigger(() => setOpen(true))
+      ) : (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
+                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                className="flex size-6 pointer-events-auto shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent/60 hover:opacity-100"
+                aria-label="Search"
+              >
+                <Search className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Search</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
 
       <Dialog open={open} onOpenChange={setOpenState}>
         <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md" showCloseButton={false}>

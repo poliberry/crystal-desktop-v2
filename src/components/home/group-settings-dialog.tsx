@@ -1,12 +1,13 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { Camera, Loader2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { GroupAvatar } from "@/components/home/group-avatar";
+import { uploadImage } from "@/lib/cdn-upload";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -56,6 +57,7 @@ export function GroupSettingsDialog({
   open,
   onOpenChange,
 }: GroupSettingsDialogProps) {
+  const convex = useConvex();
   const renameGroup = useMutation(api.conversations.renameGroup);
   const generateUploadUrl = useMutation(api.conversations.generateGroupIconUploadUrl);
   const setGroupIcon = useMutation(api.conversations.setGroupIcon);
@@ -87,15 +89,8 @@ export function GroupSettingsDialog({
     setUploading(true);
     setError(null);
     try {
-      const uploadUrl = await generateUploadUrl();
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!res.ok) throw new Error("Upload failed.");
-      const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
-      await setGroupIcon({ conversationId, storageId });
+      const uploaded = await uploadImage(convex, file, "icons", generateUploadUrl);
+      await setGroupIcon({ conversationId, ...uploaded });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload icon.");
     } finally {

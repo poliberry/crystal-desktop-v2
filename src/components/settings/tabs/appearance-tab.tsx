@@ -1,5 +1,6 @@
 "use client";
 
+import { PanelTop } from "lucide-react";
 import { useState } from "react";
 
 import { useUiPreferences } from "@/components/ui-preferences-provider";
@@ -9,16 +10,35 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { type Theme, PRESET_THEMES } from "@/lib/themes";
+import { SettingRow, SettingsGroup } from "@/components/settings/settings-ui";
+import { ThemePicker } from "@/components/settings/theme-picker";
+import { type Theme, PRESET_THEMES, getPresetById } from "@/lib/themes";
 
 export function AppearanceTab() {
-  const { theme, applyTheme } = useTheme();
+  const {
+    theme,
+    mode,
+    setMode,
+    applyTheme,
+    systemThemeIds,
+    setSystemThemeIds,
+    dynamicSupported,
+    accentColor,
+    prefersDark,
+  } = useTheme();
   const { communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled } = useUiPreferences();
   const [editingPreset, setEditingPreset] = useState<string | null>(null);
   const [jsonValue, setJsonValue] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
 
-  const activeId = theme?.id ?? "dark";
+  // Only a picked theme has a card of its own to be marked; in `system` and
+  // `dynamic` mode the theme in effect belongs to the card for the mode.
+  const activeId = mode === "fixed" ? (theme?.id ?? "dark") : "";
+  // What the active theme belongs to, so a family's tile reads as selected for
+  // whichever of its styles is on. Looked up by id because a theme edited from
+  // JSON is stored without its family.
+  const activeFamily =
+    mode === "fixed" ? (theme?.family ?? getPresetById(activeId)?.family)?.id : undefined;
 
   const openEditor = (t: Theme) => {
     setJsonValue(JSON.stringify({ name: t.name, isDark: t.isDark, font: t.font ?? "", colors: t.colors }, null, 2));
@@ -65,73 +85,23 @@ export function AppearanceTab() {
       <Card>
         <CardHeader>
           <CardTitle>Theme</CardTitle>
-          <CardDescription>Pick a preset or build your own with JSON.</CardDescription>
+          <CardDescription>Follow your system, pick a preset — themes with several styles have a dropdown — or build your own with JSON.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            {PRESET_THEMES.map((preset) => {
-              const isActive = activeId === preset.id;
-              return (
-                <div key={preset.id} className="space-y-1.5">
-                  <button
-                    type="button"
-                    onClick={() => applyTheme(preset)}
-                    className={`relative w-full overflow-hidden rounded-lg border-2 transition-all ${
-                      isActive ? "border-primary" : "border-border hover:border-border/80"
-                    }`}
-                  >
-                    <div
-                      className="h-16 w-full"
-                      style={{ background: preset.previewBg }}
-                    >
-                      <div className="flex h-full flex-col justify-end p-2 gap-1">
-                        <div
-                          className="h-2 w-3/4 rounded-full"
-                          style={{ background: preset.previewAccent }}
-                        />
-                        <div
-                          className="h-1.5 w-1/2 rounded-full opacity-50"
-                          style={{ background: preset.previewAccent }}
-                        />
-                      </div>
-                    </div>
-                    {isActive && (
-                      <div className="absolute right-1.5 top-1.5 size-3 rounded-full bg-primary" />
-                    )}
-                  </button>
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-medium">{preset.name}</p>
-                    <button
-                      type="button"
-                      onClick={() => openEditor(preset)}
-                      className="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
-                    >
-                      Edit
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Custom slot */}
-            <div className="space-y-1.5">
-              <button
-                type="button"
-                onClick={openCustomEditor}
-                className={`relative w-full overflow-hidden rounded-lg border-2 border-dashed transition-all ${
-                  activeId === "custom" ? "border-primary" : "border-border hover:border-border/80"
-                }`}
-              >
-                <div className="flex h-16 items-center justify-center bg-muted/30">
-                  <p className="text-xs text-muted-foreground">Custom…</p>
-                </div>
-                {activeId === "custom" && (
-                  <div className="absolute right-1.5 top-1.5 size-3 rounded-full bg-primary" />
-                )}
-              </button>
-              <p className="text-xs font-medium">Custom</p>
-            </div>
-          </div>
+          <ThemePicker
+            mode={mode}
+            activeId={activeId}
+            activeFamily={activeFamily}
+            systemThemeIds={systemThemeIds}
+            resolvedTheme={theme ?? PRESET_THEMES[0]}
+            dynamic={dynamicSupported && accentColor ? { accentColor, prefersDark } : null}
+            onApply={applyTheme}
+            onEdit={openEditor}
+            onCustom={openCustomEditor}
+            onSelectSystem={() => setMode("system")}
+            onSelectDynamic={() => setMode("dynamic")}
+            onSystemThemeIds={setSystemThemeIds}
+          />
 
           {editingPreset !== null && (
             <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
@@ -197,25 +167,15 @@ export function AppearanceTab() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Tabbed interface</CardTitle>
-          <CardDescription>
-            Open DMs and channels as tabs in the top bar, instead of each one replacing the current view.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium">Enable tabs</p>
-              <p className="text-xs text-muted-foreground">
-                When off, clicking a DM or channel replaces the current view like before.
-              </p>
-            </div>
-            <Switch checked={tabsEnabled} onCheckedChange={setTabsEnabled} />
-          </div>
-        </CardContent>
-      </Card>
+      <SettingsGroup title="Tabs">
+        <SettingRow
+          icon={PanelTop}
+          title="Tabbed interface"
+          description="Open DMs and channels as tabs in the top bar. When off, each replaces the current view."
+        >
+          <Switch checked={tabsEnabled} onCheckedChange={setTabsEnabled} />
+        </SettingRow>
+      </SettingsGroup>
     </div>
   );
 }
