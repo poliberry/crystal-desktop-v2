@@ -209,12 +209,25 @@ export interface DesktopAPI {
     path(): Promise<string>;
     reveal(): Promise<boolean>;
   };
+  /** What the operating system says about its appearance that the page can't
+   * see for itself. Optional for the same reason as the rest of the late
+   * additions: an older preload has none of it. */
+  system?: {
+    /** The accent colour as `#rrggbb`, or `null` where the platform has none
+     * the app can read (anything but macOS and Windows). */
+    accentColor(): Promise<string | null>;
+    onAccentColorChange(cb: (color: string | null) => void): () => void;
+  };
   window: {
     minimize(): Promise<void>;
     toggleMaximize(): Promise<void>;
     close(): Promise<void>;
     isMaximized(): Promise<boolean>;
     onMaximizedChange(cb: (maximized: boolean) => void): () => void;
+    /** Optional for the same reason as `setZoomFactor`: an older preload has
+     * neither, and the renderer then assumes the window isn't full screen. */
+    isFullScreen?(): Promise<boolean>;
+    onFullScreenChange?(cb: (fullScreen: boolean) => void): () => void;
     /** Scale this window's contents (Settings → Accessibility → Zoom).
      * Optional so a renderer running against an older preload — a packaged
      * build whose window was opened before an update — falls back to CSS
@@ -330,5 +343,13 @@ export interface DesktopAPI {
       scopeId?: string;
       scopeName?: string;
     }): Promise<boolean>;
+  };
+  /** Opens Crystal Studio, the creator workspace, in its own window. */
+  studio: {
+    open(): Promise<boolean>;
+  };
+  /** Opens the staff-only administration console in its own window. */
+  admin: {
+    open(): Promise<boolean>;
   };
 }

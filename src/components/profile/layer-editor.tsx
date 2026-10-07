@@ -3,157 +3,143 @@
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   Copy,
+  Eye,
+  HelpCircle,
   ImagePlus,
   Loader2,
+  Maximize,
   Minus,
   Plus,
-  RotateCcw,
+  Redo2,
+  Shapes,
   Square,
   Trash2,
   Type,
+  Undo2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LayerCanvas } from "@/components/profile/layer-canvas";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import {
-  ANCHORS,
-  clearVariant,
+  canvasBounds,
+  confineLayer,
+  DEFAULT_VARIANT,
   defaultShapeLayer,
   defaultTextLayer,
-  END_ANCHORS,
-  endLine,
-  endYFromLine,
-  layerKind,
-  MAX_TEXT_LENGTH,
-  DEFAULT_VARIANT,
-  LAYER_LIMITS,
+  layerCentreY,
   layerHeight,
+  layerKind,
+  layerYFromCentre,
   MAX_LAYERS,
+  MAX_TEXT_LENGTH,
   newLayerId,
-  patchLayer,
-  reanchorLayer,
-  resolveLayer,
-  twoEndedStretch,
+  STICKER_MAX_WIDTH,
+  type CanvasKind,
   type CosmeticLayer,
-  type LayerAnchor,
-  type LayerEnd,
 } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
 
 /**
- * The editor both cosmetics are arranged in: a canvas with the real thing on
- * it, a list of the artwork on top, and the numbers behind whatever is
- * selected.
+ * The editor both cosmetics are arranged in — avatar decorations and profile
+ * stickers: a canvas with the real thing on it, the artwork listed beside it,
+ * and a few controls for whichever piece is selected.
  *
- * One component for the profile frame and the avatar decoration because the
- * two are the same problem at different scales — place some pictures against
- * something. What differs is the backdrop and the shapes it comes in, which is
- * why both arrive as props: `renderStage` draws the thing being decorated, and
- * `stages` lists every shape of it worth arranging against — a decoration has
- * one, a frame has a card at each width and content level. They are all shown
- * at once; dragging on one edits that one.
+ * ## Shape of the thing
+ *
+ * One canvas, one stage. A decoration is worn on an avatar, which is a square
+ * at every size; a sticker is stuck on a profile card, which is the same width
+ * at every height. Placement is stored in percentages of the stage's width (see
+ * src/lib/cosmetic-layers.ts), so one arrangement is right wherever it is drawn
+ * and there is nothing to place twice.
+ *
+ * The canvas has edges. Everything that can move a layer — dragging, the
+ * handles, the keyboard, the sliders — holds it inside them (`confineLayer`),
+ * so artwork cannot end up three screens from the thing it decorates, and a
+ * sticker cannot be a frame.
  *
  * ## Editing is local, saving is not
  *
  * Everything here works on a draft. A drag fires per pointer move, and a
- * mutation per pointer move is a write per pixel — so the canvas edits the
- * draft and only a finished gesture is saved. The draft is re-seeded whenever
- * the stored value changes underneath, which is what makes "Reset" and an edit
- * from another window both land.
+ * mutation per pointer move is a write per pixel — so the canvas edits the draft
+ * and only a finished gesture is saved. The draft is re-seeded whenever the
+ * stored value changes underneath, which is what makes an edit from another
+ * window land.
  */
 
-/** Which unit the inspector's measurements are typed in. Percent is what gets
- * stored — it has to be, since a card is drawn at several widths — and pixels
- * are what anybody lining artwork up with an edge is actually thinking in. */
-export type SizeUnit = "percent" | "px";
+/** Room round the canvas inside its viewport, in px, so handles and the
+ * toolbar at its edges are never against the frame. */
+const VIEWPORT_PAD = 48;
 
-/** A shared "not panned" value, so every un-panned canvas reads the same object
- * rather than a fresh `{ x: 0, y: 0 }` each render. */
-const ZERO_PAN = { x: 0, y: 0 };
+/** Fit-to-window is capped, so a small canvas isn't blown up past the point
+ * where the artwork is mush: an avatar can go big, a card cannot. */
+const MAX_FIT: Record<CanvasKind, number> = { decoration: 5, sticker: 2 };
 
-/** What each anchor is called in the interface. "Locked" is the odd one out and
- * says so: the other three name an edge, and it names what it does. */
-const ANCHOR_LABELS: Record<LayerAnchor, string> = {
-  top: "Top",
-  center: "Middle",
-  bottom: "Bottom",
-  locked: "Locked",
-};
+const HISTORY_LIMIT = 50;
 
-export interface StageHeightOption {
-  key: string;
-  label: string;
-  /** Width of the stage in CSS pixels, at zoom 1 — the ruler every layer's
-   * percentage geometry is a percentage of on this shape. */
+/** The narrowest a layer can be made with the size slider, in percent of the
+ * stage's width. */
+const MIN_SIZE = 4;
+
+export interface StageSize {
+  /** Width of the stage in CSS pixels at zoom 1 — the ruler every layer's
+   * percentage geometry is a percentage of. */
   width: number;
-  /** Height of the stage in CSS pixels, at zoom 1. */
   height: number;
-  hint?: string;
 }
 
 export function LayerEditor({
   layers: stored,
   onSave,
   renderStage,
-  stages,
+  stage,
+  kind,
   upload,
   uploadHint,
   presets,
-  elementToggles,
+  previewOptions,
   resolveSrc = (url) => url,
   className,
 }: {
   layers: CosmeticLayer[];
   onSave: (layers: CosmeticLayer[]) => void | Promise<unknown>;
   /** The thing being decorated, drawn at the stage's width and height. */
-  renderStage: (stage: StageHeightOption) => React.ReactNode;
-  /**
-   * Every shape the backdrop is worth arranging against, all shown at once.
-   *
-   * A profile card has no one height — a long bio or a rich presence card makes
-   * it grow — and no one width, since the full profile page is wider than a
-   * popover. Each of these is a real card in one of those states; a layer can be
-   * placed differently on each, and dragging on one edits that one.
-   */
-  stages: StageHeightOption[];
+  renderStage: (stage: StageSize) => React.ReactNode;
+  stage: StageSize;
+  /** What is being decorated, which decides where the canvas ends. */
+  kind: CanvasKind;
   /** Puts a picked file in storage and hands back what a layer needs. */
   upload: (file: File) => Promise<{ url: string; storageId?: string }>;
   uploadHint: string;
   /** Artwork that needs no upload — the built-in decoration presets. Their
    * `url` is the *stored* form (a preset key), which is what a layer keeps. */
   presets?: { label: string; url: string }[];
-  /** Checkboxes for hiding parts of the backdrop — the frame editor's "show the
-   * bio / badges / …" controls. Rendered in the side panel; owned by the caller
-   * because the same state also drives what `renderStage` draws. */
-  elementToggles?: React.ReactNode;
+  /** Controls for what the backdrop shows — the sticker editor's "show the
+   * badges / roles / …" switches. Owned by the caller because the same state
+   * also drives what `renderStage` draws. */
+  previewOptions?: React.ReactNode;
   /** A stored url to the picture to draw for it. Only the decoration editor
    * needs one, because only decorations have artwork that isn't a file. */
   resolveSrc?: (url: string) => string;
   className?: string;
 }) {
   const [draft, setDraft] = useState<CosmeticLayer[]>(stored);
-  const [selectedIds, setSelectedIds] = useState<string[]>(stored[0] ? [stored[0].id] : []);
-  const [zoom, setZoom] = useState(1);
-  /** One pan per shape — the shapes are shown together, and nudging the view of
-   * one is not a reason to move the others. */
-  const [pans, setPans] = useState<Record<string, { x: number; y: number }>>({});
-  /** Percent of the card, or pixels at the size it is drawn here. The stored
-   * number is the percentage either way — this only decides which one you type
-   * into, and pixels are what somebody matching artwork to a card edge wants. */
-  const [unit, setUnit] = useState<SizeUnit>("percent");
-  /** Which shape the keyboard, the inspector and a preset drop belong to — the
-   * last one touched. Edits to the first shape are edits to the layer itself. */
-  const [activeKey, setActiveKey] = useState(stages[0]?.key ?? "");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /** Zoom relative to "fits the window" — 1 is the whole canvas in view. */
+  const [userZoom, setUserZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
-  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState<{ w: number; h: number } | null>(null);
 
   /**
    * The stored value as it was the last time the draft was seeded from it.
@@ -172,77 +158,123 @@ export function LayerEditor({
     setDraft(stored);
   }
 
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      setViewport({ w: entry.contentRect.width, h: entry.contentRect.height });
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   /** Artwork proportions, so a layer that keeps its own shape can be given
    * handles that sit on it. Filled in as the files load. */
   const [ratios, setRatios] = useState<Record<string, number>>({});
   useEffect(() => {
     for (const layer of draft) {
-      if (ratios[layer.url]) continue;
+      if (layerKind(layer) !== "image" || !layer.url || ratios[layer.url]) continue;
       const image = new Image();
       image.onload = () => {
         if (!image.naturalHeight) return;
-        setRatios((prev) => ({
-          ...prev,
-          [layer.url]: image.naturalWidth / image.naturalHeight,
-        }));
+        setRatios((prev) => ({ ...prev, [layer.url]: image.naturalWidth / image.naturalHeight }));
       };
       image.src = resolveSrc(layer.url);
     }
   }, [draft, ratios, resolveSrc]);
 
-  const activeStage =
-    stages.find((option) => option.key === activeKey) ?? stages[0];
-  /** The width the active shape is drawn at — what a percent is a percent of for
-   * the inspector's pixel readouts and for a preset dropped onto the canvas. */
-  const stageWidth = activeStage?.width ?? 100;
-  const stageHeight = activeStage?.height ?? stageWidth;
+  const stageHeightPercent = (stage.height / stage.width) * 100;
 
-  /**
-   * Undo/redo, as a stack of drafts rather than of edits.
-   *
-   * A stack of whole drafts is more memory than a stack of diffs, but a layer
-   * list is a few kilobytes and fifty of them is nothing — and it means every
-   * kind of change (a drag, a slider, a delete, a paste) undoes the same way,
-   * with no special case for the one that isn't expressible as a diff.
-   */
-  const HISTORY_LIMIT = 50;
+  const heightOf = useCallback(
+    (layer: CosmeticLayer) => layerHeight(layer, ratios[layer.url], stageHeightPercent),
+    [ratios, stageHeightPercent],
+  );
+
+  /** Every layer held inside the canvas. Everything below goes through this on
+   * the way into the draft, so the canvas's edges hold for whichever control
+   * did the moving. */
+  const confineAll = useCallback(
+    (list: CosmeticLayer[]) =>
+      list.map((layer) => confineLayer(layer, kind, stageHeightPercent, heightOf)),
+    [heightOf, kind, stageHeightPercent],
+  );
+
+  // --- Zoom ------------------------------------------------------------------
+
+  const bounds = canvasBounds(kind, stageHeightPercent);
+  const boundsWidth = ((bounds.maxX - bounds.minX) / 100) * stage.width;
+  const boundsHeight = ((bounds.maxY - bounds.minY) / 100) * stage.width;
+  const fit = viewport
+    ? Math.max(
+        0.3,
+        Math.min(
+          (viewport.w - VIEWPORT_PAD * 2) / boundsWidth,
+          (viewport.h - VIEWPORT_PAD * 2) / boundsHeight,
+          MAX_FIT[kind],
+        ),
+      )
+    : 1;
+  const zoom = fit * userZoom;
+
+  const zoomBy = (factor: number) =>
+    setUserZoom((z) => Math.min(6, Math.max(0.4, Math.round(z * factor * 100) / 100)));
+  const resetView = () => {
+    setUserZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // --- History and saving ----------------------------------------------------
+
   const history = useRef<{ past: CosmeticLayer[][]; future: CosmeticLayer[][] }>({
     past: [],
     future: [],
   });
+  const [historyVersion, setHistoryVersion] = useState(0);
+
+  const save = useCallback(
+    (next: CosmeticLayer[]) => {
+      setSaving((n) => n + 1);
+      void Promise.resolve(onSave(next))
+        .catch((err) => setError(err instanceof Error ? err.message : "Couldn't save that."))
+        .finally(() => setSaving((n) => n - 1));
+    },
+    [onSave],
+  );
 
   const commit = useCallback(
-    (next: CosmeticLayer[]) => {
+    (raw: CosmeticLayer[]) => {
+      const next = confineAll(raw);
       history.current.past.push(draft);
       if (history.current.past.length > HISTORY_LIMIT) history.current.past.shift();
       history.current.future = [];
+      setHistoryVersion((v) => v + 1);
       setDraft(next);
-      void Promise.resolve(onSave(next)).catch((err) =>
-        setError(err instanceof Error ? err.message : "Couldn't save that."),
-      );
+      save(next);
     },
-    [draft, onSave],
+    [confineAll, draft, save],
   );
 
   const undo = useCallback(() => {
     const previous = history.current.past.pop();
     if (!previous) return;
     history.current.future.push(draft);
+    setHistoryVersion((v) => v + 1);
     setDraft(previous);
-    void Promise.resolve(onSave(previous)).catch((err) =>
-      setError(err instanceof Error ? err.message : "Couldn't save that."),
-    );
-  }, [draft, onSave]);
+    save(previous);
+  }, [draft, save]);
 
   const redo = useCallback(() => {
     const next = history.current.future.pop();
     if (!next) return;
     history.current.past.push(draft);
+    setHistoryVersion((v) => v + 1);
     setDraft(next);
-    void Promise.resolve(onSave(next)).catch((err) =>
-      setError(err instanceof Error ? err.message : "Couldn't save that."),
-    );
-  }, [draft, onSave]);
+    save(next);
+  }, [draft, save]);
+
+  const canUndo = history.current.past.length > 0 && historyVersion >= 0;
+  const canRedo = history.current.future.length > 0 && historyVersion >= 0;
 
   const deleteLayers = useCallback(
     (ids: string[]) => {
@@ -273,160 +305,6 @@ export function LayerEditor({
     [commit, draft],
   );
 
-  const selectedStored =
-    selectedIds.length === 1 ? draft.find((layer) => layer.id === selectedIds[0]) ?? null : null;
-  /** The selected layer as it is drawn on the active shape. */
-  const selected = selectedStored ? resolveLayer(selectedStored, activeKey) : null;
-
-  /**
-   * A slider fires per pixel of travel, so the two are separate: the draft
-   * follows the drag, and only the release is worth a write.
-   *
-   * Both go through `patchLayer`, which decides whether an edit belongs to the
-   * layer or to the shape of card currently on the canvas.
-   */
-  const patchLive = (id: string, patch: Partial<CosmeticLayer>) =>
-    setDraft((prev) =>
-      prev.map((layer) => (layer.id === id ? patchLayer(layer, patch, activeKey) : layer)),
-    );
-  const patchSaved = (id: string, patch: Partial<CosmeticLayer>) =>
-    commit(
-      draft.map((layer) => (layer.id === id ? patchLayer(layer, patch, activeKey) : layer)),
-    );
-
-  /** How tall each shape is, in percent of *its own* width — the unit every
-   * layer is stored in, and what re-anchoring converts against. Each shape has
-   * its own width now (a popover is narrower than the full page). */
-  const heightPercentOf = useCallback(
-    (key: string) => {
-      const shape = stages.find((option) => option.key === key);
-      const height = shape?.height ?? stageHeight;
-      const width = shape?.width ?? stageWidth;
-      return (height / width) * 100;
-    },
-    [stages, stageHeight, stageWidth],
-  );
-
-  /**
-   * Pin the selected layer to something else, keeping it where it is.
-   *
-   * Not through `patchSaved`, which routes an edit to the shape currently on the
-   * canvas: an anchor is the layer's, and changing it changes what *every*
-   * shape's position means.
-   */
-  const reanchor = (anchor: LayerAnchor) => {
-    if (!selectedStored) return;
-    commit(
-      draft.map((layer) =>
-        layer.id === selectedStored.id
-          ? reanchorLayer(layer, anchor, heightPercentOf)
-          : layer,
-      ),
-    );
-  };
-
-  /**
-   * Set — or clear — the selected layer's two stretched ends.
-   *
-   * Direct to the layer like `reanchor`, not through `patchSaved`: where a
-   * full-card border's edges are pinned is a fact about the border, the same on
-   * every shape of card, so routing it to the shape on screen would be wrong.
-   *
-   * Live and saved, like the sliders elsewhere — dragging the "locked %" slider
-   * fires per pixel and only the release is worth a write.
-   */
-  const withEnds = (
-    layer: CosmeticLayer,
-    ends: { top: LayerEnd; bottom: LayerEnd } | null,
-  ): CosmeticLayer => ({
-    ...layer,
-    stretchTop: ends?.top,
-    stretchBottom: ends?.bottom,
-    // Turning ends on is a kind of stretching, and it can't share the box with a
-    // fixed height.
-    stretchY: ends ? true : layer.stretchY,
-    height: ends ? undefined : layer.height,
-  });
-  const setStretchEndsLive = (ends: { top: LayerEnd; bottom: LayerEnd } | null) => {
-    if (!selectedStored) return;
-    const id = selectedStored.id;
-    setDraft((prev) => prev.map((layer) => (layer.id === id ? withEnds(layer, ends) : layer)));
-  };
-  const setStretchEndsSaved = (ends: { top: LayerEnd; bottom: LayerEnd } | null) => {
-    if (!selectedStored) return;
-    const id = selectedStored.id;
-    commit(draft.map((layer) => (layer.id === id ? withEnds(layer, ends) : layer)));
-  };
-
-  /** Put a ready-made layer on the canvas and select it, which is what makes
-   * the inspector show its controls straight away. */
-  const addLayerObject = (layer: CosmeticLayer) => {
-    if (draft.length >= MAX_LAYERS) {
-      setError(`That's the most one of these can hold (${MAX_LAYERS}).`);
-      return;
-    }
-    commit([...draft, layer]);
-    setSelectedIds([layer.id]);
-  };
-
-  const addLayer = (url: string, storageId?: string) => {
-    if (draft.length >= MAX_LAYERS) {
-      setError(`That's the most artwork one of these can hold (${MAX_LAYERS}).`);
-      return;
-    }
-    // Dropped in the middle at a size that reads as "this is your picture,
-    // now put it somewhere" rather than in a corner where it might be missed.
-    const layer: CosmeticLayer = {
-      id: newLayerId(),
-      url,
-      storageId,
-      anchor: "center",
-      x: 50,
-      y: 0,
-      width: 100,
-    };
-    commit([...draft, layer]);
-    setSelectedIds([layer.id]);
-  };
-
-  const pickFiles = async (files: FileList | null) => {
-    if (!files?.length) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const room = MAX_LAYERS - draft.length;
-      const chosen = Array.from(files).slice(0, Math.max(0, room));
-      // Uploaded one at a time and added as a batch: adding them one by one
-      // would save between each, and a half-uploaded set is not an arrangement
-      // anybody meant to keep.
-      const added: CosmeticLayer[] = [];
-      for (const file of chosen) {
-        const { url, storageId } = await upload(file);
-        added.push({
-          id: newLayerId(),
-          url,
-          storageId,
-          anchor: "center",
-          x: 50,
-          y: 0,
-          width: 100,
-        });
-      }
-      if (added.length > 0) {
-        commit([...draft, ...added]);
-        setSelectedIds([added[added.length - 1]!.id]);
-      }
-      if (chosen.length < files.length) {
-        setError(`Only ${chosen.length} of those fitted — ${MAX_LAYERS} is the limit.`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "That upload didn't work.");
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
   const move = (id: string, direction: -1 | 1) => {
     const index = draft.findIndex((layer) => layer.id === id);
     const target = index + direction;
@@ -437,853 +315,755 @@ export function LayerEditor({
     commit(next);
   };
 
-  const stageList = useMemo(
-    () => stages.filter((option) => option.height > 0 && option.width > 0),
-    [stages],
-  );
-  /** A common box width for every canvas, so the narrow popover and the wide
-   * full-page card line up down the middle and each has room for a frame that
-   * hangs off its edges. */
-  const maxStageWidth = useMemo(
-    () => stageList.reduce((max, option) => Math.max(max, option.width), 0),
-    [stageList],
-  );
+  // --- Adding ----------------------------------------------------------------
 
-  const resetView = () => {
-    setZoom(1);
-    setPans({});
+  /** Put a new layer where new layers go, and select it so its controls are
+   * what's next to it. Nudged by how many are already there, so adding three
+   * of the same thing doesn't stack them exactly. */
+  const addLayerObject = (layer: CosmeticLayer) => {
+    if (draft.length >= MAX_LAYERS) {
+      setError(`That's the most one of these can hold (${MAX_LAYERS}).`);
+      return;
+    }
+    const offset = (draft.length % 4) * 3;
+    const placed: CosmeticLayer =
+      kind === "sticker"
+        ? {
+            ...layer,
+            anchor: "top",
+            x: 50 + offset,
+            // A third of the way down: where a sticker reads as a sticker on a
+            // card, not as something stuck over its name.
+            y: stageHeightPercent * 0.3 + offset,
+          }
+        : { ...layer, anchor: "center", x: 50 + offset, y: offset };
+    commit([...draft, placed]);
+    setSelectedIds([placed.id]);
   };
 
-  return (
-    <div className={cn("flex min-h-0 flex-col gap-3", className)}>
-      <div className="flex min-h-0 flex-1 gap-3">
-        {/* The canvas. Left alone by the panel beside it: this is the part
-            being looked at, so it gets the room. */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-          {/* Every card shape at once, one under the other — a frame that only
-              works on the short popover is caught by seeing it on the tall
-              page too. The shape last touched is "active": it answers the
-              keyboard and the inspector's numbers are its. */}
-          <div className="flex min-h-0 flex-1 flex-row items-center gap-5 overflow-auto rounded-md border border-border/50 bg-background/30 p-4">
-            {stageList.map((stage) => (
-              <div key={stage.key} className="flex shrink-0 flex-col items-center gap-1">
-                <LayerCanvas
-                  layers={draft}
-                  stage={{ width: stage.width, height: stage.height }}
-                  selectedIds={selectedIds}
-                  onSelect={setSelectedIds}
-                  onChange={setDraft}
-                  onCommit={commit}
-                  onDelete={deleteLayers}
-                  onDuplicate={duplicateLayers}
-                  onReorder={move}
-                  onUndo={undo}
-                  onRedo={redo}
-                  ratios={ratios}
-                  variant={stage.key}
-                  zoom={zoom}
-                  onZoomChange={setZoom}
-                  pan={pans[stage.key] ?? ZERO_PAN}
-                  onPanChange={(next) =>
-                    setPans((prev) => ({ ...prev, [stage.key]: next }))
-                  }
-                  active={stage.key === activeKey}
-                  onActivate={() => setActiveKey(stage.key)}
-                  resolveSrc={resolveSrc}
-                  style={{
-                    width: maxStageWidth * zoom + 96,
-                    height: stage.height * zoom + 96,
-                  }}
-                >
-                  {renderStage(stage)}
-                </LayerCanvas>
-                <span
-                  className={cn(
-                    "text-[11px]",
-                    stage.key === activeKey
-                      ? "font-medium text-foreground"
-                      : "text-muted-foreground",
-                  )}
-                  title={stage.hint}
-                >
-                  {stage.label}
-                </span>
-              </div>
+  const addImage = (url: string, storageId?: string, width = kind === "sticker" ? 36 : 100) =>
+    addLayerObject({ id: newLayerId(), url, storageId, anchor: "center", x: 50, y: 0, width });
+
+  const pickFiles = async (files: File[] | FileList | null) => {
+    const list = files ? Array.from(files) : [];
+    if (list.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const room = MAX_LAYERS - draft.length;
+      const chosen = list.slice(0, Math.max(0, room));
+      // Uploaded one at a time and added as a batch: adding them one by one
+      // would save between each, and a half-uploaded set is not an arrangement
+      // anybody meant to keep.
+      const added: CosmeticLayer[] = [];
+      for (const [index, file] of chosen.entries()) {
+        const { url, storageId } = await upload(file);
+        const offset = ((draft.length + index) % 4) * 3;
+        added.push(
+          kind === "sticker"
+            ? {
+                id: newLayerId(),
+                url,
+                storageId,
+                anchor: "top",
+                x: 50 + offset,
+                y: stageHeightPercent * 0.3 + offset,
+                width: 36,
+              }
+            : {
+                id: newLayerId(),
+                url,
+                storageId,
+                anchor: "center",
+                x: 50 + offset,
+                y: offset,
+                width: 100,
+              },
+        );
+      }
+      if (added.length > 0) {
+        commit([...draft, ...added]);
+        setSelectedIds([added[added.length - 1]!.id]);
+      }
+      if (chosen.length < list.length) {
+        setError(`Only ${chosen.length} of those fitted — ${MAX_LAYERS} is the limit.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That upload didn't work.");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  // --- Editing the selected layer ---------------------------------------------
+
+  const selected =
+    selectedIds.length === 1 ? (draft.find((layer) => layer.id === selectedIds[0]) ?? null) : null;
+
+  /** A slider fires per pixel of travel, so the two are separate: the draft
+   * follows the drag, and only the release is worth a write. */
+  const patchLive = (id: string, patch: (layer: CosmeticLayer) => Partial<CosmeticLayer>) =>
+    setDraft((prev) => confineAll(prev.map((l) => (l.id === id ? { ...l, ...patch(l) } : l))));
+  const patchSaved = (id: string, patch: (layer: CosmeticLayer) => Partial<CosmeticLayer>) =>
+    commit(draft.map((l) => (l.id === id ? { ...l, ...patch(l) } : l)));
+
+  const maxSize = kind === "sticker" ? STICKER_MAX_WIDTH : bounds.maxX - bounds.minX;
+
+  /** Resizing by width carries the rest of the layer's size with it, in the
+   * shape it had: an explicit height, and the type size of a text layer. */
+  const resized = (layer: CosmeticLayer, width: number): Partial<CosmeticLayer> => {
+    const factor = width / Math.max(layer.width, 0.0001);
+    return {
+      width,
+      height: layer.height === undefined ? undefined : layer.height * factor,
+      fontSize: layer.fontSize === undefined ? undefined : layer.fontSize * factor,
+    };
+  };
+
+  const centreLayer = (layer: CosmeticLayer) => {
+    patchSaved(layer.id, (l) => ({
+      x: 50,
+      // An avatar is as tall as it is wide, so centred means centred both ways;
+      // a card is not, and a sticker only centres across it.
+      ...(kind === "decoration"
+        ? { y: layerYFromCentre(l.anchor, 50, stageHeightPercent) }
+        : {}),
+    }));
+  };
+
+  const emptyState = (
+    <div className="flex w-[22rem] max-w-full flex-col items-center gap-3 rounded-xl border border-dashed border-primary/40 bg-background/80 p-5 text-center shadow-lg backdrop-blur">
+      <span className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <ImagePlus className="size-5" />
+      </span>
+      <div className="space-y-0.5">
+        <p className="text-sm font-medium">
+          {kind === "sticker" ? "Stick something on your card" : "Decorate your avatar"}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Drop an image anywhere on the canvas, or choose one.
+        </p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-2">
+        <Button size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+          Choose images
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addLayerObject(defaultTextLayer())}>
+          <Type className="size-4" />
+          Add text
+        </Button>
+      </div>
+      {presets && presets.length > 0 && (
+        <div className="flex flex-col items-center gap-1.5">
+          <p className="text-[11px] text-muted-foreground">or start from a built-in</p>
+          <div className="flex gap-1">
+            {presets.map((preset) => (
+              <button
+                key={preset.url}
+                type="button"
+                title={preset.label}
+                onClick={() => addImage(preset.url)}
+                className="size-10 rounded-md border border-border/60 bg-background/60 p-1 transition-colors hover:border-primary hover:bg-accent/40"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={resolveSrc(preset.url)}
+                  alt={preset.label}
+                  className="size-full object-contain"
+                  draggable={false}
+                />
+              </button>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                className="size-7"
-                title="Zoom out"
-                onClick={() => setZoom((z) => Math.max(0.35, Math.round((z - 0.1) * 100) / 100))}
-              >
+  return (
+    <div className={cn("flex min-h-0 flex-col gap-2", className)}>
+      <div className="flex min-h-0 flex-1 gap-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          {/* The toolbar: adding things on the left, looking at them on the
+              right. */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/gif,image/webp,image/jpeg,image/svg+xml"
+              multiple
+              className="hidden"
+              onChange={(event) => void pickFiles(event.target.files)}
+            />
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy || draft.length >= MAX_LAYERS}
+              onClick={() => fileRef.current?.click()}
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+              Add image
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={draft.length >= MAX_LAYERS}
+              onClick={() => addLayerObject(defaultTextLayer())}
+            >
+              <Type className="size-4" />
+              Text
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={draft.length >= MAX_LAYERS}
+              onClick={() => addLayerObject(defaultShapeLayer("rect"))}
+            >
+              <Square className="size-4" />
+              Shape
+            </Button>
+            {presets && presets.length > 0 && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button type="button" size="sm" variant="outline" disabled={draft.length >= MAX_LAYERS}>
+                    <Shapes className="size-4" />
+                    Built in
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-2">
+                  <div className="flex gap-1">
+                    {presets.map((preset) => (
+                      <button
+                        key={preset.url}
+                        type="button"
+                        title={preset.label}
+                        onClick={() => addImage(preset.url)}
+                        className="size-12 rounded-md border border-border/60 p-1.5 transition-colors hover:border-primary hover:bg-accent/40"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={resolveSrc(preset.url)}
+                          alt={preset.label}
+                          className="size-full object-contain"
+                          draggable={false}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+
+            <div className="ml-auto flex items-center gap-1">
+              <IconButton title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={undo}>
+                <Undo2 className="size-3.5" />
+              </IconButton>
+              <IconButton title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>
+                <Redo2 className="size-3.5" />
+              </IconButton>
+              <span aria-hidden className="mx-1 h-4 w-px bg-border" />
+              <IconButton title="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
                 <Minus className="size-3.5" />
-              </Button>
-              <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">
-                {Math.round(zoom * 100)}%
+              </IconButton>
+              <span className="w-11 text-center text-xs tabular-nums text-muted-foreground">
+                {Math.round(userZoom * 100)}%
               </span>
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                className="size-7"
-                title="Zoom in"
-                onClick={() => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 100) / 100))}
-              >
+              <IconButton title="Zoom in" onClick={() => zoomBy(1.25)}>
                 <Plus className="size-3.5" />
-              </Button>
-              {/* Only offered once the view has actually been moved — a button
-                  that undoes nothing is a button in the way. */}
-              {(zoom !== 1 || Object.keys(pans).length > 0) && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 px-2 text-xs"
-                  title="Back to 100% and centred"
-                  onClick={resetView}
-                >
-                  Reset view
-                </Button>
+              </IconButton>
+              <IconButton
+                title="Fit the canvas to the window"
+                disabled={userZoom === 1 && pan.x === 0 && pan.y === 0}
+                onClick={resetView}
+              >
+                <Maximize className="size-3.5" />
+              </IconButton>
+              {previewOptions && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs">
+                      <Eye className="size-3.5" />
+                      Preview
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-56">
+                    <p className="mb-2 text-xs font-medium">Show on the card</p>
+                    {previewOptions}
+                  </PopoverContent>
+                </Popover>
               )}
-            </div>
-
-            <div className="ml-auto flex items-center gap-2">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/png,image/gif,image/webp,image/jpeg,image/svg+xml"
-                multiple
-                className="hidden"
-                onChange={(event) => void pickFiles(event.target.files)}
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7"
-                disabled={busy || draft.length >= MAX_LAYERS}
-                onClick={() => fileRef.current?.click()}
-              >
-                {busy ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <ImagePlus className="size-3.5" />
-                )}
-                Add images
-              </Button>
-              {/* A frame is not only pictures: a name across the bottom or a
-                  band behind the avatar is a thing people want and had to
-                  make in another program and upload. */}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7"
-                disabled={draft.length >= MAX_LAYERS}
-                onClick={() => addLayerObject(defaultTextLayer())}
-              >
-                <Type className="size-3.5" />
-                Text
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7"
-                disabled={draft.length >= MAX_LAYERS}
-                onClick={() => addLayerObject(defaultShapeLayer("rect"))}
-              >
-                <Square className="size-3.5" />
-                Shape
-              </Button>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-7"
+                    title="Shortcuts"
+                    aria-label="Shortcuts"
+                  >
+                    <HelpCircle className="size-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-64 text-xs">
+                  <Shortcuts />
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
+
+          {/* The canvas fills what's left. It is measured, so "fit" means fit
+              this window rather than a size picked in advance. */}
+          <div ref={viewportRef} className="min-h-0 flex-1">
+            <LayerCanvas
+              className="size-full"
+              layers={draft}
+              stage={stage}
+              kind={kind}
+              selectedIds={selectedIds}
+              onSelect={setSelectedIds}
+              onChange={setDraft}
+              onCommit={commit}
+              onDelete={deleteLayers}
+              onDuplicate={duplicateLayers}
+              onReorder={move}
+              onUndo={undo}
+              onRedo={redo}
+              ratios={ratios}
+              variant={DEFAULT_VARIANT}
+              zoom={zoom}
+              onZoomChange={(next) => setUserZoom(Math.min(6, Math.max(0.4, next / fit)))}
+              pan={pan}
+              onPanChange={setPan}
+              resolveSrc={resolveSrc}
+              onFiles={(files) => void pickFiles(files)}
+              emptyState={emptyState}
+            >
+              {renderStage(stage)}
+            </LayerCanvas>
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <p className="min-w-0 truncate text-[11px] text-muted-foreground">{uploadHint}</p>
+            <span
+              className={cn(
+                "flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-opacity",
+                draft.length === 0 && saving === 0 && "opacity-0",
+              )}
+            >
+              {saving > 0 ? (
+                <>
+                  <Loader2 className="size-3 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Check className="size-3 text-emerald-500" />
+                  Saved
+                </>
+              )}
+            </span>
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
 
-        {/* The panel: what's on the canvas, and the numbers behind whichever
-            piece of it is selected. */}
-        <div
-          ref={smoothRef}
-          className="flex w-56 shrink-0 flex-col gap-3 overflow-y-auto"
-        >
-          {elementToggles && (
+        {/* The side panel: what's on the canvas, and what can be done to the
+            selected piece of it. */}
+        <ScrollArea className="w-60 shrink-0">
+          <div className="flex flex-col gap-4 pr-3">
             <div className="space-y-1.5">
-              <Label className="text-xs">Show on the card</Label>
-              {elementToggles}
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <Label className="text-xs">Artwork</Label>
-            {draft.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nothing yet.</p>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {/* Reversed: the last layer is drawn on top, and a list that
-                    reads top-down should say so. */}
-                {[...draft].reverse().map((layer) => (
-                  <div
-                    key={layer.id}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md border p-1 transition-colors",
-                      selectedIds.includes(layer.id)
-                        ? "border-primary bg-accent/60"
-                        : "border-transparent hover:bg-accent/40",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        // Shift or ctrl/cmd extends the selection, the same as
-                        // clicking a layer on the canvas does — one place to
-                        // learn the gesture, not two.
-                        if (event.shiftKey || event.ctrlKey || event.metaKey) {
-                          setSelectedIds((prev) =>
-                            prev.includes(layer.id)
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Layers</Label>
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {draft.length}/{MAX_LAYERS}
+                </span>
+              </div>
+              {draft.length === 0 ? (
+                <p className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
+                  Nothing here yet.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {/* Reversed: the last layer is drawn on top, and a list that
+                      reads top-down should say so. */}
+                  {[...draft].reverse().map((layer, index) => (
+                    <LayerRow
+                      key={layer.id}
+                      layer={layer}
+                      label={layerLabel(layer, draft.length - index)}
+                      selected={selectedIds.includes(layer.id)}
+                      resolveSrc={resolveSrc}
+                      onSelect={(additive) =>
+                        setSelectedIds((prev) =>
+                          additive
+                            ? prev.includes(layer.id)
                               ? prev.filter((id) => id !== layer.id)
-                              : [...prev, layer.id],
-                          );
-                        } else {
-                          setSelectedIds([layer.id]);
-                        }
-                      }}
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                    >
-                      {/* A thumbnail of the thing itself rather than of its
-                          file: a text layer has no file, and "Aa" in the
-                          right colour identifies it faster than a name would. */}
-                      <span className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:8px_8px] [container-type:size]">
-                        {layerKind(layer) === "text" ? (
-                          <span
-                            className="text-[11px] font-bold leading-none"
-                            style={{ color: layer.color ?? "#ffffff" }}
-                          >
-                            Aa
-                          </span>
-                        ) : layerKind(layer) === "shape" ? (
-                          <span
-                            className="size-4"
-                            style={{
-                              background: layer.color ?? "#ffffff",
-                              borderRadius: layer.shape === "ellipse" ? "50%" : 2,
-                            }}
-                          />
-                        ) : (
-                          <img
-                            src={resolveSrc(layer.url)}
-                            alt=""
-                            className="size-full object-contain"
-                            draggable={false}
-                          />
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-                        {Math.round(layer.width)}% · {ANCHOR_LABELS[layer.anchor]}
-                      </span>
-                    </button>
-                    <div className="flex shrink-0 flex-col">
-                      <button
-                        type="button"
-                        title="Bring forward"
-                        className="text-muted-foreground hover:text-foreground"
-                        onClick={() => move(layer.id, 1)}
-                      >
-                        <ArrowUp className="size-3" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Send back"
-                        className="text-muted-foreground hover:text-foreground"
-                        onClick={() => move(layer.id, -1)}
-                      >
-                        <ArrowDown className="size-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {presets && presets.length > 0 && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">Built in</Label>
-              <div className="flex flex-wrap gap-1">
-                {presets.map((preset) => (
-                  <button
-                    key={preset.url}
-                    type="button"
-                    title={preset.label}
-                    onClick={() => addLayer(preset.url)}
-                    className="size-9 rounded border border-border/60 p-0.5 hover:bg-accent/40"
-                  >
-                    <img
-                      src={resolveSrc(preset.url)}
-                      alt={preset.label}
-                      className="size-full object-contain"
-                      draggable={false}
+                              : [...prev, layer.id]
+                            : [layer.id],
+                        )
+                      }
+                      onForward={() => move(layer.id, 1)}
+                      onBackward={() => move(layer.id, -1)}
+                      onDelete={() => deleteLayers([layer.id])}
                     />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {selected && (
-            <LayerInspector
-              layer={selected}
-              height={layerHeight(
-                selected,
-                ratios[selected.url],
-                (stageHeight / stageWidth) * 100,
+                  ))}
+                </div>
               )}
-              unit={unit}
-              onUnitChange={setUnit}
-              // The stage is drawn at the card's real width, so a percent of it
-              // is a pixel of it — which is what makes "396px" mean the same
-              // thing here as it does in the artwork somebody exported.
-              pxPerPercent={stageWidth / 100}
-              stageHeightPercent={(stageHeight / stageWidth) * 100}
-              onAnchorChange={reanchor}
-              ends={twoEndedStretch(selected)}
-              onEndsChange={setStretchEndsLive}
-              onEndsCommit={setStretchEndsSaved}
-              variantLabel={
-                activeKey === DEFAULT_VARIANT
-                  ? undefined
-                  : (stages.find((option) => option.key === activeKey)?.label ??
-                    activeKey)
-              }
-              overridden={!!selectedStored?.variants?.[activeKey]}
-              onMatchDefault={() =>
-                selectedStored &&
-                commit(
-                  draft.map((layer) =>
-                    layer.id === selectedStored.id
-                      ? clearVariant(layer, activeKey)
-                      : layer,
-                  ),
-                )
-              }
-              onChange={(patch) => patchLive(selected.id, patch)}
-              onCommit={(patch) => patchSaved(selected.id, patch)}
-              onDuplicate={() => duplicateLayers([selected.id])}
-              onRemove={() => deleteLayers([selected.id])}
+            </div>
+
+            {selected ? (
+              <Inspector
+                layer={selected}
+                kind={kind}
+                maxSize={maxSize}
+                onLive={(patch) => patchLive(selected.id, patch)}
+                onSaved={(patch) => patchSaved(selected.id, patch)}
+                resized={resized}
+                onCentre={() => centreLayer(selected)}
+                onDuplicate={() => duplicateLayers([selected.id])}
+                onRemove={() => deleteLayers([selected.id])}
+                centreY={layerCentreY(selected, stageHeightPercent)}
+              />
+            ) : draft.length > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Select something on the canvas, or in the list, to change it.
+              </p>
+            ) : null}
+          </div>
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
+/** A name for a layer in the list: what it says, what shape it is, or which
+ * picture. */
+function layerLabel(layer: CosmeticLayer, position: number): string {
+  const kind = layerKind(layer);
+  if (kind === "text") return (layer.text ?? "").trim().slice(0, 24) || "Text";
+  if (kind === "shape") return layer.shape === "ellipse" ? "Ellipse" : "Rectangle";
+  return `Image ${position}`;
+}
+
+function IconButton({
+  title,
+  disabled,
+  onClick,
+  children,
+}: {
+  title: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="ghost"
+      className="size-7"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
+function Shortcuts() {
+  const rows: [string, string][] = [
+    ["Move", "Drag, or arrow keys (Shift for 10×)"],
+    ["Resize", "Drag a corner, or A / D"],
+    ["Turn", "Drag the round handle, or Q / E"],
+    ["Select several", "Shift-click"],
+    ["Duplicate", "Ctrl/Cmd + D"],
+    ["Delete", "Delete"],
+    ["Undo / redo", "Ctrl/Cmd + Z / Shift + Z"],
+    ["Zoom", "Ctrl/Cmd + scroll"],
+    ["Pan", "Scroll, or hold Space and drag"],
+    ["No snapping", "Hold Shift while dragging"],
+  ];
+  return (
+    <dl className="space-y-1.5">
+      {rows.map(([name, how]) => (
+        <div key={name} className="flex justify-between gap-3">
+          <dt className="font-medium">{name}</dt>
+          <dd className="text-right text-muted-foreground">{how}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** One layer in the list. */
+function LayerRow({
+  layer,
+  label,
+  selected,
+  resolveSrc,
+  onSelect,
+  onForward,
+  onBackward,
+  onDelete,
+}: {
+  layer: CosmeticLayer;
+  label: string;
+  selected: boolean;
+  resolveSrc: (url: string) => string;
+  onSelect: (additive: boolean) => void;
+  onForward: () => void;
+  onBackward: () => void;
+  onDelete: () => void;
+}) {
+  const kind = layerKind(layer);
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-1.5 rounded-lg border p-1 transition-colors",
+        selected ? "border-primary bg-accent/60" : "border-transparent hover:bg-accent/40",
+      )}
+    >
+      <button
+        type="button"
+        onClick={(event) => onSelect(event.shiftKey || event.ctrlKey || event.metaKey)}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        {/* A thumbnail of the thing itself rather than of its file: a text layer
+            has no file, and "Aa" in the right colour identifies it faster than a
+            name would. */}
+        <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:8px_8px]">
+          {kind === "text" ? (
+            <span
+              className="text-[11px] font-bold leading-none"
+              style={{ color: layer.color ?? "#ffffff" }}
+            >
+              Aa
+            </span>
+          ) : kind === "shape" ? (
+            <span
+              className="size-4"
+              style={{
+                background: layer.color ?? "#ffffff",
+                borderRadius: layer.shape === "ellipse" ? "50%" : 2,
+              }}
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={resolveSrc(layer.url)}
+              alt=""
+              className="size-full object-contain"
+              draggable={false}
             />
           )}
-        </div>
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs">{label}</span>
+      </button>
+      <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        <button
+          type="button"
+          title="Bring forward"
+          className="rounded p-1 text-muted-foreground hover:text-foreground"
+          onClick={onForward}
+        >
+          <ArrowUp className="size-3" />
+        </button>
+        <button
+          type="button"
+          title="Send backward"
+          className="rounded p-1 text-muted-foreground hover:text-foreground"
+          onClick={onBackward}
+        >
+          <ArrowDown className="size-3" />
+        </button>
+        <button
+          type="button"
+          title="Delete"
+          className="rounded p-1 text-muted-foreground hover:text-destructive"
+          onClick={onDelete}
+        >
+          <Trash2 className="size-3" />
+        </button>
       </div>
-
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      <p className="text-[11px] text-muted-foreground">{uploadHint}</p>
     </div>
   );
 }
 
 /**
- * The numbers behind the selected layer.
+ * The few controls behind the selected layer.
  *
- * Everything here is reachable by dragging on the canvas too — this is for
- * saying "exactly 100%" and for the two things a drag can't express: which
- * edge the artwork is pinned to, and whether it should grow with the card.
+ * Everything position-related is on the canvas — dragging, the handles, the
+ * keyboard — so what is here is what a drag can't say: an exact size, a turn,
+ * how faded, and the parts that belong to one kind of layer (the words of a
+ * text, the colour of a shape).
  */
-function LayerInspector({
+function Inspector({
   layer,
-  height,
-  unit,
-  onUnitChange,
-  pxPerPercent,
-  stageHeightPercent,
-  onAnchorChange,
-  ends,
-  onEndsChange,
-  onEndsCommit,
-  variantLabel,
-  overridden,
-  onMatchDefault,
-  onChange,
-  onCommit,
+  kind,
+  maxSize,
+  centreY,
+  resized,
+  onLive,
+  onSaved,
+  onCentre,
   onDuplicate,
   onRemove,
 }: {
   layer: CosmeticLayer;
-  /** What the layer is actually as tall as right now, in percent — from its own
-   * height, from the artwork's proportions, or from the card it stretches to. */
-  height: number;
-  unit: SizeUnit;
-  onUnitChange: (unit: SizeUnit) => void;
-  /** Pixels per percent, for the unit that isn't stored. */
-  pxPerPercent: number;
-  /** How tall the card on the canvas is, in percent of its width — what a
-   * locked layer's position is measured against. */
-  stageHeightPercent: number;
-  /** Change what the layer is pinned to, everywhere at once. */
-  onAnchorChange: (anchor: LayerAnchor) => void;
-  /** The layer's two pinned ends, or `null` if it isn't a two-ended stretch. */
-  ends: { top: LayerEnd; bottom: LayerEnd } | null;
-  /** Live, for a slider mid-drag. `null` goes back to a one-ended stretch. */
-  onEndsChange: (ends: { top: LayerEnd; bottom: LayerEnd } | null) => void;
-  /** Saved, for the release and for the one-click anchor buttons. */
-  onEndsCommit: (ends: { top: LayerEnd; bottom: LayerEnd } | null) => void;
-  /** Set when the canvas is showing a shape of card other than the default, in
-   * which case the numbers below belong to that shape alone. */
-  variantLabel?: string;
-  /** Whether this layer has already been placed differently for that shape. */
-  overridden: boolean;
-  /** Throw that placement away and follow the default again. */
-  onMatchDefault: () => void;
+  kind: CanvasKind;
+  maxSize: number;
+  centreY: number;
+  resized: (layer: CosmeticLayer, width: number) => Partial<CosmeticLayer>;
   /** Live, for a slider mid-drag. */
-  onChange: (patch: Partial<CosmeticLayer>) => void;
+  onLive: (patch: (layer: CosmeticLayer) => Partial<CosmeticLayer>) => void;
   /** Saved, for the release and for everything that is one click. */
-  onCommit: (patch: Partial<CosmeticLayer>) => void;
+  onSaved: (patch: (layer: CosmeticLayer) => Partial<CosmeticLayer>) => void;
+  onCentre: () => void;
   onDuplicate: () => void;
   onRemove: () => void;
 }) {
-  const locked = layer.anchor === "locked";
-  const stretching =
-    !!ends || (!!layer.stretchY && layer.height === undefined && !locked);
-  const kind = layerKind(layer);
+  const layerType = layerKind(layer);
+  void centreY;
 
   return (
     <div className="space-y-3 border-t border-border/50 pt-3">
-      {/* What it is made of, above where it sits: the geometry below is the
-          same questions for all three kinds, and these are the ones that only
-          make sense for one. */}
-      {kind === "text" && (
+      <Label className="text-xs">
+        {layerType === "text" ? "Text" : layerType === "shape" ? "Shape" : "Image"}
+      </Label>
+
+      {layerType === "text" && (
         <div className="space-y-2">
-          <div className="space-y-1.5">
-            <Label className="text-xs" htmlFor="layer-text">
-              Words
-            </Label>
-            <textarea
-              id="layer-text"
-              value={layer.text ?? ""}
-              maxLength={MAX_TEXT_LENGTH}
-              rows={2}
-              onChange={(event) => onChange({ text: event.target.value })}
-              // Typed live and saved on the way out: a mutation per keystroke
-              // is a write per letter.
-              onBlur={(event) => onCommit({ text: event.target.value })}
-              className="w-full resize-none rounded-md border border-border/60 bg-background px-2 py-1 text-xs outline-none focus-visible:border-ring"
-            />
-          </div>
-
-          <NumberRow
-            label="Type size"
-            value={layer.fontSize ?? 7.5}
-            unit={unit}
-            pxPerPercent={pxPerPercent}
-            min={0.5}
-            max={LAYER_LIMITS.size.max}
-            onChange={(fontSize) => onChange({ fontSize })}
-            onCommit={(fontSize) => onCommit({ fontSize })}
+          <textarea
+            value={layer.text ?? ""}
+            maxLength={MAX_TEXT_LENGTH}
+            rows={2}
+            aria-label="Words"
+            onChange={(event) => onLive(() => ({ text: event.target.value }))}
+            // Typed live and saved on the way out: a mutation per keystroke is a
+            // write per letter.
+            onBlur={(event) => onSaved(() => ({ text: event.target.value }))}
+            className="w-full resize-none rounded-md border border-border/60 bg-background px-2 py-1 text-xs outline-none focus-visible:border-ring"
           />
-
-          <div className="space-y-1.5">
-            <Label className="text-xs">Weight</Label>
-            <div className="grid grid-cols-4 gap-1">
-              {[400, 600, 700, 900].map((weight) => (
-                <Button
-                  key={weight}
-                  type="button"
-                  size="sm"
-                  variant={(layer.fontWeight ?? 700) === weight ? "secondary" : "ghost"}
-                  className="h-7 px-1 text-[11px]"
-                  onClick={() => onCommit({ fontWeight: weight })}
-                >
-                  {weight}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs">Alignment</Label>
-            <div className="grid grid-cols-3 gap-1">
-              {(["left", "center", "right"] as const).map((align) => (
-                <Button
-                  key={align}
-                  type="button"
-                  size="sm"
-                  variant={(layer.align ?? "center") === align ? "secondary" : "ghost"}
-                  className="h-7 px-1 text-[11px] capitalize"
-                  onClick={() => onCommit({ align })}
-                >
-                  {align}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-2">
-            <Label className="text-xs">Italic</Label>
-            <Switch
-              checked={!!layer.italic}
-              onCheckedChange={(italic) => onCommit({ italic: italic || undefined })}
-            />
+          <div className="grid grid-cols-4 gap-1">
+            {[400, 600, 700, 900].map((weight) => (
+              <Button
+                key={weight}
+                type="button"
+                size="sm"
+                variant={(layer.fontWeight ?? 700) === weight ? "secondary" : "ghost"}
+                className="h-7 px-1 text-[11px]"
+                style={{ fontWeight: weight }}
+                onClick={() => onSaved(() => ({ fontWeight: weight }))}
+              >
+                Aa
+              </Button>
+            ))}
           </div>
         </div>
       )}
 
-      {kind === "shape" && (
+      {layerType === "shape" && (
         <div className="space-y-2">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Shape</Label>
-            <div className="grid grid-cols-2 gap-1">
-              {(["rect", "ellipse"] as const).map((shape) => (
-                <Button
-                  key={shape}
-                  type="button"
-                  size="sm"
-                  variant={(layer.shape ?? "rect") === shape ? "secondary" : "ghost"}
-                  className="h-7 px-1 text-[11px]"
-                  onClick={() => onCommit({ shape })}
-                >
-                  {shape === "rect" ? "Rectangle" : "Ellipse"}
-                </Button>
-              ))}
-            </div>
+          <div className="grid grid-cols-2 gap-1">
+            {(["rect", "ellipse"] as const).map((shape) => (
+              <Button
+                key={shape}
+                type="button"
+                size="sm"
+                variant={(layer.shape ?? "rect") === shape ? "secondary" : "ghost"}
+                className="h-7 px-1 text-[11px]"
+                onClick={() => onSaved(() => ({ shape }))}
+              >
+                {shape === "rect" ? "Rectangle" : "Ellipse"}
+              </Button>
+            ))}
           </div>
-
           {(layer.shape ?? "rect") === "rect" && (
-            <NumberRow
+            <SliderRow
               label="Corners"
               value={layer.radius ?? 0}
-              unit={unit}
-              pxPerPercent={pxPerPercent}
               min={0}
               max={50}
-              onChange={(radius) => onChange({ radius })}
-              onCommit={(radius) => onCommit({ radius })}
+              suffix="%"
+              onChange={(radius) => onLive(() => ({ radius }))}
+              onCommit={(radius) => onSaved(() => ({ radius }))}
             />
           )}
         </div>
       )}
 
-      {kind !== "image" && (
+      {layerType !== "image" && (
         <div className="space-y-2">
           <ColorRow
-            label={kind === "text" ? "Colour" : "Fill"}
+            label={layerType === "text" ? "Colour" : "Fill"}
             value={layer.color ?? "#ffffff"}
-            onChange={(color) => onCommit({ color })}
+            onChange={(color) => onSaved(() => ({ color }))}
           />
           <ColorRow
             label="Outline"
             value={layer.strokeColor}
             onChange={(strokeColor) =>
-              onCommit({
+              onSaved((l) => ({
                 strokeColor,
                 // An outline with no width is an outline nobody can see, so
                 // turning one on gives it something to draw.
-                strokeWidth: strokeColor ? layer.strokeWidth || 0.5 : undefined,
-              })
-            }
-          />
-          {layer.strokeColor && (
-            <NumberRow
-              label="Outline width"
-              value={layer.strokeWidth ?? 0.5}
-              unit={unit}
-              pxPerPercent={pxPerPercent}
-              min={0}
-              max={20}
-              onChange={(strokeWidth) => onChange({ strokeWidth })}
-              onCommit={(strokeWidth) => onCommit({ strokeWidth })}
-            />
-          )}
-        </div>
-      )}
-      {/* What editing means right now. Without this the same sliders quietly do
-          two different things depending on which card is on the canvas, which
-          is the kind of surprise that ends with somebody's frame moved on a
-          shape they were not looking at. */}
-      {variantLabel && (
-        <div className="rounded-md border border-border/60 bg-muted/40 p-2">
-          <p className="text-[11px] leading-snug">
-            Placing this for <span className="font-medium">{variantLabel}</span>{" "}
-            cards only.
-          </p>
-          {overridden ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="mt-1 h-6 px-1.5 text-[11px]"
-              onClick={onMatchDefault}
-            >
-              <RotateCcw className="size-3" />
-              Match the default
-            </Button>
-          ) : (
-            <p className="text-[10px] leading-snug text-muted-foreground">
-              Following the default placement until you move it.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* A layer pinned at both ends carries its edges' anchors instead, so the
-          single "Pinned to" question doesn't apply to it. */}
-      {!ends && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Pinned to</Label>
-          <div className="grid grid-cols-4 gap-1">
-            {ANCHORS.map((anchor) => (
-              <Button
-                key={anchor}
-                type="button"
-                size="sm"
-                variant={layer.anchor === anchor ? "secondary" : "ghost"}
-                className="h-7 px-1 text-[11px]"
-                // Not one of the patches above: an anchor belongs to the layer
-                // rather than to the shape on screen, and changing it has to
-                // rewrite every shape's position at once — see `reanchorLayer`.
-                onClick={() => onAnchorChange(anchor)}
-              >
-                {ANCHOR_LABELS[anchor]}
-              </Button>
-            ))}
-          </div>
-          <p className="text-[10px] leading-snug text-muted-foreground">
-            {locked
-              ? "Held the same distance down the card, whatever its height."
-              : "Which edge it stays with when the card grows."}
-          </p>
-        </div>
-      )}
-
-      {(!locked || ends) && (
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <Label className="text-xs">Grow with the card</Label>
-            <p className="text-[10px] leading-snug text-muted-foreground">
-              For a border drawn to the card&apos;s whole shape.
-            </p>
-          </div>
-          <Switch
-            checked={stretching}
-            onCheckedChange={(checked) =>
-              onCommit({
-                stretchY: checked || undefined,
-                height: undefined,
-                // Turning it off takes both pinned ends with it.
-                stretchTop: undefined,
-                stretchBottom: undefined,
-              })
+                strokeWidth: strokeColor ? l.strokeWidth || 0.5 : undefined,
+              }))
             }
           />
         </div>
       )}
 
-      {/* Pin each end to its own line on the card and let the layer grow
-          between them — the answer for a full-card border on a card whose drawn
-          height isn't its content's (the full profile page). */}
-      {stretching && (
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <Label className="text-xs">Pin both ends</Label>
-            <p className="text-[10px] leading-snug text-muted-foreground">
-              Its top and bottom each hold a spot; it stretches to fit.
-            </p>
-          </div>
-          <Switch
-            checked={!!ends}
-            onCheckedChange={(checked) =>
-              onEndsCommit(
-                checked
-                  ? { top: { anchor: "top", y: 0 }, bottom: { anchor: "bottom", y: 0 } }
-                  : null,
-              )
-            }
-          />
-        </div>
-      )}
-
-      {ends && (
-        <div className="space-y-3 rounded-md border border-border/60 bg-muted/30 p-2">
-          {(["top", "bottom"] as const).map((which) => (
-            <StretchEndRow
-              key={which}
-              label={which === "top" ? "Top edge" : "Bottom edge"}
-              end={ends[which]}
-              unit={unit}
-              pxPerPercent={pxPerPercent}
-              stageHeightPercent={stageHeightPercent}
-              onChange={(next) => onEndsChange({ ...ends, [which]: next })}
-              onCommit={(next) => onEndsCommit({ ...ends, [which]: next })}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Which end of a one-ended stretch gives. A band across the middle of a
-          card and a border drawn around the whole of it want opposite answers:
-          one keeps its place and lets the space above it grow, the other keeps
-          its top and follows the card down. */}
-      {stretching && !ends && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Which end gives</Label>
-          <div className="grid grid-cols-2 gap-1">
-            {([
-              { value: "down", label: "Bottom" },
-              { value: "up", label: "Top" },
-            ] as const).map((option) => (
-              <Button
-                key={option.value}
-                type="button"
-                size="sm"
-                variant={
-                  (layer.stretchDirection ?? "down") === option.value
-                    ? "secondary"
-                    : "ghost"
-                }
-                className="h-7 px-1 text-[11px]"
-                onClick={() => onCommit({ stretchDirection: option.value })}
-              >
-                {option.label}
-              </Button>
-            ))}
-          </div>
-          <p className="text-[10px] leading-snug text-muted-foreground">
-            {(layer.stretchDirection ?? "down") === "down"
-              ? "Its top stays put; its bottom follows the card's."
-              : "Its bottom stays put; its top reaches the card's top edge."}
-          </p>
-        </div>
-      )}
-
-      {/* Which unit the four measurements below are typed in. Percentages are
-          what gets stored — they have to be, since a card is drawn at several
-          widths — but nobody matching artwork to an edge thinks in them, so
-          pixels are offered against the size the card has here. */}
-      <div className="flex items-center justify-between gap-2">
-        <Label className="text-xs">Measurements</Label>
-        <div className="flex items-center gap-0.5">
-          {(["percent", "px"] as const).map((option) => (
-            <Button
-              key={option}
-              type="button"
-              size="sm"
-              variant={unit === option ? "secondary" : "ghost"}
-              className="h-6 px-1.5 text-[10px]"
-              onClick={() => onUnitChange(option)}
-            >
-              {option === "percent" ? "%" : "px"}
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      <NumberRow
-        label="Width"
-        value={layer.width}
-        unit={unit}
-        pxPerPercent={pxPerPercent}
-        min={LAYER_LIMITS.size.min}
-        max={LAYER_LIMITS.size.max}
-        onChange={(width) => onChange({ width })}
-        onCommit={(width) => onCommit({ width })}
+      <SliderRow
+        label="Size"
+        value={Math.round(layer.width)}
+        min={MIN_SIZE}
+        max={Math.round(maxSize)}
+        suffix="%"
+        onChange={(width) => onLive((l) => resized(l, width))}
+        onCommit={(width) => onSaved((l) => resized(l, width))}
       />
-      {/* A two-ended stretch has no height of its own — it's whatever the two
-          pinned edges leave between them. */}
-      {!ends && (
-        <NumberRow
-          label="Height"
-          value={height}
-          unit={unit}
-          pxPerPercent={pxPerPercent}
-          min={LAYER_LIMITS.size.min}
-          max={LAYER_LIMITS.size.max}
-          // Typing a height is how a layer stops keeping its own proportions —
-          // the two are answers to the same question, so setting one puts the
-          // other away.
-          hint={
-            layer.height === undefined
-              ? layer.stretchY
-                ? "Following the card."
-                : "The artwork's own shape."
-              : undefined
-          }
-          onChange={(next) => onChange({ height: next, stretchY: undefined })}
-          onCommit={(next) => onCommit({ height: next, stretchY: undefined })}
-        />
-      )}
-      <NumberRow
-        label="Across"
-        value={layer.x}
-        unit={unit}
-        pxPerPercent={pxPerPercent}
-        min={LAYER_LIMITS.position.min}
-        max={LAYER_LIMITS.position.max}
-        onChange={(x) => onChange({ x })}
-        onCommit={(x) => onCommit({ x })}
-      />
-      {/* A two-ended stretch is placed by its edges, in the box above — it has
-          no single "down". */}
-      {!ends && (
-        <NumberRow
-          label="Down"
-          value={layer.y}
-          unit={unit}
-          // A locked layer's `y` is the one measurement taken against the card's
-          // height rather than its width, so a pixel of it is a different number
-          // of percent — and typing "80px" has to mean 80 pixels either way.
-          pxPerPercent={locked ? (pxPerPercent * stageHeightPercent) / 100 : pxPerPercent}
-          min={LAYER_LIMITS.position.min}
-          max={LAYER_LIMITS.position.max}
-          hint={locked ? "Percent of the card's height." : undefined}
-          onChange={(y) => onChange({ y })}
-          onCommit={(y) => onCommit({ y })}
-        />
-      )}
-      <NumberRow
+      <SliderRow
         label="Turn"
-        value={layer.rotation ?? 0}
-        unit="degrees"
-        pxPerPercent={pxPerPercent}
-        min={LAYER_LIMITS.rotation.min}
-        max={LAYER_LIMITS.rotation.max}
-        onChange={(rotation) => onChange({ rotation: rotation || undefined })}
-        onCommit={(rotation) => onCommit({ rotation: rotation || undefined })}
+        value={Math.round(layer.rotation ?? 0)}
+        min={-180}
+        max={180}
+        suffix="°"
+        onChange={(rotation) => onLive(() => ({ rotation: rotation || undefined }))}
+        onCommit={(rotation) => onSaved(() => ({ rotation: rotation || undefined }))}
       />
-      <NumberRow
-        label="Fade"
+      <SliderRow
+        label="Opacity"
         value={Math.round((layer.opacity ?? 1) * 100)}
-        unit="percent-plain"
-        pxPerPercent={pxPerPercent}
-        min={0}
+        min={10}
         max={100}
-        onChange={(value) => onChange({ opacity: value >= 100 ? undefined : value / 100 })}
-        onCommit={(value) => onCommit({ opacity: value >= 100 ? undefined : value / 100 })}
+        suffix="%"
+        onChange={(value) => onLive(() => ({ opacity: value >= 100 ? undefined : value / 100 }))}
+        onCommit={(value) => onSaved(() => ({ opacity: value >= 100 ? undefined : value / 100 }))}
       />
 
       <div className="flex flex-wrap gap-1">
-        {layer.height !== undefined && (
+        <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={onCentre}>
+          {kind === "decoration" ? "Centre on avatar" : "Centre across"}
+        </Button>
+        {(layer.rotation ?? 0) !== 0 && (
           <Button
             type="button"
             size="sm"
             variant="ghost"
             className="h-7 px-2 text-[11px]"
-            title="Back to the artwork's own proportions"
-            onClick={() => onCommit({ height: undefined })}
+            onClick={() => onSaved(() => ({ rotation: undefined }))}
           >
-            <RotateCcw className="size-3" />
-            Keep shape
+            Straighten
           </Button>
         )}
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-7 px-2 text-[11px]"
-          onClick={onDuplicate}
-        >
+        <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={onDuplicate}>
           <Copy className="size-3" />
           Duplicate
         </Button>
@@ -1302,77 +1082,40 @@ function LayerInspector({
   );
 }
 
-/**
- * One end of a two-ended stretch: what card line it holds, and how far off it.
- *
- * The three anchors are the same ones a whole layer can use, minus `"center"` —
- * `"top"`/`"bottom"` hold a card edge with an offset in percent of the card's
- * width, `"locked"` holds a percentage of the card's height. Switching between
- * them keeps the edge where it is on screen, the same courtesy `reanchorLayer`
- * does for a layer.
- */
-function StretchEndRow({
+/** A labelled slider with its value alongside. */
+function SliderRow({
   label,
-  end,
-  unit,
-  pxPerPercent,
-  stageHeightPercent,
+  value,
+  min,
+  max,
+  suffix,
   onChange,
   onCommit,
 }: {
   label: string;
-  end: LayerEnd;
-  unit: SizeUnit;
-  pxPerPercent: number;
-  stageHeightPercent: number;
-  onChange: (end: LayerEnd) => void;
-  onCommit: (end: LayerEnd) => void;
+  value: number;
+  min: number;
+  max: number;
+  suffix: string;
+  onChange: (value: number) => void;
+  onCommit: (value: number) => void;
 }) {
-  const lockedEnd = end.anchor === "locked";
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
-      <div className="grid grid-cols-3 gap-1">
-        {END_ANCHORS.map((anchor) => (
-          <Button
-            key={anchor}
-            type="button"
-            size="sm"
-            variant={end.anchor === anchor ? "secondary" : "ghost"}
-            className="h-7 px-1 text-[11px]"
-            onClick={() =>
-              onCommit({
-                anchor,
-                y: endYFromLine(
-                  anchor,
-                  endLine(end, stageHeightPercent),
-                  stageHeightPercent,
-                ),
-              })
-            }
-          >
-            {ANCHOR_LABELS[anchor]}
-          </Button>
-        ))}
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">{label}</Label>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {value}
+          {suffix}
+        </span>
       </div>
-      <NumberRow
-        label={lockedEnd ? "Down the card" : "Off the edge"}
-        value={end.y}
-        unit={unit}
-        // A locked end's offset is a percentage of the card's height, like a
-        // locked layer's `y` — so a pixel of it converts differently.
-        pxPerPercent={
-          lockedEnd ? (pxPerPercent * stageHeightPercent) / 100 : pxPerPercent
-        }
-        min={LAYER_LIMITS.position.min}
-        max={LAYER_LIMITS.position.max}
-        hint={
-          lockedEnd
-            ? "Percent of the card's height."
-            : "Negative reaches past the edge."
-        }
-        onChange={(y) => onChange({ ...end, y })}
-        onCommit={(y) => onCommit({ ...end, y })}
+      <Slider
+        value={[Math.min(max, Math.max(min, value))]}
+        min={min}
+        max={max}
+        step={1}
+        onValueChange={([next]) => onChange(next ?? value)}
+        onValueCommit={([next]) => onCommit(next ?? value)}
       />
     </div>
   );
@@ -1418,99 +1161,6 @@ function ColorRow({
           <Trash2 className="size-3" />
         </Button>
       </div>
-    </div>
-  );
-}
-
-/** What a `NumberRow` is measuring. The first two convert; the last two are
- * themselves whatever unit they are. */
-type RowUnit = SizeUnit | "degrees" | "percent-plain";
-
-/**
- * One measurement: a field to type an exact number into, and a slider to find
- * an approximate one with.
- *
- * Both, because the two are different jobs. Dragging is how you find out what
- * looks right; typing is how you say "396 pixels, the width of the card" — and
- * a slider cannot say that at any length.
- *
- * The field is only bound to the value while it isn't being typed in. A
- * controlled input that rewrites itself on every keystroke makes "1" into "1%"
- * and then refuses the "2" that was going to follow it.
- */
-function NumberRow({
-  label,
-  value,
-  unit,
-  pxPerPercent,
-  min,
-  max,
-  hint,
-  onChange,
-  onCommit,
-}: {
-  label: string;
-  /** Always in the stored unit — percent, or degrees for a turn. */
-  value: number;
-  unit: RowUnit;
-  pxPerPercent: number;
-  min: number;
-  max: number;
-  hint?: string;
-  onChange: (value: number) => void;
-  onCommit: (value: number) => void;
-}) {
-  const [typing, setTyping] = useState<string | null>(null);
-
-  const factor = unit === "px" ? pxPerPercent : 1;
-  const suffix = unit === "degrees" ? "°" : unit === "px" ? "px" : "%";
-  /** Pixels are whole; a percentage of a card needs two places to be worth
-   * anything, since one percent of it is three pixels. */
-  const shown = unit === "px" ? Math.round(value * factor) : Math.round(value * 100) / 100;
-
-  const apply = (text: string, commit: boolean) => {
-    const parsed = Number(text);
-    if (!Number.isFinite(parsed)) return;
-    const next = Math.min(max, Math.max(min, parsed / factor));
-    (commit ? onCommit : onChange)(next);
-  };
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <Label className="text-xs">{label}</Label>
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            inputMode="decimal"
-            value={typing ?? shown}
-            step={unit === "px" ? 1 : 0.5}
-            onChange={(event) => {
-              setTyping(event.target.value);
-              apply(event.target.value, false);
-            }}
-            onFocus={(event) => event.currentTarget.select()}
-            onBlur={(event) => {
-              setTyping(null);
-              apply(event.target.value, true);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
-            className="h-6 w-16 rounded border border-input bg-transparent px-1 text-right text-[11px] tabular-nums outline-none focus:border-ring"
-          />
-          <span className="w-5 text-[10px] text-muted-foreground">{suffix}</span>
-        </div>
-      </div>
-      <Slider
-        value={[Math.min(max, Math.max(min, value))]}
-        min={min}
-        max={max}
-        step={unit === "px" ? 1 / Math.max(pxPerPercent, 0.001) : 0.5}
-        onValueChange={([next]) => onChange(next ?? value)}
-        onValueCommit={([next]) => onCommit(next ?? value)}
-      />
-      {hint && <p className="text-[10px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }

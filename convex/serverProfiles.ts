@@ -9,7 +9,7 @@ import { requireMember } from "./communities";
 import {
   dropUnusedLayerAssets,
   layerArgValidator,
-  normalizeLayers,
+  normalizeStickerLayers,
 } from "./lib/cosmeticLayers";
 
 /** Returns the merged profile for a user in a community: server overrides
@@ -533,7 +533,7 @@ export const setServerProfileFrameLayers = mutation({
   handler: async (ctx, { communityId, layers }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireMember(ctx, communityId, me._id);
-    const next = normalizeLayers(layers);
+    const next = normalizeStickerLayers(layers);
     const existing = await lookupServerProfile(ctx, me._id, communityId);
     if (existing) {
       await ctx.db.patch(existing._id, { profileFrameLayers: next });

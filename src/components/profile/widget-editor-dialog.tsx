@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { ImagePlus, Loader2, Plus, Trash2, Type } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { uploadImage } from "@/lib/cdn-upload";
 import { uploadToStorage } from "@/lib/storage-upload";
 import {
   MAX_PROFILE_ASSET_BYTES,
@@ -110,8 +111,11 @@ export interface DraftWidget {
   subtitle: string;
   description: string;
   imageUrl?: string;
-  /** A newly-picked cover, not yet saved. */
+  /** A newly-picked cover, not yet saved: on Convex storage, or — the usual
+   * case — on the CDN. */
   imageStorageId?: Id<"_storage">;
+  imageCdnKey?: string;
+  imageCdnUrl?: string;
   /** True once the existing cover has been removed and not replaced. */
   clearImage?: boolean;
   accent: string;
@@ -149,6 +153,7 @@ export function WidgetEditorDialog({
   communityId?: Id<"communities">;
   onDeleted?: () => void;
 }) {
+  const convex = useConvex();
   const upsertWidget = useMutation(api.profileWidgets.upsertWidget);
   const removeWidget = useMutation(api.profileWidgets.removeWidget);
   const generateUploadUrl = useMutation(api.profileWidgets.generateWidgetUploadUrl);
@@ -188,12 +193,18 @@ export function WidgetEditorDialog({
     setUploading("cover");
     setError(null);
     try {
-      const storageId = await upload(file);
-      // Shown from the local file until the save round-trips: the storage URL
-      // doesn't exist yet, and a blank box while uploading reads as failure.
+      if (file.size > MAX_PROFILE_ASSET_BYTES) {
+        throw new Error(`Images must be smaller than ${MAX_PROFILE_ASSET_LABEL}.`);
+      }
+      // CDN first, like every other picture.
+      const uploaded = await uploadImage(convex, file, "banners", generateUploadUrl);
+      // Shown from the local file until the save round-trips: a Convex storage
+      // URL doesn't exist yet, and a blank box while uploading reads as failure.
       patch({
-        imageStorageId: storageId,
-        imageUrl: URL.createObjectURL(file),
+        imageStorageId: uploaded.storageId,
+        imageCdnKey: uploaded.cdnKey,
+        imageCdnUrl: uploaded.cdnUrl,
+        imageUrl: uploaded.cdnUrl ?? URL.createObjectURL(file),
         clearImage: false,
       });
     } catch (err) {
@@ -245,6 +256,8 @@ export function WidgetEditorDialog({
         subtitle: draft.subtitle,
         description: draft.description,
         imageStorageId: draft.imageStorageId,
+        imageCdnKey: draft.imageCdnKey,
+        imageCdnUrl: draft.imageCdnUrl,
         clearImage: draft.clearImage,
         accent: draft.accent,
         // An image field with nothing in it would render as a broken picture,

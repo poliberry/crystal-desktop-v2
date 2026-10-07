@@ -5,7 +5,8 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
-import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
+import { clearConversationPriority } from "./priority";
+import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
@@ -370,16 +371,32 @@ export const generateGroupIconUploadUrl = mutation({
 });
 
 export const setGroupIcon = mutation({
-  args: { conversationId: v.id("conversations"), storageId: v.id("_storage") },
-  handler: async (ctx, { conversationId, storageId }) => {
+  args: {
+    conversationId: v.id("conversations"),
+    storageId: v.optional(v.id("_storage")),
+    /** Uploaded to the CDN instead of Convex storage. */
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, { conversationId, storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const conversation = await requireGroupMembership(ctx, conversationId, me._id);
 
-    const url = await ctx.storage.getUrl(storageId);
+    const onCdn = !!(cdnKey || cdnUrl);
+    const url = onCdn
+      ? (cdnUrl ?? r2PublicUrlForKey(cdnKey!))
+      : storageId
+        ? await ctx.storage.getUrl(storageId)
+        : null;
     if (!url) throw new Error("Icon upload failed.");
     const previous = conversation.iconStorageId;
-    await ctx.db.patch(conversationId, { imageUrl: url, iconStorageId: storageId });
+    const previousUrl = conversation.imageUrl;
+    await ctx.db.patch(conversationId, {
+      imageUrl: url,
+      iconStorageId: onCdn ? undefined : storageId,
+    });
     if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    if (previousUrl && previousUrl !== url) await dropR2Url(ctx, previousUrl);
   },
 });
 
@@ -606,6 +623,8 @@ export const setClosed = mutation({
       // A closed DM shouldn't hold a pin slot it can't be seen in.
       pinnedAt: undefined,
     });
+    // Same reasoning for the sidebar's Priority card.
+    await clearConversationPriority(ctx, me._id, conversationId);
   },
 });
 
@@ -649,7 +668,7 @@ export const setConversationBackground = mutation({
         backgroundStorageId: undefined,
         backgroundOpacity: undefined,
       });
-      if (previousUrl) await r2DeleteByUrl(previousUrl);
+      if (previousUrl) await dropR2Url(ctx, previousUrl);
       if (previous) await ctx.storage.delete(previous).catch(() => {});
       return;
     }
@@ -680,7 +699,7 @@ export const setConversationBackground = mutation({
     const previous = conversation.backgroundStorageId;
     const previousUrl = (conversation as unknown as { backgroundUrl?: string }).backgroundUrl;
     await ctx.db.patch(conversationId, patch);
-    if ((cdnKey || cdnUrl) && previousUrl) await r2DeleteByUrl(previousUrl);
+    if ((cdnKey || cdnUrl) && previousUrl) await dropR2Url(ctx, previousUrl);
     if (storageId && previous && previous !== storageId) {
       await ctx.storage.delete(previous).catch(() => {});
     }

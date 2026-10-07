@@ -5,56 +5,67 @@ import { useEffect, useRef, useState } from "react";
 import { CallPip } from "@/components/call/call-pip";
 import { CallStage } from "@/components/call/call-stage";
 import { useCall } from "@/components/call/call-provider";
+import { CommunityFinaleHost } from "@/components/community/community-finale-host";
 import { ChannelView } from "@/components/community/channel-view";
 import { CommunityMembersSection } from "@/components/community/community-members-section";
 import { ServerOverview } from "@/components/community/server-overview";
-import { CommunitySidebar } from "@/components/community/community-sidebar";
 import { ChatView } from "@/components/home/chat-view";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
-import { CommunityRail } from "@/components/home/community-rail";
 import { FriendsPanel } from "@/components/home/friends-panel";
-import { NavSidebar } from "@/components/home/nav-sidebar";
 import { useNavigation, useRegisterNavigation } from "@/components/home/navigation-context";
-import { type TabTarget, useTabs } from "@/components/home/tabs-context";
+import { type PageTarget, type TabTarget, isPageTarget, useTabs } from "@/components/home/tabs-context";
 import { WindowTitle } from "@/components/home/window-title";
+import { PageHost } from "@/components/pages/page-host";
+import { usePage } from "@/components/pages/page-context";
 import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { UserCard } from "./user-card";
-import { useAction, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import { useUser } from "@clerk/react";
 
 export function HomeLayout() {
-  const { user } = useUser();
-  const [search, setSearch] = useState("");
   const [pendingCommunityId, setPendingCommunityId] = useState<Id<"communities"> | null>(null);
   const pendingModeRef = useRef<"replace" | "new">("new");
   const [overviewFor, setOverviewFor] = useState<Id<"communities"> | null>(null);
   const [membersSection, setMembersSection] = useState(false);
 
   const { activeCall, expanded, joinDmCall, joinChannelCall, expand, collapse, joinError, dismissJoinError } = useCall();
-  const { tabs, activeTab, openTab, activateTab, closeTab } = useTabs();
-  const { communityNavStyle, tabsEnabled } = useUiPreferences();
+  const { tabs, activeTab, openTab, activateTab, closeTab, leavePage } = useTabs();
+  const { page } = usePage();
+  const { tabsEnabled } = useUiPreferences();
   const target = activeTab.target;
 
   const browsingCommunityId: Id<"communities"> | null =
     pendingCommunityId ?? (target.type === "channel" ? target.communityId : null);
-  const getOrCreateStripeUser = useAction(api.users.createOrGetStripeUser);
   const myPermissions = useQuery(
     api.roles.myPermissions,
     browsingCommunityId ? { communityId: browsingCommunityId } : "skip",
   ) ?? 0;
 
+  // Set by a navigation that steps off a page *and* sets one of the states
+  // below in the same breath: the tab changes as a result, and the reset that
+  // follows every tab change would wipe what it just set.
+  const keepViewState = useRef(false);
+
   useEffect(() => {
+    if (keepViewState.current) {
+      keepViewState.current = false;
+      return;
+    }
     setPendingCommunityId(null);
     setOverviewFor(null);
     setMembersSection(false);
-    if (user?.organizationMemberships?.[0]?.organization.id === "org_3IfKYp4cyTPeYWtsN12lj8VWVKc") {
-      getOrCreateStripeUser();
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab.id]);
+
+  // A server's front page, members list and not-yet-picked-channel view are
+  // all drawn in place of a place's own content, so they can't be drawn over a
+  // page. Step back to the last place first, leaving the page open in its tab.
+  const stepOffPage = () => {
+    if (!isPageTarget(target)) return;
+    keepViewState.current = true;
+    leavePage();
+  };
 
   const collapseIfCovering = () => {
     if (expanded && activeCall) collapse();
@@ -98,7 +109,9 @@ export function HomeLayout() {
       navigateTo(target);
       return;
     }
-    const effectiveMode = mode === "replace" && activeTab.pinned ? "new" : mode;
+    // A pinned tab, or a page, is never the thing a channel replaces.
+    const effectiveMode =
+      mode === "replace" && (activeTab.pinned || isPageTarget(activeTab.target)) ? "new" : mode;
     if (effectiveMode === "replace" && activeTab.id !== "home") {
       closeTab(activeTab.id);
     }
@@ -113,6 +126,11 @@ export function HomeLayout() {
   ) => {
     setMembersSection(false);
     if (channelId) {
+      // The sidebar can open a channel in a server other than the one being
+      // browsed, or the one that's already the active tab — neither changes the
+      // tab, so the reset on tab change never runs. Clear them here instead.
+      setPendingCommunityId(null);
+      setOverviewFor(null);
       openCommunityChannel(id, channelId, mode);
       return;
     }
@@ -123,6 +141,7 @@ export function HomeLayout() {
       return;
     }
 
+    stepOffPage();
     pendingModeRef.current = mode;
     setMembersSection(false);
     setPendingCommunityId(id);
@@ -131,10 +150,6 @@ export function HomeLayout() {
 
   const selectCommunity = (id: Id<"communities">, channelId?: Id<"channels">) => {
     openCommunity(id, channelId, "new");
-  };
-
-  const selectCommunityFromRail = (id: Id<"communities">, mode: "replace" | "new" = "replace") => {
-    openCommunity(id, undefined, mode);
   };
 
   const selectChannel = (channelId: Id<"channels">, type: "text" | "voice") => {
@@ -157,14 +172,51 @@ export function HomeLayout() {
     collapse();
   };
 
-  useRegisterNavigation({ openConversation, openCommunity: selectCommunity, goHome: selectFriends });
+  // Show a view of a server that isn't a channel. When the active tab is
+  // already one of its channels the server is being browsed; otherwise it has
+  // to be made the pending one first, or `showOverview` has nothing to match.
+  const browseCommunity = (id: Id<"communities">) => {
+    stepOffPage();
+    if (target.type === "channel" && target.communityId === id) {
+      setPendingCommunityId(null);
+    } else {
+      pendingModeRef.current = "new";
+      setPendingCommunityId(id);
+    }
+    collapseIfCovering();
+  };
+
+  const openCommunityOverview = (id: Id<"communities">) => {
+    setMembersSection(false);
+    browseCommunity(id);
+    setOverviewFor(id);
+  };
+
+  const openCommunityMembers = (id: Id<"communities">) => {
+    setOverviewFor(null);
+    browseCommunity(id);
+    setMembersSection(true);
+  };
+
+  const openPage = (next: PageTarget) => navigateTo(next);
+
+  useRegisterNavigation({
+    openConversation,
+    openCommunity: selectCommunity,
+    goHome: selectFriends,
+    openCommunityOverview,
+    openCommunityMembers,
+    openPage,
+  });
 
   const nav = useNavigation();
 
   const showCallStage = expanded && !!activeCall;
 
   useEffect(() => {
-    const view = showCallStage
+    // Neither the call screen nor a page is showing the conversation, so a
+    // message in it is news.
+    const view = showCallStage || page
       ? null
       : target.type === "dm"
         ? { kind: "conversation" as const, id: target.conversationId }
@@ -172,7 +224,7 @@ export function HomeLayout() {
           ? { kind: "channel" as const, id: target.channelId }
           : null;
     void getDesktopAPI()?.notifications.setActiveView(view);
-  }, [showCallStage, target]);
+  }, [showCallStage, page, target]);
 
   useEffect(() => {
     return getDesktopAPI()?.notifications.onNavigate((notif) => {
@@ -184,10 +236,6 @@ export function HomeLayout() {
     });
   }, [nav]);
 
-  const openCommunityIds = new Set(
-    tabs.flatMap((t) => (t.target.type === "channel" ? [t.target.communityId] : []))
-  );
-
   const showCommunityPlaceholder =
     browsingCommunityId !== null && !(target.type === "channel" && target.communityId === browsingCommunityId);
 
@@ -195,47 +243,16 @@ export function HomeLayout() {
     overviewFor !== null && overviewFor === browsingCommunityId;
 
   return (
-    <div className={`flex h-full`}>
+    <div className="flex h-full min-w-0">
       <WindowTitle target={target} />
 
-      {communityNavStyle === "rail" && (
-        <CommunityRail
-          selectedCommunityId={browsingCommunityId}
-          onSelectHome={selectFriends}
-          onSelectCommunity={selectCommunityFromRail}
-          canOpenInCurrentTab={!tabsEnabled || !activeTab.pinned}
-          openCommunityIds={openCommunityIds}
-        />
-      )}
-
-      {browsingCommunityId ? (
-        <CommunitySidebar
-          communityId={browsingCommunityId}
-          selectedChannelId={
-            !membersSection && target.type === "channel" && target.communityId === browsingCommunityId ? target.channelId : null
-          }
-          onSelectMembers={() => { setMembersSection(true); setOverviewFor(null); collapseIfCovering(); }}
-          membersSelected={membersSection}
-          onSelectChannel={selectChannel}
-          onSelectOverview={() => { setMembersSection(false); setOverviewFor(browsingCommunityId); }}
-          overviewSelected={showOverview}
-        />
-      ) : (
-        <NavSidebar
-          search={search}
-          onSearchChange={setSearch}
-          isFriendsActive={target.type === "home"}
-          activeConversationId={target.type === "dm" ? target.conversationId : null}
-          onSelectFriends={selectFriends}
-          onSelectConversation={openConversation}
-        />
-      )}
       {activeCall && (
         <div className={showCallStage ? "flex min-h-0 min-w-0 flex-1 flex-col border-t" : "hidden"}>
           <CallStage />
         </div>
       )}
-      {!showCallStage && (
+      {page && !showCallStage && <PageHost key={activeTab.id} page={page} />}
+      {!showCallStage && !page && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
           {joinError && (
             <div className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -280,17 +297,18 @@ export function HomeLayout() {
               }}
             />
           ) : (
-            <FriendsPanel search={search} onMessageFriend={openConversation} />
+            <FriendsPanel search="" onMessageFriend={openConversation} />
           )}
         </div>
       )}
-
-      <UserCard />
 
       {/* The call's mini player, while the call screen is collapsed. Rendered
           here rather than by CallProvider so the provider doesn't have to
           import a component that reads its own context back out. */}
       <CallPip />
+
+      {/* The end-of-create-community overlay, which has to outlive the page. */}
+      <CommunityFinaleHost />
     </div>
   );
 }

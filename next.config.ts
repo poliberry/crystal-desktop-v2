@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "export",
+  // A separate build directory lets a production build run while `next dev` is
+  // using `.next` — the web deploy builds into `.next-web`.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   images: { unoptimized: true },
   trailingSlash: true,
   compress: true,

@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
+import { RightSidebarHeader } from "@/components/sidebar/right-sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type FriendStatus } from "@/lib/presence";
 
@@ -55,21 +56,22 @@ export function DmMemberList({ conversationId }: DmMemberListProps) {
   const offline = members.filter((m) => m.status === "offline");
 
   return (
-    <div className="flex w-56 shrink-0 flex-col border-l">
+    <>
+      <RightSidebarHeader title="Members" count={members.length} />
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 p-2">
+        <div className="flex flex-col gap-3 p-2 pt-1">
           {online.length > 0 && <DmMemberGroup label="Online" members={online} />}
           {offline.length > 0 && <DmMemberGroup label="Offline" members={offline} />}
         </div>
       </ScrollArea>
-    </div>
+    </>
   );
 }
 
 function DmMemberGroup({ label, members }: { label: string; members: DmMember[] }) {
   return (
     <div>
-      <p className="px-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <p className="px-2 text-xs font-semibold tracking-wide text-sidebar-foreground/60 uppercase">
         {label} — {members.length}
       </p>
       <div className="mt-1 flex flex-col gap-0.5">
@@ -78,7 +80,7 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="group/member relative flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent/40"
+                className="group/member relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent"
               >
                 <Avatar size="sm">
                   <AvatarImage src={member.imageUrl} alt={member.name} />
@@ -88,7 +90,8 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                     status={member.status}
                     activities={member.activities}
                     accent={member.borderGradientStart}
-                    isBirthday={member.isBirthday}                  />
+                    isBirthday={member.isBirthday}
+                  />
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm">{member.name}</p>

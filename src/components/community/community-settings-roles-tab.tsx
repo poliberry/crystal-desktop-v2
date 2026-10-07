@@ -16,13 +16,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery } from "convex/react";
+import { useConfirmLeave, useSettingsDraft } from "@/components/settings/settings-save";
 import {
   ArrowLeft,
   ChevronRight,
   Copy,
   GripVertical,
   Hash,
-  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -209,13 +209,10 @@ function RolesListView({
   };
 
   return (
-    <div className="flex flex-col gap-5 p-10">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold">Roles</h1>
-        <p className="text-sm text-muted-foreground">
-          Use roles to group your server members and assign permissions.
-        </p>
-      </div>
+    <div className="flex flex-col gap-5">
+      <p className="text-sm text-muted-foreground">
+        Use roles to group your server members and assign permissions.
+      </p>
 
       {everyone && (
         <button
@@ -415,9 +412,6 @@ function RoleEditorView({
   const [color, setColor] = useState(role?.color ?? "");
   const [permissions, setPermissions] = useState(role?.permissions ?? 0);
   const [hoist, setHoist] = useState(role?.hoist ?? false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   // Re-seed when the editor is pointed at a different role. Keyed on the id
   // rather than the whole document so an edit landing from elsewhere doesn't
   // wipe out what's being typed here.
@@ -428,22 +422,31 @@ function RoleEditorView({
     setColor(next.color ?? "");
     setPermissions(next.permissions);
     setHoist(next.hoist);
-    setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
-  if (!role) return null;
+  const changedFields = role
+    ? Number(name !== role.name) +
+      Number((color || undefined) !== role.color) +
+      Number(permissions !== role.permissions) +
+      Number(hoist !== role.hoist)
+    : 0;
 
-  const dirty =
-    name !== role.name ||
-    (color || undefined) !== role.color ||
-    permissions !== role.permissions ||
-    hoist !== role.hoist;
+  const resetDraft = () => {
+    if (!role) return;
+    setName(role.name);
+    setColor(role.color ?? "");
+    setPermissions(role.permissions);
+    setHoist(role.hoist);
+  };
 
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
+  // Saved from the page's one bar, like every other tab. Member changes in the
+  // third tab apply as they are made and are not part of this.
+  useSettingsDraft({
+    changes: canManage ? changedFields : 0,
+    discard: resetDraft,
+    save: async () => {
+      if (!role) return;
       await update({
         roleId: role.id,
         name: role.isEveryone ? undefined : name,
@@ -451,12 +454,22 @@ function RoleEditorView({
         permissions,
         hoist,
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save role.");
-    } finally {
-      setSaving(false);
-    }
+    },
+  });
+
+  // Moving to another role (or back to the list) with edits outstanding asks
+  // first: they are this role's.
+  const confirmLeave = useConfirmLeave();
+  const goToRole = (id: Id<"roles">) => {
+    if (id !== roleId && !confirmLeave()) return;
+    onSelectRole(id);
   };
+  const goBack = () => {
+    if (!confirmLeave()) return;
+    onBack();
+  };
+
+  if (!role) return null;
 
   return (
     <div className="flex h-full min-h-0 p-10">
@@ -464,7 +477,7 @@ function RoleEditorView({
           jumping between roles without going back to the list first. */}
       <div className="flex w-56 shrink-0 flex-col border-r">
         <div className="flex items-center justify-between gap-2 px-3 py-3">
-          <Button variant="ghost" size="sm" className="gap-1.5 text-xs font-semibold uppercase" onClick={onBack}>
+          <Button variant="ghost" size="sm" className="gap-1.5 text-xs font-semibold uppercase" onClick={goBack}>
             <ArrowLeft className="size-4" />
             Back
           </Button>
@@ -473,7 +486,7 @@ function RoleEditorView({
               variant="ghost"
               size="icon"
               aria-label="Create role"
-              onClick={() => void createRole({ communityId, name: "new role" }).then(onSelectRole)}
+              onClick={() => void createRole({ communityId, name: "new role" }).then(goToRole)}
             >
               <Plus className="size-4" />
             </Button>
@@ -485,7 +498,7 @@ function RoleEditorView({
               <button
                 key={entry.id}
                 type="button"
-                onClick={() => onSelectRole(entry.id)}
+                onClick={() => goToRole(entry.id)}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent/60",
                   entry.id === roleId && "bg-accent"
@@ -515,7 +528,7 @@ function RoleEditorView({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => void duplicate({ roleId: role.id }).then(onSelectRole)}>
+                <DropdownMenuItem onClick={() => void duplicate({ roleId: role.id }).then(goToRole)}>
                   <Copy className="size-4" />
                   Duplicate Role
                 </DropdownMenuItem>
@@ -592,33 +605,6 @@ function RoleEditorView({
             )}
           </div>
         </ScrollArea>
-
-        {/* Only Display and Permissions are drafts — member changes apply as
-            they're made, so the bar is about the two that need a commit. */}
-        {canManage && dirty && tab !== "members" && (
-          <div className="flex items-center justify-between gap-3 border-t bg-card px-6 py-3">
-            <p className="text-sm text-muted-foreground">
-              {error ?? "You have unsaved changes."}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setName(role.name);
-                  setColor(role.color ?? "");
-                  setPermissions(role.permissions);
-                  setHoist(role.hoist);
-                  setError(null);
-                }}
-              >
-                Reset
-              </Button>
-              <Button disabled={saving} onClick={() => void save()}>
-                {saving ? <Loader2 className="size-4 animate-spin" /> : "Save Changes"}
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -644,7 +630,7 @@ function DisplayTab({
   setHoist: (value: boolean) => void;
 }) {
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="space-y-6">
       <div className="space-y-2">
         <Label htmlFor="role-name">
           Role name <span className="text-destructive">*</span>
@@ -766,7 +752,7 @@ function PermissionsTab({
     .filter((group) => group.keys.length > 0);
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="space-y-6">
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -856,7 +842,7 @@ function ManageMembersTab({
   }
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="space-y-4">
       <div className="flex items-center gap-3">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

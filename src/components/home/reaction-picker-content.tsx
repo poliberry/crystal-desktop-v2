@@ -112,7 +112,7 @@ function EmojiButton({
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <p className="sticky top-0 z-10 bg-popover px-1 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <p className="sticky top-0 z-10 bg-[color:var(--picker-surface,var(--popover))] px-1 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
       {children}
     </p>
   );
@@ -130,7 +130,11 @@ function EmojiGrid({ children }: { children: React.ReactNode }) {
  */
 export function ReactionPickerContent({
   onSelect,
+  glass = false,
 }: {
+  /** Drawn on a glass card (see `GLASS_DARK`) rather than a popover: no
+   * surface of its own, so the card's gradient shows through. */
+  glass?: boolean;
   /**
    * `text` is the readable form to type into a composer — `:name:` for a
    * custom emoji, the character itself for a Unicode one. `custom` is set
@@ -192,7 +196,14 @@ export function ReactionPickerContent({
   );
 
   return (
-    <div className="flex h-[26rem] w-[21rem] overflow-hidden rounded-md bg-popover">
+    <div
+      className={cn(
+        "flex h-[26rem] w-[21rem] overflow-hidden",
+        glass
+          ? "rounded-2xl bg-transparent [--picker-surface:var(--glass-bg)]"
+          : "rounded-md bg-popover",
+      )}
+    >
       {/* Rail: one entry per server with emoji, then the Unicode categories. */}
       <div className="flex w-11 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r py-2">
         {groups.map((group) => (

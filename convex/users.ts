@@ -18,11 +18,13 @@ import {
   FRAME_MODES,
   resolveProfileAsset,
 } from "./lib/profileCosmetics";
-import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
+import { activeSuspension } from "./lib/moderation";
+import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import {
   dropUnusedLayerAssets,
   layerArgValidator,
-  normalizeLayers,
+  normalizeDecorationLayers,
+  normalizeStickerLayers,
 } from "./lib/cosmeticLayers";
 import {
   MAX_DECORATION_BYTES,
@@ -30,7 +32,6 @@ import {
   requireWithinUploadLimit,
 } from "./uploadLimits";
 import {
-  action,
   internalMutation,
   internalQuery,
   mutation,
@@ -38,11 +39,6 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import StripeSubscriptions from "@convex-dev/stripe";
-import { components } from "./_generated/api";
-
-const stripeClient = new StripeSubscriptions(components.stripe, {});
-
 export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
@@ -55,6 +51,16 @@ export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> 
 export async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
   const user = await getCurrentUserOrNull(ctx);
   if (!user) throw new Error("Not authenticated, or user has not been bootstrapped yet.");
+  // A suspended account can still read — the app shows it its own notice — but
+  // can't do anything: every mutation goes through here.
+  const suspension = activeSuspension(user);
+  if (suspension) {
+    throw new Error(
+      suspension.indefinite
+        ? "Your account is suspended."
+        : `Your account is suspended until ${new Date(suspension.until).toDateString()}.`,
+    );
+  }
   return user;
 }
 
@@ -104,21 +110,6 @@ export const ensureUser = mutation({
     return userId;
   },
 });
-
-export const createOrGetStripeUser = action({
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
-
-    const customer = await stripeClient.getOrCreateCustomer(ctx, {
-      userId: identity.subject,
-      email: identity.email,
-      name: identity.name,
-    })
-
-    return customer;
-  }
-})
 
 const USERNAME_RE = /^[a-z0-9_.]{3,32}$/;
 const NAME_MAX = 64;
@@ -306,8 +297,8 @@ export const setBanner = mutation({
         : {}),
     });
     if (isR2) {
-      if (previousUrl) await r2DeleteByUrl(previousUrl);
-      if (previousOriginalUrl && previousOriginalUrl !== url) await r2DeleteByUrl(previousOriginalUrl);
+      if (previousUrl) await dropR2Url(ctx, previousUrl);
+      if (previousOriginalUrl && previousOriginalUrl !== url) await dropR2Url(ctx, previousOriginalUrl);
     } else {
       if (originalStorageId && previousOriginal && previousOriginal !== originalStorageId && previousOriginal !== storageId) {
         await ctx.storage.delete(previousOriginal);
@@ -334,8 +325,8 @@ export const removeBanner = mutation({
       bannerOriginalUrl: undefined,
       bannerOriginalStorageId: undefined,
     });
-    if (previousUrl) await r2DeleteByUrl(previousUrl);
-    if (previousOriginalUrl) await r2DeleteByUrl(previousOriginalUrl);
+    if (previousUrl) await dropR2Url(ctx, previousUrl);
+    if (previousOriginalUrl) await dropR2Url(ctx, previousOriginalUrl);
     if (previous && previous !== previousOriginal) await ctx.storage.delete(previous).catch(() => {});
     if (previousOriginal) await ctx.storage.delete(previousOriginal).catch(() => {});
   },
@@ -368,7 +359,7 @@ export const setNameplate = mutation({
     const previous = me.nameplateStorageId;
     const previousUrl = me.nameplateUrl;
     await ctx.db.patch(me._id, { nameplateUrl: url, nameplateStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
     else if (previous && previous !== storageId) await ctx.storage.delete(previous);
     return url;
   },
@@ -437,7 +428,7 @@ export const setCustomAvatarDecoration = mutation({
     const previous = me.avatarDecorationStorageId;
     const previousUrl = me.avatarDecoration as string | undefined;
     await ctx.db.patch(me._id, { avatarDecoration: url, avatarDecorationStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
     else if (previous && previous !== storageId) await ctx.storage.delete(previous);
     return url;
   },
@@ -450,7 +441,7 @@ export const removeAvatarDecoration = mutation({
     const previous = me.avatarDecorationStorageId;
     const previousUrl = me.avatarDecoration as string | undefined;
     await ctx.db.patch(me._id, { avatarDecoration: undefined, avatarDecorationStorageId: undefined });
-    if (previousUrl) await r2DeleteByUrl(previousUrl);
+    if (previousUrl) await dropR2Url(ctx, previousUrl);
     if (previous) await ctx.storage.delete(previous).catch(() => {});
   },
 });
@@ -496,7 +487,7 @@ export const setProfileEffect = mutation({
     const previous = me.profileEffectStorageId;
     const previousUrl = me.profileEffect as string | undefined;
     await ctx.db.patch(me._id, { profileEffect: url, profileEffectStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
     else await dropProfileAsset(ctx, previous, storageId!);
     return url;
   },
@@ -509,7 +500,7 @@ export const removeProfileEffect = mutation({
     const previous = me.profileEffectStorageId;
     const previousUrl = me.profileEffect as string | undefined;
     await ctx.db.patch(me._id, { profileEffect: undefined, profileEffectStorageId: undefined });
-    if (previousUrl) await r2DeleteByUrl(previousUrl);
+    if (previousUrl) await dropR2Url(ctx, previousUrl);
     await dropProfileAsset(ctx, previous);
   },
 });
@@ -539,7 +530,7 @@ export const setProfileFrame = mutation({
     const previous = me.profileFrameStorageId;
     const previousUrl = me.profileFrame as string | undefined;
     await ctx.db.patch(me._id, { profileFrame: url, profileFrameStorageId: storageId ?? undefined, profileFrameMode: mode ?? me.profileFrameMode ?? "wrap" });
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
     else await dropProfileAsset(ctx, previous, storageId!);
     return url;
   },
@@ -634,7 +625,7 @@ export const setProfileFrameLayers = mutation({
   args: { layers: v.array(layerArgValidator) },
   handler: async (ctx, { layers }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const next = normalizeLayers(layers);
+    const next = normalizeStickerLayers(layers);
     await ctx.db.patch(me._id, { profileFrameLayers: next });
     await dropUnusedLayerAssets(ctx, me.profileFrameLayers, next);
   },
@@ -672,7 +663,7 @@ export const setAvatarDecorationLayers = mutation({
   args: { layers: v.array(layerArgValidator) },
   handler: async (ctx, { layers }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const next = normalizeLayers(layers);
+    const next = normalizeDecorationLayers(layers);
     const previousLayers = me.avatarDecorationLayers;
     const previousSingle = me.avatarDecorationStorageId;
 
@@ -820,8 +811,8 @@ export const setAvatar = mutation({
         : {}),
     });
     // Delete old R2 file if replaced
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
-    if (isR2 && previousOriginalUrl && previousOriginalUrl !== url) await r2DeleteByUrl(previousOriginalUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
+    if (isR2 && previousOriginalUrl && previousOriginalUrl !== url) await dropR2Url(ctx, previousOriginalUrl);
     if (!isR2) {
       if (
         originalStorageId &&

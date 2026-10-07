@@ -10,7 +10,7 @@ import { CachedBackground } from "@/components/cached-background";
 import { FriendActionButton } from "@/components/friend-action-button";
 import { StatusDialog } from "@/components/status-dialog";
 import { useOpenProfile } from "@/components/profile/profile-page";
-import { useOpenProfileEditor } from "@/components/profile/profile-editor-dialog";
+import { useOpenProfileEditor, useOpenSettings } from "@/components/pages/page-context";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import {
@@ -26,7 +26,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useOpenSettings } from "@/components/settings/settings-dialog";
 import { BadgeIcon } from "@/components/badge-icon";
 import { layersHeadroom, type CosmeticLayer } from "@/lib/cosmetic-layers";
 import { PresenceBadge } from "@/components/presence-dot";
@@ -53,6 +52,22 @@ import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { useUserActivities } from "@/hooks/use-rich-presence";
 import { ScrollArea } from "../ui/scroll-area";
+import { InlineText } from "@/components/profile/inline-text";
+
+/** The draft behind a card that is being edited in place. */
+export interface InlineProfileEdit {
+  name: string;
+  customStatus: string;
+  bio: string;
+  onNameChange: (value: string) => void;
+  onCustomStatusChange: (value: string) => void;
+  onBioChange: (value: string) => void;
+}
+
+/** Same limits the editor has always enforced. */
+const NAME_MAX = 64;
+const STATUS_MAX = 128;
+const BIO_MAX = 300;
 
 export interface MemberProfileMember {
   userId: Id<"users">;
@@ -152,6 +167,8 @@ export function MemberProfileCard({
   frameHandledByHost = false,
   reserveFrameRoom = true,
   previewActivities,
+  customStatusOverride,
+  inlineEdit,
   className,
 }: {
   member: MemberProfileMember;
@@ -167,6 +184,17 @@ export function MemberProfileCard({
    * "playing something" card without the viewer actually broadcasting. Stands
    * in for the live activities everywhere they're read. */
   previewActivities?: RichPresenceActivity[];
+  /** Shown instead of the stored custom status — for a card that previews what
+   * is being typed. An empty string shows none, where leaving it out shows the
+   * stored one. */
+  customStatusOverride?: string;
+  /**
+   * Turns the card's name, status and bio into things to click and type into —
+   * the profile editor's way of editing them, in the place they are drawn. The
+   * values here are the draft; they replace what the card would otherwise read,
+   * and nothing is saved from here.
+   */
+  inlineEdit?: InlineProfileEdit;
   className?: string;
 }) {
   const me = useQuery(api.users.getCurrentUser);
@@ -185,7 +213,9 @@ export function MemberProfileCard({
   const hasGradient = !!(
     member.borderGradientStart && member.borderGradientEnd
   );
-  const customStatus = profile?.customStatus ?? member.customStatus;
+  const customStatus = inlineEdit
+    ? inlineEdit.customStatus
+    : (customStatusOverride ?? profile?.customStatus ?? member.customStatus);
   const avatarDecoration = profile?.avatarDecoration ?? member.avatarDecoration;
   const isBirthday = profile?.isBirthday ?? member.isBirthday;
   const profileEffect = profile?.profileEffect ?? member.profileEffect;
@@ -252,7 +282,10 @@ export function MemberProfileCard({
         className={cn(
           "min-h-full",
           expanded ? "h-[130%]" : "h-full",
-          expanded && "px-4",
+          // No side padding here, expanded or not: the banner runs edge to edge
+          // and every block under it pads itself. Padding the box as well
+          // insets the banner into a floating strip and doubles the gutter of
+          // everything else.
           "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/20",
           hasGradient ? "bg-background/70" : "bg-accent",
           // Radix wraps the viewport's children in a `display: table` box that
@@ -330,24 +363,44 @@ export function MemberProfileCard({
             {/* Beside the avatar, not over it: this row holds nothing else, and
                 a bubble pinned across the avatar's corner would cut a piece
                 out of any decoration worn there. */}
-            {customStatus && (
-              <StatusBubble
-                text={customStatus}
-                kind={statusBubble}
-                onClick={isSelf ? () => setStatusOpen(true) : undefined}
-                // Up against the avatar's top rather than sitting on the row's
-                // baseline: the row is as tall as the avatar, and a bubble at
-                // the bottom of it reads as attached to the shoulders.
-                //
-                // `ml-3` on top of the row's own gap, because the tail hangs off
-                // the bubble's left edge and has to land in that gap rather
-                // than on the avatar.
-                className={cn(
-                  "mt-1 ml-2 min-w-0 self-start",
-                  expanded ? "max-w-64" : "max-w-40",
-                )}
-              />
-            )}
+            {(customStatus || inlineEdit) &&
+              (inlineEdit ? (
+                // Always there while editing, so a card with no status has
+                // somewhere to click to write one.
+                <StatusBubble
+                  kind={statusBubble}
+                  className={cn(
+                    "mt-1 ml-2 min-w-0 self-start",
+                    expanded ? "max-w-64" : "max-w-40",
+                  )}
+                >
+                  <InlineText
+                    value={inlineEdit.customStatus}
+                    onChange={inlineEdit.onCustomStatusChange}
+                    placeholder="Add a status"
+                    label="Edit your status"
+                    maxLength={STATUS_MAX}
+                    className="text-sm font-medium text-white"
+                  />
+                </StatusBubble>
+              ) : (
+                <StatusBubble
+                  text={customStatus}
+                  kind={statusBubble}
+                  onClick={isSelf ? () => setStatusOpen(true) : undefined}
+                  // Up against the avatar's top rather than sitting on the row's
+                  // baseline: the row is as tall as the avatar, and a bubble at
+                  // the bottom of it reads as attached to the shoulders.
+                  //
+                  // `ml-3` on top of the row's own gap, because the tail hangs
+                  // off the bubble's left edge and has to land in that gap
+                  // rather than on the avatar.
+                  className={cn(
+                    "mt-1 ml-2 min-w-0 self-start",
+                    expanded ? "max-w-64" : "max-w-40",
+                  )}
+                />
+              ))}
           </div>
 
           {isSelf && (
@@ -359,15 +412,31 @@ export function MemberProfileCard({
               <p
                 data-slot="profile-name"
                 className={cn(
-                  "truncate font-bold leading-tight",
+                  "font-bold leading-tight",
+                  !inlineEdit && "truncate",
                   expanded ? "text-xl" : "text-base",
                   // A gradient style paints the text with `bg-clip-text`, which
                   // needs the element to be the one carrying the background —
-                  // so the style lands here rather than on a wrapper.
-                  nameStyle,
+                  // so the style lands here rather than on a wrapper. Not while
+                  // the name is being edited: the text is then inside a field,
+                  // and a transparent fill would make what is typed invisible —
+                  // `InlineText` puts it on the plain text instead.
+                  !inlineEdit && nameStyle,
                 )}
               >
-                {member.name}
+                {inlineEdit ? (
+                  <InlineText
+                    value={inlineEdit.name}
+                    onChange={inlineEdit.onNameChange}
+                    placeholder="Your name"
+                    label="Edit your display name"
+                    maxLength={NAME_MAX}
+                    className="font-bold leading-tight"
+                    displayClassName={nameStyle}
+                  />
+                ) : (
+                  member.name
+                )}
               </p>
             </div>
             <p
@@ -397,7 +466,19 @@ export function MemberProfileCard({
               className="w-full"
             />
           )}
-          {member.bio ? (
+          {inlineEdit ? (
+            <div data-slot="profile-bio" className="text-sm">
+              <InlineText
+                multiline
+                value={inlineEdit.bio}
+                onChange={inlineEdit.onBioChange}
+                placeholder="Add a bio"
+                label="Edit your bio"
+                maxLength={BIO_MAX}
+                className="w-full text-sm"
+              />
+            </div>
+          ) : member.bio ? (
             <p data-slot="profile-bio" className="text-sm whitespace-pre-wrap">
               {member.bio}
             </p>

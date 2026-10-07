@@ -151,6 +151,7 @@ export const sendFriendRequest = mutation({
       .withIndex("by_username", (q) => q.eq("username", normalized))
       .unique();
     if (!target) throw new Error("No user found with that username.");
+    if (target.clerkId === "system:crystal") throw new Error("The Crystal account cannot receive friend requests.");
     if (target._id === me._id) throw new Error("You can't add yourself.");
 
     const alreadyFriends = await ctx.db
@@ -205,6 +206,8 @@ export const acceptFriendRequest = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const request = await ctx.db.get(requestId);
     if (!request || request.recipientId !== me._id) throw new Error("Request not found.");
+    const requester = await ctx.db.get(request.requesterId);
+    if (requester?.clerkId === "system:crystal") throw new Error("The Crystal account cannot be added as a friend.");
 
     await ctx.db.delete(request._id);
     const now = Date.now();

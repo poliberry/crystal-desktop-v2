@@ -29,7 +29,7 @@ import type { Room } from "livekit-client";
 /** The three states, and the one before the first sample lands. Deliberately
  * the app's status ramp rather than the chart palette: this is a state, not a
  * series. */
-const GRADE = {
+export const GRADE = {
   good: {
     label: "Voice Connected",
     tone: "text-emerald-500",
@@ -110,7 +110,7 @@ export function ConnectionDetails({
   );
 }
 
-function ConnectionPanel({ stats }: { stats: ReturnType<typeof useCallStats> }) {
+export function ConnectionPanel({ stats }: { stats: ReturnType<typeof useCallStats> }) {
   const grade = GRADE[stats.grade];
 
   return (

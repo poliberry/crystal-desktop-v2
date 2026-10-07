@@ -72,6 +72,13 @@ function ChannelWindowTitle({
   return null;
 }
 
+const PAGE_TITLES: Partial<Record<TabTarget["type"], string>> = {
+  settings: "Settings",
+  "profile-editor": "Edit profile",
+  "create-community": "New community",
+  "community-settings": "Community settings",
+};
+
 export function WindowTitle({ target }: { target: TabTarget }) {
   // The same count the app icon's badge and the notification inbox show —
   // see use-app-badge.ts.
@@ -80,6 +87,12 @@ export function WindowTitle({ target }: { target: TabTarget }) {
   useEffect(() => {
     if (target.type !== "home") return;
     document.title = `${APP_NAME}${titleSuffix(unread)}`;
+  }, [target.type, unread]);
+
+  // Pages have no name worth a query: the tab says which community.
+  useEffect(() => {
+    const title = PAGE_TITLES[target.type];
+    if (title) document.title = `${title} - ${APP_NAME}${titleSuffix(unread)}`;
   }, [target.type, unread]);
 
   if (target.type === "dm") {

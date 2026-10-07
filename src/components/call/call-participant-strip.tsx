@@ -32,14 +32,16 @@ interface ParticipantMeta {
  * Per-participant event wiring mirrors ParticipantTile, minus everything to
  * do with tracks that carry pictures.
  */
-function ParticipantChip({
+export function ParticipantChip({
   participant,
   soundboardActive,
   meta,
+  className,
 }: {
   participant: Participant;
   soundboardActive: boolean;
   meta: ParticipantMeta;
+  className?: string;
 }) {
   const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
   const [micMuted, setMicMuted] = useState(!participant.isMicrophoneEnabled);
@@ -79,7 +81,7 @@ function ParticipantChip({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="relative shrink-0">
+          <div className={cn("relative shrink-0", className)}>
             <Avatar
               className={cn(
                 "size-7 rounded-md ring-2 ring-transparent transition-shadow",
@@ -117,15 +119,18 @@ function ParticipantChip({
 }
 
 /**
- * Everyone in the current call, as avatars with live speaking / soundboard
- * rings — the mini-panel version of the call grid, shown in the user card
- * while a call is running so you can see who's in it and who's talking
- * without opening the full screen.
+ * Everyone in the call, with the profile each is shown under and who is making
+ * a soundboard noise right now. Shared by the strip below and by the sidebar's
+ * call card, which shows the same people differently.
+ *
+ * Re-renders when the active speakers change as well as when people come and
+ * go, so anything sorting by who spoke last stays current.
  */
-export function CallParticipantStrip() {
+export function useCallRoster() {
   const { activeCall, controller } = useCall();
   const { room } = controller;
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [, setSpeakerTick] = useState(0);
   const soundboardActive = useSoundboardActivity();
 
   useEffect(() => {
@@ -134,18 +139,21 @@ export function CallParticipantStrip() {
         room.localParticipant,
         ...Array.from(room.remoteParticipants.values()),
       ]);
+    const speakersChanged = () => setSpeakerTick((n) => n + 1);
     refresh();
     room
       .on(RoomEvent.ParticipantConnected, refresh)
       .on(RoomEvent.ParticipantDisconnected, refresh)
       .on(RoomEvent.Connected, refresh)
-      .on(RoomEvent.Disconnected, refresh);
+      .on(RoomEvent.Disconnected, refresh)
+      .on(RoomEvent.ActiveSpeakersChanged, speakersChanged);
     return () => {
       room
         .off(RoomEvent.ParticipantConnected, refresh)
         .off(RoomEvent.ParticipantDisconnected, refresh)
         .off(RoomEvent.Connected, refresh)
-        .off(RoomEvent.Disconnected, refresh);
+        .off(RoomEvent.Disconnected, refresh)
+        .off(RoomEvent.ActiveSpeakersChanged, speakersChanged);
     };
   }, [room]);
 
@@ -168,6 +176,31 @@ export function CallParticipantStrip() {
   const metaByIdentity = new Map(
     (userData ?? []).map((u) => [u.id as string, u as ParticipantMeta])
   );
+
+  return { participants, metaByIdentity, soundboardActive };
+}
+
+/**
+ * Whoever is talking, then whoever talked most recently, then everyone else —
+ * with you last among equals, since you know what you sound like.
+ */
+export function sortByActivity(participants: Participant[]): Participant[] {
+  return [...participants].sort(
+    (a, b) =>
+      Number(b.isSpeaking) - Number(a.isSpeaking) ||
+      (b.lastSpokeAt?.getTime() ?? 0) - (a.lastSpokeAt?.getTime() ?? 0) ||
+      Number(a.isLocal) - Number(b.isLocal)
+  );
+}
+
+/**
+ * Everyone in the current call, as avatars with live speaking / soundboard
+ * rings — the mini-panel version of the call grid, shown in the user card
+ * while a call is running so you can see who's in it and who's talking
+ * without opening the full screen.
+ */
+export function CallParticipantStrip() {
+  const { participants, metaByIdentity, soundboardActive } = useCallRoster();
 
   if (participants.length === 0) return null;
 

@@ -16,14 +16,16 @@ import { OutboxStatus } from "@/components/outbox-status";
 import { AccessibilityProvider } from "@/components/accessibility-provider";
 import { AudioPreferencesProvider } from "@/components/audio-provider";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ThemePackProvider } from "@/components/theme-pack-provider";
+import { ExtensionsProvider } from "@/extensions/extensions-provider";
 import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
+import { AccountSuspendedGate } from "@/components/account-suspended-gate";
+import { AppLoadingGate } from "@/components/app-loading-gate";
 import { DataPreloader } from "@/components/data-preloader";
 import { FileDropGuard } from "@/components/home/composer-attachments";
 import { CustomCssProvider } from "@/components/custom-css-provider";
 import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog";
-import { ProfileEditorProvider } from "@/components/profile/profile-editor-dialog";
 import { ProfilePageProvider } from "@/components/profile/profile-page";
-import { SettingsDialogProvider } from "@/components/settings/settings-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const CLERK_PUBLISHABLE_KEY =
@@ -101,6 +103,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
               <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
                 <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
                   <CacheScope />
+                  {/* Over everything while the app is starting or offline. */}
+                  <AppLoadingGate />
                   <AuthCallbackHandler />
                   <DataPreloader />
                   <OutboxFlusher />
@@ -109,16 +113,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   {/* All inside Convex/Clerk: each of these renders something
                       that queries the current user.
 
-                      Settings is outermost of the three dialog hosts because
-                      its sidebar is what opens the other two — the profile
-                      editor and the CSS editor are reachable from there, and a
-                      provider cannot be used by something above it. */}
+                      Settings, the profile editor and community settings are
+                      pages now, tabs drawn by HomeLayout.
+                      The CSS editor is still a dialog, and still has to be
+                      above them: Settings is where it is opened from. */}
                   <CustomCssProviderDialog>
-                    <ProfileEditorProvider>
-                      <ProfilePageProvider>
-                        <SettingsDialogProvider>{children}</SettingsDialogProvider>
-                      </ProfilePageProvider>
-                    </ProfileEditorProvider>
+                    <AccountSuspendedGate>
+                      <ThemePackProvider>
+                        <ExtensionsProvider>
+                          <ProfilePageProvider>{children}</ProfilePageProvider>
+                        </ExtensionsProvider>
+                      </ThemePackProvider>
+                    </AccountSuspendedGate>
                   </CustomCssProviderDialog>
                 </ConvexProviderWithClerk>
               </ClerkProvider>

@@ -1,9 +1,12 @@
 "use client";
 
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { useQuery } from "convex/react";
+import { Loader2 } from "lucide-react";
 
+import { api } from "../../../convex/_generated/api";
 import { useCall } from "@/components/call/call-provider";
 import { useCallTitle } from "@/components/call/use-call-title";
+import { LoungeStage } from "@/components/lounge/lounge-stage";
 import { RoomView, type RoomController } from "@/components/room-view";
 import { Button } from "@/components/ui/button";
 
@@ -15,6 +18,10 @@ export function CallStage() {
   const { activeCall, controller, collapse, leaveCall } = useCall();
   const { status, error } = controller;
   const roomName = useCallTitle(activeCall);
+  const channel = useQuery(
+    api.channels.get,
+    activeCall?.kind === "channel" ? { channelId: activeCall.channelId } : "skip",
+  );
 
   if (!activeCall) return null;
 
@@ -23,7 +30,15 @@ export function CallStage() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-card/30">
       <div className="min-h-0 flex-1">
-        {isConnected ? (
+        {isConnected && activeCall.kind === "channel" && channel?.isLounge ? (
+          <LoungeStage
+            roomName={roomName}
+            controller={controller as RoomController}
+            onLeave={leaveCall}
+            channelId={activeCall.channelId}
+            communityId={activeCall.communityId}
+          />
+        ) : isConnected ? (
           <RoomView roomName={roomName} controller={controller as RoomController} onLeave={leaveCall} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">

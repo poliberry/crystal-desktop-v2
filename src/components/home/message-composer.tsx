@@ -10,9 +10,8 @@ import {
   ComposerAttachments,
   ComposerDropOverlay,
 } from "@/components/home/composer-attachments";
-import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
+import { ComposerEmojiPicker, EMOJI_TRIGGER_ATTRIBUTE } from "@/components/composer-emoji-picker";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   EmojiTextInput,
   type EmojiTextInputHandle,
@@ -23,6 +22,7 @@ import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { matchInProgressShortcode } from "@/lib/custom-emoji";
 import type { ReplyDraft } from "@/lib/reply";
+import { GLASS_BASE, GLASS_DARK, GLASS_SOFT } from "@/components/sidebar/glass";
 import { cn } from "@/lib/utils";
 import { randomSmiley, searchSystemEmoji } from "@/lib/system-emoji";
 
@@ -235,13 +235,19 @@ export function MessageComposer({
     setAutocomplete(matchInProgressShortcode(value, caret));
   };
 
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
   const insertEmoji = (emoji: string) => {
     setText((prev) => prev + emoji);
     textareaRef.current?.focus();
   };
 
+  // 17px under the box, not 8: the user card is 8px (the sidebar's padding) +
+  // 1px (its border) + 8px (the dock's padding) off the bottom of the window,
+  // and the box is the same 58px tall (the card's 56px row plus its two 1px
+  // border edges), so the two share a top and a bottom edge.
   return (
-    <div ref={dropZoneRef} className="relative shrink-0 p-2">
+    <div ref={dropZoneRef} className="relative shrink-0 p-2 pb-[17px]">
       <ComposerDropOverlay active={isDraggingOver} />
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
@@ -265,7 +271,7 @@ export function MessageComposer({
       {/* Birthday prompt. Above the box rather than in it, so it reads as
           something the app noticed rather than as text you have to clear. */}
       {birthdayNames.length > 0 && !wishDismissed && (
-        <div className="mb-2 flex items-center gap-2 rounded-t-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-1.5">
+        <div className="mb-2 flex items-center gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-2.5 py-1.5">
           <span aria-hidden className="text-base leading-none">
             🎂
           </span>
@@ -300,7 +306,7 @@ export function MessageComposer({
       )}
 
       {replyingTo && (
-        <div className="flex items-center gap-2 rounded-t-md border border-b-0 bg-muted/40 px-2.5 py-1 text-xs">
+        <div className="mb-1.5 flex items-center gap-2 rounded-xl border bg-muted/40 px-2.5 py-1 text-xs">
           <Reply className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
             Replying to <span className="font-medium text-foreground">{replyingTo.authorName}</span>
@@ -342,75 +348,92 @@ export function MessageComposer({
         </button>
       )}
 
-      <div className={cn(replyingTo ? "rounded-b-md" : "rounded-md", "flex items-center gap-1 h-14 border border-input bg-transparent p-2 shadow-xs transition-[color,box-shadow]")}>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => void addFiles(e.target.files)}
+      {/* The call card's surface — see `GLASS_DARK`. The focus ring is the
+          border lighting up rather than a ring outside it, which the card's
+          rounded, clipped edge would cut. */}
+      {/* The picker is a child of the box's own frame, so it sits flush on
+          its top edge, and the box squares off the corner they share while it
+          is open — one shape, not a card resting on another. */}
+      <div className="relative">
+        <ComposerEmojiPicker
+          open={emojiOpen}
+          onClose={() => setEmojiOpen(false)}
+          onSelect={insertEmoji}
         />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-9 shrink-0"
-          disabled={uploading}
-          onClick={openFilePicker}
+        <div
+          className={cn(
+            GLASS_BASE,
+            GLASS_DARK,
+            GLASS_SOFT,
+            emojiOpen && "rounded-tr-none",
+            "flex h-[58px] items-center gap-1 px-2 py-1 transition-[border-color,box-shadow,border-radius] duration-200 focus-within:border-ring/70 focus-within:ring-ring/40",
+          )}
         >
-          <Paperclip className="size-4" />
-        </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => void addFiles(e.target.files)}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-9 shrink-0"
+            disabled={uploading}
+            onClick={openFilePicker}
+          >
+            <Paperclip className="size-4" />
+          </Button>
 
-        <EmojiTextInput
-          ref={textareaRef}
-          value={text}
-          onChange={handleTextChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onBlur={() => setAutocomplete(null)}
-          emojiByName={customEmojiByName}
-          emojiById={customEmojiById}
-          placeholder="Message…"
-        />
+          <EmojiTextInput
+            ref={textareaRef}
+            value={text}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onBlur={() => setAutocomplete(null)}
+            emojiByName={customEmojiByName}
+            emojiById={customEmojiById}
+            placeholder="Message…"
+          />
 
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="relative size-8 shrink-0 overflow-hidden"
-              onMouseEnter={() => setHoverEmoji(randomSmiley())}
-              onMouseLeave={() => setHoverEmoji(null)}
-            >
-              {/* The Smile icon stays mounted; the random emoji is an overlay.
-                  Swapping the hovered node out instead makes React fire a
-                  spurious mouseleave and the emoji never appears. */}
-              <Smile className="size-4" />
-              {hoverEmoji && (
-                <span
-                  aria-hidden
-                  className="absolute inset-0 flex items-center justify-center bg-accent text-sm leading-none grayscale"
-                >
-                  {hoverEmoji}
-                </span>
-              )}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent side="top" align="end" className="w-auto p-0">
-            <ReactionPickerContent onSelect={(text) => insertEmoji(text)} />
-          </PopoverContent>
-        </Popover>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="relative size-8 shrink-0 overflow-hidden"
+            aria-expanded={emojiOpen}
+            {...{ [EMOJI_TRIGGER_ATTRIBUTE]: "" }}
+            onClick={() => setEmojiOpen((open) => !open)}
+            onMouseEnter={() => setHoverEmoji(randomSmiley())}
+            onMouseLeave={() => setHoverEmoji(null)}
+          >
+            {/* The Smile icon stays mounted; the random emoji is an overlay.
+                Swapping the hovered node out instead makes React fire a
+                spurious mouseleave and the emoji never appears. */}
+            <Smile className="size-4" />
+            {hoverEmoji && (
+              <span
+                aria-hidden
+                className="absolute inset-0 flex items-center justify-center bg-accent text-sm leading-none grayscale"
+              >
+                {hoverEmoji}
+              </span>
+            )}
+          </Button>
 
-        <Button
-          type="button"
-          size="icon"
-          className="size-8 shrink-0"
-          disabled={sending || uploading}
-          onClick={() => void handleSend()}
-        >
-          <Send className="size-4" />
-        </Button>
+          <Button
+            type="button"
+            size="icon"
+            className="size-8 shrink-0"
+            disabled={sending || uploading}
+            onClick={() => void handleSend()}
+          >
+            <Send className="size-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );

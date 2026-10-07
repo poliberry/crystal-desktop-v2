@@ -1,3 +1,4 @@
+import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
@@ -125,9 +126,12 @@ export const add = mutation({
   args: {
     communityId: v.id("communities"),
     name: v.string(),
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
+    /** Uploaded to the CDN instead of Convex storage. */
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, name, storageId }) => {
+  handler: async (ctx, { communityId, name, storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
 
@@ -174,14 +178,19 @@ export const add = mutation({
       .unique();
     if (duplicate) throw new Error(`An emoji named "${sanitized}" already exists.`);
 
-    const imageUrl = await ctx.storage.getUrl(storageId);
+    const onCdn = !!(cdnKey || cdnUrl);
+    const imageUrl = onCdn
+      ? (cdnUrl ?? r2PublicUrlForKey(cdnKey!))
+      : storageId
+        ? await ctx.storage.getUrl(storageId)
+        : null;
     if (!imageUrl) throw new Error("Emoji upload failed — no URL returned.");
 
     await ctx.db.insert("communityEmojis", {
       communityId,
       name: sanitized,
       imageUrl,
-      storageId,
+      storageId: onCdn ? undefined : storageId,
       uploadedBy: me._id,
       createdAt: Date.now(),
     });
@@ -220,7 +229,8 @@ export const remove = mutation({
       if (!canManage) throw new Error("You don't have permission to manage emojis.");
     }
 
-    await ctx.storage.delete(emoji.storageId).catch(() => {});
+    if (emoji.storageId) await ctx.storage.delete(emoji.storageId).catch(() => {});
+    else await dropR2Url(ctx, emoji.imageUrl);
     await ctx.db.delete(emojiId);
   },
 });

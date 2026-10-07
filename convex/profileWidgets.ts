@@ -24,6 +24,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { requireMember } from "./communities";
+import { isR2Url, dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 
@@ -221,6 +222,9 @@ export const upsertWidget = mutation({
     subtitle: v.optional(v.string()),
     description: v.optional(v.string()),
     imageStorageId: v.optional(v.id("_storage")),
+    /** The cover uploaded to the CDN instead of Convex storage. */
+    imageCdnKey: v.optional(v.string()),
+    imageCdnUrl: v.optional(v.string()),
     /** True to drop the cover image. Distinct from omitting
      * `imageStorageId`, which means "leave the one that's there". */
     clearImage: v.optional(v.boolean()),
@@ -254,6 +258,11 @@ export const upsertWidget = mutation({
       if (!url) throw new Error("Widget image upload failed.");
       imageUrl = url;
       imageStorageId = args.imageStorageId;
+    } else if (args.imageCdnKey || args.imageCdnUrl) {
+      const url = args.imageCdnUrl ?? r2PublicUrlForKey(args.imageCdnKey!);
+      if (!url) throw new Error("Widget image upload failed.");
+      imageUrl = url;
+      imageStorageId = undefined;
     }
 
     const fields = cleanFields(args.fields ?? []);
@@ -272,6 +281,11 @@ export const upsertWidget = mutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, doc);
+      // A CDN cover that was replaced or removed — Convex-stored ones are
+      // handled by `dropUnreferenced` below, by id.
+      if (existing.imageUrl && existing.imageUrl !== imageUrl && isR2Url(existing.imageUrl)) {
+        await dropR2Url(ctx, existing.imageUrl).catch(() => {});
+      }
       // Whatever the new version no longer points at: the old cover, and any
       // image field that was removed or re-picked.
       await dropUnreferenced(ctx, existing, imageStorageId, fields);
@@ -320,6 +334,9 @@ export const removeWidget = mutation({
     if (!widget || widget.userId !== me._id) return;
     await ctx.db.delete(widgetId);
     await dropUnreferenced(ctx, widget, undefined, []);
+    if (widget.imageUrl && isR2Url(widget.imageUrl)) {
+      await dropR2Url(ctx, widget.imageUrl).catch(() => {});
+    }
   },
 });
 

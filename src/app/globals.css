@@ -84,6 +84,48 @@
   --sidebar-ring: oklch(0.705 0.015 286.067);
 }
 
+/*
+ * The surface of the "glass card" — the call card, the device pickers, the
+ * message composer (see GLASS_DARK in sidebar/glass.ts). A soft light raking
+ * across it from the top-left corner: pale on a near-black card in dark mode,
+ * and white on a pale grey one in light mode.
+ *
+ * Keyed on `:root.dark` rather than on `dark:` variants, deliberately: the app
+ * shell is a `<main class="dark">`, so `dark:` is on for everything inside it
+ * whatever the theme. The class on <html> is the one the theme actually sets
+ * (see theme-provider.tsx).
+ */
+:root {
+  --glass-bg: rgb(244 244 245 / 0.9);
+  --glass-bg-soft: rgb(244 244 245 / 0.25);
+  --glass-border: rgb(0 0 0 / 0.1);
+  --glass-ring: rgb(244 244 245);
+  --glass-glow: radial-gradient(
+    120% 140% at 0% 0%,
+    rgb(255 255 255 / 0.95) 0%,
+    rgb(255 255 255 / 0.7) 12%,
+    rgb(255 255 255 / 0.4) 28%,
+    rgb(255 255 255 / 0.15) 48%,
+    rgb(255 255 255 / 0.04) 68%,
+    transparent 85%
+  );
+}
+:root.dark {
+  --glass-bg: rgb(9 9 11 / 0.9);
+  --glass-bg-soft: rgb(9 9 11 / 0.25);
+  --glass-border: rgb(255 255 255 / 0.1);
+  --glass-ring: rgb(0 0 0);
+  --glass-glow: radial-gradient(
+    120% 140% at 0% 0%,
+    rgb(255 255 255 / 0.17) 0%,
+    rgb(255 255 255 / 0.12) 12%,
+    rgb(255 255 255 / 0.07) 28%,
+    rgb(255 255 255 / 0.03) 48%,
+    rgb(255 255 255 / 0.01) 68%,
+    transparent 85%
+  );
+}
+
 .dark {
   --background: oklch(0.141 0.005 285.823);
   --foreground: oklch(0.985 0 0);
@@ -116,6 +158,83 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
+}
+
+/*
+ * The look of the settings pages — Windows Settings' Mica, in this app's
+ * glass: a page that is the theme's background washed with a soft tint of its
+ * own accent from two corners (the way Mica picks up the desktop behind it),
+ * with the cards laid on it as translucent gradient glass.
+ *
+ * `.settings-surface` also re-skins any shadcn `Card` inside it, so the tabs
+ * that are still built from cards match the ones built from `SettingRow`s
+ * without being rewritten. Unlayered on purpose: it has to beat the Tailwind
+ * utilities the Card carries.
+ */
+.settings-surface {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(70% 55% at 0% 0%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 72%),
+    radial-gradient(60% 50% at 100% 100%, color-mix(in oklab, var(--primary) 9%, transparent), transparent 72%);
+}
+/* A card that is all picture to its edges (`data-flush`) keeps its own padding
+ * and corners. */
+.settings-surface [data-slot="card"]:not([data-flush]) {
+  gap: 1rem;
+  padding-block: 1rem;
+  border-radius: 0.5rem;
+}
+.settings-surface [data-slot="card"] {
+  border-color: color-mix(in oklab, var(--foreground) 10%, transparent);
+  background-color: transparent;
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--foreground) 8%, transparent),
+    color-mix(in oklab, var(--foreground) 3%, transparent) 45%,
+    transparent
+  );
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.1);
+}
+.settings-surface [data-slot="card-header"],
+.settings-surface [data-slot="card-content"],
+.settings-surface [data-slot="card-footer"] {
+  padding-inline: 1rem;
+}
+.settings-surface [data-slot="card-title"] {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.settings-surface [data-slot="card-description"] {
+  font-size: 0.75rem;
+}
+
+/*
+ * A server's overview: the cards on a twelve-column grid, each in the cell it
+ * was given on the pinboard (--x/--y/--w/--h, in cells). Rows are 36px with a
+ * 12px gap, which is the 48px pitch src/lib/overview-layout.ts measures in. In
+ * a window too narrow for twelve columns the cards stack, each at least as tall
+ * as its board height.
+ */
+.overview-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+}
+.overview-cell {
+  min-height: calc(var(--h, 5) * 48px - 12px);
+}
+@media (min-width: 640px) {
+  .overview-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-auto-rows: 36px;
+  }
+  .overview-cell {
+    min-height: 0;
+    grid-column: calc(var(--x, 0) + 1) / span var(--w, 6);
+    grid-row: calc(var(--y, 0) + 1) / span var(--h, 5);
+  }
 }
 
 @theme inline {
@@ -602,4 +721,86 @@ html {
 :root.a11y-underline-links [role="link"] {
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* --- Lounge ---------------------------------------------------------------- */
+/* How an avatar moves in a lounge: a bob while talking or typing, a hop while
+ * walking and a slow breath while sitting. Each is a transform on its own
+ * wrapper so they stack with the avatar's position rather than replacing it. */
+@keyframes lounge-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9%); }
+}
+@keyframes lounge-walk {
+  0%, 100% { transform: translateY(0) rotate(-2.5deg); }
+  50% { transform: translateY(-12%) rotate(2.5deg); }
+}
+@keyframes lounge-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+@keyframes lounge-wave {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+.lounge-bob { animation: lounge-bob 0.52s ease-in-out infinite; }
+.lounge-walk { animation: lounge-walk 0.34s ease-in-out infinite; }
+.lounge-breathe { animation: lounge-breathe 3.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .lounge-bob, .lounge-walk, .lounge-breathe { animation: none; }
+}
+/* The animated props a lounge scene can have — see lounge-props.tsx. */
+@keyframes lounge-flicker {
+  0%, 100% { transform: scale(1, 1) rotate(0deg); }
+  25% { transform: scale(0.94, 1.07) rotate(-2deg); }
+  50% { transform: scale(1.05, 0.95) rotate(1.5deg); }
+  75% { transform: scale(0.97, 1.05) rotate(-1deg); }
+}
+@keyframes lounge-prop-pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+@keyframes lounge-neon {
+  0%, 18%, 22%, 62%, 100% { opacity: 1; }
+  20%, 60% { opacity: 0.45; }
+}
+@keyframes lounge-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes lounge-twinkle {
+  0%, 100% { opacity: 0.15; transform: scale(0.7); }
+  50% { opacity: 0.7; transform: scale(1.2); }
+}
+@keyframes lounge-firefly {
+  0% { opacity: 0; transform: translate(0, 0); }
+  30% { opacity: 1; }
+  60% { opacity: 0.8; transform: translate(8px, -10px); }
+  100% { opacity: 0; transform: translate(-6px, -18px); }
+}
+@keyframes lounge-snow {
+  0% { transform: translate(0, 0); opacity: 0; }
+  10% { opacity: 0.9; }
+  100% { transform: translate(8px, 108px); opacity: 0.2; }
+}
+@keyframes lounge-steam {
+  0% { transform: translateY(6px); opacity: 0; }
+  40% { opacity: 0.65; }
+  100% { transform: translateY(-14px); opacity: 0; }
+}
+.lounge-flicker { animation: lounge-flicker 0.9s ease-in-out infinite; }
+.lounge-prop-pulse { animation: lounge-prop-pulse 1.4s ease-in-out infinite; }
+.lounge-neon { animation: lounge-neon 4.5s linear infinite; }
+.lounge-spin { animation: lounge-spin 6s linear infinite; }
+.lounge-twinkle { animation: lounge-twinkle 1.4s ease-in-out infinite; }
+.lounge-firefly { animation: lounge-firefly 4s ease-in-out infinite; }
+.lounge-snow { animation: lounge-snow 6s linear infinite; }
+.lounge-steam { animation: lounge-steam 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .lounge-flicker, .lounge-prop-pulse, .lounge-neon, .lounge-spin, .lounge-twinkle, .lounge-firefly, .lounge-snow, .lounge-steam { animation: none; }
+}
+@keyframes lounge-static {
+  0% { transform: translate(0, 0); }
+  33% { transform: translate(-3%, 2%); }
+  66% { transform: translate(2%, -3%); }
+  100% { transform: translate(-1%, 3%); }
 }

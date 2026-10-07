@@ -1,14 +1,38 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Id } from "../../../convex/_generated/dataModel";
 import { recordRecentView } from "@/lib/recent-views";
 
+/**
+ * Full pages that take over the content area — Settings, the profile editor, a
+ * community's settings. They are tabs like any other (so they show in the tab
+ * strip, survive a reload and take part in back/forward), but they are not
+ * places: nothing about them is worth pinning or preloading.
+ */
+export type PageTarget =
+  | { type: "settings" }
+  | { type: "profile-editor" }
+  | { type: "create-community" }
+  | { type: "marketplace" }
+  | { type: "community-settings"; communityId: Id<"communities"> };
+
 export type TabTarget =
   | { type: "home" }
   | { type: "dm"; conversationId: Id<"conversations"> }
-  | { type: "channel"; communityId: Id<"communities">; channelId: Id<"channels"> };
+  | { type: "channel"; communityId: Id<"communities">; channelId: Id<"channels"> }
+  | PageTarget;
+
+export function isPageTarget(target: TabTarget): target is PageTarget {
+  return (
+    target.type === "settings" ||
+    target.type === "profile-editor" ||
+    target.type === "create-community" ||
+    target.type === "marketplace" ||
+    target.type === "community-settings"
+  );
+}
 
 export interface Tab {
   id: string;
@@ -26,6 +50,16 @@ function tabId(target: TabTarget): string {
       return `dm:${target.conversationId}`;
     case "channel":
       return `channel:${target.communityId}:${target.channelId}`;
+    case "settings":
+      return "settings";
+    case "profile-editor":
+      return "profile-editor";
+    case "create-community":
+      return "create-community";
+    case "marketplace":
+      return "marketplace";
+    case "community-settings":
+      return `community-settings:${target.communityId}`;
   }
 }
 
@@ -48,6 +82,18 @@ function tabPath(target: TabTarget): string {
       return `#/dm/${target.conversationId}`;
     case "channel":
       return `#/community/${target.communityId}/${target.channelId}`;
+    case "settings":
+      return "#/settings";
+    case "profile-editor":
+      return "#/profile";
+    case "create-community":
+      return "#/create-community";
+    case "marketplace":
+      return "#/marketplace";
+    case "community-settings":
+      // Its own first segment rather than `#/community/:id/settings`, which
+      // is already how a channel whose id is "settings" would be written.
+      return `#/community-settings/${target.communityId}`;
   }
 }
 
@@ -67,6 +113,13 @@ function parseHash(hash: string): TabTarget | null {
       channelId: parts[2] as Id<"channels">,
     };
   }
+  if (parts[0] === "settings") return { type: "settings" };
+  if (parts[0] === "profile") return { type: "profile-editor" };
+  if (parts[0] === "create-community") return { type: "create-community" };
+  if (parts[0] === "marketplace") return { type: "marketplace" };
+  if (parts[0] === "community-settings" && parts[1]) {
+    return { type: "community-settings", communityId: parts[1] as Id<"communities"> };
+  }
   return null;
 }
 
@@ -75,14 +128,16 @@ function loadPinnedTargets(): TabTarget[] {
     const raw = localStorage.getItem(PINNED_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as TabTarget[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter((t) => !isPageTarget(t)) : [];
   } catch {
     return [];
   }
 }
 
 function savePinnedTargets(tabs: Tab[]) {
-  const pinned = tabs.filter((t) => t.pinned && t.target.type !== "home").map((t) => t.target);
+  const pinned = tabs
+    .filter((t) => t.pinned && t.target.type !== "home" && !isPageTarget(t.target))
+    .map((t) => t.target);
   localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinned));
 }
 
@@ -98,6 +153,10 @@ interface TabsContextValue {
   closeTab: (id: string) => void;
   activateTab: (id: string) => void;
   togglePinTab: (id: string) => void;
+  /** Goes back to the last tab that wasn't a page, leaving the page's own tab
+   * open. For navigation that has to show something *in* a place rather than
+   * beside the page. */
+  leavePage: () => void;
 }
 
 const TabsContext = createContext<TabsContextValue | null>(null);
@@ -115,6 +174,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     ...loadPinnedTargets().map((target) => ({ id: tabId(target), target, pinned: true })),
   ]);
   const [activeTabId, setActiveTabId] = useState<string>("home");
+  // The last tab that was a place, not a page: where closing a page goes back
+  // to, rather than to whichever tab happens to sit next to it in the strip.
+  const returnTabId = useRef("home");
 
   // Restore the active tab from the current URL hash on first mount (reload / deep link).
   useEffect(() => {
@@ -137,7 +199,10 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     if (window.location.hash !== hash) {
       window.history.pushState({ tabId: active.id }, "", hash || window.location.pathname);
     }
-    if (active.target.type !== "home") recordRecentView(active.target);
+    if (!isPageTarget(active.target)) returnTabId.current = active.id;
+    if (active.target.type === "dm" || active.target.type === "channel") {
+      recordRecentView(active.target);
+    }
   }, [activeTabId, tabs]);
 
   useEffect(() => {
@@ -171,8 +236,14 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       setTabs(next);
       savePinnedTargets(next);
       if (activeTabId === id) {
-        const ordered = orderTabs(next);
-        setActiveTabId((ordered[Math.max(0, idx - 1)] ?? HOME_TAB).id);
+        const closing = tabs[idx];
+        const back = next.find((t) => t.id === returnTabId.current);
+        if (isPageTarget(closing.target) && back) {
+          setActiveTabId(back.id);
+        } else {
+          const ordered = orderTabs(next);
+          setActiveTabId((ordered[Math.max(0, idx - 1)] ?? HOME_TAB).id);
+        }
       }
     },
     [tabs, activeTabId]
@@ -184,7 +255,8 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
 
   const togglePinTab = useCallback(
     (id: string) => {
-      if (id === "home") return;
+      const tab = tabs.find((t) => t.id === id);
+      if (id === "home" || !tab || isPageTarget(tab.target)) return;
       const next = tabs.map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t));
       setTabs(next);
       savePinnedTargets(next);
@@ -192,12 +264,26 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     [tabs]
   );
 
+  const leavePage = useCallback(() => {
+    const back = tabs.find((t) => t.id === returnTabId.current);
+    setActiveTabId(back ? back.id : "home");
+  }, [tabs]);
+
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? HOME_TAB;
   const ordered = useMemo(() => orderTabs(tabs), [tabs]);
 
   const value = useMemo(
-    () => ({ tabs: ordered, activeTabId, activeTab, openTab, closeTab, activateTab, togglePinTab }),
-    [ordered, activeTabId, activeTab, openTab, closeTab, activateTab, togglePinTab]
+    () => ({
+      tabs: ordered,
+      activeTabId,
+      activeTab,
+      openTab,
+      closeTab,
+      activateTab,
+      togglePinTab,
+      leavePage,
+    }),
+    [ordered, activeTabId, activeTab, openTab, closeTab, activateTab, togglePinTab, leavePage]
   );
 
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;
@@ -207,4 +293,10 @@ export function useTabs(): TabsContextValue {
   const ctx = useContext(TabsContext);
   if (!ctx) throw new Error("useTabs must be used within <TabsProvider>");
   return ctx;
+}
+
+/** The tabs, or `null` outside the provider — the pop-out window mounts none of
+ * this. */
+export function useOptionalTabs(): TabsContextValue | null {
+  return useContext(TabsContext);
 }

@@ -1,3 +1,4 @@
+import { setupValidator } from "./lib/communitySetup";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
@@ -351,6 +352,10 @@ export default defineSchema({
     customActivityExpiresAt: v.optional(v.number()),
     nameplateUrl: v.optional(v.string()),
     nameplateStorageId: v.optional(v.id("_storage")),
+    /** The theme pack applied to this person's client — an entitlement of theirs,
+     * looked up and checked again whenever it is read, so one that has run out
+     * simply stops applying. */
+    themePackEntitlementId: v.optional(v.id("entitlements")),
     /** The frame drawn around this user's avatar: a `builtin:<key>` preset or
      * the storage URL of a picture they uploaded. One field rather than a key
      * and a URL, so the queries that carry it to every avatar on screen carry
@@ -391,9 +396,13 @@ export default defineSchema({
      * src/lib/soundboard.ts. A per-server override lives on
      * `serverProfiles.joinSoundId`. */
     joinSoundId: v.optional(v.string()),
+    /** Optional platform-level moderation state, separate from community bans. */
+    platformSuspendedUntil: v.optional(v.number()),
+    platformSuspensionReason: v.optional(v.string()),
   })
     .index("by_clerk_id", ["clerkId"])
-    .index("by_username", ["username"]),
+    .index("by_username", ["username"])
+    .searchIndex("search_name", { searchField: "name" }),
 
   /**
    * What each badge looks like and means — the catalogue the ids in
@@ -735,8 +744,27 @@ export default defineSchema({
      * can only be joined with an invite code/link: it's hidden from Discovery
      * and the "join" button on an emoji card is replaced with a notice. */
     inviteOnly: v.optional(v.boolean()),
+    /**
+     * The community's colours: the two ends of a gradient (`#rrggbb`) that tints
+     * its overview and channels for everyone who is in it. Both or neither —
+     * half a gradient is just a colour, and not the one that was chosen.
+     */
+    themeStart: v.optional(v.string()),
+    themeEnd: v.optional(v.string()),
+    /**
+     * What kind of community this is. Absent is a standard one. See
+     * convex/lib/communityKinds.ts: a kind is a set of capabilities (special
+     * channels and tools), not a different thing.
+     */
+    kind: v.optional(v.union(v.literal("creator"), v.literal("clan"))),
+    /** A clan's games — one to five, in the order the clan listed them. */
+    clanGames: v.optional(v.array(v.object({ id: v.string(), name: v.string() }))),
+    /** A creator community's home platform and who may join. */
+    creatorPlatform: v.optional(v.union(v.literal("twitch"), v.literal("youtube"), v.literal("tiktok"))),
+    creatorAudience: v.optional(v.union(v.literal("public"), v.literal("members"))),
   })
     .index("by_owner", ["ownerId"])
+    .searchIndex("search_name", { searchField: "name" })
     .index("by_invite_code", ["inviteCode"]),
 
   communityMembers: defineTable({
@@ -839,9 +867,468 @@ export default defineSchema({
     bannerStorageId: v.optional(v.id("_storage")),
     bannerTitle: v.optional(v.string()),
     bannerDescription: v.optional(v.string()),
+    /**
+     * A voice channel that is a **lounge**: a 2D room people walk around in,
+     * with a screen on the wall for whichever stream is being watched. It is
+     * still a voice channel in every way that matters (the same LiveKit room,
+     * the same participant rows, the same permissions), which is why this is a
+     * flag on a voice channel and not a third channel type.
+     */
+    isLounge: v.optional(v.boolean()),
+    /**
+     * A text channel that shows something other than a message list — a feed, a
+     * calendar, a forum, a game server. See convex/lib/communityKinds.ts. Only
+     * communities of a kind that allows it can have one.
+     */
+    surface: v.optional(
+      v.union(
+        v.literal("feed"),
+        v.literal("calendar"),
+        v.literal("ama"),
+        v.literal("threads"),
+        v.literal("servers"),
+        v.literal("lfg"),
+        v.literal("roster"),
+      ),
+    ),
+    /** The clan game a channel belongs to, where it belongs to one. */
+    gameId: v.optional(v.string()),
+    /** A built-in scene's id (src/lib/lounge-scenes.tsx), or `"custom"` when
+     * `loungeSceneCustom` — a scene bought from the marketplace — is in use. */
+    loungeScene: v.optional(v.string()),
+    loungeSceneCustom: v.optional(
+      v.object({
+        name: v.string(),
+        backgroundUrl: v.string(),
+        /** Where the screen is, as percentages of the picture. */
+        screen: v.object({ x: v.number(), y: v.number(), w: v.number(), h: v.number() }),
+        /** Where the floor starts, as a percentage from the top. */
+        floorTop: v.number(),
+        /** Where people can sit, and the animated props — see
+         * convex/lib/creationSpecs.ts. Absent on scenes bought before they existed. */
+        seats: v.optional(v.array(v.object({ x: v.number(), y: v.number() }))),
+        props: v.optional(
+          v.array(
+            v.object({
+              id: v.string(),
+              kind: v.string(),
+              x: v.number(),
+              y: v.number(),
+              size: v.number(),
+              interactive: v.boolean(),
+              on: v.boolean(),
+            }),
+          ),
+        ),
+        lights: v.optional(v.object({ dimOnShare: v.boolean(), amount: v.number() })),
+      }),
+    ),
+    /** What the room is about right now. Set by anyone in it, and gone when
+     * the last person leaves. */
+    loungeTopic: v.optional(v.string()),
+    loungeTopicBy: v.optional(v.id("users")),
+    loungeTopicAt: v.optional(v.number()),
   })
     .index("by_community", ["communityId"])
     .index("by_community_position", ["communityId", "position"]),
+
+  // --- Extensions ------------------------------------------------------------------------
+
+  /** Something a person can install to extend Crystal: its identity and who made it.
+   * What it does is in its versions, each reviewed on its own. */
+  extensions: defineTable({
+    slug: v.string(),
+    publisherId: v.id("users"),
+    name: v.string(),
+    description: v.string(),
+    kind: v.union(v.literal("plugin"), v.literal("component")),
+    /** Stopping one stops it everywhere, for everyone, whatever version they have. */
+    suspendedAt: v.optional(v.number()),
+    suspendedReason: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_publisher", ["publisherId"]),
+
+  /**
+   * One release of an extension: its code, exactly as submitted, and the hash of it.
+   *
+   * The code is stored here rather than as a file somewhere else so that what was
+   * reviewed *is* what is run: the client checks the hash before it runs anything, and
+   * a version is never edited — a change is a new version and a new review.
+   */
+  extensionVersions: defineTable({
+    extensionId: v.id("extensions"),
+    version: v.string(),
+    manifest: v.object({
+      v: v.literal(1),
+      name: v.string(),
+      description: v.string(),
+      version: v.string(),
+      kind: v.union(v.literal("plugin"), v.literal("component")),
+      capabilities: v.array(v.string()),
+      network: v.array(v.string()),
+      panel: v.optional(v.object({ title: v.string() })),
+    }),
+    source: v.string(),
+    hash: v.string(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"), v.literal("revoked")),
+    /** What the scan found when it was submitted, kept with it for the reviewer. */
+    findings: v.array(v.object({ level: v.string(), message: v.string() })),
+    reviewNote: v.optional(v.string()),
+    reviewedBy: v.optional(v.id("users")),
+    reviewedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_extension", ["extensionId", "createdAt"])
+    .index("by_status", ["status", "createdAt"]),
+
+  /** An extension a person has turned on, and the powers they agreed to give it. */
+  extensionInstalls: defineTable({
+    userId: v.id("users"),
+    extensionId: v.id("extensions"),
+    versionId: v.id("extensionVersions"),
+    /** A subset of what the version's manifest asks for — what the person said yes to. */
+    granted: v.array(v.string()),
+    installedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_extension", ["userId", "extensionId"])
+    .index("by_extension", ["extensionId"]),
+
+  /** An extension's private data, per person. Another extension can't see it. */
+  extensionStorage: defineTable({
+    userId: v.id("users"),
+    extensionId: v.id("extensions"),
+    key: v.string(),
+    value: v.string(),
+  })
+    .index("by_user_extension", ["userId", "extensionId"])
+    .index("by_user_extension_key", ["userId", "extensionId", "key"]),
+
+  /** Requests an extension has made through Crystal's proxy, for rate limiting. */
+  extensionHttpLog: defineTable({
+    userId: v.id("users"),
+    extensionId: v.id("extensions"),
+    at: v.number(),
+  }).index("by_user_extension_at", ["userId", "extensionId", "at"]),
+
+  // --- Creator communities --------------------------------------------------------------
+
+  /**
+   * An outside account a person has connected to theirs — a Twitch, YouTube or
+   * TikTok login. Tokens are stored only as ciphertext (convex/lib/secrets.ts)
+   * and are never returned to a client; what a client sees is who the account is.
+   */
+  connectedAccounts: defineTable({
+    userId: v.id("users"),
+    provider: v.union(v.literal("twitch"), v.literal("youtube"), v.literal("tiktok")),
+    /** The platform's own id for the account — stable, unlike a handle. */
+    externalId: v.string(),
+    displayName: v.string(),
+    handle: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    accessCipher: v.string(),
+    refreshCipher: v.optional(v.string()),
+    /** When the access token stops working, in epoch ms. */
+    expiresAt: v.optional(v.number()),
+    scopes: v.array(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    lastError: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_provider_external", ["provider", "externalId"]),
+
+  /** The platform channel a creator community is centred on. */
+  creatorChannels: defineTable({
+    communityId: v.id("communities"),
+    accountId: v.id("connectedAccounts"),
+    provider: v.union(v.literal("twitch"), v.literal("youtube"), v.literal("tiktok")),
+    /** The channel's id on the platform (a Twitch user id, a YouTube channel id…). */
+    channelId: v.string(),
+    name: v.string(),
+    avatarUrl: v.optional(v.string()),
+    url: v.optional(v.string()),
+    isLive: v.boolean(),
+    liveTitle: v.optional(v.string()),
+    liveSince: v.optional(v.number()),
+    lastSyncAt: v.optional(v.number()),
+    lastSyncError: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_account", ["accountId"]),
+
+  /** Recent streams, VODs and uploads from the channel, normalised. */
+  creatorFeedItems: defineTable({
+    communityId: v.id("communities"),
+    provider: v.union(v.literal("twitch"), v.literal("youtube"), v.literal("tiktok")),
+    /** The platform's id for the item — makes a re-sync an update, not a duplicate. */
+    externalId: v.string(),
+    kind: v.union(v.literal("live"), v.literal("vod"), v.literal("upload"), v.literal("short")),
+    title: v.string(),
+    thumbnailUrl: v.optional(v.string()),
+    url: v.string(),
+    durationSeconds: v.optional(v.number()),
+    views: v.optional(v.number()),
+    publishedAt: v.number(),
+  })
+    .index("by_community_published", ["communityId", "publishedAt"])
+    .index("by_community_external", ["communityId", "externalId"]),
+
+  /** A platform membership tier, and the role it was imported as. */
+  creatorTiers: defineTable({
+    communityId: v.id("communities"),
+    /** The platform's key for the tier: `1000`/`2000`/`3000` on Twitch, a level id on YouTube. */
+    tierKey: v.string(),
+    name: v.string(),
+    /** Lowest first, so a higher tier outranks the ones below it. */
+    rank: v.number(),
+    roleId: v.id("roles"),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_role", ["roleId"]),
+
+  /** What a member is, on the platform, as last checked. One row per member. */
+  creatorMemberships: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    tierKey: v.optional(v.string()),
+    checkedAt: v.number(),
+  }).index("by_community_user", ["communityId", "userId"]),
+
+  /** A question put to the creator in an AMA channel. */
+  amaQuestions: defineTable({
+    channelId: v.id("channels"),
+    communityId: v.id("communities"),
+    authorId: v.id("users"),
+    text: v.string(),
+    votes: v.number(),
+    status: v.union(v.literal("open"), v.literal("current"), v.literal("answered"), v.literal("dismissed")),
+    answer: v.optional(v.string()),
+    createdAt: v.number(),
+    answeredAt: v.optional(v.number()),
+  })
+    .index("by_channel_status", ["channelId", "status", "votes"])
+    .index("by_channel_created", ["channelId", "createdAt"]),
+
+  amaVotes: defineTable({
+    questionId: v.id("amaQuestions"),
+    userId: v.id("users"),
+  })
+    .index("by_question_user", ["questionId", "userId"])
+    .index("by_question", ["questionId"]),
+
+  /** A thread channel's posts: each one a conversation of its own. */
+  forumPosts: defineTable({
+    channelId: v.id("channels"),
+    communityId: v.id("communities"),
+    authorId: v.id("users"),
+    title: v.string(),
+    body: v.string(),
+    createdAt: v.number(),
+    lastActivityAt: v.number(),
+    replyCount: v.number(),
+    pinned: v.boolean(),
+    locked: v.boolean(),
+  })
+    .index("by_channel_activity", ["channelId", "lastActivityAt"])
+    .index("by_channel_pinned", ["channelId", "pinned", "lastActivityAt"]),
+
+  forumReplies: defineTable({
+    postId: v.id("forumPosts"),
+    authorId: v.id("users"),
+    text: v.string(),
+    createdAt: v.number(),
+  }).index("by_post", ["postId", "createdAt"]),
+
+  // --- Clans and the calendar ---------------------------------------------------------
+
+  /** Who plays a clan's game, as what. One row per member per game. */
+  clanRoster: defineTable({
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    gameId: v.string(),
+    /** Their name in the game, which is rarely their name here. */
+    ign: v.string(),
+    rank: v.optional(v.string()),
+    role: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_community_game", ["communityId", "gameId"])
+    .index("by_member", ["communityId", "userId"]),
+
+  /** "Need two for ranked": a call for people to play something now, which
+   * expires on its own. */
+  lfgPosts: defineTable({
+    communityId: v.id("communities"),
+    gameId: v.string(),
+    authorId: v.id("users"),
+    title: v.string(),
+    details: v.optional(v.string()),
+    /** How many more people it needs. */
+    slots: v.number(),
+    joined: v.array(v.id("users")),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    closedAt: v.optional(v.number()),
+  }).index("by_community", ["communityId", "createdAt"]),
+
+  /** Something scheduled: an event, a scrim, a stream. Shared by clans and
+   * creator communities. */
+  communityEvents: defineTable({
+    communityId: v.id("communities"),
+    kind: v.union(v.literal("event"), v.literal("scrim"), v.literal("stream")),
+    title: v.string(),
+    details: v.optional(v.string()),
+    gameId: v.optional(v.string()),
+    startsAt: v.number(),
+    endsAt: v.optional(v.number()),
+    /** For a scrim: how many it can field. */
+    capacity: v.optional(v.number()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    cancelledAt: v.optional(v.number()),
+  }).index("by_community_start", ["communityId", "startsAt"]),
+
+  eventRsvps: defineTable({
+    eventId: v.id("communityEvents"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    status: v.union(v.literal("going"), v.literal("maybe")),
+    /** In the lineup, for a scrim — set by whoever manages events. */
+    starter: v.optional(v.boolean()),
+    createdAt: v.number(),
+  })
+    .index("by_event", ["eventId"])
+    .index("by_event_user", ["eventId", "userId"]),
+
+  // --- Game servers (Pterodactyl) -----------------------------------------------------
+
+  /**
+   * A community's connection to a Pterodactyl panel.
+   *
+   * The API key is a *client* key — the same reach as the person who made it —
+   * and is stored only as ciphertext (AES-GCM under CREDENTIALS_ENCRYPTION_KEY).
+   * It is read by server-side actions and never returned to any client; what a
+   * client gets is `keyHint`, the last four characters, to tell keys apart.
+   */
+  gameServerPanels: defineTable({
+    communityId: v.id("communities"),
+    /** `https://panel.example.com` — an origin, validated on the way in. */
+    baseUrl: v.string(),
+    keyCipher: v.string(),
+    keyHint: v.string(),
+    connectedBy: v.id("users"),
+    createdAt: v.number(),
+    lastOkAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+  }).index("by_community", ["communityId"]),
+
+  /**
+   * One panel server a community has chosen to show, and who may do what to it.
+   *
+   * `access` is what Crystal allows, and the panel key's own reach is the ceiling:
+   * a member can never do something to a server the key can't. `view` sees state
+   * and usage and `power` also starts and stops it. Managers always have all of it.
+   */
+  gameServers: defineTable({
+    communityId: v.id("communities"),
+    panelId: v.id("gameServerPanels"),
+    /** The panel's short id for the server — the 8 characters in its URL. */
+    identifier: v.string(),
+    name: v.string(),
+    /** The clan game it belongs to, where there is one. */
+    gameId: v.optional(v.string()),
+    /**
+     * Whether every member sees this server's details — its picture, description,
+     * game and what to install — whether or not they may operate it. Operating it
+     * is `everyoneLevel`/`roleAccess`; this is only about being told it exists.
+     */
+    listed: v.optional(v.boolean()),
+    /** What is shown about it. Rebuilt on the way in — see convex/lib/serverProfile.ts. */
+    profile: v.optional(
+      v.object({
+        displayName: v.optional(v.string()),
+        description: v.optional(v.string()),
+        gameName: v.optional(v.string()),
+        gameVersion: v.optional(v.string()),
+        address: v.optional(v.string()),
+        minecraft: v.optional(
+          v.object({
+            loader: v.string(),
+            loaderVersion: v.optional(v.string()),
+            modpack: v.optional(
+              v.object({
+                name: v.string(),
+                url: v.string(),
+                version: v.optional(v.string()),
+                format: v.union(v.literal("mrpack"), v.literal("zip")),
+                source: v.union(v.literal("modrinth"), v.literal("curseforge"), v.literal("other")),
+                pageUrl: v.optional(v.string()),
+              }),
+            ),
+            packs: v.array(
+              v.object({
+                name: v.string(),
+                url: v.string(),
+                version: v.optional(v.string()),
+                kind: v.union(v.literal("resourcepack"), v.literal("shader")),
+                required: v.boolean(),
+              }),
+            ),
+          }),
+        ),
+      }),
+    ),
+    iconUrl: v.optional(v.string()),
+    iconStorageId: v.optional(v.id("_storage")),
+    everyoneLevel: v.union(v.literal("none"), v.literal("view"), v.literal("power")),
+    roleAccess: v.array(
+      v.object({
+        roleId: v.id("roles"),
+        level: v.union(v.literal("view"), v.literal("power")),
+      }),
+    ),
+    position: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_community", ["communityId", "position"])
+    .index("by_panel", ["panelId"]),
+
+  /** Everything done to a game server through Crystal, and by whom. */
+  gameServerAudit: defineTable({
+    communityId: v.id("communities"),
+    serverId: v.id("gameServers"),
+    userId: v.id("users"),
+    action: v.string(),
+    detail: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_community", ["communityId", "createdAt"]),
+
+  /** What is said in a lounge. Kept only while people are in it. */
+  loungeMessages: defineTable({
+    channelId: v.id("channels"),
+    authorId: v.id("users"),
+    kind: v.union(v.literal("text"), v.literal("image"), v.literal("emoji"), v.literal("sticker")),
+    text: v.optional(v.string()),
+    /** An emoji, unicode or `<:name:id>`, for the kind that floats. */
+    emoji: v.optional(v.string()),
+    sticker: v.optional(v.object({ source: v.union(v.literal("builtin"), v.literal("emoji")), id: v.string() })),
+    image: v.optional(
+      v.object({
+        storageId: v.optional(v.id("_storage")),
+        cdnUrl: v.optional(v.string()),
+        cdnKey: v.optional(v.string()),
+        fileName: v.string(),
+        fileType: v.string(),
+        fileSize: v.number(),
+      }),
+    ),
+    createdAt: v.number(),
+  }).index("by_channel", ["channelId", "createdAt"]),
 
   /**
    * How far a member has read in a channel.
@@ -950,7 +1437,8 @@ export default defineSchema({
     name: v.string(),
     /** Public served URL from Convex file storage — populated on add. */
     imageUrl: v.string(),
-    storageId: v.id("_storage"),
+    /** Absent for an emoji uploaded to the CDN, which has no Convex file. */
+    storageId: v.optional(v.id("_storage")),
     uploadedBy: v.id("users"),
     createdAt: v.number(),
   })
@@ -1083,8 +1571,12 @@ export default defineSchema({
     position: v.number(),
     /** Shown above the card. Optional — a banner is usually its own title. */
     title: v.optional(v.string()),
-    /** How much of the row it takes. The overview is a two-column grid. */
+    /** How much of the row it takes. Kept in step with `layout` for readers
+     * that predate it: wide enough to be "full", else "half". */
     width: v.optional(v.union(v.literal("half"), v.literal("full"))),
+    /** Where the card sits on the overview's twelve-column grid, in cells.
+     * Absent on cards from before the pinboard; the client places those. */
+    layout: v.optional(v.object({ x: v.number(), y: v.number(), w: v.number(), h: v.number() })),
     config: v.union(
       /** A short list of channels worth reading first. */
       v.object({
@@ -1114,8 +1606,73 @@ export default defineSchema({
         linkUrl: v.optional(v.string()),
         linkLabel: v.optional(v.string()),
       }),
+      /** A numbered list of the community's rules, each a short title and an
+       * optional sentence of explanation. */
+      v.object({
+        kind: v.literal("rules"),
+        rules: v.array(v.object({ title: v.string(), body: v.optional(v.string()) })),
+      }),
+      /** A personal note from the community's owner, drawn as a post-it. The
+       * author is not stored: it is whoever owns the community when it is read,
+       * so the name and avatar are never out of date. */
+      v.object({
+        kind: v.literal("note"),
+        body: v.string(),
+        color: v.optional(v.string()),
+      }),
+      /** A timer counting down to a moment. */
+      v.object({
+        kind: v.literal("countdown"),
+        /** Epoch ms. */
+        target: v.number(),
+        description: v.optional(v.string()),
+      }),
+      /** A month calendar with the days something is happening marked. */
+      v.object({
+        kind: v.literal("calendar"),
+        events: v.array(v.object({ date: v.string(), title: v.string() })),
+      }),
+      /** A question with a few answers, voted on by members. Votes live in
+       * `communityPollVotes`, one row each. */
+      v.object({
+        kind: v.literal("poll"),
+        question: v.string(),
+        options: v.array(v.string()),
+        /** Epoch ms voting stops. Open-ended when absent. */
+        closesAt: v.optional(v.number()),
+      }),
     ),
   }).index("by_community", ["communityId"]),
+
+  /** One member's vote on one poll card. At most one row per member per card:
+   * voting again replaces it, retracting deletes it. */
+  communityPollVotes: defineTable({
+    widgetId: v.id("communityWidgets"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    optionIndex: v.number(),
+  })
+    .index("by_widget", ["widgetId"])
+    .index("by_widget_user", ["widgetId", "userId"]),
+
+  /**
+   * A reusable shape for a community — channels, roles and rules — that
+   * somebody saved and can hand out by code. The built-in presets live in the
+   * client (src/lib/community-templates.ts) and are not rows here.
+   */
+  communityTemplates: defineTable({
+    ownerId: v.id("users"),
+    /** What is shared: short, upper-case, easy to read out. */
+    code: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    setup: setupValidator,
+    createdAt: v.number(),
+    /** How many communities have been made from it. */
+    uses: v.optional(v.number()),
+  })
+    .index("by_code", ["code"])
+    .index("by_owner", ["ownerId"]),
 
   typing: defineTable({
     userId: v.id("users"),
@@ -1162,10 +1719,36 @@ export default defineSchema({
     body: v.optional(v.string()),
     read: v.boolean(),
     createdAt: v.number(),
+    /** Only set on `channel_mention` rows: true when the message actually
+     * pinged this user (`<@id>`, `@everyone`, `@here`, a role), false for
+     * ordinary traffic delivered because the server is on "all messages".
+     * Absent on rows written before this field existed — those were titled
+     * "X mentioned you in #y" when they were mentions, which the sidebar falls
+     * back to reading. */
+    isMention: v.optional(v.boolean()),
   })
     .index("by_user", ["userId"])
     .index("by_user_read", ["userId", "read"])
     .index("by_user_created", ["userId", "createdAt"]),
+
+  /**
+   * A conversation or channel its owner has marked as a VIP — it is lifted
+   * into the sidebar's Priority card, with its latest activity on show.
+   *
+   * Distinct from `conversationMembers.pinnedAt`, which only orders the DM
+   * list: a priority item can also be a channel in a server, which has no
+   * other place to be pinned, and the card is a separate surface from the list
+   * it's lifted out of. Exactly one of `conversationId` / `channelId` is set.
+   */
+  priorityItems: defineTable({
+    userId: v.id("users"),
+    conversationId: v.optional(v.id("conversations")),
+    channelId: v.optional(v.id("channels")),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_conversation", ["userId", "conversationId"])
+    .index("by_user_channel", ["userId", "channelId"]),
 
   /**
    * Account-wide notification switches. Absent means the defaults in
@@ -1213,6 +1796,48 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_token", ["expoPushToken"]),
 
+  /**
+   * The caller's own arrangement of their community list in the unified
+   * sidebar — a personal order, Discord-style. One row per user holding the
+   * full ordering; communities missing from it (newly joined) sort after the
+   * ordered ones by join time, and ids for communities since left are pruned
+   * on the next reorder rather than eagerly.
+   */
+  sidebarCommunityOrders: defineTable({
+    userId: v.id("users"),
+    orderedCommunityIds: v.array(v.id("communities")),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
+  /**
+   * The pictures a person has recently worn as their avatar, banner or
+   * nameplate — at most `RECENT_LIMIT` per kind per profile, newest first by
+   * `lastUsedAt`.
+   *
+   * One row per picture, per profile: the account's (`communityId` absent) and
+   * each server identity's keep separate histories, because a server profile is
+   * a different face. The row holds everything needed to put the picture back
+   * — the cropped file that is displayed and the untouched original it was cut
+   * from, so a picture can be re-cropped later — and is also what owns the
+   * files: nothing is deleted when a picture is replaced, only when its row
+   * falls out of the list (see convex/profileImages.ts).
+   *
+   * `url` is the CDN address of an R2 object, or a Convex storage url for one
+   * uploaded before the CDN was on; `storageId` is only set in the second case.
+   */
+  profileImages: defineTable({
+    userId: v.id("users"),
+    communityId: v.optional(v.id("communities")),
+    kind: v.union(v.literal("avatar"), v.literal("banner"), v.literal("nameplate")),
+    url: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    originalUrl: v.optional(v.string()),
+    originalStorageId: v.optional(v.id("_storage")),
+    lastUsedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_scope", ["userId", "kind", "communityId"]),
+
   /** R2 asset metadata — one row per file in Cloudflare R2, so we can fetch by
    * path, track owner, hash, and handle canvas-editor layers + server profiles.
    * Migrated Convex `_storage` files live under `migrated/<storageId>`; new
@@ -1254,4 +1879,369 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_community", ["communityId"])
     .index("by_kind", ["kind"]),
+
+  // --- Staff ----------------------------------------------------------------
+
+  /**
+   * Who may use the admin console, and as what.
+   *
+   * A row is the only thing that grants access: the staff email badge is a
+   * label on a profile, not a permission. `roles` is what the console checks
+   * (see convex/lib/staffPermissions.ts), and `finance` is a role of its own that
+   * no other role includes — owners hold it only if they are given it.
+   * Revoking sets `revokedAt` rather than deleting, so the audit log still has
+   * someone to point at.
+   */
+  staffMembers: defineTable({
+    userId: v.id("users"),
+    roles: v.array(
+      v.union(
+        v.literal("owner"),
+        v.literal("admin"),
+        v.literal("moderator"),
+        v.literal("support"),
+        v.literal("finance")
+      )
+    ),
+    grantedBy: v.optional(v.id("users")),
+    createdAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  }).index("by_user", ["userId"]),
+
+  /** Every change a staff member makes in the console, and every look at
+   * finance. Append-only: there is no mutation that edits or deletes a row. */
+  staffAuditLog: defineTable({
+    actorId: v.id("users"),
+    /** `catalog.sku.update`, `staff.grant`, `finance.refund`… */
+    action: v.string(),
+    targetType: v.optional(v.string()),
+    targetId: v.optional(v.string()),
+    /** Small, human-readable detail — what changed, not whole documents. */
+    summary: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_created", ["createdAt"])
+    .index("by_actor", ["actorId", "createdAt"])
+    .index("by_target", ["targetType", "targetId"]),
+
+  // --- Reports --------------------------------------------------------------
+
+  /**
+   * A user's report of a person, a message or a community.
+   *
+   * `evidence` is a snapshot taken when the report was made: what the message
+   * said, who wrote it, where. Staff review what was reported, not whatever the
+   * message has since been edited into or deleted as — and they never need to
+   * open a private conversation to do it, because only what the reporter chose to
+   * report is ever in front of them.
+   */
+  reports: defineTable({
+    reporterId: v.id("users"),
+    targetType: v.union(
+      v.literal("user"),
+      v.literal("message"),
+      v.literal("channelMessage"),
+      v.literal("community")
+    ),
+    /** The reported thing's id, as a string (it is one of several tables'). */
+    targetId: v.string(),
+    /** The person responsible, where there is one: a message's author, the user
+     * reported, a community's owner. What reports are grouped by. */
+    targetUserId: v.optional(v.id("users")),
+    communityId: v.optional(v.id("communities")),
+    category: v.union(
+      v.literal("spam"),
+      v.literal("harassment"),
+      v.literal("hate"),
+      v.literal("sexual"),
+      v.literal("violence"),
+      v.literal("self_harm"),
+      v.literal("impersonation"),
+      v.literal("scam"),
+      v.literal("other")
+    ),
+    details: v.optional(v.string()),
+    evidence: v.optional(
+      v.object({
+        text: v.optional(v.string()),
+        authorName: v.optional(v.string()),
+        authorUsername: v.optional(v.string()),
+        attachments: v.optional(v.array(v.object({ fileName: v.string(), url: v.optional(v.string()) }))),
+        context: v.optional(v.string()),
+      })
+    ),
+    status: v.union(
+      v.literal("open"),
+      v.literal("reviewing"),
+      v.literal("resolved"),
+      v.literal("dismissed")
+    ),
+    assignedTo: v.optional(v.id("users")),
+    resolution: v.optional(v.string()),
+    resolvedBy: v.optional(v.id("users")),
+    resolvedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_status", ["status", "createdAt"])
+    .index("by_target", ["targetType", "targetId"])
+    .index("by_target_user", ["targetUserId"])
+    .index("by_reporter", ["reporterId", "createdAt"]),
+
+  /** Staff-only notes on a report. */
+  reportNotes: defineTable({
+    reportId: v.id("reports"),
+    authorId: v.id("users"),
+    body: v.string(),
+    createdAt: v.number(),
+  }).index("by_report", ["reportId", "createdAt"]),
+
+  // --- Support -------------------------------------------------------------
+
+  supportTickets: defineTable({
+    userId: v.id("users"),
+    subject: v.string(),
+    category: v.union(v.literal("account"), v.literal("billing"), v.literal("community"), v.literal("technical"), v.literal("other")),
+    priority: v.union(v.literal("low"), v.literal("normal"), v.literal("high"), v.literal("urgent")),
+    status: v.union(v.literal("open"), v.literal("in_progress"), v.literal("waiting_on_user"), v.literal("resolved"), v.literal("closed")),
+    assignedTo: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_status", ["status", "updatedAt"]).index("by_user", ["userId", "updatedAt"]),
+
+  supportTicketMessages: defineTable({
+    ticketId: v.id("supportTickets"),
+    authorId: v.id("users"),
+    body: v.string(),
+    internal: v.boolean(),
+    createdAt: v.number(),
+  }).index("by_ticket", ["ticketId", "createdAt"]),
+
+  /** Immutable record of platform-wide account moderation. */
+  platformModerationLog: defineTable({
+    userId: v.id("users"),
+    actorId: v.id("users"),
+    action: v.union(v.literal("suspend"), v.literal("unsuspend")),
+    reason: v.optional(v.string()),
+    until: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_user", ["userId", "createdAt"]),
+
+  /** Staff-visible state for a community, without deleting its content. */
+  communityModeration: defineTable({
+    communityId: v.id("communities"),
+    status: v.union(v.literal("active"), v.literal("restricted"), v.literal("archived")),
+    reason: v.optional(v.string()),
+    actorId: v.id("users"),
+    updatedAt: v.number(),
+  }).index("by_community", ["communityId"]),
+
+  // --- Marketplace ----------------------------------------------------------
+
+  skuCategories: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    position: v.number(),
+    active: v.boolean(),
+  }).index("by_slug", ["slug"]),
+
+  /**
+   * Something that can be sold. The catalogue lives here, not in Stripe: Stripe
+   * is told about a SKU when it is published (`stripeProductId`/`stripePriceId`)
+   * and is never asked what a SKU costs. Prices are read from this row on the
+   * server at the moment of purchase, so nothing the client sends can set one.
+   *
+   * What a purchase gives is `grants`, a snapshot-able list: a cosmetic grants
+   * its artwork, a bundle several things, a plan some perks, a community item
+   * something for one server.
+   */
+  skus: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    categoryId: v.id("skuCategories"),
+    type: v.union(
+      v.literal("cosmetic"),
+      v.literal("subscription"),
+      v.literal("community"),
+      v.literal("bundle")
+    ),
+    /** Cents, in `currency`'s smallest unit. 0 is free. */
+    priceCents: v.number(),
+    currency: v.string(),
+    /** Subscriptions only. */
+    interval: v.optional(v.union(v.literal("month"), v.literal("year"))),
+    grants: v.array(
+      v.object({
+        kind: v.union(
+          v.literal("avatarDecoration"),
+          v.literal("profileSticker"),
+          v.literal("profileEffect"),
+          v.literal("nameplate"),
+          v.literal("communityTheme"),
+          v.literal("communityBoost"),
+          v.literal("loungeScene"),
+          v.literal("themePack"),
+          v.literal("plan")
+        ),
+        /** What it is, by kind: layers as JSON for artwork made of layers, an
+         * address for a single picture, colours as JSON for a theme. */
+        payload: v.optional(v.string()),
+        label: v.optional(v.string()),
+      })
+    ),
+    /** The picture shown in the store. A CDN address. */
+    imageUrl: v.optional(v.string()),
+    status: v.union(v.literal("draft"), v.literal("active"), v.literal("archived")),
+    featured: v.boolean(),
+    position: v.number(),
+    stripeProductId: v.optional(v.string()),
+    stripePriceId: v.optional(v.string()),
+    /** User-created listings are moderated before becoming active. */
+    creatorId: v.optional(v.id("users")),
+    creatorShareBps: v.optional(v.number()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_category", ["categoryId", "position"])
+    .index("by_status", ["status", "position"]),
+
+  /** A creator's submission before staff approves it into `skus`. */
+  marketplaceSubmissions: defineTable({
+    creatorId: v.id("users"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    type: v.union(v.literal("cosmetic"), v.literal("community"), v.literal("bundle")),
+    grants: v.array(v.object({
+      kind: v.string(),
+      payload: v.optional(v.string()),
+      label: v.optional(v.string()),
+    })),
+    requestedPriceCents: v.number(),
+    currency: v.string(),
+    /** The picture for the store: set for kinds whose grant has no single picture
+     * of its own (a theme pack, a pack of several things). */
+    previewUrl: v.optional(v.string()),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
+    reviewNote: v.optional(v.string()),
+    skuId: v.optional(v.id("skus")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_creator", ["creatorId", "createdAt"])
+    .index("by_status", ["status", "createdAt"]),
+
+  /** Stripe Connect identity for creators who have completed onboarding. */
+  creatorAccounts: defineTable({
+    userId: v.id("users"),
+    stripeAccountId: v.string(),
+    chargesEnabled: v.boolean(),
+    payoutsEnabled: v.boolean(),
+    /** Whether the creator has finished giving Stripe their details. */
+    detailsSubmitted: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]).index("by_stripe_account", ["stripeAccountId"]),
+
+  /** Immutable creator-share ledger. Transfers are created only after payment
+   * confirmation, and this row makes retries idempotent. */
+  creatorEarnings: defineTable({
+    creatorId: v.id("users"),
+    orderId: v.id("orders"),
+    skuId: v.id("skus"),
+    grossCents: v.number(),
+    platformFeeCents: v.number(),
+    creatorCents: v.number(),
+    currency: v.string(),
+    status: v.union(v.literal("pending"), v.literal("transferred"), v.literal("held"), v.literal("refunded")),
+    stripeTransferId: v.optional(v.string()),
+    stripeReversalId: v.optional(v.string()),
+    /** Why a payout is waiting or failed, for whoever has to look at it. */
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_order", ["orderId"])
+    .index("by_creator", ["creatorId", "createdAt"])
+    .index("by_status", ["status", "createdAt"]),
+
+  /** A Stripe customer for a user. One each. */
+  stripeCustomers: defineTable({
+    userId: v.id("users"),
+    stripeCustomerId: v.string(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_stripe_customer", ["stripeCustomerId"]),
+
+  /**
+   * One attempt to buy a SKU. `amountCents` and `grants` are copied from the SKU
+   * at the moment of purchase: what was charged and what was promised stay true
+   * if the SKU is later repriced or changed.
+   */
+  orders: defineTable({
+    userId: v.id("users"),
+    skuId: v.id("skus"),
+    skuName: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("paid"),
+      v.literal("failed"),
+      v.literal("canceled"),
+      v.literal("refunded")
+    ),
+    amountCents: v.number(),
+    discountCents: v.optional(v.number()),
+    currency: v.string(),
+    /** For a community item: which community it was bought for. */
+    communityId: v.optional(v.id("communities")),
+    grants: v.array(
+      v.object({
+        kind: v.string(),
+        payload: v.optional(v.string()),
+        label: v.optional(v.string()),
+      })
+    ),
+    stripePaymentIntentId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    createdAt: v.number(),
+    paidAt: v.optional(v.number()),
+    refundedAt: v.optional(v.number()),
+    refundedCents: v.optional(v.number()),
+  })
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_status", ["status", "createdAt"])
+    .index("by_payment_intent", ["stripePaymentIntentId"])
+    .index("by_subscription", ["stripeSubscriptionId"])
+    .index("by_sku", ["skuId", "createdAt"])
+    .index("by_created", ["createdAt"]),
+
+  /** What a user owns. A purchase writes these; so does a staff comp. */
+  entitlements: defineTable({
+    userId: v.id("users"),
+    skuId: v.id("skus"),
+    kind: v.string(),
+    payload: v.optional(v.string()),
+    label: v.optional(v.string()),
+    communityId: v.optional(v.id("communities")),
+    source: v.union(v.literal("purchase"), v.literal("subscription"), v.literal("staff")),
+    orderId: v.optional(v.id("orders")),
+    /** A subscription's entitlements stop at the end of what has been paid for. */
+    expiresAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_user_sku", ["userId", "skuId"])
+    .index("by_order", ["orderId"])
+    .index("by_community", ["communityId"]),
+
+  /** Stripe webhook events already handled, so a retried delivery is a no-op. */
+  stripeEvents: defineTable({
+    eventId: v.string(),
+    type: v.string(),
+    handledAt: v.number(),
+  }).index("by_event", ["eventId"]),
 });

@@ -201,7 +201,7 @@ export function ScreenShareTile({
     <div
       onClick={onClick}
       className={cn(
-        "relative flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/40",
+        "relative flex max-h-full max-w-full items-center justify-center overflow-hidden [container-type:size] rounded-2xl border border-[color:var(--glass-border)] bg-[color:var(--glass-bg)] shadow-lg shadow-black/25",
         fill ? "h-full w-full" : "aspect-video w-full",
         onClick && "cursor-pointer"
       )}
@@ -215,12 +215,19 @@ export function ScreenShareTile({
       />
 
       {!hasScreen && (
-        <div className="flex flex-col items-center gap-1 text-muted-foreground">
+        // Kept between the "Screen" badge above and the name bar below, and
+        // clipped to that space: in the strip under a focused tile there is room
+        // for a line or two, and centring a taller block in it ran the text over
+        // both. What is shown follows the room there is — see the container
+        // queries on each line.
+        <div className="absolute inset-x-3 top-9 bottom-9 flex flex-col items-center justify-center gap-1 overflow-hidden text-center text-muted-foreground">
           {isLocal && !previewLive ? (
             <>
-              <MonitorUp className="size-6" />
-              <span className="text-sm">You&apos;re sharing this screen</span>
-              <span className="max-w-[22rem] text-center text-xs">
+              <MonitorUp className="size-6 shrink-0 [@container(max-height:8.5rem)]:hidden" />
+              <span className="text-sm leading-tight [@container(max-height:8.5rem)]:text-xs">
+                You&apos;re sharing this screen
+              </span>
+              <span className="hidden max-w-[22rem] text-xs leading-snug [@container(min-height:11rem)]:block">
                 {previewing
                   ? "Preview paused while Crystal is in the background."
                   : "The preview is off so sharing stays light on this machine."}

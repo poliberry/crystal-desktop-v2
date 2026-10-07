@@ -13,6 +13,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useCall } from "@/components/call/call-provider";
 import { DmMemberList } from "@/components/home/dm-member-list";
+import { RightSidebarContent, useRightSidebar } from "@/components/sidebar/right-sidebar";
 import { GroupAvatar } from "@/components/home/group-avatar";
 import { GroupSettingsDialog } from "@/components/home/group-settings-dialog";
 import { CakeRain } from "@/components/home/cake-rain";
@@ -79,7 +80,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const { activeCall } = useCall();
   const isActiveCall =
     activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
-  const [showMembers, setShowMembers] = useState(true);
+  // Held by the window, which draws the right sidebar this fills.
+  const { open: showMembers, toggle: toggleMembers } = useRightSidebar();
   const [editingGroup, setEditingGroup] = useState(false);
   const [editingBackground, setEditingBackground] = useState(false);
   const [replyingTo, setReplyingTo] = useState<ReplyDraft | null>(null);
@@ -133,6 +135,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   }
 
   const isGroup = conversation.type === "group";
+  const isCrystalConversation = conversation.members.some((member: any) => member.username === "crystal");
   const title = isGroup
     ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
     : (conversation.members[0]?.name ?? "Unknown");
@@ -194,6 +197,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                 <p className="truncate text-sm font-semibold leading-tight">
                   {title}
                 </p>
+                {avatarUser?.username === "crystal" && <span className="shrink-0 rounded-full border border-sky-400/40 bg-sky-400/10 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-sky-400">OFFICIAL</span>}
                 {/* Their own words first, then whatever they are doing. Nothing
                     at all when there is neither: the dot on the avatar already
                     says whether they are reachable, and a line repeating it in
@@ -227,7 +231,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                 </Tooltip>
               </TooltipProvider>
             )}
-            <Button
+            {!isCrystalConversation && <Button
               size="sm"
               variant={
                 isActiveCall || callParticipants.length > 0
@@ -244,7 +248,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                 : callParticipants.length > 0
                   ? `Join call (${callParticipants.length})`
                   : "Call"}
-            </Button>
+            </Button>}
 
             <TooltipProvider>
               <Tooltip>
@@ -252,7 +256,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => setShowMembers((v) => !v)}
+                    onClick={toggleMembers}
                   >
                     {showMembers ? (
                       <PanelRightClose className="size-4" />
@@ -275,16 +279,22 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
 
         <MessageList conversationId={conversationId} onReply={setReplyingTo} />
         <TypingIndicator conversationId={conversationId} />
-        <MessageComposer
-          conversationId={conversationId}
-          birthdayMembers={birthdayMembers}
-          replyingTo={replyingTo}
-          onCancelReply={() => setReplyingTo(null)}
-        />
+        {isCrystalConversation ? (
+          <div className="border-t bg-accent/30 px-4 py-3 text-center text-xs text-muted-foreground">
+            Crystal is an official system account. Replies are not available here.
+          </div>
+        ) : (
+          <MessageComposer
+            conversationId={conversationId}
+            birthdayMembers={birthdayMembers}
+            replyingTo={replyingTo}
+            onCancelReply={() => setReplyingTo(null)}
+          />
+        )}
       </div>
 
-      {showMembers &&
-        (isGroup ? (
+      <RightSidebarContent>
+        {isGroup ? (
           <DmMemberList conversationId={conversationId} />
         ) : (
           avatarUser && (
@@ -293,7 +303,8 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               userId={avatarUser.id}
             />
           )
-        ))}
+        )}
+      </RightSidebarContent>
 
       {/* The wallpaper editor for a one-to-one DM. A group reaches the same
           component through its settings dialog. */}

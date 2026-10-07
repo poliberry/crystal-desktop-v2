@@ -18,12 +18,15 @@ import { cn } from "@/lib/utils";
 function SoundGrid({
   clips,
   onPlay,
+  columns = 4,
 }: {
   clips: SoundboardClip[];
   onPlay: (clip: SoundboardClip) => void;
+  /** More across when the grid has the width of the control bar's card. */
+  columns?: 4 | 6;
 }) {
   return (
-    <div className="grid grid-cols-4 gap-1.5">
+    <div className={cn("grid gap-1.5", columns === 6 ? "grid-cols-6" : "grid-cols-4")}>
       {clips.map((clip) => (
         <button
           key={clip.id}
@@ -46,19 +49,10 @@ function SoundGrid({
   );
 }
 
-/**
- * The soundboard: built-in clips plus whatever the current community has
- * uploaded. Clicking one broadcasts it to everyone in the call (a LiveKit
- * data packet, not an extra audio track — see `src/lib/soundboard.ts`) and
- * plays it locally.
- *
- * Community clips only appear in a community voice channel; a DM call has no
- * server to draw them from, so it gets the built-ins alone.
- */
-export function SoundboardButton({ variant, className }: { variant?: "default" | "destructive" | "ghost" | "link" | "outline" | "secondary" | null | undefined; className?: string }) {
+/** The clips on offer and the way to play one: the built-ins, plus whatever the
+ * current community has uploaded when this is a community voice channel. */
+function useSoundboard() {
   const { activeCall, controller } = useCall();
-  const { soundboardVolume, setSoundboardVolume, deafened } = useAudioPreferences();
-
   const communityId = activeCall?.kind === "channel" ? activeCall.communityId : null;
   const communitySounds = useQuery(
     api.soundboard.list,
@@ -77,6 +71,84 @@ export function SoundboardButton({ variant, className }: { variant?: "default" |
     void controller.playSoundboardClip(clip);
   };
 
+  return { uploaded, play };
+}
+
+/**
+ * The soundboard's contents — the clips and the volume — with no frame of their
+ * own, so it can sit in a popover or open out of a card (the call's control bar).
+ */
+export function SoundboardPanel({
+  columns = 4,
+  className,
+}: {
+  columns?: 4 | 6;
+  className?: string;
+}) {
+  const { soundboardVolume, setSoundboardVolume, deafened } = useAudioPreferences();
+  const { uploaded, play } = useSoundboard();
+
+  return (
+    <div className={className}>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm font-semibold">Soundboard</p>
+        {deafened && (
+          <span className="text-[10px] text-muted-foreground">
+            You won&apos;t hear these while deafened
+          </span>
+        )}
+      </div>
+
+      <ScrollArea className="max-h-64">
+        <div className="space-y-3 pr-2">
+          {uploaded.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                This server
+              </p>
+              <SoundGrid clips={uploaded} onPlay={play} columns={columns} />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Default
+            </p>
+            <SoundGrid clips={BUILTIN_SOUNDS} onPlay={play} columns={columns} />
+          </div>
+        </div>
+      </ScrollArea>
+
+      <div className="mt-3 flex items-center gap-2 border-t pt-3">
+        <Volume2 className="size-3.5 shrink-0 text-muted-foreground" />
+        <Slider
+          value={[Math.round(soundboardVolume * 100)]}
+          min={0}
+          max={100}
+          step={5}
+          onValueChange={([value]) => setSoundboardVolume((value ?? 0) / 100)}
+        />
+        <span className="w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+          {Math.round(soundboardVolume * 100)}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The soundboard as a popover: built-in clips plus whatever the current
+ * community has uploaded. Clicking one broadcasts it to everyone in the call (a
+ * LiveKit data packet, not an extra audio track — see `src/lib/soundboard.ts`)
+ * and plays it locally. Its emoji falls across the presser's tile for
+ * everyone — see `SoundboardBurst`.
+ *
+ * Community clips only appear in a community voice channel; a DM call has no
+ * server to draw them from, so it gets the built-ins alone.
+ *
+ * The call's control bar does not use this: it opens `SoundboardPanel` inside
+ * its own card, the way it does the device pickers.
+ */
+export function SoundboardButton({ variant, className }: { variant?: "default" | "destructive" | "ghost" | "link" | "outline" | "secondary" | null | undefined; className?: string }) {
   return (
     <Popover>
       <Tooltip>
@@ -95,47 +167,7 @@ export function SoundboardButton({ variant, className }: { variant?: "default" |
       </Tooltip>
 
       <PopoverContent side="top" align="center" className="w-80 p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <p className="text-sm font-semibold">Soundboard</p>
-          {deafened && (
-            <span className="text-[10px] text-muted-foreground">
-              You won&apos;t hear these while deafened
-            </span>
-          )}
-        </div>
-
-        <ScrollArea className="max-h-72">
-          <div className="space-y-3 pr-2">
-            {uploaded.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  This server
-                </p>
-                <SoundGrid clips={uploaded} onPlay={play} />
-              </div>
-            )}
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Default
-              </p>
-              <SoundGrid clips={BUILTIN_SOUNDS} onPlay={play} />
-            </div>
-          </div>
-        </ScrollArea>
-
-        <div className="mt-3 flex items-center gap-2 border-t pt-3">
-          <Volume2 className="size-3.5 shrink-0 text-muted-foreground" />
-          <Slider
-            value={[Math.round(soundboardVolume * 100)]}
-            min={0}
-            max={100}
-            step={5}
-            onValueChange={([value]) => setSoundboardVolume((value ?? 0) / 100)}
-          />
-          <span className="w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-            {Math.round(soundboardVolume * 100)}%
-          </span>
-        </div>
+        <SoundboardPanel />
       </PopoverContent>
     </Popover>
   );

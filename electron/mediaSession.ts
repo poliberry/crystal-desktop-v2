@@ -545,48 +545,70 @@ function run(command: string, args: string[], timeoutMs = 5_000): Promise<string
 
 /**
  * macOS: Spotify and Apple Music both expose `current track` and
- * `player position`. Guarded by `application … is running` so querying never
- * *launches* either of them. Field order must match the parse below.
+ * `player position`. Field order must match the parse below.
+ *
+ * One script per app, and only run for an app that is already running:
+ * AppleScript resolves `tell application "X"` terms (`playing`, `current
+ * track`) when the script *compiles*, so a script naming an app that isn't
+ * installed fails to compile — and `osascript` plays the system alert beep on
+ * every failure. Gating on a process check keeps that from ever happening,
+ * and means querying never *launches* either app.
  */
-const MAC_NOW_PLAYING_SCRIPT = [
-  'set out to ""',
-  'if application "Spotify" is running then',
-  '  tell application "Spotify"',
-  "    if player state is playing then",
-  "      set t to current track",
-  // Spotify reports track duration in ms and player position in seconds.
-  '      set out to "Spotify" & linefeed & (name of t) & linefeed & (artist of t) & linefeed & (album of t) & linefeed & (artwork url of t) & linefeed & ((duration of t) as text) & linefeed & ((player position * 1000) as text)',
-  "    end if",
-  "  end tell",
-  "end if",
-  'if out is "" then',
-  '  if application "Music" is running then',
-  '    tell application "Music"',
-  "      if player state is playing then",
-  "        set t to current track",
-  // Apple Music reports both in seconds.
-  '        set out to "Apple Music" & linefeed & (name of t) & linefeed & (artist of t) & linefeed & (album of t) & linefeed & "" & linefeed & ((duration of t) * 1000 as text) & linefeed & ((player position * 1000) as text)',
-  "      end if",
-  "    end tell",
-  "  end if",
-  "end if",
-  "return out",
-].join("\n");
+const MAC_PLAYERS = [
+  {
+    process: "Spotify",
+    script: [
+      'tell application "Spotify"',
+      "  if player state is playing then",
+      "    set t to current track",
+      // Spotify reports track duration in ms and player position in seconds.
+      '    return "Spotify" & linefeed & (name of t) & linefeed & (artist of t) & linefeed & (album of t) & linefeed & (artwork url of t) & linefeed & ((duration of t) as text) & linefeed & ((player position * 1000) as text)',
+      "  end if",
+      "end tell",
+      'return ""',
+    ].join("\n"),
+  },
+  {
+    process: "Music",
+    script: [
+      'tell application "Music"',
+      "  if player state is playing then",
+      "    set t to current track",
+      // Apple Music reports both in seconds.
+      '    return "Apple Music" & linefeed & (name of t) & linefeed & (artist of t) & linefeed & (album of t) & linefeed & "" & linefeed & ((duration of t) * 1000 as text) & linefeed & ((player position * 1000) as text)',
+      "  end if",
+      "end tell",
+      'return ""',
+    ].join("\n"),
+  },
+] as const;
+
+async function isProcessRunning(name: string): Promise<boolean> {
+  // `pgrep` exits 1 when nothing matches, which `run` surfaces as a rejection.
+  return run("/usr/bin/pgrep", ["-x", name], 2_000).then(
+    (out) => out.trim().length > 0,
+    () => false,
+  );
+}
 
 async function readMacNowPlaying(): Promise<RawNowPlaying> {
-  const out = await run("/usr/bin/osascript", ["-e", MAC_NOW_PLAYING_SCRIPT], 4_000).catch(() => "");
-  const [source, title, artist, album, artwork, duration, position] = out.trim().split("\n");
-  if (!source || !title) return { playing: false };
-  return {
-    playing: true,
-    title,
-    artist,
-    album,
-    artworkUrl: artwork?.startsWith("http") ? artwork : undefined,
-    durationMs: toFiniteInt(duration),
-    positionMs: toFiniteInt(position),
-    source,
-  };
+  for (const player of MAC_PLAYERS) {
+    if (!(await isProcessRunning(player.process))) continue;
+    const out = await run("/usr/bin/osascript", ["-e", player.script], 4_000).catch(() => "");
+    const [source, title, artist, album, artwork, duration, position] = out.trim().split("\n");
+    if (!source || !title) continue;
+    return {
+      playing: true,
+      title,
+      artist,
+      album,
+      artworkUrl: artwork?.startsWith("http") ? artwork : undefined,
+      durationMs: toFiniteInt(duration),
+      positionMs: toFiniteInt(position),
+      source,
+    };
+  }
+  return { playing: false };
 }
 
 /** Linux: MPRIS via `playerctl`, if it's installed. */

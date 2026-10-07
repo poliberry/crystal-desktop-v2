@@ -12,11 +12,25 @@ const api = {
     path: () => ipcRenderer.invoke("custom-css:path"),
     reveal: () => ipcRenderer.invoke("custom-css:reveal"),
   },
+  system: {
+    accentColor: () => ipcRenderer.invoke("system:accent-color"),
+    onAccentColorChange: (cb: (color: string | null) => void) => {
+      const handler = (_e: IpcRendererEvent, color: string | null) => cb(color);
+      ipcRenderer.on("system:accent-color-changed", handler);
+      return () => ipcRenderer.removeListener("system:accent-color-changed", handler);
+    },
+  },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize"),
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
     close: () => ipcRenderer.invoke("window:close"),
     isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+    isFullScreen: () => ipcRenderer.invoke("window:is-fullscreen"),
+    onFullScreenChange: (cb: (fullScreen: boolean) => void) => {
+      const handler = (_e: IpcRendererEvent, fullScreen: boolean) => cb(fullScreen);
+      ipcRenderer.on("window:fullscreen-changed", handler);
+      return () => ipcRenderer.removeListener("window:fullscreen-changed", handler);
+    },
     setZoomFactor: (factor: number) => ipcRenderer.invoke("window:set-zoom", factor),
     onMaximizedChange: (cb: (maximized: boolean) => void) => {
       const handler = (_e: IpcRendererEvent, maximized: boolean) => cb(maximized);
@@ -136,6 +150,12 @@ const api = {
   editor: {
     open: (options: { kind: "frame" | "decoration"; scopeId?: string; scopeName?: string }) =>
       ipcRenderer.invoke("editor:open", options),
+  },
+  studio: {
+    open: () => ipcRenderer.invoke("studio:open"),
+  },
+  admin: {
+    open: () => ipcRenderer.invoke("admin:open"),
   },
   clipboard: {
     writeImage: (buffer: ArrayBuffer, mimeType: string) =>
