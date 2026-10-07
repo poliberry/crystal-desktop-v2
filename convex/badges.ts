@@ -145,6 +145,14 @@ export const seedDefaults = internalMutation({
   handler: async (ctx) => {
     const defaults = [
       {
+        badgeId: "official",
+        label: "OFFICIAL",
+        description: "Official Crystal system account.",
+        icon: "BsPatchCheckFill",
+        className: "text-sky-400",
+        position: -1,
+      },
+      {
         badgeId: "poliberry_staff",
         label: "Poliberry Staff",
         description: "Works on Crystal at Poliberry.",

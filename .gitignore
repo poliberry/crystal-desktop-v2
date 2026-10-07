@@ -13,3 +13,4 @@ release
 # caches, and the binary itself is produced by `bun run build:native` on the
 # machine (or CI runner) doing the packaging.
 native/**/.build
+.next-web

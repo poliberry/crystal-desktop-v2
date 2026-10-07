@@ -27,7 +27,16 @@ export function GradientPicker({
   onStartChange,
   onEndChange,
   bannerUrl,
+  label = "Avatar frame gradient",
+  noun = "frame",
+  source = "banner",
 }: {
+  /** What the gradient is called, over the controls. */
+  label?: string;
+  /** What it colours, in the hints: "set the frame start". */
+  noun?: string;
+  /** Where the offered colours come from: "From your banner". */
+  source?: string;
   start: string;
   end: string;
   onStartChange: (colour: string) => void;
@@ -75,10 +84,10 @@ export function GradientPicker({
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <Label>Avatar frame gradient</Label>
+        <Label>{label}</Label>
         <div className="flex items-end gap-6">
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">Frame start</p>
+            <p className="text-xs text-muted-foreground">Start</p>
             <input
               type="color"
               value={start || "#000000"}
@@ -90,7 +99,7 @@ export function GradientPicker({
             />
           </div>
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">Frame end</p>
+            <p className="text-xs text-muted-foreground">End</p>
             <input
               type="color"
               value={end || "#000000"}
@@ -114,7 +123,7 @@ export function GradientPicker({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
-              From your banner — click to set the frame{" "}
+              From the {source} — click to set the {noun}{" "}
               <span className="font-medium text-foreground">{slot}</span>
             </p>
             <Button size="sm" variant="ghost" onClick={applyBoth}>
@@ -128,7 +137,7 @@ export function GradientPicker({
                 key={colour}
                 type="button"
                 title={colour}
-                aria-label={`Use ${colour} as the frame ${slot}`}
+                aria-label={`Use ${colour} as the ${noun} ${slot}`}
                 onClick={() => applySwatch(colour)}
                 style={{ backgroundColor: colour }}
                 className={cn(

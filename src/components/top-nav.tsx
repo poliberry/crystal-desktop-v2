@@ -6,11 +6,9 @@ import { useState } from "react";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
+import { useOpenCreateCommunity } from "@/components/pages/page-context";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
-import { GlobalSearch } from "@/components/home/global-search";
 import { useBirthday } from "@/components/home/birthday-provider";
-import { NotificationInbox } from "@/components/home/notification-inbox";
 import { useNavigation } from "@/components/home/navigation-context";
 import { TabBar } from "@/components/home/tab-bar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,6 +26,9 @@ import {
 import { UpdateIndicator } from "@/components/update-indicator";
 import { WindowControls } from "@/components/window-controls";
 import { Menu01Icon } from "@animateicons/react/huge";
+import { SidebarTrigger, useSidebar } from "./ui/sidebar";
+import { cn } from "@/lib/utils";
+import { hasNativeWindowControls, useTrafficLightsInset } from "@/hooks/use-window-controls";
 
 /**
  * Replays the birthday celebration.
@@ -63,7 +64,7 @@ function BirthdayButton() {
 
 function CommunitiesPopover() {
   const [open, setOpen] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const openCreateCommunity = useOpenCreateCommunity();
 
   const communities = useQuery(api.communities.listMine) ?? [];
   const nav = useNavigation();
@@ -140,7 +141,7 @@ function CommunitiesPopover() {
             <button
               type="button"
               onClick={() => {
-                setCreateOpen(true);
+                openCreateCommunity();
                 setOpen(false);
               }}
               className="flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent/60"
@@ -151,14 +152,6 @@ function CommunitiesPopover() {
           </div>
         </PopoverContent>
       </Popover>
-
-      <CreateCommunityDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={(id) => {
-          nav.openCommunity(id);
-        }}
-      />
     </>
   );
 }
@@ -166,16 +159,35 @@ function CommunitiesPopover() {
 export function TopNav() {
   const { communityNavStyle: style, tabsEnabled } = useUiPreferences();
   const nav = useNavigation();
+  const { state } = useSidebar();
+  // With the sidebar out of the way the window's top-left corner is this bar's,
+  // and the system's window buttons are in it.
+  const trafficLights = useTrafficLightsInset();
+  const clearOfLights = state === "collapsed" ? trafficLights : 0;
+  // Tall enough that what is in the bar sits on the same line as the lights,
+  // which are inset from the corner. And with no window buttons of ours at the
+  // right-hand end, the buttons there need their own margin from the edge.
+  const nativeControls = hasNativeWindowControls();
 
   return (
     <header
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      className="relative flex h-8 shrink-0 items-center justify-between gap-2 bg-background z-[99]"
+      className={cn(
+        "relative flex shrink-0 items-center justify-between gap-2 bg-background z-[99]",
+        trafficLights ? "h-12" : "h-8",
+        nativeControls && "pr-4",
+      )}
     >
       <div
         className="flex shrink-0 items-center gap-2 ml-2"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        style={
+          {
+            WebkitAppRegion: "no-drag",
+            marginLeft: clearOfLights || undefined,
+          } as React.CSSProperties
+        }
       >
+        <SidebarTrigger />
         {style === "popover" && (
           <>
             <TooltipProvider>
@@ -208,10 +220,6 @@ export function TopNav() {
       <UpdateIndicator />
 
       <BirthdayButton />
-
-      <NotificationInbox />
-
-      <GlobalSearch />
 
       <WindowControls className="ml-1 z-[999] pointer-events-auto" />
     </header>

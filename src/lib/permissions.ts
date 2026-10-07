@@ -26,6 +26,8 @@ export const PERMISSIONS = {
   MODERATE_MEMBERS: 1 << 15,
   MANAGE_NICKNAMES: 1 << 16,
   MENTION_EVERYONE: 1 << 17,
+  MANAGE_GAME_SERVERS: 1 << 18,
+  MANAGE_EVENTS: 1 << 19,
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -49,6 +51,8 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   MODERATE_MEMBERS: "Time members out",
   MANAGE_NICKNAMES: "Change members' nicknames",
   MENTION_EVERYONE: "Mention @everyone, @here and roles",
+  MANAGE_GAME_SERVERS: "Manage game servers",
+  MANAGE_EVENTS: "Manage events",
 } as const;
 
 export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
@@ -77,6 +81,9 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
   MANAGE_NICKNAMES: "Allows users to change the nicknames of other members.",
   MENTION_EVERYONE:
     "Allows users to use @everyone and @here, and to mention any role in your community.",
+  MANAGE_GAME_SERVERS:
+    "Allows users to connect a Pterodactyl panel and choose who can start, stop and use each game server.",
+  MANAGE_EVENTS: "Allows users to create, edit and cancel events and scrims.",
 } as const;
 
 /**
@@ -97,6 +104,8 @@ export const PERMISSION_GROUPS: { title: string; keys: PermissionKey[] }[] = [
       "MANAGE_COMMUNITY",
       "CREATE_INVITE",
       "MANAGE_NICKNAMES",
+      "MANAGE_EVENTS",
+      "MANAGE_GAME_SERVERS",
     ],
   },
   {

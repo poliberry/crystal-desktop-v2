@@ -25,6 +25,7 @@ import {
 } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import { isR2Url, dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 
 /** A dashboard is a summary. Past this it's a channel list with extra steps. */
 const MAX_WIDGETS = 16;
@@ -56,7 +57,87 @@ const configValidator = v.union(
     linkUrl: v.optional(v.string()),
     linkLabel: v.optional(v.string()),
   }),
+  v.object({
+    kind: v.literal("rules"),
+    rules: v.array(v.object({ title: v.string(), body: v.optional(v.string()) })),
+  }),
+  v.object({
+    kind: v.literal("note"),
+    body: v.string(),
+    color: v.optional(v.string()),
+  }),
+  v.object({
+    kind: v.literal("countdown"),
+    target: v.number(),
+    description: v.optional(v.string()),
+  }),
+  v.object({
+    kind: v.literal("calendar"),
+    events: v.array(v.object({ date: v.string(), title: v.string() })),
+  }),
+  v.object({
+    kind: v.literal("poll"),
+    question: v.string(),
+    options: v.array(v.string()),
+    closesAt: v.optional(v.number()),
+  }),
 );
+
+/** The post-it colours; anything else is the default yellow. */
+export const NOTE_COLORS = ["yellow", "pink", "blue", "green", "orange"] as const;
+const MAX_POLL_OPTIONS = 8;
+const MAX_CALENDAR_EVENTS = 50;
+
+/** The limits on what the newer kinds hold, applied to what a client sent. */
+function sanitizeConfig<C extends { kind: string }>(config: C): C {
+  const cfg = config as any;
+  switch (cfg.kind) {
+    case "note":
+      return {
+        ...cfg,
+        body: String(cfg.body).slice(0, 500),
+        color: NOTE_COLORS.includes(cfg.color) ? cfg.color : "yellow",
+      };
+    case "countdown":
+      return { ...cfg, description: cfg.description?.trim().slice(0, 160) || undefined };
+    case "calendar":
+      return {
+        ...cfg,
+        events: (cfg.events as { date: string; title: string }[])
+          .filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && e.title.trim())
+          .slice(0, MAX_CALENDAR_EVENTS)
+          .map((e) => ({ date: e.date, title: e.title.trim().slice(0, 80) })),
+      };
+    case "poll": {
+      const options = (cfg.options as string[])
+        .map((o) => o.trim().slice(0, 80))
+        .filter(Boolean)
+        .slice(0, MAX_POLL_OPTIONS);
+      return { ...cfg, question: String(cfg.question).trim().slice(0, 160), options };
+    }
+    default:
+      return config;
+  }
+}
+
+const layoutValidator = v.object({
+  x: v.number(),
+  y: v.number(),
+  w: v.number(),
+  h: v.number(),
+});
+
+/** The twelve-column grid (src/lib/overview-layout.ts), enforced here because
+ * the numbers come from a client. */
+function sanitizeLayout(layout: { x: number; y: number; w: number; h: number }) {
+  const w = Math.min(12, Math.max(1, Math.round(layout.w)));
+  return {
+    w,
+    h: Math.min(40, Math.max(1, Math.round(layout.h))),
+    x: Math.min(12 - w, Math.max(0, Math.round(layout.x))),
+    y: Math.min(400, Math.max(0, Math.round(layout.y))),
+  };
+}
 
 async function widgetsOf(
   ctx: QueryCtx,
@@ -121,11 +202,67 @@ export const listOverview = query({
           id: widget._id,
           title: widget.title,
           width: widget.width ?? "half",
+          layout: widget.layout,
         };
         const config = widget.config;
 
         if (config.kind === "markdown") {
           return { ...base, kind: "markdown" as const, body: config.body };
+        }
+
+        if (config.kind === "note") {
+          // Written by the owner, whoever that is now.
+          const owner = await ctx.db.get(community.ownerId);
+          return {
+            ...base,
+            kind: "note" as const,
+            body: config.body,
+            color: config.color ?? "yellow",
+            author: { name: owner?.name ?? "The owner", imageUrl: owner?.imageUrl },
+          };
+        }
+
+        if (config.kind === "countdown") {
+          return {
+            ...base,
+            kind: "countdown" as const,
+            target: config.target,
+            description: config.description,
+          };
+        }
+
+        if (config.kind === "calendar") {
+          return { ...base, kind: "calendar" as const, events: config.events };
+        }
+
+        if (config.kind === "poll") {
+          if (config.options.length < 2) return null;
+          const votes = await ctx.db
+            .query("communityPollVotes")
+            .withIndex("by_widget", (q) => q.eq("widgetId", widget._id))
+            .collect();
+          const counts = config.options.map(
+            (_, index) => votes.filter((vote) => vote.optionIndex === index).length,
+          );
+          return {
+            ...base,
+            kind: "poll" as const,
+            question: config.question,
+            options: config.options.map((label, index) => ({ label, count: counts[index]! })),
+            total: counts.reduce((sum, n) => sum + n, 0),
+            myVote: votes.find((vote) => vote.userId === me._id)?.optionIndex ?? null,
+            closesAt: config.closesAt,
+          };
+        }
+
+        if (config.kind === "rules") {
+          if (config.rules.length === 0) return null;
+          return {
+            ...base,
+            title: widget.title ?? "Rules",
+            kind: "rules" as const,
+            rules: config.rules,
+          };
         }
 
         if (config.kind === "banner") {
@@ -223,6 +360,7 @@ export const listForEditing = query({
       position: w.position,
       title: w.title,
       width: w.width ?? "half",
+      layout: w.layout,
       config: w.config,
     }));
   },
@@ -245,16 +383,27 @@ export const upsertWidget = mutation({
     title: v.optional(v.string()),
     width: v.optional(v.union(v.literal("half"), v.literal("full"))),
     config: configValidator,
+    /** Where a new card goes. Left out when editing one, so changing what a
+     * card says never moves it. */
+    layout: v.optional(layoutValidator),
     /** A freshly uploaded banner image, adopted into the config here so the
      * client never has to hold a storage URL. */
     imageStorageId: v.optional(v.id("_storage")),
+    /** The same image, uploaded to the CDN instead of Convex storage. */
+    imageCdnKey: v.optional(v.string()),
+    imageCdnUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, args.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
 
-    let config = args.config;
+    let config = sanitizeConfig(args.config);
+    if ((args.imageCdnKey || args.imageCdnUrl) && config.kind === "banner") {
+      const url = args.imageCdnUrl ?? r2PublicUrlForKey(args.imageCdnKey!);
+      if (!url) throw new Error("Banner upload failed.");
+      config = { ...config, imageUrl: url, imageStorageId: undefined };
+    }
     if (args.imageStorageId && config.kind === "banner") {
       await requireWithinUploadLimit(
         ctx,
@@ -267,10 +416,14 @@ export const upsertWidget = mutation({
       config = { ...config, imageUrl: url, imageStorageId: args.imageStorageId };
     }
 
+    const layout = args.layout ? sanitizeLayout(args.layout) : undefined;
     const patch = {
       title: args.title?.trim().slice(0, 80) || undefined,
-      width: args.width ?? "half",
+      // Kept for the sake of readers that predate `layout`; with one, the size
+      // on the board decides.
+      width: layout ? (layout.w >= 9 ? ("full" as const) : ("half" as const)) : (args.width ?? "half"),
       config,
+      ...(layout ? { layout } : {}),
     };
 
     if (args.widgetId) {
@@ -286,6 +439,17 @@ export const upsertWidget = mutation({
         existing.config.imageStorageId !== args.imageStorageId
       ) {
         await ctx.storage.delete(existing.config.imageStorageId).catch(() => {});
+      }
+      // The CDN picture it replaced, if the edit gave it a new one.
+      if (
+        existing.config.kind === "banner" &&
+        existing.config.imageUrl &&
+        isR2Url(existing.config.imageUrl) &&
+        patch.config.kind === "banner" &&
+        patch.config.imageUrl !== existing.config.imageUrl &&
+        (args.imageStorageId || args.imageCdnKey || args.imageCdnUrl)
+      ) {
+        await dropR2Url(ctx, existing.config.imageUrl).catch(() => {});
       }
       return args.widgetId;
     }
@@ -311,8 +475,18 @@ export const removeWidget = mutation({
     const community = await requireCommunity(ctx, widget.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
     await ctx.db.delete(widgetId);
+    if (widget.config.kind === "poll") {
+      const votes = await ctx.db
+        .query("communityPollVotes")
+        .withIndex("by_widget", (q) => q.eq("widgetId", widgetId))
+        .collect();
+      for (const vote of votes) await ctx.db.delete(vote._id);
+    }
     if (widget.config.kind === "banner" && widget.config.imageStorageId) {
       await ctx.storage.delete(widget.config.imageStorageId).catch(() => {});
+    }
+    if (widget.config.kind === "banner" && widget.config.imageUrl && isR2Url(widget.config.imageUrl)) {
+      await dropR2Url(ctx, widget.config.imageUrl).catch(() => {});
     }
   },
 });
@@ -333,6 +507,83 @@ export const reorderWidgets = mutation({
       const widget = await ctx.db.get(id);
       if (!widget || widget.communityId !== communityId) continue;
       await ctx.db.patch(id, { position: position++ });
+    }
+  },
+});
+
+/** Where every card sits, in one write — what comes out of a drag or a resize
+ * on the pinboard. The reading order is rewritten to match, so anything that
+ * lays the cards out in a column (a narrow window) reads them the way the board
+ * does: top to bottom, left to right. */
+export const saveLayout = mutation({
+  args: {
+    communityId: v.id("communities"),
+    items: v.array(v.object({ id: v.id("communityWidgets"), ...layoutValidator.fields })),
+  },
+  handler: async (ctx, { communityId, items }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const community = await requireCommunity(ctx, communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
+
+    const cleaned = items.map((item) => ({ id: item.id, ...sanitizeLayout(item) }));
+    cleaned.sort((a, b) => a.y - b.y || a.x - b.x);
+    let position = 0;
+    for (const item of cleaned) {
+      const widget = await ctx.db.get(item.id);
+      if (!widget || widget.communityId !== communityId) continue;
+      const { id, ...layout } = item;
+      await ctx.db.patch(id, {
+        layout,
+        width: layout.w >= 9 ? "full" : "half",
+        position: position++,
+      });
+    }
+  },
+});
+
+/**
+ * Votes on a poll card, or takes the vote back (`optionIndex: null`).
+ *
+ * Any member may vote; one vote each, and voting again moves it. Checked here
+ * rather than trusted from the card: whether the poll has closed, whether the
+ * option exists, and whether the voter is in the community at all.
+ */
+export const votePoll = mutation({
+  args: {
+    widgetId: v.id("communityWidgets"),
+    optionIndex: v.union(v.number(), v.null()),
+  },
+  handler: async (ctx, { widgetId, optionIndex }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const widget = await ctx.db.get(widgetId);
+    if (!widget || widget.config.kind !== "poll") throw new Error("That isn't a poll.");
+    await requireMember(ctx, widget.communityId, me._id);
+
+    const config = widget.config;
+    if (config.closesAt !== undefined && Date.now() >= config.closesAt) {
+      throw new Error("This poll has closed.");
+    }
+
+    const existing = await ctx.db
+      .query("communityPollVotes")
+      .withIndex("by_widget_user", (q) => q.eq("widgetId", widgetId).eq("userId", me._id))
+      .unique();
+
+    if (optionIndex === null) {
+      if (existing) await ctx.db.delete(existing._id);
+      return;
+    }
+    if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= config.options.length) {
+      throw new Error("That isn't one of the options.");
+    }
+    if (existing) await ctx.db.patch(existing._id, { optionIndex });
+    else {
+      await ctx.db.insert("communityPollVotes", {
+        widgetId,
+        communityId: widget.communityId,
+        userId: me._id,
+        optionIndex,
+      });
     }
   },
 });

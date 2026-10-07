@@ -3,7 +3,9 @@
 import { CallProvider } from "@/components/call/call-provider";
 import { HomeLayout } from "@/components/home/home-layout";
 import { NavigationProvider } from "@/components/home/navigation-context";
+import { PageSidebarProvider } from "@/components/pages/page-sidebar";
 import { InviteDeepLinkHandler } from "@/components/invite-deeplink-handler";
+import { VerifyMembershipHost } from "@/components/community/verify-membership-host";
 import { TabsProvider } from "@/components/home/tabs-context";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TopNav } from "@/components/top-nav";
@@ -14,6 +16,10 @@ import { Google_Sans_Flex } from "next/font/google";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BirthdayProvider } from "@/components/home/birthday-provider";
+import { RightSidebarHost, RightSidebarProvider } from "@/components/sidebar/right-sidebar";
+import { ResizableSidebarProvider } from "@/components/sidebar/resizable-sidebar";
+import { UnifiedSidebar } from "@/components/sidebar/unified-sidebar";
+import { Sidebar, SidebarInset } from "@/components/ui/sidebar";
 
 const googleSansFlex = Google_Sans_Flex({
   subsets: ["latin"],
@@ -145,12 +151,36 @@ export default function HomePage() {
                 {/* Inside NavigationProvider: accepting an invite jumps
                     straight into the server it was for. */}
                 <InviteDeepLinkHandler />
-                <div className="flex h-full flex-col">
-                  <TopNav />
-                  <div className="min-h-0 flex-1">
-                    <HomeLayout />
-                  </div>
-                </div>
+                <VerifyMembershipHost />
+                {/* Both halves of a page — its menu in the sidebar, its
+                    content beside it — need to find each other. */}
+                <PageSidebarProvider>
+                  <RightSidebarProvider>
+                    {/* Wider than the stock 16rem by default, and the user's to
+                        change: the Priority card, the community previews and the
+                        user card's controls all want the room. */}
+                    <ResizableSidebarProvider className="h-full min-h-0">
+                      <Sidebar variant="floating">
+                        <UnifiedSidebar />
+                      </Sidebar>
+                      {/* `min-w-0` / `overflow-hidden`: a flex child won't shrink
+                          below its content by default, so a wide page (the profile
+                          editor is three panes) would widen the whole app instead
+                          of fitting beside the sidebar. */}
+                      <SidebarInset className="min-w-0 overflow-hidden">
+                        <div className="flex h-full min-w-0 flex-col">
+                          <TopNav />
+                          <div className="min-h-0 flex-1">
+                            <HomeLayout />
+                          </div>
+                        </div>
+                      </SidebarInset>
+                      {/* The other full-height column: what the view in front
+                          puts at the right, so the top bar narrows for it too. */}
+                      <RightSidebarHost />
+                    </ResizableSidebarProvider>
+                  </RightSidebarProvider>
+                </PageSidebarProvider>
               </BirthdayProvider>
             </NavigationProvider>
           </TabsProvider>

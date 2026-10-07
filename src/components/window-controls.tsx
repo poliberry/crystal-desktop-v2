@@ -5,10 +5,20 @@ import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { useWindowControls } from "@/hooks/use-window-controls";
 import { cn } from "@/lib/utils";
 
-/** Custom minimize/maximize/close buttons for the frameless window — must
+/** Custom minimize/maximize/close buttons for the frameless window (not drawn
+ * on macOS, which has the system's) — must
  * sit in a `no-drag` region since the titlebar area around it is draggable. */
-export function WindowControls({ className }: { className?: string }) {
-  const { supported, maximized, minimize, toggleMaximize, close } = useWindowControls();
+export function WindowControls({
+  className,
+  forceCustom,
+}: {
+  className?: string;
+  /** Draw them even on macOS, where windows otherwise have the system's own. */
+  forceCustom?: boolean;
+}) {
+  const { supported, maximized, minimize, toggleMaximize, close } = useWindowControls({
+    forceCustom,
+  });
   if (!supported) return null;
 
   return (

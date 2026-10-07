@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Reply, Smile, Trash2 } from "lucide-react";
+import { Flag, Pencil, Reply, Smile, Trash2 } from "lucide-react";
 
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
 import { formatCustomEmoji } from "@/lib/custom-emoji";
@@ -27,6 +27,8 @@ interface MessageContextMenuProps {
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
   onDelete: (shiftKey: boolean) => void;
+  /** Offered only for other people's messages. */
+  onReport?: () => void;
 }
 
 /** Right-click equivalent of MessageHoverActions — same actions. */
@@ -39,6 +41,7 @@ export function MessageContextMenu({
   onReply,
   onEdit,
   onDelete,
+  onReport,
 }: MessageContextMenuProps) {
   return (
     <ContextMenu>
@@ -76,6 +79,15 @@ export function MessageContextMenu({
             <Trash2 className="size-4" />
             Delete message
           </ContextMenuItem>
+        )}
+        {onReport && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" onClick={onReport}>
+              <Flag className="size-4" />
+              Report message
+            </ContextMenuItem>
+          </>
         )}
       </ContextMenuContent>
     </ContextMenu>

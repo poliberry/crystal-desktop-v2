@@ -1,3 +1,6 @@
+import { internal } from "../_generated/api";
+import type { MutationCtx } from "../_generated/server";
+
 /**
  * R2 helpers for asset mutations (banners, decorations, effects, frames,
  * community banners, chat backgrounds, emoji, etc.).
@@ -5,6 +8,16 @@
  * When R2 env is set, uploads go to R2 and imageUrl stores the CDN public URL.
  * When not set, fallback to Convex storage.
  */
+
+/** Objects under this folder are never deleted by the app's clean-up paths. */
+export const PROTECTED_PREFIX = "marketplace/";
+
+/** The folder one creator's artwork goes in: their own id, made safe for a path.
+ * The upload ticket and the submission check both compute it, so a creator can
+ * only submit artwork that went in under their own name. */
+export function creationFolder(clerkId: string): string {
+  return `marketplace/creations/${clerkId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 48)}/`;
+}
 
 export function isR2Enabled(): boolean {
   return !!(process.env.R2_ACCOUNT_ID && process.env.R2_BUCKET && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
@@ -35,6 +48,12 @@ function r2KeyFromUrl(url: string | null | undefined): string | null {
  */
 export async function r2DeleteByKey(key: string | null | undefined): Promise<void> {
   if (!key || !isR2Enabled()) return;
+  // Marketplace artwork is one file shared by everyone who owns the item. Every
+  // "replace my picture" path in the app deletes what it replaces, and a buyer
+  // swapping a purchased decoration for something else must not delete it for
+  // every other owner. Only staff removing the SKU would, and they don't: the
+  // files of an archived item stay.
+  if (key.startsWith(PROTECTED_PREFIX)) return;
   const accountId = process.env.R2_ACCOUNT_ID!;
   const bucket = process.env.R2_BUCKET!;
   const accessKey = process.env.R2_ACCESS_KEY_ID!;
@@ -52,6 +71,24 @@ export async function r2DeleteByKey(key: string | null | undefined): Promise<voi
 export async function r2DeleteByUrl(url: string | null | undefined): Promise<void> {
   const key = r2KeyFromUrl(url);
   if (key) await r2DeleteByKey(key);
+}
+
+/**
+ * Delete an R2 object from inside a mutation.
+ *
+ * A mutation cannot make a network request, so calling `r2DeleteByUrl` from one
+ * silently does nothing — its `fetch` fails, the failure is swallowed as
+ * "best effort", and the object stays in the bucket for ever. This schedules an
+ * action to do the delete instead, which runs once the mutation commits (and not
+ * at all if it rolls back, which is also what a delete should do).
+ */
+export async function dropR2Url(
+  ctx: Pick<MutationCtx, "scheduler">,
+  url: string | null | undefined
+): Promise<void> {
+  const key = r2KeyFromUrl(url);
+  if (!key || !isR2Enabled()) return;
+  await ctx.scheduler.runAfter(0, internal.cdnInternal.deleteR2Object, { key });
 }
 
 /**

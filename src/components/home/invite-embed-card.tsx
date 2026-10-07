@@ -1,5 +1,6 @@
 "use client";
 
+import { requestMembershipVerification } from "@/lib/members-only";
 import { useMutation, useQuery } from "convex/react";
 import { Users } from "lucide-react";
 import { useState } from "react";
@@ -27,6 +28,9 @@ export function InviteEmbedCard({ code }: InviteEmbedCardProps) {
     try {
       const communityId = await joinByInviteCode({ code });
       nav.openCommunity(communityId);
+    } catch (err) {
+      // Members-only: the verification dialog takes it from here.
+      if (!requestMembershipVerification(err, { code })) throw err;
     } finally {
       setJoining(false);
     }

@@ -9,3 +9,9 @@ export function formatClock(seconds: number): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
 }
+
+/** Whether an address is a video, by what it ends in — the same rule nameplates use,
+ * so a creator's upload keeps its type through the CDN. */
+export function isVideoUrl(url: string | null | undefined): boolean {
+  return !!url && /\.(webm|mp4|m4v|mov)(\?.*)?$/i.test(url);
+}

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { isR2Url, dropR2Url } from "./r2";
 
 /**
  * Server-side handling of placed artwork — the profile frame's layers and the
@@ -173,6 +174,130 @@ export function normalizeLayers(layers: LayerArg[]): LayerArg[] {
   }));
 }
 
+/**
+ * Where artwork may go — mirrored from src/lib/cosmetic-layers.ts, which is
+ * what the editor enforces while you drag. Change one, change the other.
+ *
+ * A decoration sits around an avatar and may hang `DECORATION_MARGIN` percent
+ * past it. A sticker sits *on* a profile card and has to stay on it: no wider
+ * than `STICKER_MAX_WIDTH`, no further down than the tallest card there is, and
+ * pinned to the top or bottom edge. A layer that runs around the card is a
+ * frame, and frames are the marketplace's.
+ */
+const DECORATION_MARGIN = 30;
+const STICKER_MAX_WIDTH = 70;
+const STICKER_MAX_CARD_HEIGHT = 240;
+const STICKER_FALLBACK_CARD_HEIGHT = 130;
+
+/** Half the width and height a box takes up once it has been turned. */
+function turnedHalfExtents(width: number, height: number, rotation: number | undefined) {
+  const radians = ((rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  return { x: (width * cos + height * sin) / 2, y: (width * sin + height * cos) / 2 };
+}
+
+/** Where a layer's centre sits, measured down from the stage's top edge in
+ * percent of its width — the one place the three anchors are told apart. */
+function centreFromTop(layer: LayerArg, stageHeight: number): number {
+  if (layer.anchor === "center") return stageHeight / 2 + layer.y;
+  if (layer.anchor === "bottom") return stageHeight + layer.y;
+  if (layer.anchor === "locked") return (layer.y / 100) * stageHeight;
+  return layer.y;
+}
+
+/** The inverse of `centreFromTop`, for a given anchor. */
+function yFromCentre(anchor: LayerArg["anchor"], centre: number, stageHeight: number): number {
+  if (anchor === "center") return centre - stageHeight / 2;
+  if (anchor === "bottom") return centre - stageHeight;
+  if (anchor === "locked") return stageHeight > 0 ? (centre / stageHeight) * 100 : 0;
+  return centre;
+}
+
+/** The height to assume for a layer whose height is the artwork's own, which
+ * only the file knows: a square is the best guess and errs towards more room. */
+const heightOf = (layer: LayerArg) => layer.height ?? layer.width;
+
+/**
+ * Sticker layers as they should be stored.
+ *
+ * Without a card to measure, so against a short one and against the tallest:
+ * inside it at the sides, below the top edge, and no further down than any card
+ * goes. The editor is stricter — it confines a sticker to the card it is
+ * actually drawn on — and this is the floor that holds for a caller that isn't
+ * the editor.
+ */
+export function normalizeStickerLayers(layers: LayerArg[]): LayerArg[] {
+  return normalizeLayers(layers).map((layer) => {
+    const width = Math.min(layer.width, STICKER_MAX_WIDTH);
+    const scale = layer.width > 0 ? width / layer.width : 1;
+    const height = layer.height === undefined ? width : layer.height * scale;
+    const half = turnedHalfExtents(width, height, layer.rotation);
+
+    const fromTop = centreFromTop(layer, STICKER_FALLBACK_CARD_HEIGHT);
+    const anchor: LayerArg["anchor"] =
+      fromTop <= STICKER_FALLBACK_CARD_HEIGHT / 2 ? "top" : "bottom";
+    const rawY = yFromCentre(anchor, fromTop, STICKER_FALLBACK_CARD_HEIGHT);
+
+    return {
+      ...layer,
+      width: round(width),
+      height: layer.height === undefined ? undefined : round(layer.height * scale),
+      fontSize: layer.fontSize === undefined ? undefined : round(layer.fontSize * scale),
+      anchor,
+      x: round(clamp(layer.x, half.x, 100 - half.x)),
+      y: round(
+        anchor === "top"
+          ? clamp(rawY, half.y, STICKER_MAX_CARD_HEIGHT - half.y)
+          : clamp(rawY, -(STICKER_MAX_CARD_HEIGHT - half.y), -half.y)
+      ),
+      stretchY: undefined,
+      stretchDirection: undefined,
+      stretchTop: undefined,
+      stretchBottom: undefined,
+      variants: undefined,
+    };
+  });
+}
+
+/**
+ * Decoration layers as they should be stored: the whole of each inside the
+ * avatar plus its margin. An avatar is a square at every size, so this is the
+ * same check the editor makes.
+ */
+export function normalizeDecorationLayers(layers: LayerArg[]): LayerArg[] {
+  const min = -DECORATION_MARGIN;
+  const max = 100 + DECORATION_MARGIN;
+  return normalizeLayers(layers).map((layer) => {
+    let width = layer.width;
+    let height = heightOf(layer);
+    const extent = turnedHalfExtents(width, height, layer.rotation);
+    const scale = Math.min(
+      1,
+      (max - min) / Math.max(extent.x * 2, 0.0001),
+      (max - min) / Math.max(extent.y * 2, 0.0001)
+    );
+    let next: LayerArg = { ...layer, variants: undefined };
+    if (scale < 1) {
+      width *= scale;
+      height *= scale;
+      next = {
+        ...next,
+        width: round(width),
+        height: layer.height === undefined ? undefined : round(layer.height * scale),
+        fontSize: layer.fontSize === undefined ? undefined : round(layer.fontSize * scale),
+      };
+    }
+    const half = turnedHalfExtents(width, height, next.rotation);
+    const centre = clamp(centreFromTop(next, 100), min + half.y, max - half.y);
+    return {
+      ...next,
+      x: round(clamp(next.x, min + half.x, max - half.x)),
+      y: round(yFromCentre(next.anchor, centre, 100)),
+    };
+  });
+}
+
 /** One end of a two-ended stretch, its offset clamped like every other
  * position. `y` is percent of card width for an edge anchor, percent of card
  * height for `"locked"` — the wider range covers both. */
@@ -296,10 +421,17 @@ export async function dropUnusedLayerAssets(
   next: readonly LayerArg[]
 ): Promise<void> {
   if (!previous?.length) return;
-  const kept = new Set(next.map((layer) => layer.storageId).filter(Boolean));
+  const keptStorage = new Set(next.map((layer) => layer.storageId).filter(Boolean));
+  const keptUrls = new Set(next.map((layer) => layer.url));
   for (const layer of previous) {
-    if (layer.storageId && !kept.has(layer.storageId)) {
+    if (layer.storageId && !keptStorage.has(layer.storageId)) {
       await ctx.storage.delete(layer.storageId).catch(() => {});
+    }
+    // A layer uploaded to the CDN has no storage id: its file is an R2 object,
+    // found by the URL the layer points at. Kept if another layer still uses it
+    // (a duplicate shares its picture with the original).
+    if (layer.url && isR2Url(layer.url) && !keptUrls.has(layer.url)) {
+      await dropR2Url(ctx, layer.url).catch(() => {});
     }
   }
 }

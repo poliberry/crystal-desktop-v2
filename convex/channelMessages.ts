@@ -1,3 +1,4 @@
+import { requireCommunityOpen } from "./lib/moderation";
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
@@ -12,12 +13,6 @@ import { unexpiredCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
-
-function cdnUrlForStorageId(storageId: string): string | null {
-  const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
-  if (!base) return null;
-  return `${base.replace(/\/$/, "")}/migrated/${storageId}`;
-}
 
 function r2UrlForKey(key: string): string | null {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
@@ -144,14 +139,28 @@ async function communityAuthorDecorations(
   return new Map(entries);
 }
 
+const EMPTY_PAGE = { page: [], isDone: true, continueCursor: "" } as const;
+
 export const list = query({
   args: { channelId: v.id("channels"), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { channelId, paginationOpts }) => {
     const me = await getCurrentUserOrThrow(ctx);
-    await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
 
+    // An empty, finished page rather than a throw when the channel is gone or
+    // can't be seen any more. The data preloader keeps this subscribed for
+    // recently-viewed channels, so deleting or leaving a community re-runs it
+    // against a channel that no longer exists — and a throw from a query is an
+    // uncaught render error for the whole app.
     const channel = await ctx.db.get(channelId);
-    if (!channel) throw new Error("Channel not found.");
+    const community = channel ? await ctx.db.get(channel.communityId) : null;
+    if (!channel || !community) return EMPTY_PAGE;
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", community._id).eq("userId", me._id))
+      .unique();
+    if (!membership) return EMPTY_PAGE;
+    const perms = await getChannelPermissions(ctx, community, channelId, me._id);
+    if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) return EMPTY_PAGE;
 
     const isFirstPage = !paginationOpts.cursor;
     const cacheKey = `channel:${channelId}:messages:${paginationOpts.numItems}`;
@@ -188,8 +197,11 @@ export const list = query({
           attachmentRows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
             const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? r2UrlForKey(anyAtt.cdnKey) : null);
-            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
-            const cdnUrl = directCdn ?? migratedCdn;
+            // Only a CDN address the attachment actually has. It used to fall back to
+            // `migrated/<storageId>` for any attachment with a Convex file, which
+            // is a guess that a copy exists — and 404s for every one not yet
+            // copied the moment the CDN is switched on.
+            const cdnUrl = directCdn;
             return {
               id: attachment._id,
               fileName: attachment.fileName,
@@ -293,6 +305,10 @@ export const send = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
     await requireNotTimedOut(ctx, channelId, me._id);
+    {
+      const channel = await ctx.db.get(channelId);
+      if (channel) await requireCommunityOpen(ctx, channel.communityId, "post");
+    }
 
     if (clientId) {
       const existing = await ctx.db
@@ -606,8 +622,11 @@ export const listAttachments = query({
           rows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
             const directCdn = anyAtt.cdnUrl ?? (anyAtt.cdnKey ? r2UrlForKey(anyAtt.cdnKey) : null);
-            const migratedCdn = anyAtt.storageId ? cdnUrlForStorageId(anyAtt.storageId) : null;
-            const cdnUrl = directCdn ?? migratedCdn;
+            // Only a CDN address the attachment actually has. It used to fall back to
+            // `migrated/<storageId>` for any attachment with a Convex file, which
+            // is a guess that a copy exists — and 404s for every one not yet
+            // copied the moment the CDN is switched on.
+            const cdnUrl = directCdn;
             return {
               id: attachment._id,
               messageId: message._id,

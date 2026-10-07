@@ -9,8 +9,12 @@ import { cn } from "@/lib/utils";
 function ScrollArea({
   className,
   children,
+  horizontal = false,
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & {
+  /** Also scroll sideways, for content that can be wider than the box. */
+  horizontal?: boolean;
+}) {
   // Every ScrollArea in the app gets smooth wheel scrolling from here, which
   // is most of them. The message lists own their own scroller and attach the
   // same thing themselves (see `use-stick-to-bottom.ts`); anything left is a
@@ -41,6 +45,7 @@ function ScrollArea({
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {horizontal && <ScrollBar orientation="horizontal" />}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   );

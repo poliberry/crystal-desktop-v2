@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/avatar";
 import { PresenceBadge } from "@/components/presence-dot";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
+import { RightSidebarHeader } from "@/components/sidebar/right-sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
@@ -145,16 +146,17 @@ export function MemberList({ communityId }: MemberListProps) {
   const groups = buildGroups(members);
 
   return (
-    <div className="flex w-56 shrink-0 flex-col py-2">
+    <>
+      <RightSidebarHeader title="Members" count={rawMembers ? members.length : undefined} />
       <ScrollArea className="min-h-0 flex-1">
         {rawMembers === undefined ? (
           <MemberListSkeleton />
         ) : (
-          <div className="flex flex-col gap-3 p-2">
+          <div className="flex flex-col gap-3 p-2 pt-1">
             {groups.map((group) => (
               <div key={group.key}>
                 <p
-                  className="px-2 text-xs font-semibold tracking-wide text-muted-foreground"
+                  className="px-2 text-xs font-semibold tracking-wide text-sidebar-foreground/60"
                 >
                   {group.label} — {group.members.length}
                 </p>
@@ -183,7 +185,7 @@ export function MemberList({ communityId }: MemberListProps) {
                           <button
                             type="button"
                             className={cn(
-                              "group/member relative flex items-center gap-2 rounded-md px-2 py-1.5 max-w-52 text-left hover:bg-accent/40",
+                              "group/member relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-sidebar-accent",
                               isOffline && "opacity-50 hover:opacity-80"
                             )}
                           >
@@ -239,6 +241,6 @@ export function MemberList({ communityId }: MemberListProps) {
           </div>
         )}
       </ScrollArea>
-    </div>
+    </>
   );
 }

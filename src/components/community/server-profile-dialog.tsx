@@ -26,9 +26,9 @@ import {
   BANNER_CROP,
   ImageCropDialog,
 } from "@/components/profile/image-crop-dialog";
+import { DialogMorph } from "@/components/ui/dialog-morph";
 import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
-import { getAvatarColor } from "@/lib/avatar-color";
-import { uploadToStorage } from "@/lib/storage-upload";
+import { useProfileScope } from "@/hooks/use-profile-scope";
 
 const BIO_MAX = 300;
 
@@ -50,21 +50,10 @@ export function ServerProfileDialog({
   const serverProfile = useQuery(api.serverProfiles.getMyServerProfile, { communityId });
 
   const upsertServerProfile = useMutation(api.serverProfiles.upsertServerProfile);
-  const generateServerAvatarUploadUrl = useMutation(api.serverProfiles.generateServerAvatarUploadUrl);
-  const setServerAvatar = useMutation(api.serverProfiles.setServerAvatar);
-  const setServerAvatarAccent = useMutation(api.serverProfiles.setServerAvatarAccent);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const generateServerBannerUploadUrl = useMutation((api.serverProfiles as any).generateServerBannerUploadUrl);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const setServerBanner = useMutation((api.serverProfiles as any).setServerBanner);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const removeServerBanner = useMutation((api.serverProfiles as any).removeServerBanner);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const generateServerNameplateUploadUrl = useMutation((api.serverProfiles as any).generateServerNameplateUploadUrl);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const setServerNameplate = useMutation((api.serverProfiles as any).setServerNameplate);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const removeServerNameplate = useMutation((api.serverProfiles as any).removeServerNameplate);
+  // Pictures go through the same path as the profile editor's — CDN first,
+  // recorded in the recent list — rather than through a second set of mutations
+  // that would replace a picture and delete the file its history points at.
+  const scope = useProfileScope(communityId, communityName);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const setServerGradient = useMutation((api.serverProfiles as any).setServerGradient);
 
@@ -103,67 +92,22 @@ export function ServerProfileDialog({
   const mergedNameplateUrl = serverProfile?.nameplateUrl ?? me?.nameplateUrl;
   const displayFallback = (displayName || (me?.name ?? "?")).slice(0, 2).toUpperCase();
 
-  const uploadMedia = async (
-    file: File,
-    generateUrl: () => Promise<string>,
-    setLoading: (b: boolean) => void,
-    save: (id: Id<"_storage">) => Promise<unknown>,
-    ref: { current: HTMLInputElement | null },
-    errMsg: string,
-  ) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = await generateUrl();
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      if (!res.ok) throw new Error("Upload failed.");
-      const { storageId } = (await res.json()) as { storageId: Id<"_storage"> };
-      await save(storageId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : errMsg);
-    } finally {
-      setLoading(false);
-      if (ref.current) ref.current.value = "";
-    }
-  };
-
   /**
    * Save a crop, plus the untouched original when this is a newly-picked
-   * file, so the crop stays adjustable later — mirrors the global profile
-   * tab's `saveCrop`.
+   * file, so the crop stays adjustable later.
    */
   const saveCrop = async (crop: Blob) => {
     const target = cropping;
     if (!target) return;
     const isAvatar = target.kind === "avatar";
-    const isNewFile = target.source instanceof File;
+    const original = target.source instanceof File ? target.source : undefined;
     const setLoading = isAvatar ? setAvatarUploading : setBannerUploading;
 
     setLoading(true);
     setError(null);
     try {
-      const generate = () =>
-        isAvatar
-          ? generateServerAvatarUploadUrl({ communityId })
-          : (generateServerBannerUploadUrl({ communityId }) as Promise<string>);
-      const storageId = (await uploadToStorage(await generate(), crop)) as Id<"_storage">;
-      const originalStorageId = isNewFile
-        ? ((await uploadToStorage(await generate(), target.source as File)) as Id<"_storage">)
-        : undefined;
-
-      if (isAvatar) {
-        const url = await setServerAvatar({ communityId, storageId, originalStorageId });
-        // Sample the avatar's dominant colour here, once, rather than in
-        // every client that later renders it in a call tile.
-        const accent = await getAvatarColor(url);
-        if (accent) await setServerAvatarAccent({ communityId, accent, sourceUrl: url });
-      } else {
-        await setServerBanner({ communityId, storageId, originalStorageId });
-      }
+      if (isAvatar) await scope.setAvatar(crop, original);
+      else await scope.setBanner(crop, original);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save the image.");
       throw err;
@@ -172,16 +116,19 @@ export function ServerProfileDialog({
     }
   };
 
-  const handleNameplatePick = (file: File | undefined) =>
-    file &&
-    void uploadMedia(
-      file,
-      () => generateServerNameplateUploadUrl({ communityId }),
-      setNameplateUploading,
-      (storageId) => setServerNameplate({ communityId, storageId }),
-      nameplateFileInputRef,
-      "Failed to upload nameplate.",
-    );
+  const handleNameplatePick = async (file: File | undefined) => {
+    if (!file) return;
+    setNameplateUploading(true);
+    setError(null);
+    try {
+      await scope.setNameplate(file);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload nameplate.");
+    } finally {
+      setNameplateUploading(false);
+      if (nameplateFileInputRef.current) nameplateFileInputRef.current.value = "";
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -208,12 +155,36 @@ export function ServerProfileDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-lg flex-col overflow-hidden p-0">
+      <DialogContent className="max-w-lg overflow-hidden p-0">
+        {/* Cropping is a view of this dialog, not a second one stacked on it:
+            the profile slides out and the crop slides in, in the same frame. */}
+        <DialogMorph
+          view={cropping ? "crop" : "profile"}
+          direction={cropping ? 1 : -1}
+          padded={false}
+          className={cropping ? "grid gap-4 p-6" : "flex max-h-[85vh] flex-col"}
+        >
+        {cropping ? (
+          <ImageCropDialog
+            inline
+            open
+            onOpenChange={(open) => !open && setCropping(null)}
+            source={cropping.source}
+            shape={cropping.kind === "banner" ? BANNER_CROP : AVATAR_CROP}
+            title={
+              cropping.kind === "banner"
+                ? `Position your banner for ${communityName}`
+                : `Position your avatar for ${communityName}`
+            }
+            onCropped={saveCrop}
+          />
+        ) : (
+        <>
         <DialogHeader className="shrink-0 border-b px-6 pb-4 pt-6">
           <DialogTitle>Edit Server Profile</DialogTitle>
           <DialogDescription>Your profile for {communityName}.</DialogDescription>
         </DialogHeader>
-        <div ref={smoothRef} className="flex-1 overflow-y-auto">
+        <div ref={smoothRef} className="min-h-0 flex-1 overflow-y-auto">
           <Card className="rounded-none border-0 shadow-none">
             <CardContent className="space-y-6 px-6 py-4">
               <div className="flex items-center gap-4">
@@ -341,7 +312,7 @@ export function ServerProfileDialog({
                       size="sm"
                       variant="ghost"
                       className="text-destructive"
-                      onClick={() => void removeServerBanner({ communityId })}
+                      onClick={() => void scope.removeBanner()}
                     >
                       Remove
                     </Button>
@@ -405,7 +376,7 @@ export function ServerProfileDialog({
                       size="sm"
                       variant="ghost"
                       className="text-destructive"
-                      onClick={() => void removeServerNameplate({ communityId })}
+                      onClick={() => void scope.removeNameplate()}
                     >
                       Remove
                     </Button>
@@ -416,7 +387,7 @@ export function ServerProfileDialog({
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={(e) => handleNameplatePick(e.target.files?.[0])}
+                  onChange={(e) => void handleNameplatePick(e.target.files?.[0])}
                 />
               </div>
 
@@ -431,19 +402,9 @@ export function ServerProfileDialog({
             </CardContent>
           </Card>
         </div>
-
-        <ImageCropDialog
-          open={!!cropping}
-          onOpenChange={(open) => !open && setCropping(null)}
-          source={cropping?.source ?? null}
-          shape={cropping?.kind === "banner" ? BANNER_CROP : AVATAR_CROP}
-          title={
-            cropping?.kind === "banner"
-              ? `Position your banner for ${communityName}`
-              : `Position your avatar for ${communityName}`
-          }
-          onCropped={saveCrop}
-        />
+        </>
+        )}
+        </DialogMorph>
       </DialogContent>
     </Dialog>
   );

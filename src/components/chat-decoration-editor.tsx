@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { ImagePlus, Loader2 } from "lucide-react";
 
 import { api } from "../../convex/_generated/api";
@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { uploadToStorage } from "@/lib/storage-upload";
+import { uploadImage, type UploadedImage } from "@/lib/cdn-upload";
 import {
   MAX_PROFILE_ASSET_BYTES,
   MAX_PROFILE_ASSET_LABEL,
@@ -53,6 +53,7 @@ export function ChatDecorationEditor({
   bannerTitle?: string;
   bannerDescription?: string;
 }) {
+  const convex = useConvex();
   const setChannelBackground = useMutation(api.channels.setBackground);
   const setChannelBanner = useMutation(api.channels.setBanner);
   const generateChannelUrl = useMutation(api.channels.generateChannelAssetUploadUrl);
@@ -79,14 +80,17 @@ export function ChatDecorationEditor({
 
   const isChannel = target.kind === "channel";
 
-  const upload = async (file: File): Promise<Id<"_storage">> => {
+  const upload = async (file: File): Promise<UploadedImage> => {
     if (file.size > MAX_PROFILE_ASSET_BYTES) {
       throw new Error(`Images must be smaller than ${MAX_PROFILE_ASSET_LABEL}.`);
     }
-    const url = isChannel
-      ? await generateChannelUrl({ channelId: target.channelId })
-      : await generateConversationUrl({ conversationId: target.conversationId });
-    return (await uploadToStorage(url, file)) as Id<"_storage">;
+    // CDN first; the per-target upload url is the fallback for a deployment
+    // with no bucket.
+    return uploadImage(convex, file, "backgrounds", () =>
+      isChannel
+        ? generateChannelUrl({ channelId: target.channelId })
+        : generateConversationUrl({ conversationId: target.conversationId }),
+    );
   };
 
   const run = async (what: string, work: () => Promise<unknown>) => {
@@ -102,7 +106,7 @@ export function ChatDecorationEditor({
   };
 
   const saveBackground = (
-    args: { storageId?: Id<"_storage">; opacity?: number; clear?: boolean },
+    args: UploadedImage & { opacity?: number; clear?: boolean },
   ) =>
     isChannel
       ? setChannelBackground({ channelId: target.channelId, ...args })
@@ -190,10 +194,10 @@ export function ChatDecorationEditor({
             e.target.value = "";
             if (!file) return;
             void run("background", async () => {
-              const storageId = await upload(file);
+              const uploaded = await upload(file);
               // The opacity goes with the first upload so a new background is
               // never applied at whatever the last one happened to use.
-              await saveBackground({ storageId, opacity: opacity / 100 });
+              await saveBackground({ ...uploaded, opacity: opacity / 100 });
             });
           }}
         />
@@ -294,8 +298,8 @@ export function ChatDecorationEditor({
               e.target.value = "";
               if (!file) return;
               void run("banner", async () => {
-                const storageId = await upload(file);
-                await setChannelBanner({ channelId: target.channelId, storageId });
+                const uploaded = await upload(file);
+                await setChannelBanner({ channelId: target.channelId, ...uploaded });
               });
             }}
           />

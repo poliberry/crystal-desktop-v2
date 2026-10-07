@@ -17,9 +17,11 @@
  */
 
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { action, mutation, query } from "./_generated/server";
 import { getCurrentUserOrThrow } from "./users";
+import { creationFolder } from "./lib/r2";
+import { signUploadTicket } from "./lib/uploadTicket";
 
 // ---------------------------------------------------------------------------
 // Helpers: R2 presigned URL (AWS SigV4). Minimal impl to avoid extra deps.
@@ -31,6 +33,35 @@ import { getCurrentUserOrThrow } from "./users";
 function env(name: string): string | undefined {
   return process.env[name];
 }
+
+/**
+ * What a creator may upload, and the extension each is stored under.
+ *
+ * The extension comes from here, never from the client: the renderers and the
+ * submission checks tell a font from a sound from an icon by what an address ends
+ * in, so a file stored under an extension that doesn't match its type would be
+ * misread — or let one kind of file stand in for another.
+ */
+const CREATION_TYPES: Record<string, string> = {
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/jpeg": "jpg",
+  "video/webm": "webm",
+  "video/mp4": "mp4",
+  // Theme packs
+  "font/woff2": "woff2",
+  "font/woff": "woff",
+  "font/ttf": "ttf",
+  "font/otf": "otf",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/mpeg": "mp3",
+  "audio/ogg": "ogg",
+  "audio/mp4": "m4a",
+  // Icons, drawn only as a CSS mask (an image context: nothing in one runs).
+  "image/svg+xml": "svg",
+};
 
 function isR2Configured(): boolean {
   return !!(env("R2_ACCOUNT_ID") && env("R2_BUCKET") && env("R2_ACCESS_KEY_ID") && env("R2_SECRET_ACCESS_KEY"));
@@ -82,8 +113,18 @@ function buildKey(
       return `icons/${owner}/${hash}.webp`;
     case "banners":
       return `banners/${owner}/${hash}.webp`;
+    case "marketplace":
+      return `marketplace/${hash}.${ext || "webp"}`;
+    case "creations":
+      // Inside `marketplace/` on purpose: what a creator sells is worn by other
+      // people, and the clean-up paths never delete from there (see
+      // `PROTECTED_PREFIX`), so one buyer replacing their decoration cannot
+      // remove it for everyone else.
+      return `${creationFolder(owner)}${hash}.${ext || "webp"}`;
     case "nameplates":
-      return `nameplates/${owner}/${hash}.webp`;
+      // The real extension, not `.webp`: a nameplate can be a video, and the
+      // renderer tells the two apart by what the URL ends in.
+      return `nameplates/${owner}/${hash}.${ext || "webp"}`;
     default:
       return `${kind}/${owner}/${Date.now()}-${name}`;
   }
@@ -115,6 +156,8 @@ export const createUploadUrl = action({
       v.literal("backgrounds"),
       v.literal("emoji"),
       v.literal("sounds"),
+      v.literal("marketplace"),
+      v.literal("creations"),
     ),
     fileName: v.string(),
     contentType: v.optional(v.string()),
@@ -126,13 +169,32 @@ export const createUploadUrl = action({
   handler: async (ctx, { kind, fileName, contentType, contentHash, ownerId, ext, layerId }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+    // Marketplace artwork goes to a folder the app never cleans up (see
+    // `PROTECTED_PREFIX`), so only the people who manage the catalogue may put
+    // anything there.
+    if (kind === "marketplace") {
+      const staff = await ctx.runQuery(api.staff.me, {});
+      if (!staff?.permissions.includes("catalog.write")) throw new Error("Not allowed.");
+    }
+    // Creator artwork is shown to other people, so it has to be a picture or a
+    // short clip — never a file a browser would run.
+    const creationExt = kind === "creations" ? CREATION_TYPES[(contentType ?? "").toLowerCase()] : undefined;
+    if (kind === "creations" && !creationExt) {
+      throw new Error("Creations can be pictures, short clips, fonts, sounds or SVG icons.");
+    }
     if (!isR2Configured()) {
+      if (kind === "creations") throw new Error("Creator uploads need the CDN, which isn't set up here.");
       const uploadUrl = await ctx.storage.generateUploadUrl();
       return { mode: "convex" as const, uploadUrl };
     }
 
     const identifier = contentHash ?? identity.subject ?? "anon";
-    const key = buildKey(kind, identifier, fileName, { ownerId, hash: contentHash, ext });
+    // A creation's folder is the uploader's own id, not whatever the client says.
+    const key = buildKey(kind, identifier, fileName, {
+      ownerId: kind === "creations" ? identity.subject : ownerId,
+      hash: contentHash,
+      ext: creationExt ?? ext,
+    });
     // Normalize legacy aliases: sounds/backgrounds/emoji map to structured kinds
     // but keep them working for older clients.
     const normalizedKind = kind;
@@ -154,8 +216,10 @@ export const createUploadUrl = action({
     // To keep zero-dep, we ask the client to PUT to our Convex http endpoint
     // which proxies to R2 — avoids exposing secrets and avoids client signing.
     const convexSite = env("CONVEX_SITE_URL") ?? process.env.NEXT_PUBLIC_CONVEX_SITE_URL ?? "";
+    const resolvedType = contentType ?? "application/octet-stream";
+    const ticket = await signUploadTicket(env("R2_SECRET_ACCESS_KEY")!, key, resolvedType);
     const presignedViaProxy = convexSite
-      ? `${convexSite.replace(/\/$/, "")}/r2/upload?key=${encodeURIComponent(key)}&contentType=${encodeURIComponent(contentType ?? "application/octet-stream")}`
+      ? `${convexSite.replace(/\/$/, "")}/r2/upload?key=${encodeURIComponent(key)}&contentType=${encodeURIComponent(resolvedType)}&exp=${ticket.exp}&sig=${ticket.sig}`
       : endpoint;
 
     return {

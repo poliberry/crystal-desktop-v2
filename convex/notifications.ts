@@ -108,6 +108,8 @@ export async function notifyUsers(
       actorId,
       read: false,
       createdAt: Date.now(),
+      // Only meaningful for channel traffic — see the field in the schema.
+      ...(rest.type === "channel_mention" ? { isMention } : {}),
       ...rest,
     });
     await ctx.scheduler.runAfter(0, internal.push.sendExpoPush, {

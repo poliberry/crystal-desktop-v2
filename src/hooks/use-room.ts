@@ -34,6 +34,8 @@ import {
   JOIN_SOUND_TOPIC,
   SOUNDBOARD_TOPIC,
   beginSoundboardActivity,
+  emitSoundboardEmoji,
+  safeEmoji,
   findBuiltinSound,
   isPlayableSoundUrl,
   measureSoundDuration,
@@ -241,7 +243,9 @@ export function useRoom() {
    * duration is read from the file's metadata instead of from playback.
    */
   const highlightWhilePlaying = useCallback(
-    (identity: string, url: string, deafened: boolean) => {
+    (identity: string, url: string, deafened: boolean, emoji?: string | null) => {
+      // The emoji is for the eyes, so a deafened listener sees it too.
+      if (emoji) emitSoundboardEmoji(identity, emoji);
       const end = beginSoundboardActivity(identity);
       if (deafened) {
         void measureSoundDuration(url).then((durationMs) => {
@@ -434,7 +438,12 @@ export function useRoom() {
       const url = findBuiltinSound(packet.soundId)?.url ?? packet.url;
       if (!url || !isPlayableSoundUrl(url)) return;
 
-      highlightWhilePlaying(participant.identity, url, deafenedRef.current);
+      highlightWhilePlaying(
+        participant.identity,
+        url,
+        deafenedRef.current,
+        findBuiltinSound(packet.soundId)?.emoji ?? safeEmoji(packet.emoji),
+      );
     };
 
     room
@@ -860,7 +869,7 @@ export function useRoom() {
           kind: "soundboard",
           soundId: clip.id,
           name: clip.name,
-          ...(clip.builtin ? {} : { url: clip.url }),
+          ...(clip.builtin ? {} : { url: clip.url, emoji: clip.emoji }),
         };
         const payload = new TextEncoder().encode(JSON.stringify(packet));
         await room.localParticipant
@@ -871,7 +880,12 @@ export function useRoom() {
       }
       // The SFU doesn't echo a packet back to its sender, so this covers both
       // playing the clip and highlighting ourselves.
-      highlightWhilePlaying(room.localParticipant.identity, clip.url, deafenedRef.current);
+      highlightWhilePlaying(
+        room.localParticipant.identity,
+        clip.url,
+        deafenedRef.current,
+        clip.emoji,
+      );
     },
     [room, highlightWhilePlaying]
   );

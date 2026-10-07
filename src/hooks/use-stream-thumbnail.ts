@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { Track, type Room } from "livekit-client";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { uploadToStorage } from "@/lib/storage-upload";
+import { uploadImage } from "@/lib/cdn-upload";
 
 /**
  * How often to publish a fresh still. Slow on purpose: this exists so someone
@@ -31,6 +31,7 @@ export function useStreamThumbnail(
   channelId: Id<"channels"> | null,
   sharing: boolean
 ): void {
+  const convex = useConvex();
   const generateUploadUrl = useMutation(api.channels.generateStreamThumbnailUploadUrl);
   const setThumbnail = useMutation(api.channels.setStreamThumbnail);
   const clearThumbnail = useMutation(api.channels.clearStreamThumbnail);
@@ -70,11 +71,8 @@ export function useStreamThumbnail(
       );
       if (!blob) return;
 
-      const storageId = (await uploadToStorage(
-        await generateUploadUrl(),
-        blob
-      )) as Id<"_storage">;
-      await setThumbnail({ channelId, storageId });
+      const uploaded = await uploadImage(convex, blob, "backgrounds", generateUploadUrl, "thumbnail.jpg");
+      await setThumbnail({ channelId, ...uploaded });
     } catch {
       // A frame that can't be grabbed or uploaded is not worth reporting —
       // the card falls back to the streamer's avatar.

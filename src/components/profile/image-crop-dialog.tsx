@@ -55,6 +55,15 @@ export const BANNER_CROP: CropShape = {
   animatedOutputWidth: 640,
 };
 
+/** The strip behind a name. Wide and short — about five times as wide as it is
+ * tall — which is the shape it is drawn at in a member list and on the user
+ * card, so what is framed here is what is shown. */
+export const NAMEPLATE_CROP: CropShape = {
+  aspect: 5,
+  outputWidth: 1000,
+  animatedOutputWidth: 600,
+};
+
 /** Viewport width of the editor. Height follows the shape's aspect. */
 const FRAME_WIDTH = 400;
 
@@ -94,7 +103,11 @@ export function ImageCropDialog({
   shape,
   title,
   onCropped,
+  inline = false,
 }: {
+  /** Render the contents alone, with no dialog of their own, for a dialog that
+   * shows them as one of its views (see `DialogMorph`). */
+  inline?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** A freshly-picked file, or the URL of an image already stored. */
@@ -305,9 +318,8 @@ export function ImageCropDialog({
     }
   };
 
-  return (
-    <Dialog open={open} onOpenChange={saving ? undefined : onOpenChange}>
-      <DialogContent className="max-w-md">
+  const content = (
+    <>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
@@ -398,7 +410,13 @@ export function ImageCropDialog({
             {saving ? <Loader2 className="size-4 animate-spin" /> : "Save"}
           </Button>
         </DialogFooter>
-      </DialogContent>
+    </>
+  );
+
+  if (inline) return content;
+  return (
+    <Dialog open={open} onOpenChange={saving ? undefined : onOpenChange}>
+      <DialogContent className="max-w-md">{content}</DialogContent>
     </Dialog>
   );
 }

@@ -16,7 +16,16 @@ export const list = query({
   handler: async (ctx, { communityId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    await requireMember(ctx, communityId, me._id);
+    // Empty rather than thrown for someone who isn't (or is no longer) in it,
+    // like `channels.list` beside it: the data preloader subscribes to this for
+    // every community in the rail, and the moment one is deleted or left is a
+    // moment that query re-runs against a membership that is already gone — a
+    // throw there is an uncaught render error for the whole app.
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
+      .unique();
+    if (!membership) return [];
     const roles = await ctx.db
       .query("roles")
       .withIndex("by_community", (q) => q.eq("communityId", communityId))

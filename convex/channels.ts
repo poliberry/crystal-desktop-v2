@@ -1,3 +1,4 @@
+import { CHANNEL_SURFACES, surfaceAllowed, type ChannelSurface } from "./lib/communityKinds";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
@@ -8,7 +9,8 @@ import {
   query,
   type MutationCtx,
 } from "./_generated/server";
-import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
+import { internal } from "./_generated/api";
+import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { requireCommunity, requireMember } from "./communities";
 import {
   PERMISSIONS,
@@ -65,6 +67,9 @@ export const list = query({
           name: c.name,
           type: c.type,
           topic: c.topic,
+          isLounge: c.isLounge ?? false,
+          surface: c.surface,
+          gameId: c.gameId,
           categoryId: c.categoryId ?? null,
           position: c.position,
           permissions: perms,
@@ -93,7 +98,13 @@ export const get = query({
     if (!channel) return null;
     const community = await ctx.db.get(channel.communityId);
     if (!community) return null;
-    await requireMember(ctx, channel.communityId, me._id);
+    // Null for a non-member, like for a missing channel — the preloader keeps
+    // this subscribed through the moment a community is left.
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", channel.communityId).eq("userId", me._id))
+      .unique();
+    if (!membership) return null;
     return {
       id: channel._id,
       communityId: channel.communityId,
@@ -109,6 +120,13 @@ export const get = query({
       bannerUrl: channel.bannerUrl,
       bannerTitle: channel.bannerTitle,
       bannerDescription: channel.bannerDescription,
+      isLounge: channel.isLounge ?? false,
+      surface: channel.surface,
+      gameId: channel.gameId,
+      communityKind: community.kind,
+      loungeScene: channel.loungeScene,
+      loungeSceneCustom: channel.loungeSceneCustom,
+      loungeTopic: channel.loungeTopic,
     };
   },
 });
@@ -119,14 +137,30 @@ export const create = mutation({
     name: v.string(),
     type: v.union(v.literal("text"), v.literal("voice")),
     categoryId: v.optional(v.id("channelCategories")),
+    /** A voice channel that is a lounge. Ignored for text channels. */
+    lounge: v.optional(v.boolean()),
+    /** A text channel that shows something other than messages — only in a
+     * community whose kind allows it. */
+    surface: v.optional(v.string()),
+    gameId: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, name, type, categoryId }) => {
+  handler: async (ctx, { communityId, name, type, categoryId, lounge, surface, gameId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
 
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Channel name can't be empty.");
+
+    let channelSurface: ChannelSurface | undefined;
+    if (surface !== undefined) {
+      if (type !== "text") throw new Error("Only a text channel can be one of these.");
+      if (!(CHANNEL_SURFACES as readonly string[]).includes(surface) || !surfaceAllowed(community.kind, surface as ChannelSurface)) {
+        throw new Error("This community can't have that kind of channel.");
+      }
+      channelSurface = surface as ChannelSurface;
+    }
+    if (gameId !== undefined && !community.clanGames?.some((g) => g.id === gameId)) throw new Error("The clan doesn't play that.");
 
     const existing = await ctx.db
       .query("channels")
@@ -141,6 +175,9 @@ export const create = mutation({
       categoryId,
       position,
       createdAt: Date.now(),
+      ...(type === "voice" && lounge ? { isLounge: true, loungeScene: "living-room" } : {}),
+      ...(channelSurface ? { surface: channelSurface } : {}),
+      ...(gameId ? { gameId } : {}),
     });
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -296,8 +333,19 @@ export const setOverwrite = mutation({
     } else {
       await ctx.db.insert("channelPermissionOverwrites", { channelId, roleId, userId, allow, deny });
     }
+    await bustChannelLists(channel.communityId, me._id);
   },
 });
+
+/** The channel list is cached per member for a minute, with each channel's
+ * permissions in it. A change to who can see what should not wait that long for
+ * the person who made it — the others' caches are left to expire. */
+async function bustChannelLists(communityId: Id<"communities">, userId: Id<"users">) {
+  try {
+    const { cacheInvalidateKeys } = await import("./cache");
+    await cacheInvalidateKeys(`community:${communityId}:user:${userId}:channels`);
+  } catch {}
+}
 
 export const removeOverwrite = mutation({
   args: { overwriteId: v.id("channelPermissionOverwrites") },
@@ -309,6 +357,7 @@ export const removeOverwrite = mutation({
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
     await ctx.db.delete(overwriteId);
+    await bustChannelLists(channel.communityId, me._id);
   },
 });
 
@@ -592,6 +641,11 @@ export const recordVoiceLeave = internalMutation({
       .query("channelCallParticipants")
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
       .collect();
+    // An empty lounge forgets what was said in it and what it was about.
+    if (remaining.length === 0) {
+      const channel = await ctx.db.get(channelId);
+      if (channel?.isLounge) await ctx.scheduler.runAfter(0, internal.lounge.reset, { channelId });
+    }
     return remaining.length;
   },
 });
@@ -709,28 +763,38 @@ export const markRead = mutation({
  * frame every few seconds in storage forever.
  */
 export const setStreamThumbnail = mutation({
-  args: { channelId: v.id("channels"), storageId: v.id("_storage") },
-  handler: async (ctx, { channelId, storageId }) => {
+  args: {
+    channelId: v.id("channels"),
+    storageId: v.optional(v.id("_storage")),
+    /** Uploaded to the CDN instead of Convex storage. */
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, { channelId, storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const row = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
       .unique();
+    const newUrl = cdnKey || cdnUrl ? (cdnUrl ?? r2PublicUrlForKey(cdnKey!)) : undefined;
     if (!row) {
       // Not in the call any more — the frame is already stale, so don't keep it.
-      await ctx.storage.delete(storageId);
+      if (storageId) await ctx.storage.delete(storageId).catch(() => {});
+      if (newUrl) await dropR2Url(ctx, newUrl);
       return;
     }
 
-    const url = await ctx.storage.getUrl(storageId);
+    const url = newUrl ?? (storageId ? await ctx.storage.getUrl(storageId) : null);
     if (!url) return;
     const previous = row.streamThumbnailStorageId;
+    const previousUrl = row.streamThumbnailUrl;
     await ctx.db.patch(row._id, {
       streamThumbnailUrl: url,
-      streamThumbnailStorageId: storageId,
+      streamThumbnailStorageId: newUrl ? undefined : storageId,
       streamThumbnailAt: Date.now(),
     });
-    if (previous && previous !== storageId) await ctx.storage.delete(previous);
+    if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    if (previousUrl && previousUrl !== url) await dropR2Url(ctx, previousUrl);
   },
 });
 
@@ -813,7 +877,7 @@ export const setBackground = mutation({
         backgroundStorageId: undefined,
         backgroundOpacity: undefined,
       });
-      if (previousUrl) await r2DeleteByUrl(previousUrl);
+      if (previousUrl) await dropR2Url(ctx, previousUrl);
       if (previous) await ctx.storage.delete(previous).catch(() => {});
       return;
     }
@@ -848,7 +912,7 @@ export const setBackground = mutation({
     const previousUrl = channel.backgroundUrl;
     await ctx.db.patch(channelId, patch);
     // Delete old R2 file if we just replaced it with a new R2 upload
-    if ((cdnKey || cdnUrl) && previousUrl) await r2DeleteByUrl(previousUrl);
+    if ((cdnKey || cdnUrl) && previousUrl) await dropR2Url(ctx, previousUrl);
     if (storageId && previous && previous !== storageId) {
       await ctx.storage.delete(previous).catch(() => {});
     }
@@ -868,11 +932,14 @@ export const setBanner = mutation({
   args: {
     channelId: v.id("channels"),
     storageId: v.optional(v.id("_storage")),
+    /** The same picture, uploaded to the CDN instead — see `setBackground`. */
+    cdnKey: v.optional(v.string()),
+    cdnUrl: v.optional(v.string()),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
     clear: v.optional(v.boolean()),
   },
-  handler: async (ctx, { channelId, storageId, title, description, clear }) => {
+  handler: async (ctx, { channelId, storageId, cdnKey, cdnUrl, title, description, clear }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const channel = await requireChannel(ctx, channelId);
     const community = await requireCommunity(ctx, channel.communityId);
@@ -880,24 +947,32 @@ export const setBanner = mutation({
 
     if (clear) {
       const previous = channel.bannerStorageId;
+      const previousUrl = channel.bannerUrl;
       await ctx.db.patch(channelId, {
         bannerUrl: undefined,
         bannerStorageId: undefined,
         bannerTitle: undefined,
         bannerDescription: undefined,
       });
+      if (previousUrl) await dropR2Url(ctx, previousUrl);
       if (previous) await ctx.storage.delete(previous).catch(() => {});
       return;
     }
 
     const patch: {
       bannerUrl?: string;
-      bannerStorageId?: Id<"_storage">;
+      bannerStorageId?: Id<"_storage"> | undefined;
       bannerTitle?: string;
       bannerDescription?: string;
     } = {};
 
-    if (storageId) {
+    const onCdn = !!(cdnKey || cdnUrl);
+    if (onCdn) {
+      const url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
+      if (!url) throw new Error("Banner upload failed.");
+      patch.bannerUrl = url;
+      patch.bannerStorageId = undefined;
+    } else if (storageId) {
       await requireWithinUploadLimit(
         ctx,
         storageId,
@@ -916,9 +991,12 @@ export const setBanner = mutation({
     if (Object.keys(patch).length === 0) return;
 
     const previous = channel.bannerStorageId;
+    const previousUrl = channel.bannerUrl;
     await ctx.db.patch(channelId, patch);
-    if (storageId && previous && previous !== storageId) {
-      await ctx.storage.delete(previous).catch(() => {});
+    // The picture this replaced — only if there was a new one.
+    if (onCdn || storageId) {
+      if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+      if (previousUrl && previousUrl !== patch.bannerUrl) await dropR2Url(ctx, previousUrl);
     }
   },
 });

@@ -7,8 +7,9 @@ import { useSearchParams } from "next/navigation";
 import type { Id } from "../../../convex/_generated/dataModel";
 import {
   DecorationEditor,
-  ProfileFrameEditor,
+  ProfileStickersEditor,
 } from "@/components/profile/cosmetic-dialogs";
+import { useTrafficLightsInset } from "@/hooks/use-window-controls";
 import { WindowControls } from "@/components/window-controls";
 import { useProfileScope } from "@/hooks/use-profile-scope";
 
@@ -25,6 +26,7 @@ import { useProfileScope } from "@/hooks/use-profile-scope";
  * profile this is.
  */
 function EditorWindow() {
+  const trafficLights = useTrafficLightsInset();
   const params = useSearchParams();
   const kind = params.get("kind") === "decoration" ? "decoration" : "frame";
   const scopeId = (params.get("scope") as Id<"communities"> | null) ?? undefined;
@@ -36,11 +38,17 @@ function EditorWindow() {
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
       <header
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        style={
+          {
+            WebkitAppRegion: "drag",
+            // Clear of the system's window buttons, where there are some.
+            paddingLeft: trafficLights || undefined,
+          } as React.CSSProperties
+        }
         className="flex h-9 shrink-0 items-center justify-between border-b border-border/50 pl-3"
       >
         <span className="truncate text-xs text-muted-foreground">
-          {kind === "frame" ? "Profile frame" : "Avatar decoration"} — {scope.label}
+          {kind === "frame" ? "Profile stickers" : "Avatar decoration"} — {scope.label}
         </span>
         <WindowControls />
       </header>
@@ -50,7 +58,7 @@ function EditorWindow() {
           <Loader2 className="size-5 animate-spin" />
         </div>
       ) : kind === "frame" ? (
-        <ProfileFrameEditor className="min-h-0 flex-1 p-3" scope={scope} />
+        <ProfileStickersEditor className="min-h-0 flex-1 p-3" scope={scope} />
       ) : (
         <DecorationEditor
           className="min-h-0 flex-1 p-3"

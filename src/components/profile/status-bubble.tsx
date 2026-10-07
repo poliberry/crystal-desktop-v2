@@ -43,13 +43,17 @@ export function StatusBubble({
   text,
   kind = "speech",
   onClick,
+  children,
   className,
 }: {
-  text: string;
+  text?: string;
   kind?: StatusBubbleKind;
   /** Present only on your own card, where the bubble is the shortcut to
    * changing what it says. */
   onClick?: () => void;
+  /** What goes inside in place of `text` — a field, on the card that is being
+   * edited. */
+  children?: React.ReactNode;
   className?: string;
 }) {
   const thought = kind === "thought";
@@ -104,7 +108,7 @@ export function StatusBubble({
           SURFACE
         )}
       >
-        {text}
+        {children ?? text}
       </span>
     </Element>
   );

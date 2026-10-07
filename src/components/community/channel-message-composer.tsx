@@ -11,9 +11,8 @@ import {
   ComposerAttachments,
   ComposerDropOverlay,
 } from "@/components/home/composer-attachments";
-import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
+import { ComposerEmojiPicker, EMOJI_TRIGGER_ATTRIBUTE } from "@/components/composer-emoji-picker";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   EmojiTextInput,
   type EmojiTextInputHandle,
@@ -27,6 +26,7 @@ import { searchSystemEmoji } from "@/lib/system-emoji";
 import { matchInProgressMention, mentionToken } from "@/lib/mentions";
 import { useMentionNames, useMentionSuggestions } from "@/hooks/use-mentions";
 import type { ReplyDraft } from "@/lib/reply";
+import { GLASS_BASE, GLASS_DARK, GLASS_SOFT } from "@/components/sidebar/glass";
 import { cn } from "@/lib/utils";
 
 interface ChannelMessageComposerProps {
@@ -267,13 +267,19 @@ export function ChannelMessageComposer({
     setAutocomplete(mention ? { ...mention, kind: "mention" } : null);
   };
 
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
   const insertEmoji = (emoji: string) => {
     setText((prev) => prev + emoji);
     textareaRef.current?.focus();
   };
 
+  // 17px under the box, not 8: the user card is 8px (the sidebar's padding) +
+  // 1px (its border) + 8px (the dock's padding) off the bottom of the window,
+  // and the box is the same 58px tall (the card's 56px row plus its two 1px
+  // border edges), so the two share a top and a bottom edge.
   return (
-    <div ref={dropZoneRef} className="relative shrink-0 p-2 bg-background">
+    <div ref={dropZoneRef} className="relative shrink-0 bg-background p-2 pb-[17px]">
       <ComposerDropOverlay active={isDraggingOver} />
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
@@ -295,7 +301,7 @@ export function ChannelMessageComposer({
       )}
 
       {replyingTo && (
-        <div className="mb-1.5 flex items-center gap-2 rounded-md border border-b-0 bg-muted/40 px-2.5 py-1 text-xs">
+        <div className="mb-1.5 flex items-center gap-2 rounded-xl border bg-muted/40 px-2.5 py-1 text-xs">
           <Reply className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate text-muted-foreground">
             Replying to <span className="font-medium text-foreground">{replyingTo.authorName}</span>
@@ -337,58 +343,80 @@ export function ChannelMessageComposer({
         </button>
       )}
 
-      <div className="flex h-14 items-center gap-1 rounded-md border border-input bg-transparent px-1.5 py-1 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => void addFiles(e.target.files)}
+      {/* The call card's surface — see `GLASS_DARK`. The focus ring is the
+          border lighting up rather than a ring outside it, which the card's
+          rounded, clipped edge would cut. */}
+      {/* The picker is a child of the box's own frame, so it sits flush on
+          its top edge, and the box squares off the corner they share while it
+          is open — one shape, not a card resting on another. */}
+      <div className="relative">
+        <ComposerEmojiPicker
+          open={emojiOpen}
+          onClose={() => setEmojiOpen(false)}
+          onSelect={insertEmoji}
         />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          disabled={uploading}
-          onClick={openFilePicker}
+        <div
+          className={cn(
+            GLASS_BASE,
+            GLASS_DARK,
+            GLASS_SOFT,
+            emojiOpen && "rounded-tr-none",
+            "flex h-[58px] items-center gap-1 px-2 py-1 transition-[border-color,box-shadow,border-radius] duration-200 focus-within:border-ring/70 focus-within:ring-ring/40",
+          )}
         >
-          <Paperclip className="size-4" />
-        </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => void addFiles(e.target.files)}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            disabled={uploading}
+            onClick={openFilePicker}
+          >
+            <Paperclip className="size-4" />
+          </Button>
 
-        <EmojiTextInput
-          ref={textareaRef}
-          value={text}
-          onChange={handleTextChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onBlur={() => setAutocomplete(null)}
-          emojiByName={customEmojiByName}
-          emojiById={customEmojiById}
-          mentionNames={mentionNames}
-          placeholder="Message…"
-        />
+          <EmojiTextInput
+            ref={textareaRef}
+            value={text}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onBlur={() => setAutocomplete(null)}
+            emojiByName={customEmojiByName}
+            emojiById={customEmojiById}
+            mentionNames={mentionNames}
+            placeholder="Message…"
+          />
 
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0">
-              <Smile className="size-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent side="top" align="end" className="w-auto p-0">
-            <ReactionPickerContent onSelect={(text) => insertEmoji(text)} />
-          </PopoverContent>
-        </Popover>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-expanded={emojiOpen}
+            {...{ [EMOJI_TRIGGER_ATTRIBUTE]: "" }}
+            onClick={() => setEmojiOpen((open) => !open)}
+          >
+            <Smile className="size-4" />
+          </Button>
 
-        <Button
-          type="button"
-          size="icon"
-          className="size-8 shrink-0"
-          disabled={sending || uploading}
-          onClick={() => void handleSend()}
-        >
-          <Send className="size-4" />
-        </Button>
+          <Button
+            type="button"
+            size="icon"
+            className="size-8 shrink-0"
+            disabled={sending || uploading}
+            onClick={() => void handleSend()}
+          >
+            <Send className="size-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );

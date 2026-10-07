@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/avatar";
 import { useAvatarAccent } from "@/hooks/use-avatar-accent";
 import { routeElementToPlayback } from "@/lib/system-audio";
+import { SoundboardBurst } from "@/components/call/soundboard-burst";
 import { cn } from "@/lib/utils";
 
 interface ParticipantTileProps {
@@ -39,11 +40,6 @@ interface ParticipantTileProps {
    * and gradient are (see `getUsersByIds`). Drawn only when there's no video
    * — a camera covers the avatar it would be worn on. */
   avatarDecoration?: string;
-  /** How large the avatar placeholder is drawn. `"sm"` is the expanded view's
-   * size — used by the focused tile and the thumbnail rail beside it, where
-   * the tile is either far bigger than the avatar needs to be or too small to
-   * hold the full-size one. */
-  avatarSize?: "default" | "sm";
   /** Fill the parent's box exactly (grid/focused view) instead of the
    * default fixed 16:9 card (bottom rail thumbnails). */
   fill?: boolean;
@@ -70,7 +66,6 @@ export function ParticipantTile({
   gradientStart,
   gradientEnd,
   avatarDecoration,
-  avatarSize = "default",
   fill = false,
   onClick,
   localVolume,
@@ -224,7 +219,15 @@ export function ParticipantTile({
   const backdrop: CSSProperties | undefined = showVideo
     ? undefined
     : gradient
-      ? { backgroundImage: gradient }
+      ? {
+          backgroundImage: gradient,
+          // Painted across the border box and not repeated. By default a
+          // background is sized to the area *inside* the border and tiles
+          // underneath it, so the translucent border at the bottom edge showed
+          // the top of the gradient — a thin line in the wrong colour.
+          backgroundOrigin: "border-box",
+          backgroundRepeat: "no-repeat",
+        }
       : avatarBg
         ? { backgroundColor: avatarBg }
         : undefined;
@@ -233,8 +236,10 @@ export function ParticipantTile({
     <div
       onClick={onClick}
       className={cn(
-        "relative flex w-full items-center justify-center overflow-hidden rounded-lg ring-2 ring-inset ring-transparent transition-[background-color,box-shadow]",
-        backdrop ? "" : "bg-muted/40",
+        // The glass card's edge and shadow, so a tile belongs with the control
+        // bar and the sidebar cards; the ring stays the speaking indicator.
+        "relative flex w-full items-center justify-center overflow-hidden [container-type:size] rounded-2xl border border-[color:var(--glass-border)] shadow-lg shadow-black/25 ring-2 ring-inset ring-transparent transition-[background-color,box-shadow]",
+        backdrop ? "" : "bg-[color:var(--glass-bg)]",
         fill ? "h-full" : "aspect-video",
         onClick && "cursor-pointer",
         // Soundboard wins the ring while it's active: it's the more
@@ -243,6 +248,12 @@ export function ParticipantTile({
       )}
       style={backdrop}
     >
+      {/* The glass card's raking light, over the backdrop (an avatar tint or a
+          profile gradient) and under the avatar. Not over a camera feed. */}
+      {!showVideo && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 bg-[image:var(--glass-glow)]" />
+      )}
+
       <video
         ref={videoRef}
         autoPlay
@@ -255,19 +266,34 @@ export function ParticipantTile({
         )}
       />
 
+      {/* Sized from the tile it is in, by its shorter side: about the 100px
+            it used to be on an ordinary grid tile, a good deal more on a focused
+            one (up to 12rem), and the 60px floor in the strip beneath it.
+            One rule instead of a size per layout, which is how the focused tile
+            came to have a smaller avatar than the grid. */}
       {!showVideo && (
-        <Avatar className={avatarSize === "sm" ? "size-15 rounded-md" : "size-25 rounded-xl"}>
-          <AvatarImage src={imageUrl} alt={displayName} className="rounded-xl" />
-          <AvatarFallback className="bg-primary/30 text-2xl font-semibold text-foreground">
+        <Avatar
+          style={{
+            width: "clamp(3.75rem, 55cqmin, 12rem)",
+            height: "clamp(3.75rem, 55cqmin, 12rem)",
+          }}
+          className="rounded-[22%]"
+        >
+          <AvatarImage src={imageUrl} alt={displayName} className="rounded-[22%]" />
+          <AvatarFallback className="bg-primary/30 text-[length:clamp(1.25rem,18cqmin,4rem)] font-semibold text-foreground">
             {initials}
           </AvatarFallback>
           {/* Placed in container units against the avatar it's worn on, so
-              one decoration fits both sizes above — see AvatarDecoration. */}
+              one decoration fits at any size — see AvatarDecoration. */}
           <AvatarDecoration value={avatarDecoration} />
         </Avatar>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between w-fit bg-background/80 rounded-md gap-2 m-1 px-2 py-1.5">
+      {/* Every soundboard press, as its emoji falling across the presser's
+          tile — for everyone, since each client draws it from the same packet. */}
+      <SoundboardBurst identity={participant.identity} />
+
+      <div className="absolute inset-x-0 bottom-0 z-20 m-2 flex w-fit items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 backdrop-blur-md">
         {deafened ||
           (micMuted && (
             <span className="flex shrink-0 items-center gap-1 text-white/90">

@@ -179,6 +179,9 @@ export const getJoinContext = internalQuery({
       )
       .unique();
     if (!membership) throw new Error("Not a member of this conversation.");
+    const members = await ctx.db.query("conversationMembers").withIndex("by_conversation", (q) => q.eq("conversationId", conversationId)).collect();
+    const users = await Promise.all(members.map((member) => ctx.db.get(member.userId)));
+    if (users.some((user) => user?.clerkId === "system:crystal")) throw new Error("Crystal is not available for calls.");
     return { userId: me._id, name: me.name };
   },
 });
@@ -264,6 +267,8 @@ export const ring = mutation({
         .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
         .collect(),
     ]);
+    const memberUsers = await Promise.all(members.map((member) => ctx.db.get(member.userId)));
+    if (memberUsers.some((user) => user?.clerkId === "system:crystal")) throw new Error("Crystal is not available for calls.");
     const alreadyInCall = new Set(inCall.map((p) => p.userId));
 
     const newlyRung: Id<"users">[] = [];

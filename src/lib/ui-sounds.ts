@@ -48,8 +48,27 @@ export function pickRingSound(): UiSound {
   return Math.random() < RING_ALT_CHANCE ? "ringAlt" : "ring";
 }
 
+/** Sounds a theme pack has replaced, by sound. Set by `ThemePackProvider`; empty
+ * when no pack is applied. Only ever https addresses — see `setSoundOverrides`. */
+let overrides: Partial<Record<UiSound, string>> = {};
+
+/** Replace some of the app's sounds with a theme pack's. Anything that isn't a
+ * known sound with an https address is ignored, whatever it was given. */
+export function setSoundOverrides(next: Record<string, string>): void {
+  const clean: Partial<Record<UiSound, string>> = {};
+  for (const [key, url] of Object.entries(next)) {
+    if (!(key in UI_SOUNDS)) continue;
+    try {
+      if (new URL(url).protocol === "https:") clean[key as UiSound] = url;
+    } catch {
+      /* not an address */
+    }
+  }
+  overrides = clean;
+}
+
 function urlFor(sound: UiSound): string {
-  return `/sounds/ui/${UI_SOUNDS[sound]}.wav`;
+  return overrides[sound] ?? `/sounds/ui/${UI_SOUNDS[sound]}.wav`;
 }
 
 export interface UiSoundOptions {

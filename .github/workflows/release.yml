@@ -42,6 +42,8 @@ env:
   NEXT_PUBLIC_LIVEKIT_URL: ${{ secrets.NEXT_PUBLIC_LIVEKIT_URL }}
   NEXT_PUBLIC_CDN_URL: ${{ secrets.NEXT_PUBLIC_CDN_URL }}
   NEXT_PUBLIC_R2_PUBLIC_URL: ${{ secrets.NEXT_PUBLIC_R2_PUBLIC_URL }}
+  # Stripe's publishable key is meant to be public; without it the shop still
+  # loads but can't take payment.
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
   CONVEX_DEPLOYMENT: ${{ secrets.CONVEX_DEPLOYMENT }}
   LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}

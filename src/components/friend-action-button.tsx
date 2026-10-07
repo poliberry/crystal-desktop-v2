@@ -52,6 +52,7 @@ export function FriendActionButton({
   // Undefined while the query is in flight — showing "Add Friend" then
   // flipping it to "Message" a beat later would be worse than a placeholder.
   if (!relationship || relationship.kind === "self") return null;
+  if (username.toLowerCase() === "crystal") return null;
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);

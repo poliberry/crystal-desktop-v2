@@ -1,21 +1,54 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import { type Theme, DEFAULT_THEME_ID, getPresetById, PRESET_THEMES } from "@/lib/themes";
+import { getDesktopAPI } from "@/lib/desktop";
+import {
+  type SystemThemeIds,
+  type Theme,
+  type ThemeMode,
+  DEFAULT_SYSTEM_THEME_IDS,
+  DEFAULT_THEME_ID,
+  PRESET_THEMES,
+  deriveDynamicTheme,
+  getPresetById,
+} from "@/lib/themes";
 
 const STORAGE_KEY = "crystal-theme";
+const MODE_KEY = "crystal-theme-mode";
+const SYSTEM_KEY = "crystal-theme-system";
 
 interface ThemeContextValue {
+  /** The theme in effect — the picked one, or whichever of the system's two
+   * (or the dynamic one) applies right now. */
   theme: Theme | null;
+  mode: ThemeMode;
+  setMode: (mode: ThemeMode) => void;
+  /** Picks a theme and goes back to a fixed one. */
   applyTheme: (theme: Theme) => void;
   resetTheme: () => void;
+  /** Which theme goes with the system's light and its dark setting. */
+  systemThemeIds: SystemThemeIds;
+  setSystemThemeIds: (ids: Partial<SystemThemeIds>) => void;
+  /** Whether the app can read the system's accent colour here. */
+  dynamicSupported: boolean;
+  /** The system accent colour (`#rrggbb`), where it can be read. */
+  accentColor: string | null;
+  /** The system's setting, whether or not a mode is following it. */
+  prefersDark: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: null,
+  mode: "fixed",
+  setMode: () => {},
   applyTheme: () => {},
   resetTheme: () => {},
+  systemThemeIds: DEFAULT_SYSTEM_THEME_IDS,
+  setSystemThemeIds: () => {},
+  dynamicSupported: false,
+  accentColor: null,
+  prefersDark: true,
 });
 
 function injectTheme(theme: Theme) {
@@ -38,45 +71,126 @@ function injectTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme.isDark);
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme | null>(null);
+function readJson<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
 
-  useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    let resolved: Theme | null = null;
-    if (stored) {
-      try {
-        resolved = JSON.parse(stored) as Theme;
-      } catch {}
-    }
-    if (!resolved) {
-      resolved = getPresetById(DEFAULT_THEME_ID) ?? PRESET_THEMES[0];
-    }
-    setTheme(resolved);
-    injectTheme(resolved);
+function readMode(): ThemeMode {
+  const stored = localStorage.getItem(MODE_KEY);
+  return stored === "system" || stored === "dynamic" ? stored : "fixed";
+}
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // What was picked, kept apart from what is showing: in `system` and `dynamic`
+  // mode the picked theme is still there to go back to.
+  const [fixedTheme, setFixedTheme] = useState<Theme | null>(null);
+  const [mode, setModeState] = useState<ThemeMode>("fixed");
+  const [systemThemeIds, setSystemThemeIdsState] = useState(DEFAULT_SYSTEM_THEME_IDS);
+  const [prefersDark, setPrefersDark] = useState(true);
+  const [accentColor, setAccentColor] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    const stored = readJson<Theme>(STORAGE_KEY);
+    setFixedTheme(stored ?? getPresetById(DEFAULT_THEME_ID) ?? PRESET_THEMES[0]);
+    setModeState(readMode());
+    setSystemThemeIdsState({
+      ...DEFAULT_SYSTEM_THEME_IDS,
+      ...readJson<Partial<SystemThemeIds>>(SYSTEM_KEY),
+    });
   }, []);
 
-  // The Settings window is a separate Electron BrowserWindow (separate
+  useEffect(load, [load]);
+
+  // The Settings window used to be a separate Electron BrowserWindow (separate
   // renderer/JS realm) — `storage` fires here when *another* same-origin
-  // window writes localStorage, letting theme changes made in Settings
-  // apply to the main window live instead of only on next reload.
+  // window writes localStorage, letting theme changes made elsewhere apply to
+  // this window live instead of only on next reload.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY || !e.newValue) return;
-      try {
-        const next = JSON.parse(e.newValue) as Theme;
-        setTheme(next);
-        injectTheme(next);
-      } catch {}
+      if (e.key === STORAGE_KEY || e.key === MODE_KEY || e.key === SYSTEM_KEY) load();
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+  }, [load]);
+
+  // The system's light/dark setting.
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    setPrefersDark(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setPrefersDark(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
   }, []);
 
-  const applyTheme = useCallback((t: Theme) => {
-    setTheme(t);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
-    injectTheme(t);
+  // The system's accent colour, where the desktop app can read it.
+  useEffect(() => {
+    const system = getDesktopAPI()?.system;
+    if (!system) return;
+    const read = () => void system.accentColor().then(setAccentColor);
+    read();
+    const unsubscribe = system.onAccentColorChange(setAccentColor);
+    // A belt for the braces: the main process announces a change, but a
+    // notification missed while the app was in the background (a laptop asleep,
+    // the setting changed in another Space) would leave the colour stale until
+    // the next change. Looking again on coming back costs one IPC call.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") read();
+    };
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
+  const dynamicSupported = accentColor !== null;
+
+  const theme = useMemo<Theme | null>(() => {
+    if (mode === "dynamic" && accentColor) return deriveDynamicTheme(accentColor, prefersDark);
+    // Dynamic where it can't be read behaves as the system mode does, rather
+    // than as a fixed theme the user never chose for this machine.
+    if (mode === "system" || mode === "dynamic") {
+      const id = prefersDark ? systemThemeIds.dark : systemThemeIds.light;
+      return (
+        getPresetById(id) ??
+        getPresetById(prefersDark ? DEFAULT_SYSTEM_THEME_IDS.dark : DEFAULT_SYSTEM_THEME_IDS.light) ??
+        fixedTheme
+      );
+    }
+    return fixedTheme;
+  }, [mode, accentColor, prefersDark, systemThemeIds, fixedTheme]);
+
+  useEffect(() => {
+    if (theme) injectTheme(theme);
+  }, [theme]);
+
+  const setMode = useCallback((next: ThemeMode) => {
+    setModeState(next);
+    localStorage.setItem(MODE_KEY, next);
+  }, []);
+
+  const applyTheme = useCallback(
+    (t: Theme) => {
+      setFixedTheme(t);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
+      setMode("fixed");
+    },
+    [setMode],
+  );
+
+  const setSystemThemeIds = useCallback((ids: Partial<SystemThemeIds>) => {
+    setSystemThemeIdsState((current) => {
+      const next = { ...current, ...ids };
+      localStorage.setItem(SYSTEM_KEY, JSON.stringify(next));
+      return next;
+    });
   }, []);
 
   const resetTheme = useCallback(() => {
@@ -84,11 +198,34 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyTheme(def);
   }, [applyTheme]);
 
-  return (
-    <ThemeContext.Provider value={{ theme, applyTheme, resetTheme }}>
-      {children}
-    </ThemeContext.Provider>
+  const value = useMemo(
+    () => ({
+      theme,
+      mode,
+      setMode,
+      applyTheme,
+      resetTheme,
+      systemThemeIds,
+      setSystemThemeIds,
+      dynamicSupported,
+      accentColor,
+      prefersDark,
+    }),
+    [
+      theme,
+      mode,
+      setMode,
+      applyTheme,
+      resetTheme,
+      systemThemeIds,
+      setSystemThemeIds,
+      dynamicSupported,
+      accentColor,
+      prefersDark,
+    ],
   );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

@@ -1,35 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
-import {
-  Check,
-  ChevronDown,
-  ChevronsLeft,
-  ChevronsRight,
-  Code2,
-  Loader2,
-  Plus,
-  Sparkles,
-} from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Check, ChevronDown, Code2, Loader2, Plus, Sparkles, Sticker } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { BoardEditor } from "@/components/profile/board-editor";
+import { PageSidebar } from "@/components/pages/page-sidebar";
 import { ProfileCssDialog } from "@/components/profile/profile-css-dialog";
 import {
   DecorationDialog,
   DisplayNameStyleDialog,
-  NameplateDialog,
   ProfileEffectDialog,
-  ProfileFrameDialog,
+  ProfileStickersDialog,
   ThemeDialog,
 } from "@/components/profile/cosmetic-dialogs";
 import {
-  AVATAR_CROP,
-  BANNER_CROP,
-  ImageCropDialog,
-} from "@/components/profile/image-crop-dialog";
+  ProfileImagesDialog,
+  type ProfileImageKind,
+} from "@/components/profile/profile-images-dialog";
 import { MemberProfileCard } from "@/components/community/member-profile-card";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import { Avatar, AvatarDecoration, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -40,12 +31,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { useMyPresence } from "@/hooks/use-presence";
-import { useProfileScope, type ProfileScope } from "@/hooks/use-profile-scope";
+import { useProfileScope } from "@/hooks/use-profile-scope";
 import { displayNameStyleClass } from "@/lib/profile-cosmetics";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -65,8 +53,6 @@ import { cn } from "@/lib/utils";
  * are the exception and sit behind a Save button: they're typed rather than
  * chosen, and writing on every keystroke would be a mutation per character.
  */
-
-const BIO_MAX = 300;
 
 /** A section of the rail. */
 function RailSection({
@@ -178,102 +164,87 @@ function ScopeMenu({
   );
 }
 
-/** Name, bio and status — the part that's typed rather than picked. */
-function DetailsForm({ scope }: { scope: ProfileScope }) {
-  const values = scope.values;
-  const [name, setName] = useState(values?.name ?? "");
-  const [bio, setBio] = useState(values?.bio ?? "");
-  const [customStatus, setCustomStatus] = useState(values?.customStatus ?? "");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  // Re-seeded whenever the scope changes underneath — switching from the
-  // account to a server profile is a different set of values in the same
-  // fields, and stale text would be saved into the new scope.
-  const [seededFor, setSeededFor] = useState(scope.label);
-  if (seededFor !== scope.label && values) {
-    setSeededFor(scope.label);
-    setName(values.name);
-    setBio(values.bio);
-    setCustomStatus(values.customStatus);
-    setSaved(false);
-  }
+/** The three things that are typed rather than picked, held as a draft until
+ * the whole profile is saved. */
+interface TextDraft {
+  name: string;
+  bio: string;
+  customStatus: string;
+}
 
-  const dirty =
-    !!values &&
-    (name !== values.name ||
-      bio !== values.bio ||
-      customStatus !== values.customStatus);
+/** How long "Saved" stays up after a save. */
+const SAVED_FLASH_MS = 1800;
 
+/**
+ * The one place a profile's typed edits are saved.
+ *
+ * The name, status and bio are edited on the card itself, and none of them has
+ * a Save button: a bar rises from the bottom while anything is changed, says so,
+ * and saves the lot in one go — the same bar the community overview uses for its
+ * cards. Pictures, stickers and the rest apply as they are chosen, which is why
+ * this is only about the three.
+ */
+function ProfileSaveBar({
+  changes,
+  saving,
+  saved,
+  error,
+  onDiscard,
+  onSave,
+}: {
+  changes: number;
+  saving: boolean;
+  saved: boolean;
+  error: string | null;
+  onDiscard: () => void;
+  onSave: () => void;
+}) {
+  const visible = changes > 0 || saved;
   return (
-    <div className="space-y-3">
-      <div className="space-y-1.5">
-        <Label htmlFor="pe-name" className="text-xs">
-          Display name
-        </Label>
-        <Input
-          id="pe-name"
-          value={name}
-          maxLength={64}
-          onChange={(e) => {
-            setName(e.target.value);
-            setSaved(false);
-          }}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="pe-status" className="text-xs">
-          Custom status
-        </Label>
-        <Input
-          id="pe-status"
-          value={customStatus}
-          maxLength={128}
-          placeholder="What are you up to?"
-          onChange={(e) => {
-            setCustomStatus(e.target.value);
-            setSaved(false);
-          }}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="pe-bio" className="text-xs">
-          Bio
-        </Label>
-        <Textarea
-          id="pe-bio"
-          rows={4}
-          className="resize-none"
-          value={bio}
-          onChange={(e) => {
-            setBio(e.target.value.slice(0, BIO_MAX));
-            setSaved(false);
-          }}
-        />
-        <p className="text-right text-[11px] text-muted-foreground">
-          {bio.length}/{BIO_MAX}
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          disabled={!dirty || saving}
-          onClick={async () => {
-            setSaving(true);
-            try {
-              await scope.saveText({ name, bio, customStatus });
-              setSaved(true);
-            } finally {
-              setSaving(false);
-            }
-          }}
+    <AnimatePresence>
+      {visible && (
+        <motion.div
+          key="profile-save-bar"
+          role="status"
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 24 }}
+          transition={{ type: "spring", stiffness: 420, damping: 34 }}
+          className="absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-popover/95 py-2 pr-2 pl-4 shadow-xl backdrop-blur-xl"
         >
-          {saving ? <Loader2 className="size-4 animate-spin" /> : "Save"}
-        </Button>
-        {saved && !dirty && (
-          <span className="text-xs text-muted-foreground">Saved.</span>
-        )}
-      </div>
-    </div>
+          {changes === 0 ? (
+            <span className="flex items-center gap-1.5 pr-2 text-sm">
+              <Check className="size-4 text-emerald-500" />
+              Profile saved
+            </span>
+          ) : (
+            <>
+              <span className="text-sm">
+                {error ? (
+                  <span className="text-destructive">{error}</span>
+                ) : changes === 1 ? (
+                  "1 change"
+                ) : (
+                  `${changes} changes`
+                )}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="rounded-full"
+                disabled={saving}
+                onClick={onDiscard}
+              >
+                Discard
+              </Button>
+              <Button size="sm" className="rounded-full" disabled={saving} onClick={onSave}>
+                {saving ? <Loader2 className="size-4 animate-spin" /> : "Save profile"}
+              </Button>
+            </>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -294,24 +265,33 @@ export function ProfileEditor({
   const scope = useProfileScope(scopeId, scopeName);
   const values = scope.values;
 
-  const [wide, setWide] = useState(false);
   const [tab, setTab] = useState<"board" | "activity">("board");
   const [dialog, setDialog] = useState<
     | null
-    | "nameplate"
+    | "images"
     | "decoration"
     | "nameStyle"
     | "theme"
     | "effect"
-    | "frame"
+    | "stickers"
     | "css"
   >(null);
-  /** The crop editor is owned here rather than by the theme dialog, so a crop
-   * never opens on top of another dialog. */
-  const [cropping, setCropping] = useState<{
-    kind: "avatar" | "banner";
-    source: File | string;
-  } | null>(null);
+  /** Which picture the images dialog opens on. */
+  const [imageKind, setImageKind] = useState<ProfileImageKind>("avatar");
+  const openImages = (kind: ProfileImageKind) => {
+    setImageKind(kind);
+    setDialog("images");
+  };
+
+  // The typed edits, as only what has been changed: the card reads each field as
+  // the edit if there is one and the stored value if not, so there is no copy of
+  // the stored text to fall out of date, and "discard" is clearing this.
+  const [edits, setEdits] = useState<Partial<TextDraft>>({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(savedTimer.current), []);
 
   if (!me || !values) {
     return (
@@ -321,55 +301,68 @@ export function ProfileEditor({
     );
   }
 
-  const saveCrop = async (crop: Blob) => {
-    const target = cropping;
-    if (!target) return;
-    const original = target.source instanceof File ? target.source : undefined;
-    if (target.kind === "avatar") await scope.setAvatar(crop, original);
-    else await scope.setBanner(crop, original);
+  const text: TextDraft = {
+    name: edits.name ?? values.name,
+    bio: edits.bio ?? values.bio,
+    customStatus: edits.customStatus ?? values.customStatus,
+  };
+  /** Only the fields whose edit differs from what is stored — typing something
+   * and then typing it back is not a change. */
+  const changed = (["name", "bio", "customStatus"] as const).filter(
+    (key) => edits[key] !== undefined && edits[key] !== values[key],
+  );
+
+  const edit = (key: keyof TextDraft, value: string) => {
+    setSaveError(null);
+    setEdits((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const saveProfile = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await scope.saveText(text);
+      setEdits({});
+      setSaved(true);
+      window.clearTimeout(savedTimer.current);
+      savedTimer.current = window.setTimeout(() => setSaved(false), SAVED_FLASH_MS);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Couldn't save your profile.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Changing profile while there are unsaved edits would save them into the
+   * wrong one or lose them, so it asks first. */
+  const changeScope = (id: Id<"communities"> | undefined, name?: string) => {
+    if (changed.length > 0 && !window.confirm("Discard your unsaved changes?")) return;
+    setEdits({});
+    setSaveError(null);
+    setScopeId(id);
+    setScopeName(name);
   };
 
   return (
-    <div className={cn("flex h-full min-h-0 overflow-hidden bg-background", className)}>
+    <div className={cn("relative flex h-full min-h-0 overflow-hidden bg-background", className)}>
       {/* ---------------------------------------------------------------- */}
-      {/* Left rail                                                         */}
+      {/* Left rail — drawn in the unified sidebar, see `PageSidebar`        */}
       {/* ---------------------------------------------------------------- */}
-      <aside
-        className={cn(
-          "flex min-h-0 shrink-0 flex-col border-r border-border/40 bg-card/40 transition-[width] duration-200",
-          wide ? "w-[380px]" : "w-[260px]",
-        )}
-      >
+      <PageSidebar>
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
           <ScopeMenu
             communityId={scopeId}
             label={scopeId ? (scopeName ?? "Server Profile") : "Main Profile"}
-            onChange={(id, name) => {
-              setScopeId(id);
-              setScopeName(name);
-            }}
+            onChange={changeScope}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            aria-label={wide ? "Narrow the panel" : "Widen the panel"}
-            title={wide ? "Narrow the panel" : "Widen the panel to edit your details"}
-            onClick={() => setWide((w) => !w)}
-          >
-            {wide ? (
-              <ChevronsLeft className="size-4" />
-            ) : (
-              <ChevronsRight className="size-4" />
-            )}
-          </Button>
         </div>
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-5 px-3 pb-6">
             <RailSection label="Nameplate">
               <RailTile
-                onClick={() => setDialog("nameplate")}
+                onClick={() => openImages("nameplate")}
                 label="Edit nameplate"
                 filled={!!values.nameplateUrl}
                 className="h-12"
@@ -386,18 +379,7 @@ export function ProfileEditor({
             <RailSection label="Avatar & Decoration">
               <div className="grid grid-cols-2 gap-2">
                 <RailTile
-                  onClick={() => {
-                    // A fresh pick rather than a re-crop: re-cropping is
-                    // offered from the crop editor's own entry point below.
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.accept = "image/*";
-                    input.onchange = () => {
-                      const file = input.files?.[0];
-                      if (file) setCropping({ kind: "avatar", source: file });
-                    };
-                    input.click();
-                  }}
+                  onClick={() => openImages("avatar")}
                   label="Change avatar"
                   filled={!!values.imageUrl}
                 >
@@ -424,21 +406,6 @@ export function ProfileEditor({
                   </Avatar>
                 </RailTile>
               </div>
-              {values.avatarOriginalUrl && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs"
-                  onClick={() =>
-                    setCropping({
-                      kind: "avatar",
-                      source: values.avatarOriginalUrl as string,
-                    })
-                  }
-                >
-                  Adjust avatar crop
-                </Button>
-              )}
             </RailSection>
 
             <RailSection label="Display Name Style" badge={<NewBadge />}>
@@ -482,7 +449,7 @@ export function ProfileEditor({
                   </span>
                 </RailTile>
                 <RailTile
-                  onClick={() => setDialog("theme")}
+                  onClick={() => openImages("banner")}
                   label="Edit banner"
                   filled={!!values.bannerUrl}
                 >
@@ -496,7 +463,7 @@ export function ProfileEditor({
               </div>
             </RailSection>
 
-            <RailSection label="Profile Effect & Frame" badge={<NewBadge />}>
+            <RailSection label="Profile Effect & Stickers" badge={<NewBadge />}>
               <div className="grid grid-cols-2 gap-2">
                 <RailTile
                   onClick={() => setDialog("effect")}
@@ -511,16 +478,16 @@ export function ProfileEditor({
                   />
                 </RailTile>
                 <RailTile
-                  onClick={() => setDialog("frame")}
-                  label="Edit profile frame"
-                  filled={!!values.profileFrame}
+                  onClick={() => setDialog("stickers")}
+                  label="Edit profile stickers"
+                  filled={!!values.profileFrame || (values.profileFrameLayers?.length ?? 0) > 0}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={values.profileFrame}
-                    alt=""
-                    className="h-full w-full object-contain p-1"
-                  />
+                  <span className="flex flex-col items-center gap-1 text-muted-foreground">
+                    <Sticker className="size-6" />
+                    <span className="text-[11px]">
+                      {values.profileFrameLayers?.length ?? (values.profileFrame ? 1 : 0)} on your card
+                    </span>
+                  </span>
                 </RailTile>
               </div>
             </RailSection>
@@ -545,28 +512,10 @@ export function ProfileEditor({
               </button>
             </RailSection>
 
-            {/* Only in the wide rail: the cosmetics above are the point of
-                this panel, and pushing them up out of sight behind three text
-                fields would be the wrong trade at 260 pixels. */}
-            {wide && (
-              <RailSection label="Details">
-                <DetailsForm scope={scope} />
-              </RailSection>
-            )}
-
-            {!wide && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => setWide(true)}
-              >
-                Edit name, status & bio
-              </Button>
-            )}
           </div>
         </ScrollArea>
-      </aside>
+      </div>
+      </PageSidebar>
 
       {/* ---------------------------------------------------------------- */}
       {/* Live card                                                         */}
@@ -582,13 +531,23 @@ export function ProfileEditor({
               showActivity={false}
               communityId={scopeId}
               communityName={scopeName}
+              // The name, status and bio are the card's own: click one to
+              // change it. What is typed is a draft until the bar below saves.
+              inlineEdit={{
+                name: text.name,
+                customStatus: text.customStatus,
+                bio: text.bio,
+                onNameChange: (value) => edit("name", value),
+                onCustomStatusChange: (value) => edit("customStatus", value),
+                onBioChange: (value) => edit("bio", value),
+              }}
               member={{
                 userId: me._id,
-                name: values.name,
+                name: text.name,
                 username: me.username,
                 imageUrl: values.imageUrl,
-                bio: values.bio,
-                customStatus: values.customStatus,
+                bio: text.bio,
+                customStatus: text.customStatus,
                 bannerUrl: values.bannerUrl,
                 avatarDecoration: values.avatarDecoration,
                 borderGradientStart: values.borderGradientStart,
@@ -662,11 +621,6 @@ export function ProfileEditor({
       </div>
 
       {/* Dialogs ---------------------------------------------------------- */}
-      <NameplateDialog
-        open={dialog === "nameplate"}
-        onOpenChange={(o) => setDialog(o ? "nameplate" : null)}
-        scope={scope}
-      />
       <DecorationDialog
         open={dialog === "decoration"}
         onOpenChange={(o) => setDialog(o ? "decoration" : null)}
@@ -689,26 +643,16 @@ export function ProfileEditor({
         open={dialog === "theme"}
         onOpenChange={(o) => setDialog(o ? "theme" : null)}
         scope={scope}
-        onPickBanner={() => {
-          setDialog(null);
-          const input = document.createElement("input");
-          input.type = "file";
-          input.accept = "image/*";
-          input.onchange = () => {
-            const file = input.files?.[0];
-            if (file) setCropping({ kind: "banner", source: file });
-          };
-          input.click();
-        }}
+        onPickBanner={() => openImages("banner")}
       />
       <ProfileEffectDialog
         open={dialog === "effect"}
         onOpenChange={(o) => setDialog(o ? "effect" : null)}
         scope={scope}
       />
-      <ProfileFrameDialog
-        open={dialog === "frame"}
-        onOpenChange={(o) => setDialog(o ? "frame" : null)}
+      <ProfileStickersDialog
+        open={dialog === "stickers"}
+        onOpenChange={(o) => setDialog(o ? "stickers" : null)}
         scope={scope}
         scopeId={scopeId}
         scopeName={scopeName}
@@ -719,13 +663,24 @@ export function ProfileEditor({
         scope={scope}
       />
 
-      <ImageCropDialog
-        open={!!cropping}
-        onOpenChange={(open) => !open && setCropping(null)}
-        source={cropping?.source ?? null}
-        shape={cropping?.kind === "banner" ? BANNER_CROP : AVATAR_CROP}
-        title={cropping?.kind === "banner" ? "Position your banner" : "Position your avatar"}
-        onCropped={saveCrop}
+      <ProfileImagesDialog
+        open={dialog === "images"}
+        onOpenChange={(o) => setDialog(o ? "images" : null)}
+        scope={scope}
+        scopeId={scopeId}
+        initialKind={imageKind}
+      />
+
+      <ProfileSaveBar
+        changes={changed.length}
+        saving={saving}
+        saved={saved}
+        error={saveError}
+        onDiscard={() => {
+          setEdits({});
+          setSaveError(null);
+        }}
+        onSave={() => void saveProfile()}
       />
     </div>
   );

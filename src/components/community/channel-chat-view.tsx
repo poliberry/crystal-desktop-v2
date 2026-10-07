@@ -1,5 +1,6 @@
 "use client";
 
+import { CommunityThemeWash } from "@/components/community/community-theme-wash";
 import { useQuery } from "convex/react";
 import { Hash, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import { ChannelMessageComposer } from "@/components/community/channel-message-c
 import { ChannelMessageList } from "@/components/community/channel-message-list";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { MemberList } from "@/components/community/member-list";
+import { RightSidebarContent, useRightSidebar } from "@/components/sidebar/right-sidebar";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -38,7 +40,9 @@ export function ChannelChatView({
   name,
   topic,
 }: ChannelChatViewProps) {
-  const [showMembers, setShowMembers] = useState(true);
+  // The member list lives in the right sidebar, which the window owns; this
+  // view only says what goes in it and has the button for it.
+  const { open: showMembers, toggle: toggleMembers } = useRightSidebar();
   const [replyingTo, setReplyingTo] = useState<ReplyDraft | null>(null);
   useEffect(() => {
     setReplyingTo(null);
@@ -107,6 +111,7 @@ export function ChannelChatView({
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-accent/40 backdrop-blur-xl">
         {/* Behind everything in this column, and outside the scroller so it
             stays put while the messages move. */}
+        <CommunityThemeWash communityId={communityId} />
         <ChatBackground
           url={channel?.backgroundUrl}
           opacity={channel?.backgroundOpacity}
@@ -125,7 +130,7 @@ export function ChannelChatView({
                   variant="ghost"
                   size="icon"
                   className="ml-auto size-7"
-                  onClick={() => setShowMembers((v) => !v)}
+                  onClick={toggleMembers}
                 >
                   {showMembers ? (
                     <ChevronRightIcon duration={0.8} className="size-4" />
@@ -183,7 +188,9 @@ export function ChannelChatView({
         />
       </div>
 
-      {showMembers && <MemberList communityId={communityId} />}
+      <RightSidebarContent>
+        <MemberList communityId={communityId} />
+      </RightSidebarContent>
     </div>
   );
 }

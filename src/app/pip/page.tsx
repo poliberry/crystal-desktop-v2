@@ -27,7 +27,7 @@ export default function PipPage() {
         className="flex h-8 shrink-0 items-center justify-between border-b border-white/10 bg-black/80 pl-2"
       >
         <span className="truncate text-xs text-white/50">Crystal</span>
-        <WindowControls className="border-white/10" />
+        <WindowControls forceCustom className="border-white/10" />
       </header>
 
       <div className="relative min-h-0 flex-1">

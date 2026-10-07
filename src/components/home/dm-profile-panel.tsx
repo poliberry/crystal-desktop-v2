@@ -38,7 +38,7 @@ export function DmProfilePanel({
   const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   return (
-    <div className="flex w-72 shrink-0 flex-col border-l bg-background">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* A plain scroller rather than `ScrollArea`: Radix wraps its viewport's
           children in a `display: table` div, and a percentage height inside
           that resolves to auto — which is exactly what the card needs to fill

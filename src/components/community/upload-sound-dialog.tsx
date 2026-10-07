@@ -1,11 +1,8 @@
 "use client";
 
-import { useMutation } from "convex/react";
 import { Loader2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
 import { WaveformTrimmer, type TrimRange } from "@/components/community/waveform-trimmer";
 import { EmojiSelect } from "@/components/home/emoji-select";
 import { Button } from "@/components/ui/button";
@@ -21,7 +18,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { decodeAudioFile, encodeClipToWav, MAX_CLIP_MS } from "@/lib/audio-clip";
-import { uploadToStorage } from "@/lib/storage-upload";
 import { MAX_SOUND_BYTES, MAX_SOUND_LABEL } from "@/lib/upload-limits";
 
 /** What a fresh selection starts as: the first `MAX_CLIP_MS` of the file, or
@@ -30,8 +26,16 @@ function initialRange(duration: number): TrimRange {
   return { startSec: 0, endSec: Math.min(duration, MAX_CLIP_MS / 1000) };
 }
 
+/** A clip that has been trimmed and named, waiting to be uploaded. */
+export interface StagedSoundClip {
+  name: string;
+  emoji?: string;
+  clip: Blob;
+  durationMs: number;
+}
+
 /**
- * Upload a soundboard clip: pick a file, choose the part of it you want, name
+ * Add a soundboard clip: pick a file, choose the part of it you want, name
  * it, give it an emoji.
  *
  * Replaces a row of inline fields in the settings tab. The trimming is the
@@ -44,16 +48,17 @@ function initialRange(duration: number): TrimRange {
  * resolver, other clients — needs to know a trim ever happened.
  */
 export function UploadSoundDialog({
-  communityId,
   open,
   onOpenChange,
+  onAdd,
 }: {
-  communityId: Id<"communities">;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Handed the trimmed clip, ready to upload. Nothing is uploaded here: the
+   * soundboard page holds it with its other unsaved changes and sends it when
+   * they are saved. */
+  onAdd: (sound: StagedSoundClip) => void;
 }) {
-  const generateUploadUrl = useMutation(api.soundboard.generateUploadUrl);
-  const addSound = useMutation(api.soundboard.add);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -121,13 +126,10 @@ export function UploadSoundDialog({
       if (clip.size > MAX_SOUND_BYTES) {
         throw new Error(`The trimmed clip is over ${MAX_SOUND_LABEL}. Select a shorter part.`);
       }
-      const uploadUrl = await generateUploadUrl();
-      const storageId = await uploadToStorage(uploadUrl, clip);
-      await addSound({
-        communityId,
+      onAdd({
         name: trimmed,
         emoji: emoji.trim() || undefined,
-        storageId: storageId as Id<"_storage">,
+        clip,
         durationMs: Math.round((range.endSec - range.startSec) * 1000),
       });
       onOpenChange(false);
@@ -144,7 +146,7 @@ export function UploadSoundDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload a Sound</DialogTitle>
+          <DialogTitle>Add a Sound</DialogTitle>
           <DialogDescription className="sr-only">
             Choose an audio file, trim it to the part you want, and give it a name and emoji.
           </DialogDescription>
@@ -245,7 +247,7 @@ export function UploadSoundDialog({
             Never mind
           </Button>
           <Button onClick={() => void submit()} disabled={!ready || uploading}>
-            {uploading ? <Loader2 className="size-4 animate-spin" /> : "Upload"}
+            Add
           </Button>
         </DialogFooter>
       </DialogContent>

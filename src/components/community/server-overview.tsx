@@ -1,10 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery } from "convex/react";
+import { CommunityThemeWash } from "@/components/community/community-theme-wash";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "convex/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ExternalLink, Hash, LayoutDashboard, Pencil, Volume2 } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Hash,
+  LayoutDashboard,
+  Pencil,
+  Volume2,
+} from "lucide-react";
 import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
@@ -14,6 +25,7 @@ import { ServerOverviewEditor } from "@/components/community/server-overview-edi
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { fillLayouts, resolve } from "@/lib/overview-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -45,16 +57,18 @@ function CardShell({
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm",
+        "flex h-full flex-col overflow-hidden rounded-xl border border-border/50 bg-card/50 backdrop-blur-sm",
         wide && "sm:col-span-2",
       )}
     >
       {title && (
-        <header className="border-b border-border/40 px-4 py-2.5">
+        <header className="shrink-0 border-b border-border/40 px-4 py-2.5">
           <h3 className="text-sm font-semibold">{title}</h3>
         </header>
       )}
-      {children}
+      {/* A card is the size the board gave it, so what is in it scrolls rather
+          than stretching it. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </section>
   );
 }
@@ -169,6 +183,285 @@ function MarkdownCard({
   );
 }
 
+function RulesCard({
+  widget,
+}: {
+  widget: Extract<OverviewWidget, { kind: "rules" }>;
+}) {
+  return (
+    <CardShell title={widget.title ?? "Rules"} wide={widget.width === "full"}>
+      <ol className="space-y-3 p-4">
+        {widget.rules.map((rule, index) => (
+          <li key={index} className="flex gap-3">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+              {index + 1}
+            </span>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <p className="text-sm font-medium">{rule.title}</p>
+              {rule.body && <p className="mt-0.5 text-xs text-muted-foreground">{rule.body}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </CardShell>
+  );
+}
+
+const NOTE_PAPER: Record<string, string> = {
+  yellow: "bg-amber-200",
+  pink: "bg-pink-200",
+  blue: "bg-sky-200",
+  green: "bg-lime-200",
+  orange: "bg-orange-200",
+};
+
+/** A post-it from the owner. Fixed dark ink on pale paper whatever the theme,
+ * because it is paper. */
+function NoteCard({ widget }: { widget: Extract<OverviewWidget, { kind: "note" }> }) {
+  return (
+    <div className="h-full p-1">
+      <div
+        className={cn(
+          "relative flex h-full -rotate-1 flex-col rounded-sm px-4 pt-6 pb-3 text-zinc-800 shadow-lg shadow-black/25",
+          NOTE_PAPER[widget.color] ?? NOTE_PAPER.yellow,
+          // The curled corner.
+          "after:pointer-events-none after:absolute after:right-0 after:bottom-0 after:size-6 after:bg-gradient-to-tl after:from-black/20 after:to-transparent after:content-['']",
+        )}
+      >
+        {/* A strip of tape holding it up. */}
+        <span
+          aria-hidden
+          className="absolute -top-2 left-1/2 h-4 w-16 -translate-x-1/2 rotate-2 bg-white/60 shadow-sm"
+        />
+        {widget.title && <p className="mb-1 text-xs font-bold tracking-wide uppercase">{widget.title}</p>}
+        <p className="min-h-0 flex-1 overflow-y-auto text-sm leading-relaxed font-medium whitespace-pre-wrap">
+          {widget.body}
+        </p>
+        <div className="mt-2 flex shrink-0 items-center gap-2">
+          <Avatar size="sm" className="size-6 ring-2 ring-black/10">
+            <AvatarImage src={widget.author.imageUrl} alt={widget.author.name} />
+            <AvatarFallback className="text-[9px]">
+              {widget.author.name.slice(0, 2).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <p className="min-w-0 truncate text-xs font-semibold">— {widget.author.name}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Time left, as the four numbers people read a countdown by. */
+function CountdownCard({ widget }: { widget: Extract<OverviewWidget, { kind: "countdown" }> }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const remaining = widget.target - now;
+  const parts = (() => {
+    const total = Math.max(0, Math.floor(remaining / 1000));
+    return [
+      { label: "days", value: Math.floor(total / 86400) },
+      { label: "hours", value: Math.floor((total % 86400) / 3600) },
+      { label: "min", value: Math.floor((total % 3600) / 60) },
+      { label: "sec", value: total % 60 },
+    ];
+  })();
+
+  return (
+    <CardShell title={widget.title ?? "Countdown"} wide={widget.width === "full"}>
+      <div className="flex h-full flex-col justify-center gap-3 p-4">
+        {remaining > 0 ? (
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {parts.map((part) => (
+              <div key={part.label} className="rounded-lg bg-muted/40 py-2">
+                <p className="text-2xl font-semibold tabular-nums">
+                  {String(part.value).padStart(2, "0")}
+                </p>
+                <p className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                  {part.label}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-center text-lg font-semibold">
+            It started {moment(widget.target).fromNow()}.
+          </p>
+        )}
+        {widget.description && (
+          <p className="text-center text-sm text-muted-foreground">{widget.description}</p>
+        )}
+        <p className="text-center text-xs text-muted-foreground">
+          {moment(widget.target).format("dddd D MMMM YYYY, h:mm a")}
+        </p>
+      </div>
+    </CardShell>
+  );
+}
+
+/** A month at a time, with the days that have something on marked. */
+function CalendarCard({ widget }: { widget: Extract<OverviewWidget, { kind: "calendar" }> }) {
+  const [offset, setOffset] = useState(0);
+  const month = useMemo(() => moment().startOf("month").add(offset, "months"), [offset]);
+  const today = moment().format("YYYY-MM-DD");
+
+  const byDate = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const event of widget.events) {
+      map.set(event.date, [...(map.get(event.date) ?? []), event.title]);
+    }
+    return map;
+  }, [widget.events]);
+
+  // Weeks start on Monday, with blanks before the 1st to line the days up.
+  const lead = (month.isoWeekday() + 6) % 7;
+  const days = Array.from({ length: month.daysInMonth() }, (_, i) =>
+    month.clone().add(i, "days").format("YYYY-MM-DD"),
+  );
+  const inMonth = widget.events
+    .filter((e) => e.date.startsWith(month.format("YYYY-MM")))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return (
+    <CardShell title={widget.title ?? "Calendar"} wide={widget.width === "full"}>
+      <div className="space-y-2 p-3">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-label="Previous month"
+            onClick={() => setOffset((n) => n - 1)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          <p className="text-sm font-semibold">{month.format("MMMM YYYY")}</p>
+          <button
+            type="button"
+            aria-label="Next month"
+            onClick={() => setOffset((n) => n + 1)}
+            className="rounded p-1 text-muted-foreground hover:bg-accent"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        </div>
+        <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] text-muted-foreground">
+          {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
+            <span key={i}>{d}</span>
+          ))}
+          {Array.from({ length: lead }, (_, i) => (
+            <span key={`lead${i}`} />
+          ))}
+          {days.map((date) => {
+            const events = byDate.get(date);
+            return (
+              <span
+                key={date}
+                title={events?.join("\n")}
+                className={cn(
+                  "relative flex aspect-square items-center justify-center rounded-md text-xs",
+                  date === today && "bg-primary text-primary-foreground",
+                  events && date !== today && "bg-primary/15 font-semibold text-foreground",
+                )}
+              >
+                {Number(date.slice(8))}
+                {events && (
+                  <span
+                    aria-hidden
+                    className="absolute bottom-0.5 size-1 rounded-full bg-primary"
+                  />
+                )}
+              </span>
+            );
+          })}
+        </div>
+        <ul className="space-y-1">
+          {inMonth.slice(0, 5).map((event, index) => (
+            <li key={index} className="flex gap-2 text-xs">
+              <span className="w-12 shrink-0 text-muted-foreground tabular-nums">
+                {moment(event.date).format("D MMM")}
+              </span>
+              <span className="truncate">{event.title}</span>
+            </li>
+          ))}
+          {inMonth.length === 0 && (
+            <li className="text-xs text-muted-foreground">Nothing on this month.</li>
+          )}
+        </ul>
+      </div>
+    </CardShell>
+  );
+}
+
+/** A question members vote on. Each answer is a bar that fills as it gains
+ * votes; pressing yours again takes the vote back. */
+function PollCard({ widget }: { widget: Extract<OverviewWidget, { kind: "poll" }> }) {
+  const vote = useMutation(api.communityWidgets.votePoll);
+  const [error, setError] = useState<string | null>(null);
+  const closed = widget.closesAt !== undefined && Date.now() >= widget.closesAt;
+
+  const cast = async (index: number) => {
+    setError(null);
+    try {
+      await vote({
+        widgetId: widget.id,
+        optionIndex: widget.myVote === index ? null : index,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't record that vote.");
+    }
+  };
+
+  return (
+    <CardShell title={widget.title ?? "Poll"} wide={widget.width === "full"}>
+      <div className="space-y-2 p-3">
+        <p className="text-sm font-semibold">{widget.question}</p>
+        {widget.options.map((option, index) => {
+          const share = widget.total > 0 ? (option.count / widget.total) * 100 : 0;
+          const mine = widget.myVote === index;
+          return (
+            <button
+              key={index}
+              type="button"
+              disabled={closed}
+              onClick={() => void cast(index)}
+              className={cn(
+                "relative flex w-full items-center gap-2 overflow-hidden rounded-md border px-3 py-1.5 text-left text-sm transition-colors enabled:hover:border-primary/60",
+                mine ? "border-primary" : "border-border/60",
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "absolute inset-y-0 left-0 transition-[width] duration-500",
+                  mine ? "bg-primary/25" : "bg-muted/60",
+                )}
+                style={{ width: `${share}%` }}
+              />
+              <span className="relative min-w-0 flex-1 truncate">{option.label}</span>
+              {mine && <Check className="relative size-3.5 shrink-0 text-primary" />}
+              <span className="relative shrink-0 text-xs text-muted-foreground tabular-nums">
+                {Math.round(share)}%
+              </span>
+            </button>
+          );
+        })}
+        <p className="text-xs text-muted-foreground">
+          {widget.total} vote{widget.total === 1 ? "" : "s"}
+          {closed
+            ? " · closed"
+            : widget.closesAt !== undefined
+              ? ` · closes ${moment(widget.closesAt).fromNow()}`
+              : ""}
+        </p>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
+    </CardShell>
+  );
+}
+
 function BannerCard({
   widget,
 }: {
@@ -177,7 +470,7 @@ function BannerCard({
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border/50",
+        "relative h-full overflow-hidden rounded-xl border border-border/50",
         widget.width === "full" && "sm:col-span-2",
       )}
     >
@@ -234,8 +527,39 @@ export function ServerOverview({
 
   const empty = widgets !== undefined && widgets.length === 0;
 
+  // Where each card sits. Cards a reader can't see have already been dropped,
+  // so the rest close up over the gaps they leave.
+  const cells = useMemo(
+    () =>
+      new Map(
+        (widgets ? resolve(fillLayouts(widgets, (w) => w.kind)) : []).map((cell) => [cell.id, cell]),
+      ),
+    [widgets],
+  );
+
+  // Arranging the page happens on the page: the pinboard takes the place of the
+  // cards in the same space, and Done puts them back. One leaves before the
+  // other arrives, so the page is never both at once.
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <AnimatePresence mode="wait" initial={false}>
+      {editing && canEdit ? (
+        <motion.div
+          key="edit"
+          className="relative flex min-h-0 flex-1 flex-col"
+          exit={{ opacity: 1 }}
+        >
+          <ServerOverviewEditor communityId={communityId} onDone={() => setEditing(false)} />
+        </motion.div>
+      ) : (
+    <motion.div
+      key="view"
+      className="relative isolate flex min-h-0 flex-1 flex-col"
+      initial={{ opacity: 0, scale: 0.985 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.985 }}
+      transition={{ type: "spring", stiffness: 420, damping: 36 }}
+    >
+      <CommunityThemeWash communityId={communityId} />
       {/* The server's own banner behind the page, if it has one — the overview
           is the closest thing a server has to a cover. */}
       {community?.bannerUrl && (
@@ -297,8 +621,10 @@ export function ServerOverview({
               )}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="overview-grid">
               {widgets.map((widget) => {
+                const cell = cells.get(widget.id);
+                const card = (() => {
                 switch (widget.kind) {
                   case "channels":
                     return (
@@ -318,22 +644,41 @@ export function ServerOverview({
                     );
                   case "markdown":
                     return <MarkdownCard key={widget.id} widget={widget} />;
+                  case "rules":
+                    return <RulesCard key={widget.id} widget={widget} />;
+                  case "note":
+                    return <NoteCard key={widget.id} widget={widget} />;
+                  case "countdown":
+                    return <CountdownCard key={widget.id} widget={widget} />;
+                  case "calendar":
+                    return <CalendarCard key={widget.id} widget={widget} />;
+                  case "poll":
+                    return <PollCard key={widget.id} widget={widget} />;
                   case "banner":
                     return <BannerCard key={widget.id} widget={widget} />;
                 }
+                })();
+                return (
+                  <div
+                    key={widget.id}
+                    className="overview-cell"
+                    style={
+                      cell
+                        ? ({ "--x": cell.x, "--y": cell.y, "--w": cell.w, "--h": cell.h } as React.CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {card}
+                  </div>
+                );
               })}
             </div>
           )}
         </div>
       </ScrollArea>
 
-      {canEdit && (
-        <ServerOverviewEditor
-          communityId={communityId}
-          open={editing}
-          onOpenChange={setEditing}
-        />
+    </motion.div>
       )}
-    </div>
+    </AnimatePresence>
   );
 }

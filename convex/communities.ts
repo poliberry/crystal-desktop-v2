@@ -1,8 +1,9 @@
+import { requireCommunityOpen } from "./lib/moderation";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { r2DeleteByUrl, r2PublicUrlForKey } from "./lib/r2";
+import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import {
   DEFAULT_EVERYONE_PERMISSIONS,
   PERMISSIONS,
@@ -11,6 +12,15 @@ import {
   requireAbove,
   requireCommunityPermission,
 } from "./permissions";
+import {
+  CREATOR_AUDIENCES,
+  CREATOR_PLATFORMS,
+  sanitizeClanGames,
+  surfaceAllowed,
+  type CreatorAudience,
+  type CreatorPlatform,
+} from "./lib/communityKinds";
+import { sanitizeSetup, setupValidator } from "./lib/communitySetup";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
@@ -109,6 +119,167 @@ export const create = mutation({
       position: 1,
       createdAt: Date.now(),
     });
+
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`user:${me._id}:communities`);
+    } catch {}
+    return communityId;
+  },
+});
+
+/**
+ * Makes a community and everything the setup flow decided about it in one go.
+ *
+ * One mutation rather than `create` followed by a call per channel and role:
+ * the flow is long, the people running it are mid-sentence, and a server left
+ * with half its channels because the tenth call failed is worse than one that
+ * didn't get made. The icon and banner are uploaded afterwards by the client
+ * (`setIcon`, `setBanner`), which needs the id this returns.
+ *
+ * The rules go onto the overview as a card, with a "Start here" card pointing
+ * at the first few text channels, so the front page is not empty on day one.
+ */
+export const createFromSetup = mutation({
+  args: {
+    name: v.string(),
+    setup: setupValidator,
+    inviteOnly: v.optional(v.boolean()),
+    /** A saved template this was made from, to count its uses. */
+    templateId: v.optional(v.id("communityTemplates")),
+    /** Absent is a standard community. */
+    kind: v.optional(v.union(v.literal("creator"), v.literal("clan"))),
+    /** A clan's games, one to five. */
+    clanGames: v.optional(v.array(v.object({ id: v.optional(v.string()), name: v.string() }))),
+    creator: v.optional(
+      v.object({
+        platform: v.optional(v.string()),
+        audience: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, { name, setup: rawSetup, inviteOnly, templateId, kind, clanGames, creator }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const trimmed = name.trim().slice(0, 64);
+    if (!trimmed) throw new Error("Community name can't be empty.");
+    const setup = sanitizeSetup(rawSetup);
+    if (setup.channels.length === 0) throw new Error("A community needs at least one channel.");
+
+    // What the kind adds is checked here, against what was sent — a client can
+    // describe any setup it likes, and only the kinds that allow a surface may
+    // have it.
+    const games = kind === "clan" ? sanitizeClanGames(clanGames ?? []) : undefined;
+    let creatorPlatform: CreatorPlatform | undefined;
+    let creatorAudience: CreatorAudience | undefined;
+    if (kind === "creator") {
+      const platform = creator?.platform;
+      if (platform !== undefined && !(CREATOR_PLATFORMS as readonly string[]).includes(platform)) {
+        throw new Error("That isn't a platform Crystal can connect to.");
+      }
+      if (!(CREATOR_AUDIENCES as readonly string[]).includes(creator?.audience ?? "")) {
+        throw new Error("Choose who can join.");
+      }
+      creatorPlatform = platform as CreatorPlatform | undefined;
+      creatorAudience = creator!.audience as CreatorAudience;
+    }
+    for (const channel of setup.channels) {
+      if (channel.surface && !surfaceAllowed(kind, channel.surface as never)) {
+        throw new Error(`A ${kind ?? "standard"} community can't have a ${channel.surface} channel.`);
+      }
+      if (channel.gameId && !games?.some((g) => g.id === channel.gameId)) {
+        throw new Error("A channel belongs to a game the clan doesn't have.");
+      }
+    }
+
+    const now = Date.now();
+    const communityId = await ctx.db.insert("communities", {
+      name: trimmed,
+      ownerId: me._id,
+      createdAt: now,
+      // A members-only creator community is joined through the platform, not an
+      // invite link; a public one is open the way a creator would expect.
+      inviteOnly: kind === "creator" ? creatorAudience === "members" : (inviteOnly ?? true),
+      kind,
+      clanGames: games,
+      creatorPlatform,
+      creatorAudience,
+    });
+    await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: now });
+
+    await ctx.db.insert("roles", {
+      communityId,
+      name: "@everyone",
+      permissions: DEFAULT_EVERYONE_PERMISSIONS,
+      position: 0,
+      isEveryone: true,
+    });
+    // Highest first in the setup, so the first one gets the highest position.
+    for (const [index, role] of setup.roles.entries()) {
+      await ctx.db.insert("roles", {
+        communityId,
+        name: role.name,
+        color: role.color,
+        permissions: role.permissions,
+        position: setup.roles.length - index,
+        isEveryone: false,
+        hoist: role.hoist,
+      });
+    }
+
+    const categoryIds = new Map<string, Id<"channelCategories">>();
+    for (const channel of setup.channels) {
+      if (!channel.category || categoryIds.has(channel.category)) continue;
+      categoryIds.set(
+        channel.category,
+        await ctx.db.insert("channelCategories", {
+          communityId,
+          name: channel.category,
+          position: categoryIds.size,
+        }),
+      );
+    }
+
+    const channelIds: { id: Id<"channels">; type: "text" | "voice" }[] = [];
+    for (const [position, channel] of setup.channels.entries()) {
+      const id = await ctx.db.insert("channels", {
+        communityId,
+        name: channel.name,
+        type: channel.type,
+        topic: channel.topic,
+        categoryId: channel.category ? categoryIds.get(channel.category) : undefined,
+        position,
+        createdAt: now,
+        surface: channel.surface as never,
+        gameId: channel.gameId,
+      });
+      channelIds.push({ id, type: channel.type });
+    }
+
+    let widgetPosition = 0;
+    if (setup.rules.length > 0) {
+      await ctx.db.insert("communityWidgets", {
+        communityId,
+        position: widgetPosition++,
+        title: "Rules",
+        width: "full",
+        config: { kind: "rules", rules: setup.rules },
+      });
+    }
+    const startHere = channelIds.filter((c) => c.type === "text").slice(0, 4);
+    if (startHere.length > 0) {
+      await ctx.db.insert("communityWidgets", {
+        communityId,
+        position: widgetPosition++,
+        title: "Start here",
+        width: "full",
+        config: { kind: "channels", channelIds: startHere.map((c) => c.id) },
+      });
+    }
+
+    if (templateId) {
+      const template = await ctx.db.get(templateId);
+      if (template) await ctx.db.patch(templateId, { uses: (template.uses ?? 0) + 1 });
+    }
 
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -322,6 +493,12 @@ export const get = query({
       isOwner: community.ownerId === me._id,
       createdAt: community.createdAt,
       inviteOnly: isInviteOnly(community),
+      themeStart: community.themeStart,
+      themeEnd: community.themeEnd,
+      kind: community.kind,
+      clanGames: community.clanGames,
+      creatorPlatform: community.creatorPlatform,
+      creatorAudience: community.creatorAudience,
     };
     try {
       const { cacheSetJson } = await import("./cache");
@@ -350,6 +527,7 @@ export const join = mutation({
       .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .unique();
     if (existing) return;
+    await requireCommunityOpen(ctx, communityId, "join");
 
     // Open-join path only. An invite code (`joinByInviteCode`) is explicit
     // permission and bypasses this — see `isInviteOnly`.
@@ -400,8 +578,12 @@ export const updateSettings = mutation({
     communityId: v.id("communities"),
     name: v.optional(v.string()),
     inviteOnly: v.optional(v.boolean()),
+    /** The theme gradient. Both set to change it, both an empty string to clear
+     * it; one without the other is refused. */
+    themeStart: v.optional(v.string()),
+    themeEnd: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, name, inviteOnly }) => {
+  handler: async (ctx, { communityId, name, inviteOnly, themeStart, themeEnd }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
@@ -413,6 +595,22 @@ export const updateSettings = mutation({
     }
     if (inviteOnly !== undefined) {
       await ctx.db.patch(communityId, { inviteOnly });
+    }
+    if (themeStart !== undefined || themeEnd !== undefined) {
+      if (themeStart === undefined || themeEnd === undefined) {
+        throw new Error("A theme needs both of its colours.");
+      }
+      const clearing = themeStart === "" && themeEnd === "";
+      // Stored text that ends up in a stylesheet value: only a plain hex colour
+      // is let through.
+      const hex = /^#[0-9a-fA-F]{6}$/;
+      if (!clearing && !(hex.test(themeStart) && hex.test(themeEnd))) {
+        throw new Error("Theme colours must be hex colours like #5865f2.");
+      }
+      await ctx.db.patch(communityId, {
+        themeStart: clearing ? undefined : themeStart.toLowerCase(),
+        themeEnd: clearing ? undefined : themeEnd.toLowerCase(),
+      });
     }
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -452,7 +650,7 @@ export const setIcon = mutation({
     const previous = community.iconStorageId;
     const previousUrl = community.imageUrl;
     await ctx.db.patch(communityId, { imageUrl: url, iconStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
     else if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -489,7 +687,7 @@ export const setBanner = mutation({
     const previous = community.bannerStorageId;
     const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: url, bannerStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await r2DeleteByUrl(previousUrl);
+    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
     else if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -508,7 +706,7 @@ export const removeBanner = mutation({
     const previous = community.bannerStorageId;
     const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: undefined, bannerStorageId: undefined });
-    if (previousUrl) await r2DeleteByUrl(previousUrl);
+    if (previousUrl) await dropR2Url(ctx, previousUrl);
     if (previous) await ctx.storage.delete(previous).catch(() => {});
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -579,8 +777,8 @@ export const remove = mutation({
     for (const member of members) await ctx.db.delete(member._id);
 
     if (community.iconStorageId) await ctx.storage.delete(community.iconStorageId).catch(() => {});
-    if (community.imageUrl) await r2DeleteByUrl(community.imageUrl).catch(() => {});
-    if (community.bannerUrl) await r2DeleteByUrl(community.bannerUrl).catch(() => {});
+    if (community.imageUrl) await dropR2Url(ctx, community.imageUrl).catch(() => {});
+    if (community.bannerUrl) await dropR2Url(ctx, community.bannerUrl).catch(() => {});
     await ctx.db.delete(communityId);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -596,7 +794,13 @@ export const listMembers = query({
     if (!me) return [];
     const community = await ctx.db.get(communityId);
     if (!community) return [];
-    await requireMember(ctx, communityId, me._id);
+    // Empty for a non-member, not a throw — see `roles.list`: the preloader
+    // keeps this subscribed through the moment a community is left or deleted.
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
+      .unique();
+    if (!membership) return [];
 
     const [members, memberRoles, roles] = await Promise.all([
       ctx.db
@@ -1141,6 +1345,19 @@ export const joinByInviteCode = mutation({
       .query("communityMembers")
       .withIndex("by_community_user", (q) => q.eq("communityId", community._id).eq("userId", me._id))
       .unique();
+    if (!existing) await requireCommunityOpen(ctx, community._id, "join");
+    // A members-only creator community is for members of the channel, and an
+    // invite link doesn't change that — it is how they get in once the platform
+    // has confirmed it. The owner is let through to set it up.
+    if (!existing && community.kind === "creator" && community.creatorAudience === "members" && community.ownerId !== me._id) {
+      const verified = await ctx.db
+        .query("creatorMemberships")
+        .withIndex("by_community_user", (q) => q.eq("communityId", community._id).eq("userId", me._id))
+        .unique();
+      if (!verified?.tierKey || Date.now() - verified.checkedAt > 24 * 60 * 60 * 1000) {
+        throw new Error("This community is members-only. Connect your account and verify your membership first.");
+      }
+    }
     if (!existing) {
       await ctx.db.insert("communityMembers", {
         communityId: community._id,
@@ -1149,5 +1366,68 @@ export const joinByInviteCode = mutation({
       });
     }
     return community._id;
+  },
+});
+
+// --- Unified sidebar ordering ------------------------------------------------
+// Personal arrangement of the community list. Stored per user rather than on
+// the membership rows so a reorder is one write, and so leaving/rejoining a
+// community doesn't have to renumber anything.
+
+export const getSidebarOrder = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const row = await ctx.db
+      .query("sidebarCommunityOrders")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .unique();
+    return row?.orderedCommunityIds ?? [];
+  },
+});
+
+export const reorderSidebar = mutation({
+  args: { orderedCommunityIds: v.array(v.id("communities")) },
+  handler: async (ctx, { orderedCommunityIds }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const memberships = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+    const joined = new Set(memberships.map((m) => m.communityId as string));
+    // Keep only communities the caller is still in, in the order they sent —
+    // ids for servers since left are dropped, and anything missing (a join
+    // that raced the drag) is appended so it can't vanish from the list.
+    const seen = new Set<string>();
+    const ordered = orderedCommunityIds.filter((id) => {
+      const key = id as string;
+      if (seen.has(key) || !joined.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    for (const m of memberships) {
+      const key = m.communityId as string;
+      if (!seen.has(key)) {
+        ordered.push(m.communityId);
+        seen.add(key);
+      }
+    }
+    const existing = await ctx.db
+      .query("sidebarCommunityOrders")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        orderedCommunityIds: ordered,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("sidebarCommunityOrders", {
+        userId: me._id,
+        orderedCommunityIds: ordered,
+        updatedAt: Date.now(),
+      });
+    }
   },
 });

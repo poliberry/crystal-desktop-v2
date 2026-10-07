@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
+  Flag,
   FolderPlus,
   Hash,
   LogOut,
@@ -13,10 +14,11 @@ import {
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { CommunitySettingsDialog } from "@/components/community/community-settings-dialog";
+import { useOpenCommunitySettings } from "@/components/pages/page-context";
 import { CreateCategoryDialog } from "@/components/community/create-category-dialog";
 import { CreateChannelDialog } from "@/components/community/create-channel-dialog";
 import { InviteDialog } from "@/components/community/invite-dialog";
+import { ReportDialog } from "@/components/reports/report-dialog";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 
 /**
@@ -48,6 +50,7 @@ export interface CommunityActionHandlers {
   createCategory: () => void;
   communitySettings: () => void;
   leave: () => void;
+  report: () => void;
 }
 
 export function communityActionItems({
@@ -101,6 +104,13 @@ export function communityActionItems({
   // Settings action, deliberately further away than a menu item.
   if (!isOwner) {
     items.push({
+      key: "report",
+      label: "Report Server",
+      icon: Flag,
+      onSelect: handlers.report,
+      separatorBefore: items.length > 0,
+    });
+    items.push({
       key: "leave",
       label: "Leave Server",
       icon: LogOut,
@@ -137,7 +147,8 @@ export function useCommunityActions({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const openCommunitySettings = useOpenCommunitySettings();
 
   const items = communityActionItems({
     permissions,
@@ -146,8 +157,9 @@ export function useCommunityActions({
       invite: () => setInviteOpen(true),
       createChannel: () => setCreateChannelOpen(true),
       createCategory: () => setCreateCategoryOpen(true),
-      communitySettings: () => setSettingsOpen(true),
+      communitySettings: () => openCommunitySettings(communityId),
       leave: () => void leaveCommunity({ communityId }),
+      report: () => setReporting(true),
     },
   });
 
@@ -156,6 +168,12 @@ export function useCommunityActions({
   // as soon as it exists.
   const dialogs = (
     <>
+      {reporting && (
+        <ReportDialog
+          target={{ type: "community", id: communityId, label: "this community" }}
+          onClose={() => setReporting(false)}
+        />
+      )}
       {inviteOpen && (
         <InviteDialog communityId={communityId} open onOpenChange={setInviteOpen} />
       )}
@@ -171,18 +189,6 @@ export function useCommunityActions({
           communityId={communityId}
           open
           onOpenChange={setCreateCategoryOpen}
-        />
-      )}
-      {settingsOpen && (
-        <CommunitySettingsDialog
-          communityId={communityId}
-          open
-          onOpenChange={setSettingsOpen}
-          canManageCommunity={hasPermission(permissions, PERMISSIONS.MANAGE_COMMUNITY)}
-          canManageRoles={hasPermission(permissions, PERMISSIONS.MANAGE_ROLES)}
-          canManageChannels={hasPermission(permissions, PERMISSIONS.MANAGE_CHANNELS)}
-          canManageEmojis={hasPermission(permissions, PERMISSIONS.MANAGE_EMOJIS)}
-          isOwner={isOwner}
         />
       )}
     </>

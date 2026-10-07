@@ -1,11 +1,12 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Ban, Clock, PencilLine, UserMinus } from "lucide-react";
+import { Ban, Clock, Flag, PencilLine, UserMinus } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { ReportDialog } from "@/components/reports/report-dialog";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -70,6 +71,7 @@ export function MemberContextMenu({
   const timeoutMember = useMutation(api.communities.timeoutMember);
   const setMemberNickname = useMutation(api.communities.setMemberNickname);
 
+  const [reporting, setReporting] = useState(false);
   const [nicknameOpen, setNicknameOpen] = useState(false);
   const [nickname, setNickname] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +84,9 @@ export function MemberContextMenu({
   const canModerate = !isSelf && (canKick || canBan || canTimeout);
   const timedOut = !!timeoutUntil && timeoutUntil > Date.now();
 
-  if (!canModerate && !canNickname) return <>{children}</>;
+  // Anyone can report someone else, so the menu is only plain for your own row
+  // when you have nothing to do to it.
+  if (!canModerate && !canNickname && isSelf) return <>{children}</>;
 
   const run = (action: () => Promise<unknown>) => {
     setError(null);
@@ -161,8 +165,22 @@ export function MemberContextMenu({
               Ban {name}
             </ContextMenuItem>
           )}
+          {!isSelf && (
+            <>
+              {(canModerate || canNickname) && <ContextMenuSeparator />}
+              <ContextMenuItem variant="destructive" onClick={() => setReporting(true)}>
+                <Flag />
+                Report {name}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
+
+      <ReportDialog
+        target={reporting ? { type: "user", id: userId, label: name } : null}
+        onClose={() => setReporting(false)}
+      />
 
       <Dialog open={nicknameOpen} onOpenChange={setNicknameOpen}>
         <DialogContent className="sm:max-w-sm">

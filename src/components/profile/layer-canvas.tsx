@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Copy, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, ImagePlus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LayerContent } from "@/components/profile/layer-content";
@@ -12,6 +12,9 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
+  canvasBounds,
+  confineLayer,
+  DEFAULT_VARIANT,
   endLine,
   endYFromLine,
   LAYER_LIMITS,
@@ -21,6 +24,7 @@ import {
   patchLayer,
   resolveLayer,
   twoEndedStretch,
+  type CanvasKind,
   type CosmeticLayer,
 } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
@@ -134,8 +138,77 @@ const rotate = (x: number, y: number, degrees: number) => {
   return { x: x * cos - y * sin, y: x * sin + y * cos };
 };
 
+/** The widest the canvas can be zoomed, as a multiple of whatever the editor
+ * calls 100% — which is "fits the window", so this is a lot of room for the
+ * small avatar and plenty for a card. */
+const MAX_ZOOM = 12;
+const MIN_ZOOM = 0.2;
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
+
+/**
+ * The small bar that floats under the selected layer.
+ *
+ * Placed from the layer's *turned* extent and not from its box, so it sits
+ * below whatever is actually lowest on screen instead of being swallowed by a
+ * corner of a rotated layer — and kept off the canvas's edge by the same
+ * measure, so there is always somewhere for it to be.
+ */
+function LayerToolbar({
+  layer,
+  height,
+  stageHeightPercent,
+  pxPerPercent,
+  onForward,
+  onBackward,
+  onDuplicate,
+  onDelete,
+}: {
+  layer: CosmeticLayer;
+  height: number;
+  stageHeightPercent: number;
+  pxPerPercent: number;
+  onForward: () => void;
+  onBackward: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const radians = ((layer.rotation ?? 0) * Math.PI) / 180;
+  const halfHeight =
+    (layer.width * Math.abs(Math.sin(radians)) + height * Math.abs(Math.cos(radians))) / 2;
+  const left = layer.x * pxPerPercent;
+  const top = (layerCentreY(layer, stageHeightPercent) + halfHeight) * pxPerPercent + 12;
+
+  const button =
+    "flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+  return (
+    <div
+      onPointerDown={(event) => event.stopPropagation()}
+      className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border bg-popover/95 p-0.5 shadow-lg backdrop-blur"
+      style={{ left, top }}
+    >
+      <button type="button" title="Bring forward" className={button} onClick={onForward}>
+        <ArrowUp className="size-3.5" />
+      </button>
+      <button type="button" title="Send backward" className={button} onClick={onBackward}>
+        <ArrowDown className="size-3.5" />
+      </button>
+      <span aria-hidden className="mx-0.5 h-4 w-px bg-border" />
+      <button type="button" title="Duplicate (Ctrl+D)" className={button} onClick={onDuplicate}>
+        <Copy className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        title="Delete (Del)"
+        className={cn(button, "hover:bg-destructive/15 hover:text-destructive")}
+        onClick={onDelete}
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+    </div>
+  );
+}
 
 export function LayerCanvas({
   layers,
@@ -152,7 +225,8 @@ export function LayerCanvas({
   /** Ratios by url, so a layer that keeps its own proportions still gets
    * handles in the right place. Measured by the caller as images load. */
   ratios,
-  variant,
+  kind,
+  variant = DEFAULT_VARIANT,
   zoom,
   onZoomChange,
   pan,
@@ -160,6 +234,8 @@ export function LayerCanvas({
   active = true,
   onActivate,
   resolveSrc,
+  onFiles,
+  emptyState,
   children,
   className,
   style,
@@ -180,9 +256,15 @@ export function LayerCanvas({
   onUndo: () => void;
   onRedo: () => void;
   ratios: Record<string, number>;
-  /** Which shape of card is on the canvas. Layers are drawn as that shape's
-   * placement, and edits are written back to it — see `patchLayer`. */
-  variant: string;
+  /**
+   * What is being decorated, which decides how far from it a layer may go: the
+   * canvas is bounded, and everything that moves a layer — a drag, a resize,
+   * a nudge — is held inside it. See `confineLayer`.
+   */
+  kind: CanvasKind;
+  /** Which shape of card is on the canvas. Only the default one is edited
+   * now; kept so a layer's stored variants still resolve. */
+  variant?: string;
   zoom: number;
   onZoomChange: (zoom: number) => void;
   /** How far the whole scene has been shoved around, in screen pixels. Owned
@@ -199,6 +281,10 @@ export function LayerCanvas({
    * where a url is a url; the decoration editor passes the one that also knows
    * how to draw a preset key. */
   resolveSrc: (url: string) => string;
+  /** Images dropped onto the canvas. Without it a drop does nothing. */
+  onFiles?: (files: File[]) => void;
+  /** Drawn over the canvas while there is nothing on it — what to do first. */
+  emptyState?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
@@ -225,6 +311,7 @@ export function LayerCanvas({
   const [spaceHeld, setSpaceHeld] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
+  const [dropping, setDropping] = useState(false);
 
   /** Pixels per percent-of-stage-width, which is the only number that connects
    * the stored geometry to the screen. */
@@ -237,6 +324,25 @@ export function LayerCanvas({
   const heightOf = useCallback(
     (layer: CosmeticLayer) => layerHeight(layer, ratios[layer.url], stageHeightPercent),
     [ratios, stageHeightPercent],
+  );
+
+  /**
+   * Hold every layer inside the canvas.
+   *
+   * Applied to everything this component hands back — a drag frame, a key
+   * press — rather than only to the layer that moved, so a list that arrives
+   * with something already out of bounds (artwork saved before the canvas had
+   * edges) is brought in the first time anything is touched, not left half in
+   * and half out.
+   */
+  const confine = useCallback(
+    (list: CosmeticLayer[]) =>
+      list.map((layer) => {
+        const placedLayer = resolveLayer(layer, variant);
+        const next = confineLayer(placedLayer, kind, stageHeightPercent, heightOf);
+        return next === placedLayer ? layer : patchLayer(layer, next, variant);
+      }),
+    [heightOf, kind, stageHeightPercent, variant],
   );
 
   /** What the layers look like on the shape of card currently underneath them.
@@ -344,7 +450,8 @@ export function LayerCanvas({
       if (!start) return;
 
       /** Draw it, and remember it as the thing to save when this ends. */
-      const apply = (next: CosmeticLayer[]) => {
+      const apply = (raw: CosmeticLayer[]) => {
+        const next = confine(raw);
         pending.current = next;
         onChange(next);
       };
@@ -585,6 +692,7 @@ export function LayerCanvas({
       window.removeEventListener("pointercancel", end);
     };
   }, [
+    confine,
     drag,
     heightOf,
     layers,
@@ -656,7 +764,7 @@ export function LayerCanvas({
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
-        const next = Math.min(3, Math.max(0.2, zoom * (1 - event.deltaY / 500)));
+        const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * (1 - event.deltaY / 500)));
         onZoomChange(Math.round(next * 100) / 100);
         return;
       }
@@ -743,7 +851,7 @@ export function LayerCanvas({
        * drag, so there is nothing to wait for. */
       const apply = (fn: (layer: CosmeticLayer) => Partial<CosmeticLayer>) => {
         event.preventDefault();
-        const next = patchEach(selectedIds, fn);
+        const next = confine(patchEach(selectedIds, fn));
         onChange(next);
         onCommit(next);
       };
@@ -827,6 +935,7 @@ export function LayerCanvas({
     return () => window.removeEventListener("keydown", onKey);
   }, [
     active,
+    confine,
     heightOf,
     placed,
     onChange,
@@ -847,17 +956,49 @@ export function LayerCanvas({
   const singleSelected =
     selectedIds.length === 1 ? placed.find((layer) => layer.id === selectedIds[0]) ?? null : null;
 
+  /** The canvas itself — the one box a layer may be in — in screen pixels, from
+   * the stage's top-left corner. */
+  const bounds = canvasBounds(kind, stageHeightPercent);
+  const pxPerPercent = (stage.width * zoom) / 100;
+  const boundsBox = {
+    left: bounds.minX * pxPerPercent,
+    top: bounds.minY * pxPerPercent,
+    width: (bounds.maxX - bounds.minX) * pxPerPercent,
+    height: (bounds.maxY - bounds.minY) * pxPerPercent,
+  };
+
   return (
     <div
       className={cn(
-        // The checkerboard says "transparent" the way every image editor does,
-        // which matters here: almost every frame is mostly nothing.
-        "relative flex items-center justify-center overflow-hidden rounded-md border bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]",
-        active ? "border-primary/70" : "border-border/50",
+        // The area round the canvas is plain: the canvas is the one thing here
+        // with edges, and it says so by being the only part with a
+        // checkerboard (below).
+        "relative flex items-center justify-center overflow-hidden rounded-xl border bg-muted/20",
+        active ? "border-primary/50" : "border-border/50",
+        dropping && "border-primary bg-primary/5",
         className,
       )}
       ref={rootRef}
       onPointerDown={beginPan}
+      onDragOver={(event) => {
+        if (!onFiles || !event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        setDropping(true);
+      }}
+      onDragLeave={(event) => {
+        // Leaving for a child is not leaving the canvas.
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(event) => {
+        setDropping(false);
+        if (!onFiles) return;
+        const files = Array.from(event.dataTransfer.files).filter((file) =>
+          file.type.startsWith("image/"),
+        );
+        if (files.length === 0) return;
+        event.preventDefault();
+        onFiles(files);
+      }}
       style={{
         cursor: panFrom?.moved ? "grabbing" : spaceHeld ? "grab" : undefined,
         ...style,
@@ -875,6 +1016,15 @@ export function LayerCanvas({
           transform: `translate(${pan.x}px, ${pan.y}px)`,
         }}
       >
+        {/* The canvas: where artwork can go. Drawn behind the thing being
+            decorated, so for a card — which fills it — it is just an edge, and
+            for an avatar it is the margin round it that is free to use. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute rounded-lg border border-dashed border-primary/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:12px_12px]"
+          style={boundsBox}
+        />
+
         <div
           // Rendered at its true size and scaled as a whole, so every
           // proportion inside it — text, avatar, padding — stays right at any
@@ -942,16 +1092,24 @@ export function LayerCanvas({
                           onPointerDown={(event) => beginDrag(event, spec.handle, layer)}
                           style={{
                             cursor: spec.cursor,
-                            left: `calc(${(spec.fx + 0.5) * 100}% - 5px)`,
-                            top: `calc(${(spec.fy + 0.5) * 100}% - 5px)`,
+                            left: `calc(${(spec.fx + 0.5) * 100}% - 6px)`,
+                            top: `calc(${(spec.fy + 0.5) * 100}% - 6px)`,
                           }}
-                          className="absolute size-2.5 rounded-[2px] border border-primary bg-background"
+                          className="absolute size-3 rounded-[3px] border-2 border-primary bg-background shadow-sm"
                         />
                       ))}
+                      {/* A stem to the turning handle, so it reads as attached to
+                          the layer rather than as a stray dot above it. */}
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute w-px bg-primary/60"
+                        style={{ left: "calc(50% - 0.5px)", top: -22, height: 22 }}
+                      />
                       <span
                         onPointerDown={(event) => beginDrag(event, "rotate", layer)}
-                        style={{ left: "calc(50% - 6px)", top: -26 }}
-                        className="absolute size-3 cursor-grab rounded-full border border-primary bg-background"
+                        title="Drag to turn"
+                        style={{ left: "calc(50% - 7px)", top: -30 }}
+                        className="absolute size-3.5 cursor-grab rounded-full border-2 border-primary bg-background shadow-sm active:cursor-grabbing"
                       />
                     </>
                   )}
@@ -989,6 +1147,23 @@ export function LayerCanvas({
           );
         })}
 
+        {/* What you can do with the selected layer, next to it rather than in a
+            panel across the dialog: duplicating, reordering and deleting are the
+            things you reach for right after placing something. Hidden mid-drag,
+            when it would be in the way of the thing being dragged. */}
+        {singleSelected && !drag && (
+          <LayerToolbar
+            layer={singleSelected}
+            height={heightOf(singleSelected)}
+            stageHeightPercent={stageHeightPercent}
+            pxPerPercent={pxPerPercent}
+            onForward={() => onReorder(singleSelected.id, 1)}
+            onBackward={() => onReorder(singleSelected.id, -1)}
+            onDuplicate={() => onDuplicate([singleSelected.id])}
+            onDelete={() => onDelete([singleSelected.id])}
+          />
+        )}
+
         {/* Snap guides, drawn only while something has landed on one. */}
         {guides.x !== undefined && (
           <span
@@ -1004,11 +1179,24 @@ export function LayerCanvas({
         )}
       </div>
 
-      {/* A word about what to do, but only when there's nothing to do it to. */}
-      {layers.length === 0 && (
-        <p className="pointer-events-none absolute bottom-3 text-xs text-muted-foreground">
-          Add an image to start
-        </p>
+      {/* What to do first, but only when there's nothing to do it to. */}
+      {layers.length === 0 && emptyState && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+          <div className="pointer-events-auto" onPointerDown={(event) => event.stopPropagation()}>
+            {emptyState}
+          </div>
+        </div>
+      )}
+
+      {/* Shown while a file is being dragged over, so it is clear the canvas
+          will take it. */}
+      {dropping && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-primary/10 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-lg border border-primary bg-background/90 px-3 py-2 text-sm font-medium shadow-lg">
+            <ImagePlus className="size-4 text-primary" />
+            Drop to add
+          </div>
+        </div>
       )}
       {singleSelected && (
         <p className="pointer-events-none absolute right-2 bottom-2 rounded bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">

@@ -1,5 +1,6 @@
 "use client";
 
+import { requestMembershipVerification } from "@/lib/members-only";
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Compass, Volume2 } from "lucide-react";
@@ -9,7 +10,8 @@ import { Fragment, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useCommunityActions } from "@/components/community/community-actions";
-import { CreateCommunityDialog } from "@/components/community/create-community-dialog";
+import { useOpenCreateCommunity } from "@/components/pages/page-context";
+import { PlusIcon } from "@animateicons/react/lucide";
 import {
   Avatar,
   AvatarFallback,
@@ -135,9 +137,14 @@ function DiscoverDialog({
       setInviteInput("");
       onJoined(communityId);
     } catch (err) {
-      setInviteError(
-        err instanceof Error ? err.message : "Couldn't join with that code.",
-      );
+      if (requestMembershipVerification(err, { code })) {
+        setOpen(false);
+        setInviteInput("");
+      } else {
+        setInviteError(
+          err instanceof Error ? err.message : "Couldn't join with that code.",
+        );
+      }
     } finally {
       setJoiningByCode(false);
     }
@@ -566,6 +573,7 @@ export function CommunityRail({
   canOpenInCurrentTab,
   openCommunityIds,
 }: CommunityRailProps) {
+  const openCreateCommunity = useOpenCreateCommunity();
   const {
     activeCall,
     controller,
@@ -634,7 +642,16 @@ export function CommunityRail({
             hoverable box around the trigger, and that box is the dialog's
             neighbour rather than its business. */}
         <div className="group relative">
-          <CreateCommunityDialog onCreated={onSelectCommunity} />
+          <Button
+            variant="secondary"
+            size="icon"
+            aria-label="Create a community"
+            title="Create a community"
+            className="size-12 rounded-full transition-[border-radius] ease-in-out hover:rounded-2xl"
+            onClick={openCreateCommunity}
+          >
+            <PlusIcon duration={0.5} />
+          </Button>
           <SelectionPill className="-left-2" state="idle" />
         </div>
       </div>

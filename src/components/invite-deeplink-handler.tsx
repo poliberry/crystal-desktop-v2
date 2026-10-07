@@ -1,5 +1,6 @@
 "use client";
 
+import { requestMembershipVerification } from "@/lib/members-only";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
@@ -71,7 +72,9 @@ export function InviteDeepLinkHandler() {
       close();
       openCommunity(communityId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't join that server.");
+      // A members-only creator community: hand off to the verification dialog.
+      if (requestMembershipVerification(err, { code })) close();
+      else setError(err instanceof Error ? err.message : "Couldn't join that server.");
     } finally {
       setJoining(false);
     }

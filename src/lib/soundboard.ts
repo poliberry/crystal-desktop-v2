@@ -46,6 +46,10 @@ export interface SoundboardPacket {
    * so a receiver never has to trust a URL it can already look up. */
   url?: string;
   name?: string;
+  /** The clip's emoji, so every listener can show it falling over the sender's
+   * tile. Only sent for uploaded clips — a built-in's is looked up from
+   * `soundId`, like its url — and checked by `safeEmoji` on arrival. */
+  emoji?: string;
 }
 
 export const SOUNDBOARD_TOPIC = "soundboard";
@@ -182,6 +186,45 @@ export function measureSoundDuration(url: string): Promise<number | null> {
     audio.addEventListener("error", () => done(null), { once: true });
     audio.src = url;
   });
+}
+
+// --- the emoji that falls over a tile ---------------------------------------
+
+/**
+ * A clip's emoji as it arrives in a packet, or `null` if it is not fit to draw.
+ *
+ * A data packet is whatever its sender made it, and this ends up as text in
+ * everyone else's call: a short string, no control characters. Custom emoji
+ * (`<:name:id>`) pass — `EmojiGlyph` shows one only if the viewer can see it
+ * and a placeholder otherwise.
+ */
+export function safeEmoji(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 64) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+type EmojiListener = (identity: string, emoji: string) => void;
+// Held on `globalThis`, not in the module: when this file is hot-reloaded in
+// development the module is evaluated again, and a tile still subscribed to the
+// old copy's list would never hear a press emitted into the new one.
+const emojiGlobal = globalThis as { __crystalEmojiListeners?: Set<EmojiListener> };
+const emojiListeners = (emojiGlobal.__crystalEmojiListeners ??= new Set<EmojiListener>());
+
+/** Someone played a clip: tell whatever is drawing their tile. */
+export function emitSoundboardEmoji(identity: string, emoji: string): void {
+  for (const listener of emojiListeners) listener(identity, emoji);
+}
+
+/** Subscribe to clips being played; returns the unsubscribe. */
+export function onSoundboardEmoji(listener: EmojiListener): () => void {
+  emojiListeners.add(listener);
+  return () => {
+    emojiListeners.delete(listener);
+  };
 }
 
 // --- who's playing a sound right now ---------------------------------------
