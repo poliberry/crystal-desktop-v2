@@ -51,12 +51,23 @@ const ThemeContext = createContext<ThemeContextValue>({
   prefersDark: true,
 });
 
+/**
+ * Set on <html> by ThemePackProvider while a theme pack that carries colours is on: "dark" or "light". The pack decides
+ * which, so a theme change underneath it must not flip the class back.
+ */
+export const PACK_SCHEME_ATTR = "data-theme-pack-scheme";
+
 function injectTheme(theme: Theme) {
   let styleEl = document.getElementById("crystal-theme-vars") as HTMLStyleElement | null;
   if (!styleEl) {
     styleEl = document.createElement("style");
     styleEl.id = "crystal-theme-vars";
-    document.head.appendChild(styleEl);
+    // Always before the theme pack's stylesheet and the person's own: all three set the same variables at the same
+    // specificity, so the order is the whole precedence (theme < pack < custom CSS). This effect runs after the pack
+    // provider's own (it is the parent), so appending here would put the theme on top of a pack that got there first.
+    const later = document.getElementById("crystal-theme-pack") ?? document.getElementById("crystal-custom-css");
+    if (later) document.head.insertBefore(styleEl, later);
+    else document.head.appendChild(styleEl);
   }
 
   const cssVars = Object.entries(theme.colors)
@@ -68,7 +79,8 @@ function injectTheme(theme: Theme) {
   // Override both :root and .dark so the colors win regardless of dark class state
   styleEl.textContent = `:root {\n${cssVars}${fontLine}\n}\n.dark {\n${cssVars}${fontLine}\n}`;
 
-  document.documentElement.classList.toggle("dark", theme.isDark);
+  const forced = document.documentElement.getAttribute(PACK_SCHEME_ATTR);
+  document.documentElement.classList.toggle("dark", forced ? forced === "dark" : theme.isDark);
 }
 
 function readJson<T>(key: string): T | null {

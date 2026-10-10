@@ -1,8 +1,13 @@
 "use client";
 
-import { PanelTop } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { Check, Loader2, Palette, PanelTop } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
+import { api } from "../../../../convex/_generated/api";
+import { SkuPreview } from "@/components/marketplace/sku-preview";
+import { useOpenMarketplace } from "@/components/pages/page-context";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
@@ -13,6 +18,79 @@ import { Textarea } from "@/components/ui/textarea";
 import { SettingRow, SettingsGroup } from "@/components/settings/settings-ui";
 import { ThemePicker } from "@/components/settings/theme-picker";
 import { type Theme, PRESET_THEMES, getPresetById } from "@/lib/themes";
+
+/**
+ * The theme packs the person owns, with the one in force marked. A pack is a font, colours, sounds and icons for the whole
+ * app (see theme-pack-provider.tsx); one is on at a time, and taking it off goes back to the theme chosen above.
+ * Shown whenever there is something to show, and a way to the shop when there isn't, so the section is findable.
+ */
+function ThemePacksCard() {
+  const entitlements = useQuery(api.marketplace.myEntitlements);
+  const active = useQuery(api.marketplace.activeThemePack);
+  const equip = useMutation(api.marketplace.equip);
+  const unequip = useMutation(api.marketplace.unequipThemePack);
+  const openMarketplace = useOpenMarketplace();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  if (entitlements === undefined) return null;
+  const packs = entitlements.filter((e) => e.kind === "themePack");
+
+  const run = async (id: string, action: () => Promise<unknown>, done: string) => {
+    setBusy(id);
+    try {
+      await action();
+      toast.success(done);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "That didn't work.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Theme packs</CardTitle>
+        <CardDescription>
+          A pack changes the font, colours, sounds and icons together. One is on at a time; turning it off returns to the theme above.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {packs.length === 0 ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            <span>You don&apos;t have any theme packs yet.</span>
+            <Button size="sm" variant="outline" onClick={() => openMarketplace()}>
+              Browse the Marketplace
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-4">
+            {packs.map((pack) => {
+              const on = active?.entitlementId === pack.id;
+              return (
+                <div key={pack.id} className={`flex flex-col overflow-hidden rounded-xl border-2 bg-card/60 ${on ? "border-primary" : "border-border"}`}>
+                  <SkuPreview grants={[{ kind: pack.kind, payload: pack.payload, label: pack.label }]} size="md" className="aspect-[4/3.4] w-full" />
+                  <div className="flex flex-1 flex-col gap-2 p-3">
+                    <p className="truncate text-sm font-semibold">{pack.skuName}</p>
+                    {on ? (
+                      <Button size="sm" variant="outline" disabled={busy === pack.id} onClick={() => void run(pack.id, () => unequip({}), "Theme pack removed.")}>
+                        {busy === pack.id ? <Loader2 className="animate-spin" /> : <Check />} Applied — remove
+                      </Button>
+                    ) : (
+                      <Button size="sm" disabled={busy === pack.id} onClick={() => void run(pack.id, () => equip({ entitlementId: pack.id }), "Theme pack applied.")}>
+                        {busy === pack.id ? <Loader2 className="animate-spin" /> : <Palette />} Apply
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function AppearanceTab() {
   const {
@@ -131,6 +209,8 @@ export function AppearanceTab() {
           )}
         </CardContent>
       </Card>
+
+      <ThemePacksCard />
 
       <Card>
         <CardHeader>

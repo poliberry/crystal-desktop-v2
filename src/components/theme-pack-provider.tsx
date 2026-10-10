@@ -4,7 +4,7 @@ import { useQuery } from "convex/react";
 import { useEffect } from "react";
 
 import { api } from "../../convex/_generated/api";
-import { useTheme } from "@/components/theme-provider";
+import { PACK_SCHEME_ATTR, useTheme } from "@/components/theme-provider";
 import { setSoundOverrides } from "@/lib/ui-sounds";
 
 const STYLE_ID = "crystal-theme-pack";
@@ -47,15 +47,21 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
     if (!spec) {
       style?.remove();
       setSoundOverrides({});
+      document.documentElement.removeAttribute(PACK_SCHEME_ATTR);
       return;
     }
     if (!style) {
       style = document.createElement("style");
       style.id = STYLE_ID;
-      // After the app's own theme, so an equal rule from the pack wins — but before
-      // the person's own stylesheet, which always has the last word.
+      // Straight after the app's own theme, so an equal rule from the pack wins — and before
+      // the person's own stylesheet, which always has the last word. The theme's element is
+      // created by ThemeProvider after this effect has first run (a parent's effects follow
+      // its children's), and it puts itself before this one when it is made, so whichever is
+      // there first, the order comes out the same.
+      const themeVars = document.getElementById("crystal-theme-vars");
       const custom = document.getElementById("crystal-custom-css");
-      if (custom) document.head.insertBefore(style, custom);
+      if (themeVars) themeVars.after(style);
+      else if (custom) document.head.insertBefore(style, custom);
       else document.head.appendChild(style);
     }
 
@@ -96,13 +102,21 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
     style.textContent = rules.join("\n");
 
     setSoundOverrides(spec.sounds ?? {});
-    // A pack that says it is light or dark decides which, for as long as it is on.
-    if (spec.theme) document.documentElement.classList.toggle("dark", spec.theme.isDark);
+    // A pack that says it is light or dark decides which, for as long as it is on. It is also written where
+    // ThemeProvider can see it: picking another theme underneath would otherwise set the class straight back.
+    const html = document.documentElement;
+    if (spec.theme) {
+      html.setAttribute(PACK_SCHEME_ATTR, spec.theme.isDark ? "dark" : "light");
+      html.classList.toggle("dark", spec.theme.isDark);
+    } else {
+      html.removeAttribute(PACK_SCHEME_ATTR);
+    }
 
     return () => {
       document.getElementById(STYLE_ID)?.remove();
       setSoundOverrides({});
-      document.documentElement.classList.toggle("dark", isDarkBase);
+      html.removeAttribute(PACK_SCHEME_ATTR);
+      html.classList.toggle("dark", isDarkBase);
     };
   }, [pack, isDarkBase]);
 
