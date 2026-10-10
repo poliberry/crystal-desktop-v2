@@ -24,7 +24,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { UpdateIndicator } from "@/components/update-indicator";
-import { WindowControls } from "@/components/window-controls";
+import { useRightSidebarShown } from "@/components/sidebar/right-sidebar";
+import { useReservesWindowControls, WINDOW_CONTROLS_WIDTH } from "@/components/window-controls-dock";
 import { Menu01Icon } from "@animateicons/react/huge";
 import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { cn } from "@/lib/utils";
@@ -168,6 +169,8 @@ export function TopNav() {
   // which are inset from the corner. And with no window buttons of ours at the
   // right-hand end, the buttons there need their own margin from the edge.
   const nativeControls = hasNativeWindowControls();
+  const sidebarShown = useRightSidebarShown();
+  const reserveCorner = useReservesWindowControls() && !sidebarShown;
 
   return (
     <header
@@ -221,7 +224,9 @@ export function TopNav() {
 
       <BirthdayButton />
 
-      <WindowControls className="ml-1 z-[999] pointer-events-auto" />
+      {/* The window's buttons are fixed to the corner (WindowControlsDock). When the details sidebar is open that corner is
+          the top of its column; otherwise it is this bar's end, and this keeps the bar's contents clear of it. */}
+      {reserveCorner && <div aria-hidden className="shrink-0" style={{ width: WINDOW_CONTROLS_WIDTH }} />}
     </header>
   );
 }

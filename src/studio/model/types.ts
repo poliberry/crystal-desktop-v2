@@ -373,7 +373,14 @@ export interface ThemePackData {
   font?: { family: string; faces?: FontFaceData[]; assetId?: string };
   /** `template` is the id of the built-in app theme the colours started from, if any — so the
    * editor can say so and offer to go back to it. It is Studio's own note: it is never submitted. */
-  theme?: { isDark: boolean; colors: Record<string, string>; template?: string };
+  theme?: {
+    isDark: boolean;
+    colors: Record<string, string>;
+    template?: string;
+    /** A palette for the other scheme (light if `isDark`, dark if not), so the pack follows the person's setting. Absent:
+     * the pack has one look. Its `template` is Studio's own note, like the main one's. */
+    alt?: { colors: Record<string, string>; template?: string };
+  };
   sounds: Record<string, string>;
   icons: Record<string, string>;
 }

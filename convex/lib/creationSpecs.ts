@@ -281,9 +281,40 @@ export interface ThemePackSpec {
   v: 1;
   name: string;
   font?: { family: string; faces: FontFaceSpec[] };
-  theme?: { isDark: boolean; colors: Partial<Record<ThemeToken, string>> };
+  /**
+   * The pack's colours. `isDark` says which scheme `colors` is for. `alt` is an optional second palette for the other
+   * scheme: with it the pack follows the person's light/dark choice, wearing whichever palette matches. Without it the
+   * pack has one look and forces its scheme on, as every pack did before variants existed. Kept inside `theme` so an app
+   * that doesn't know about `alt` reads a variant pack as the single-palette pack it always understood.
+   */
+  theme?: { isDark: boolean; colors: Partial<Record<ThemeToken, string>>; alt?: { colors: Partial<Record<ThemeToken, string>> } };
   sounds?: Partial<Record<PackSound, string>>;
   icons?: Record<string, string>;
+}
+
+/**
+ * Which palette a pack wears, given whether the app's own theme is dark. A pack with both palettes follows the app's
+ * light/dark setting (`forced: false`: nothing overrides the scheme). A pack with one forces its scheme.
+ */
+export function pickThemeVariant(
+  theme: NonNullable<ThemePackSpec["theme"]>,
+  baseIsDark: boolean,
+): { isDark: boolean; colors: Partial<Record<ThemeToken, string>>; forced: boolean } {
+  if (!theme.alt) return { isDark: theme.isDark, colors: theme.colors, forced: true };
+  if (theme.isDark === baseIsDark) return { isDark: theme.isDark, colors: theme.colors, forced: false };
+  return { isDark: !theme.isDark, colors: theme.alt.colors, forced: false };
+}
+
+/** A palette of known tokens with plain colours, or an error saying which one isn't. */
+function normalizeColours(input: unknown): Partial<Record<ThemeToken, string>> {
+  const colors: Partial<Record<ThemeToken, string>> = {};
+  for (const [token, value] of Object.entries((input ?? {}) as Record<string, unknown>)) {
+    if (!(THEME_TOKENS as readonly string[]).includes(token)) throw new Error(`"${token}" isn't a colour a theme can set.`);
+    if (typeof value !== "string" || !COLOUR.test(value.trim())) throw new Error(`"${token}" isn't a plain colour.`);
+    colors[token as ThemeToken] = value.trim();
+  }
+  if (Object.keys(colors).length === 0) throw new Error("A theme with no colours isn't a theme.");
+  return colors;
 }
 
 /** A colour and nothing else: hex, or a colour function over plain numbers. No
@@ -338,14 +369,13 @@ export function normalizeThemePackSpec(input: unknown, assertUrl: UrlCheck): The
 
   if (raw.theme) {
     const t = raw.theme as Record<string, unknown>;
-    const colors: Partial<Record<ThemeToken, string>> = {};
-    for (const [token, value] of Object.entries((t.colors ?? {}) as Record<string, unknown>)) {
-      if (!(THEME_TOKENS as readonly string[]).includes(token)) throw new Error(`"${token}" isn't a colour a theme can set.`);
-      if (typeof value !== "string" || !COLOUR.test(value.trim())) throw new Error(`"${token}" isn't a plain colour.`);
-      colors[token as ThemeToken] = value.trim();
+    out.theme = { isDark: t.isDark !== false, colors: normalizeColours(t.colors) };
+    // The other scheme's palette, if the pack has one. An empty one is "no variant", not an error: it is what a creator
+    // who added a variant and hasn't coloured it yet has, and the pack is still a good single-palette pack.
+    const alt = t.alt as Record<string, unknown> | null | undefined;
+    if (alt && typeof alt === "object" && Object.keys((alt.colors ?? {}) as object).length > 0) {
+      out.theme.alt = { colors: normalizeColours(alt.colors) };
     }
-    if (Object.keys(colors).length === 0) throw new Error("A theme with no colours isn't a theme.");
-    out.theme = { isDark: t.isDark !== false, colors };
   }
 
   if (raw.sounds) {
