@@ -298,25 +298,6 @@ body {
     "Segoe UI Symbol", sans-serif;
 }
 
-.animated-gradient {
-  background: radial-gradient(circle, #0080c0 22%, #387c51 85%);
-  background-size: 220% 220%;
-  animation: animated-gradient-breathing 10s cubic-bezier(0.4, 0, 0.2, 1)
-    infinite;
-}
-
-@keyframes animated-gradient-breathing {
-  0%,
-  100% {
-    background-size: 220% 220%;
-    opacity: 0.9;
-  }
-  50% {
-    background-size: 240% 240%;
-    opacity: 1;
-  }
-}
-
 .fade-mask-l {
   -webkit-mask-image: linear-gradient(
     to left,

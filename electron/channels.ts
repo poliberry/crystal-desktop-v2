@@ -130,6 +130,83 @@ function readBuildChannel(appPath: string): ReleaseChannel | null {
   }
 }
 
+/**
+ * Crystal ships as two applications from one codebase: Crystal itself, and Crystal Studio, which is installed, launched,
+ * updated and uninstalled on its own (own Dock tile, own icon, own data directory, own update feed). Each exists on every
+ * channel, so "Crystal Studio Canary" sits beside "Crystal Canary".
+ */
+export type AppKind = "crystal" | "studio";
+
+/** What the OS knows an application by. For `crystal` this is the channel's own row, unchanged. */
+export interface AppIdentity {
+  kind: AppKind;
+  productName: string;
+  appId: string;
+  /** Space-free base for installer filenames. */
+  fileName: string;
+  /** Icon in build/ for Windows and Linux: full bleed. */
+  icon: string;
+  /**
+   * Icon in build/ for macOS: the same artwork with the margin macOS icons have, which is what the .icns is made from and
+   * what a development run puts in the Dock (it has no bundle icon of its own). See scripts/make-icons.mjs.
+   */
+  macIcon: string;
+  /** The custom URL scheme this app is the handler for. */
+  scheme: string;
+  /**
+   * electron-updater's feed "channel", which names the metadata file it reads (`latest-mac.yml` for the default). Crystal
+   * and Crystal Studio publish to one GitHub release, so each needs a file of its own or they would overwrite one another.
+   */
+  feedChannel: string;
+}
+
+export function appIdentity(channel: ChannelDefinition, kind: AppKind): AppIdentity {
+  if (kind === "crystal") {
+    return {
+      kind,
+      productName: channel.productName,
+      appId: channel.appId,
+      fileName: channel.fileName,
+      icon: channel.icon,
+      // Canary and Development have artwork of their own, already circular and unpadded as they were drawn.
+      macIcon: channel.icon === "icon.png" ? "icon-mac.png" : channel.icon,
+      scheme: "crystal",
+      feedChannel: "latest",
+    };
+  }
+  const side = channel.id === "stable";
+  return {
+    kind,
+    productName: side ? "Crystal Studio" : `Crystal Studio ${channel.label}`,
+    appId: `${channel.appId}.studio`,
+    fileName: side ? "Crystal-Studio" : `Crystal-Studio-${channel.label}`,
+    // One icon on every channel, as PTB shares Stable's.
+    icon: "icon-studio.png",
+    macIcon: "icon-studio-mac.png",
+    scheme: "crystal-studio",
+    feedChannel: "studio",
+  };
+}
+
+export function resolveAppKind(raw: unknown): AppKind | null {
+  return raw === "crystal" || raw === "studio" ? raw : null;
+}
+
+/**
+ * Which application the running process is. Like the channel, `CRYSTAL_APP` wins (dev runs, packaging) and a packaged
+ * build reads the `buildApp` that scripts/electron-builder-config.cjs stamped into its package.json.
+ */
+export function resolveRunningApp(options: { appPath: string }): AppKind {
+  const fromEnv = resolveAppKind(process.env.CRYSTAL_APP);
+  if (fromEnv) return fromEnv;
+  try {
+    const raw = fs.readFileSync(path.join(options.appPath, "package.json"), "utf8");
+    return resolveAppKind((JSON.parse(raw) as { buildApp?: unknown }).buildApp) ?? "crystal";
+  } catch {
+    return "crystal";
+  }
+}
+
 /** Which channel the running app belongs to. */
 export function resolveRunningChannel(options: {
   appPath: string;

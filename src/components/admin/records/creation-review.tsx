@@ -1,5 +1,6 @@
 "use client";
 
+import { SceneOverlayArt } from "@/components/lounge/scene-overlay";
 import { AlertTriangle, CheckCircle2, ExternalLink, Play, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -100,6 +101,7 @@ function SceneReview({ grant, name }: { grant: Grant; name: string }) {
         <div className="absolute inset-0">
           <SceneBackground url={spec.backgroundUrl} />
         </div>
+        <SceneOverlayArt overlay={spec.overlay} />
         <div className="absolute inset-0 bg-[#05030a] transition-opacity duration-1000" style={{ opacity: dim ? spec.lights.amount : 0 }} />
         <div className="absolute overflow-hidden rounded-[0.3cqw] bg-black" style={{ left: `${spec.screen.x}%`, top: `${spec.screen.y}%`, width: `${spec.screen.w}%`, height: `${spec.screen.h}%` }}>
           <div className={cn("flex size-full items-center justify-center text-[1.6cqw] text-white/70", sharing ? "bg-gradient-to-br from-indigo-700 via-fuchsia-600 to-orange-400" : "bg-neutral-950")}>{sharing ? "Live" : "No signal"}</div>
@@ -125,6 +127,8 @@ function SceneReview({ grant, name }: { grant: Grant; name: string }) {
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <dt className="text-muted-foreground">Background</dt>
           <dd><FileLink url={spec.backgroundUrl} /></dd>
+          <dt className="text-muted-foreground">Artwork</dt>
+          <dd className="space-y-0.5">{spec.overlay?.length ? spec.overlay.map((o, i) => <div key={i}><FileLink url={o.url} /></div>) : "none drawn"}</dd>
           <dt className="text-muted-foreground">Screen</dt>
           <dd className="font-mono text-xs">{spec.screen.x}, {spec.screen.y} · {spec.screen.w}×{spec.screen.h}%</dd>
           <dt className="text-muted-foreground">Floor</dt>

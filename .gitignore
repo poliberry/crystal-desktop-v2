@@ -7,6 +7,9 @@ node_modules
 out
 dist-electron
 release
+release-studio
+release-installer
+.installer-app
 *.tsbuildinfo
 .DS_Store
 # SwiftPM's build tree for the macOS system-audio helper — ~100MB of module
@@ -14,3 +17,7 @@ release
 # machine (or CI runner) doing the packaging.
 native/**/.build
 .next-web
+
+# Copied from node_modules by scripts/prepare-studio-assets.mjs
+public/monaco
+public/studio-sdk

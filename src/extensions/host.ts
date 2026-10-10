@@ -1,5 +1,5 @@
 import { sourceHash } from "../../convex/lib/extensionManifest";
-import { DEFAULT_BUDGET, FAULT_TEXT, OPS, OP_POWER, type Budget, type FaultReason, type FromWorker, type Op, type ToWorker } from "@/extensions/protocol";
+import { DEFAULT_BUDGET, FAULT_TEXT, HOST_LIMITS, OPS, OP_POWER, type Budget, type FaultReason, type FromWorker, type Op, type ToWorker } from "@/extensions/protocol";
 import { sanitizeTree, type UiNode } from "@/extensions/ui-schema";
 
 /**
@@ -67,14 +67,14 @@ export interface HostOptions {
   eventWatchdogMs?: number;
 }
 
-const MAX_ACTIVE_TIMERS = 5;
-const MIN_TIMEOUT_MS = 250;
-const MIN_INTERVAL_MS = 1000;
-const MAX_TIMER_MS = 60 * 60 * 1000;
-const MAX_CALLS_PER_SEC = 60;
-const MAX_UI_PER_SEC = 15;
-const MAX_NOTIFY_PER_MIN = 5;
-const MAX_LOG_LINES = 200;
+const MAX_ACTIVE_TIMERS = HOST_LIMITS.activeTimers;
+const MIN_TIMEOUT_MS = HOST_LIMITS.minTimeoutMs;
+const MIN_INTERVAL_MS = HOST_LIMITS.minIntervalMs;
+const MAX_TIMER_MS = HOST_LIMITS.maxTimerMs;
+const MAX_CALLS_PER_SEC = HOST_LIMITS.callsPerSecond;
+const MAX_UI_PER_SEC = HOST_LIMITS.redrawsPerSecond;
+const MAX_NOTIFY_PER_MIN = HOST_LIMITS.noticesPerMinute;
+const MAX_LOG_LINES = HOST_LIMITS.logLines;
 
 const clip = (s: unknown, n: number) => String(s ?? "").slice(0, n);
 

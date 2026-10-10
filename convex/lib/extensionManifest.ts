@@ -39,6 +39,18 @@ export const EXTENSION_LIMITS = {
   storageTotal: 256 * 1024,
 } as const;
 
+/** Requests made for an extension by `extensions.http`, which reads these. */
+export const EXTENSION_HTTP = {
+  perMinute: 30,
+  timeoutMs: 8000,
+  maxResponseBytes: 512 * 1024,
+  maxRequestBytes: 64 * 1024,
+  maxRedirects: 3,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  /** Request headers an extension may set. Cookies and the like are never sent. */
+  headers: ["accept", "accept-language", "content-type", "authorization", "x-api-key"],
+} as const;
+
 export interface ExtensionManifest {
   v: 1;
   name: string;
@@ -110,7 +122,7 @@ const USES: [Capability, RegExp][] = [
 
 /** Code that builds more code at run time. Inside the sandbox it can't reach anything,
  * but a reviewer can't read what doesn't exist until it runs — so it isn't allowed. */
-const DYNAMIC: [RegExp, string][] = [
+export const DYNAMIC: [RegExp, string][] = [
   [/\beval\s*\(/, "eval()"],
   [/\bnew\s+Function\s*\(/, "new Function()"],
   [/(^|[^.\w])Function\s*\(/, "Function()"],

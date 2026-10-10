@@ -1,7 +1,8 @@
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
 
-import { REPO, resolveRunningChannel, type ChannelDefinition, type ReleaseChannel } from "./channels";
+import { newestRelease } from "./releases";
+import { appIdentity, REPO, resolveRunningApp, resolveRunningChannel, type AppIdentity, type ChannelDefinition, type ReleaseChannel } from "./channels";
 
 /**
  * Wraps `electron-updater`'s `autoUpdater` (GitHub-releases provider, see the
@@ -59,31 +60,9 @@ export type UpdaterListener = (state: UpdaterState) => void;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const INITIAL_CHECK_DELAY_MS = 10_000;
 
-/**
- * Newest published tag for a channel, or null if it has never released.
- *
- * The releases API returns them newest-first, so the first tag carrying the
- * channel's prefix is the one to update to. Drafts are skipped — their assets
- * aren't downloadable — and so is any tag belonging to another channel, which
- * is what keeps a Canary install off PTB's builds.
- */
+/** Newest published tag for a channel, or null if it has never released (see `newestRelease`). */
 async function newestTagForChannel(channel: ChannelDefinition): Promise<string | null> {
-  const response = await fetch(
-    `https://api.github.com/repos/${REPO.owner}/${REPO.repo}/releases?per_page=50`,
-    { headers: { Accept: "application/vnd.github+json", "User-Agent": "crystal-desktop" } }
-  );
-  if (!response.ok) {
-    throw new Error(`GitHub releases API returned ${response.status}.`);
-  }
-  const releases = (await response.json()) as { tag_name?: string; draft?: boolean }[];
-  for (const release of releases) {
-    const tag = release.tag_name;
-    if (release.draft || typeof tag !== "string") continue;
-    // `v` is Stable's prefix and a prefix of nothing else, but the side
-    // channels' prefixes are distinct words, so a plain prefix test is enough.
-    if (tag.startsWith(channel.tagPrefix)) return tag;
-  }
-  return null;
+  return (await newestRelease(channel))?.tag ?? null;
 }
 
 class Updater {
@@ -91,6 +70,11 @@ class Updater {
     appPath: app.getAppPath(),
     isPackaged: app.isPackaged,
   });
+  /** Crystal or Crystal Studio. Both publish to the same release, so Studio reads its own metadata file from it. */
+  private readonly identity: AppIdentity = appIdentity(
+    this.channel,
+    resolveRunningApp({ appPath: app.getAppPath() }),
+  );
   private state: UpdaterState = {
     phase: "idle",
     currentVersion: app.getVersion(),
@@ -170,7 +154,9 @@ class Updater {
    * re-resolved on every check because the tag moves with each publish.
    */
   private async configureFeed(): Promise<void> {
-    if (this.channel.id === "stable") return;
+    // Stable Crystal's baked-in GitHub provider already finds the repo's latest release. Studio can't use it: it must read
+    // `studio*.yml`, not `latest*.yml`, which only a feed that names its channel does.
+    if (this.channel.id === "stable" && this.identity.kind === "crystal") return;
 
     const tag = await newestTagForChannel(this.channel);
     if (!tag) {
@@ -185,6 +171,7 @@ class Updater {
       // answer multi-range requests — the same reason electron-updater turns
       // this off for its own GitHub provider.
       useMultipleRangeRequest: false,
+      channel: this.identity.feedChannel,
     });
     this.feedTag = tag;
   }

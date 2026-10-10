@@ -1,3 +1,4 @@
+import { versionBlocker } from "./lib/listingUpdate";
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
@@ -5,6 +6,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { action, internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
   CAPABILITIES,
+  EXTENSION_HTTP,
   EXTENSION_LIMITS,
   hasBlocking,
   normalizeManifest,
@@ -30,15 +32,15 @@ import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
  */
 
 const MAX_PENDING_PER_EXTENSION = 3;
-const HTTP_PER_MINUTE = 30;
-const HTTP_TIMEOUT_MS = 8000;
-const HTTP_MAX_BODY = 512 * 1024;
-const HTTP_MAX_REQUEST_BODY = 64 * 1024;
-const MAX_REDIRECTS = 3;
+const HTTP_PER_MINUTE = EXTENSION_HTTP.perMinute;
+const HTTP_TIMEOUT_MS = EXTENSION_HTTP.timeoutMs;
+const HTTP_MAX_BODY = EXTENSION_HTTP.maxResponseBytes;
+const HTTP_MAX_REQUEST_BODY = EXTENSION_HTTP.maxRequestBytes;
+const MAX_REDIRECTS = EXTENSION_HTTP.maxRedirects;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+const METHODS: readonly string[] = EXTENSION_HTTP.methods;
 /** Request headers an extension may set. Cookies and the like are never sent. */
-const ALLOWED_HEADERS = new Set(["accept", "accept-language", "content-type", "authorization", "x-api-key"]);
+const ALLOWED_HEADERS = new Set<string>(EXTENSION_HTTP.headers);
 
 const isCapability = (c: string): c is Capability => (CAPABILITIES as readonly string[]).includes(c);
 
@@ -59,8 +61,14 @@ export const publishingAllowed = query({
 
 /** Send a version for review. What is stored is rebuilt here from what was sent. */
 export const submitVersion = mutation({
-  args: { slug: v.string(), manifest: v.any(), source: v.string() },
-  handler: async (ctx, { slug, manifest: rawManifest, source }): Promise<Id<"extensionVersions">> => {
+  args: {
+    slug: v.string(),
+    manifest: v.any(),
+    source: v.string(),
+    /** The author is replacing a version of theirs that is still waiting for review, rather than adding another. */
+    replacePending: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { slug, manifest: rawManifest, source, replacePending }): Promise<Id<"extensionVersions">> => {
     const me = await getCurrentUserOrThrow(ctx);
     if (!(await canPublish(ctx))) throw new Error("Publishing extensions isn't open yet.");
     if (!SLUG.test(slug) || slug.length > 40) throw new Error("The id can use lowercase letters, numbers and hyphens.");
@@ -79,11 +87,18 @@ export const submitVersion = mutation({
       extension = (await ctx.db.get(id))!;
     }
 
-    const versions = await ctx.db.query("extensionVersions").withIndex("by_extension", (q) => q.eq("extensionId", extension!._id)).collect();
-    if (versions.some((x) => x.version === manifest.version)) throw new Error(`Version ${manifest.version} already exists — a change is a new version.`);
+    let versions = await ctx.db.query("extensionVersions").withIndex("by_extension", (q) => q.eq("extensionId", extension!._id)).collect();
+    // A fix to a version still in the queue takes its place; nothing that has been reviewed is ever replaced.
+    if (replacePending) {
+      for (const x of versions.filter((x) => x.status === "pending")) await ctx.db.delete(x._id);
+      versions = versions.filter((x) => x.status !== "pending");
+    }
+    const blocked = versionBlocker(versions.map((x) => x.version), manifest.version);
+    if (blocked) throw new Error(blocked);
     if (versions.filter((x) => x.status === "pending").length >= MAX_PENDING_PER_EXTENSION) throw new Error("Wait for the versions already waiting to be reviewed.");
 
-    await ctx.db.patch(extension._id, { name: manifest.name, description: manifest.description, kind: manifest.kind, updatedAt: now });
+    // The live listing (its name, description and kind) is changed when this is *approved*, not now: until staff
+    // have read it, people looking at the extension still see what they approved.
     return ctx.db.insert("extensionVersions", {
       extensionId: extension._id,
       version: manifest.version,
@@ -204,6 +219,8 @@ export const adminReview = mutation({
     // Checked again: what is about to be approved is what is stored, hash and all.
     if ((await sourceHash(x.source)) !== x.hash) throw new Error("The stored code doesn't match its hash. Don't approve this.");
     await ctx.db.patch(versionId, { status: approve ? "approved" : "rejected", reviewNote: reason || undefined, reviewedBy: staff.user._id, reviewedAt: Date.now() });
+    // Approving is what updates the page: the extension takes the name, description and kind this version declares.
+    if (approve) await ctx.db.patch(x.extensionId, { name: x.manifest.name, description: x.manifest.description, kind: x.manifest.kind, updatedAt: Date.now() });
     await audit(ctx, staff.user._id, approve ? "extension.approve" : "extension.reject", { type: "extensionVersion", id: versionId }, `${e.slug}@${x.version} (${x.hash.slice(0, 12)})${reason ? ` — ${reason}` : ""}`);
   },
 });
@@ -274,6 +291,36 @@ export const directory = query({
       });
     }
     return out;
+  },
+});
+
+/**
+ * What an install link for an extension shows: the newest approved version of the extension with
+ * this public name, the powers it asks for, and whether this person already has it. Nothing is
+ * installed by reading this; `install` below does that, with the powers the person ticks.
+ */
+export const installInfoBySlug = query({
+  args: { slug: v.string() },
+  handler: async (ctx, { slug }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const e = await ctx.db.query("extensions").withIndex("by_slug", (q) => q.eq("slug", slug.trim().toLowerCase())).unique();
+    if (!e || e.suspendedAt) return null;
+    const version = await latestApproved(ctx, e._id);
+    if (!version) return null;
+    const publisher = await ctx.db.get(e.publisherId);
+    const install = await ctx.db.query("extensionInstalls").withIndex("by_user_extension", (q) => q.eq("userId", me._id).eq("extensionId", e._id)).unique();
+    return {
+      versionId: version._id,
+      slug: e.slug,
+      name: version.manifest.name,
+      description: version.manifest.description,
+      version: version.version,
+      capabilities: version.manifest.capabilities,
+      network: version.manifest.network,
+      publisher: publisher?.name ?? "Unknown",
+      installed: install ? { current: install.versionId === version._id, granted: install.granted } : null,
+    };
   },
 });
 

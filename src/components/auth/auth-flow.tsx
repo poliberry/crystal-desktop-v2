@@ -3,11 +3,17 @@
 import { useSignIn, useSignUp } from '@clerk/react'
 import { useRouter } from 'next/navigation'
 import React from 'react'
+import { safeReturnTo } from '@/lib/return-to'
 import { Label } from '../ui/label'
 import { Input } from '../ui/input'
 import { Button } from '../ui/button'
 
-export default function AuthFlow() {
+/**
+ * Sign in or sign up with an email and password. `bare` drops the page's own heading and padding, for a screen that
+ * puts the form inside a card of its own.
+ */
+export default function AuthFlow({ returnTo, bare }: { returnTo?: string; bare?: boolean } = {}) {
+  const target = safeReturnTo(returnTo)
   const { signIn, errors, fetchStatus } = useSignIn()
   const { signUp } = useSignUp()
   const router = useRouter()
@@ -68,7 +74,7 @@ export default function AuthFlow() {
             return
           }
 
-          const url = decorateUrl('/')
+          const url = decorateUrl(target)
           if (url.startsWith('http')) {
             window.location.href = url
           } else {
@@ -122,7 +128,7 @@ export default function AuthFlow() {
             }
 
             // If no session tasks, navigate the signed-in user to the home page
-            const url = decorateUrl('/')
+            const url = decorateUrl(target)
             if (url.startsWith('http')) {
               window.location.href = url
             } else {
@@ -155,7 +161,7 @@ export default function AuthFlow() {
             return
           }
 
-          const url = decorateUrl('/')
+          const url = decorateUrl(target)
           if (url.startsWith('http')) {
             window.location.href = url
           } else {
@@ -171,33 +177,38 @@ export default function AuthFlow() {
 
   if (showEmailCode || signIn.status === 'needs_client_trust') {
     return (
-      <>
-        <h1>Verify your account</h1>
-        <form onSubmit={handleVerify}>
-          <div>
-            <label htmlFor="code">Code</label>
-            <input
+      <div className={bare ? 'flex w-full flex-col items-start gap-4' : 'flex flex-col items-start justify-center w-full h-full gap-4 p-8'}>
+        {!bare && <h1 className='text-2xl text-left'>Verify your account</h1>}
+        <p className='text-sm text-muted-foreground'>We sent a code to your email. Enter it to continue.</p>
+        <form onSubmit={handleVerify} className='flex w-full flex-col gap-4'>
+          <div className='flex flex-col space-y-2'>
+            <Label htmlFor="code">Code</Label>
+            <Input
               id="code"
               name="code"
               type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
-            {errors.fields.code && <p>{errors.fields.code.message}</p>}
+            {errors.fields.code && <p className='text-sm text-destructive'>{errors.fields.code.message}</p>}
           </div>
-          <button type="submit" disabled={fetchStatus === 'fetching'}>
+          <Button variant="default" type="submit" disabled={fetchStatus === 'fetching'}>
             Verify
-          </button>
+          </Button>
         </form>
-        <button onClick={() => signIn.mfa.sendEmailCode()}>I need a new code</button>
-        <button onClick={() => signIn.reset()}>Start over</button>
-      </>
+        <div className='flex gap-2'>
+          <Button variant="ghost" size="sm" type="button" onClick={() => signIn.mfa.sendEmailCode()}>I need a new code</Button>
+          <Button variant="ghost" size="sm" type="button" onClick={() => signIn.reset()}>Start over</Button>
+        </div>
+      </div>
     )
   }
 
   return (
-    <div className='flex flex-col items-start justify-center w-full h-full gap-4 p-8'>
-      <h1 className='text-2xl text-left'>Sign up/sign in</h1>
+    <div className={bare ? 'flex w-full flex-col items-start gap-4' : 'flex flex-col items-start justify-center w-full h-full gap-4 p-8'}>
+      {!bare && <h1 className='text-2xl text-left'>Sign up/sign in</h1>}
       <form onSubmit={handleSubmit} className='flex flex-col gap-4 w-full'>
         <div className='flex flex-col space-y-2'>
           <Label htmlFor="email">Enter email address</Label>

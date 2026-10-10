@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { CommunitySettingsChannelsTab } from "@/components/community/community-settings-channels-tab";
 import { ClanSettings } from "@/components/community/settings/clan-settings";
 import { CreatorSettings } from "@/components/community/settings/creator-settings";
+import { BotsSettings } from "@/components/community/settings/bots-settings";
 import { ServersSettings } from "@/components/community/settings/servers-settings";
 import { CommunitySettingsEmojisTab } from "@/components/community/community-settings-emojis-tab";
 import { CommunitySettingsGeneralTab } from "@/components/community/community-settings-general-tab";
@@ -94,8 +95,10 @@ function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsP
   // What a kind of community adds to its settings.
   const kind = (community as { kind?: "creator" | "clan" } | null | undefined)?.kind;
   const canManageServers = hasPermission(permissions, PERMISSIONS.MANAGE_GAME_SERVERS);
+  const canManageIntegrations = hasPermission(permissions, PERMISSIONS.MANAGE_INTEGRATIONS);
   const navItems = [
     ...data.navMain[0].items,
+    ...(canManageIntegrations ? [{ title: "Bots" }] : []),
     ...(kind === "creator" ? [{ title: "Creator" }] : []),
     ...(kind === "clan" ? [{ title: "Clan" }] : []),
     ...(kind && canManageServers ? [{ title: "Game servers" }] : []),
@@ -204,6 +207,7 @@ function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsP
               )}
               {selectedTab === "Creator" && <CreatorSettings communityId={communityId} />}
               {selectedTab === "Clan" && <ClanSettings communityId={communityId} canManage={canManageCommunity} />}
+              {selectedTab === "Bots" && <BotsSettings communityId={communityId} />}
               {selectedTab === "Game servers" && <ServersSettings communityId={communityId} />}
             </ErrorBoundary>
           </SettingsPageLayout>

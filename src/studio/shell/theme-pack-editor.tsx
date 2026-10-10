@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Plus, Trash2, Upload } from "lucide-react";
+import { Check, Loader2, Paintbrush, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { MAX_FONT_FACES, PACK_SOUNDS, THEME_TOKENS } from "../../../convex/lib/creationSpecs";
@@ -9,12 +9,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { SubmitPanel } from "@/studio/shell/submit-panel";
+import { ThemePackPreview } from "@/studio/shell/theme-pack-preview";
 import { COMMON_ICONS, SOUND_LABELS, WEIGHT_NAMES, fontOf, guessFace } from "@/studio/model/theme-pack";
 import { emptyThemePack, type FontFaceData, type Project, type ThemePackData } from "@/studio/model/types";
 import { ASSET_LIMITS, useProjectAssets, type LoadedAsset } from "@/studio/storage/assets";
+import { cssToHex } from "@/lib/css-color";
+import { themeEntries, type Theme } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 
-type Tab = "theme" | "font" | "sounds" | "icons";
+type Tab = "preview" | "theme" | "font" | "sounds" | "icons";
 
 const FONT_EXTS = ["woff2", "woff", "ttf", "otf"];
 const SOUND_EXTS = ["wav", "mp3", "ogg", "m4a"];
@@ -35,17 +38,159 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 /** Theme tokens a creator is most likely to want first; the rest follow. */
 const TOKEN_ORDER = ["background", "foreground", "card", "primary", "primary-foreground", "secondary", "accent", "muted", "muted-foreground", "border", "sidebar", "sidebar-accent", "destructive", "ring"];
 
+/** The app's own themes, flat: a family's styles each get a card, named as the app names them. */
+const TEMPLATES: Theme[] = themeEntries().flatMap((e) => (e.kind === "theme" ? [e.theme] : e.variants));
+
+function Swatch({ value, onPick, label }: { value: string; onPick: (hex: string) => void; label: string }) {
+  const hex = value ? cssToHex(value) : null;
+  return (
+    <span className="relative size-8 shrink-0 overflow-hidden rounded border border-input" title={value || "The app's own colour"}>
+      {value ? (
+        <span className="absolute inset-0" style={{ background: value }} />
+      ) : (
+        // Nothing set: a dashed, empty swatch, so "unset" doesn't look like grey.
+        <span className="absolute inset-0 border border-dashed border-muted-foreground/40" />
+      )}
+      <input type="color" value={hex ?? "#808080"} onChange={(e) => onPick(e.target.value)} className="absolute inset-0 size-full cursor-pointer opacity-0" aria-label={label} />
+    </span>
+  );
+}
+
+/** Where the colours start: nothing, or one of the app's own themes. */
+function StartFrom({ current, customised, onScratch, onTemplate, onCancel }: { current?: string; customised: number; onScratch: () => void; onTemplate: (t: Theme) => void; onCancel?: () => void }) {
+  // Replacing colours someone has already set is asked about first.
+  const [pending, setPending] = useState<{ kind: "scratch" } | { kind: "template"; theme: Theme } | null>(null);
+  const choose = (next: NonNullable<typeof pending>) => {
+    if (customised === 0) return apply(next);
+    setPending(next);
+  };
+  const apply = (next: NonNullable<typeof pending>) => {
+    setPending(null);
+    if (next.kind === "scratch") onScratch();
+    else onTemplate(next.theme);
+  };
+  return (
+    <div className="space-y-3 rounded-xl border border-border p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">How do you want to start?</h3>
+          <p className="text-xs text-muted-foreground">Begin with a blank theme, or take one of Crystal&apos;s own as a starting point and change what you like. You can switch at any time.</p>
+        </div>
+        {onCancel && (
+          <Button size="sm" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+      </div>
+
+      {pending && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <span className="min-w-0 flex-1">
+            This replaces the {customised} colour{customised === 1 ? "" : "s"} you&apos;ve set{pending.kind === "template" ? ` with ${pending.theme.name}'s` : ""}.
+          </span>
+          <Button size="sm" onClick={() => apply(pending)}>
+            Replace
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setPending(null)}>
+            Keep mine
+          </Button>
+        </div>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <button
+          type="button"
+          onClick={() => choose({ kind: "scratch" })}
+          className={cn("flex items-center gap-3 rounded-lg border border-dashed border-border p-3 text-left hover:border-foreground/40 hover:bg-accent/40", current === undefined && "border-primary")}
+        >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <Paintbrush className="size-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">From scratch</span>
+            <span className="block text-xs text-muted-foreground">Set only what you want to change</span>
+          </span>
+        </button>
+        {TEMPLATES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => choose({ kind: "template", theme: t })}
+            className={cn("flex items-center gap-3 rounded-lg border border-border p-3 text-left hover:border-foreground/40 hover:bg-accent/40", current === t.id && "border-primary bg-primary/5")}
+          >
+            <span className="relative flex size-10 shrink-0 items-end justify-end overflow-hidden rounded-md border border-border/60 p-1" style={{ background: t.previewBg }}>
+              <span className="size-4 rounded-full" style={{ background: t.previewAccent }} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{t.name}</span>
+              <span className="block text-xs text-muted-foreground">{t.isDark ? "Dark" : "Light"}</span>
+            </span>
+            {current === t.id && <Check className="size-4 shrink-0 text-primary" />}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ThemeTab({ data, set }: { data: ThemePackData; set: (d: ThemePackData) => void }) {
   const theme = data.theme ?? { isDark: true, colors: {} };
   const tokens = [...TOKEN_ORDER, ...THEME_TOKENS.filter((t) => !TOKEN_ORDER.includes(t))];
+  const customised = Object.keys(theme.colors).length;
+  const template = theme.template ? TEMPLATES.find((t) => t.id === theme.template) : undefined;
+  // A new pack asks how to start; one that has colours (or has chosen) goes straight to them.
+  const [choosing, setChoosing] = useState(!data.theme);
+  // Whether the pack has moved off its template, so "Reset" only appears when it would do something.
+  const drifted = !!template && (theme.isDark !== template.isDark || Object.entries(template.colors).some(([k, v]) => theme.colors[k] !== v) || customised !== Object.keys(template.colors).length);
+
   const setColour = (token: string, value: string) => {
     const colors = { ...theme.colors };
     if (value.trim()) colors[token] = value;
     else delete colors[token];
     set({ ...data, theme: { ...theme, colors } });
   };
+  // Only the colours a theme can set: a template's own keys are checked against the same list the server uses.
+  const fromTemplate = (t: Theme) => {
+    const colors: Record<string, string> = {};
+    for (const token of THEME_TOKENS) {
+      const value = (t.colors as unknown as Record<string, string | undefined>)[token];
+      if (value) colors[token] = value;
+    }
+    set({ ...data, theme: { isDark: t.isDark, colors, template: t.id } });
+    setChoosing(false);
+  };
+  const fromScratch = () => {
+    set({ ...data, theme: { isDark: theme.isDark, colors: {} } });
+    setChoosing(false);
+  };
+
   return (
     <Section title="Colours" hint="Any CSS colour — hex, rgb(), hsl() or oklch(). Leave a colour empty to keep the app's own.">
+      {choosing ? (
+        <StartFrom current={data.theme ? (theme.template ?? undefined) : undefined} customised={customised} onScratch={fromScratch} onTemplate={fromTemplate} onCancel={data.theme ? () => setChoosing(false) : undefined} />
+      ) : (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/40 p-3 text-sm">
+          <span className="min-w-0 flex-1">
+            {template ? (
+              <>
+                Based on <span className="font-medium">{template.name}</span>
+                {drifted ? <span className="text-muted-foreground"> · changed</span> : null}
+              </>
+            ) : (
+              <span className="text-muted-foreground">Started from scratch</span>
+            )}
+          </span>
+          {template && drifted && (
+            <Button size="sm" variant="secondary" onClick={() => fromTemplate(template)}>
+              <RotateCcw className="size-3.5" /> Reset to template
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={() => setChoosing(true)}>
+            Change starting point
+          </Button>
+        </div>
+      )}
+
       <label className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm">
         This is a dark theme
         <Switch checked={theme.isDark} onCheckedChange={(isDark) => set({ ...data, theme: { ...theme, isDark } })} />
@@ -53,10 +198,9 @@ function ThemeTab({ data, set }: { data: ThemePackData; set: (d: ThemePackData) 
       <div className="grid gap-2 sm:grid-cols-2">
         {tokens.map((token) => {
           const value = theme.colors[token] ?? "";
-          const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#808080";
           return (
             <div key={token} className="flex items-center gap-2">
-              <input type="color" value={hex} onChange={(e) => setColour(token, e.target.value)} className="size-8 shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5" aria-label={token} />
+              <Swatch value={value} label={token} onPick={(hex) => setColour(token, hex)} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[11px] text-muted-foreground">{token}</p>
                 <Input value={value} placeholder="default" onChange={(e) => setColour(token, e.target.value)} className="h-7 font-mono text-xs" />
@@ -98,6 +242,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
   const data = project.themePack ?? emptyThemePack();
   const { assets, add, remove } = useProjectAssets(project.id);
   const [tab, setTab] = useState<Tab>("theme");
+  const previewScope = `tp-${project.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [iconName, setIconName] = useState("");
@@ -123,6 +268,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
   const setFont = (font: { family: string; faces: FontFaceData[] } | undefined) => set({ ...data, font });
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
+    { id: "preview", label: "Preview" },
     { id: "theme", label: "Theme", count: Object.keys(data.theme?.colors ?? {}).length || undefined },
     { id: "font", label: "Font", count: family?.faces.length || undefined },
     { id: "sounds", label: "Sounds", count: Object.keys(data.sounds).length || undefined },
@@ -152,11 +298,20 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
         ))}
       </div>
 
-      <div className="mx-auto w-full max-w-3xl space-y-6 p-6">
+      <div className={cn("mx-auto w-full space-y-6 p-6", tab === "preview" ? "max-w-6xl" : "max-w-3xl")}>
+        {tab === "preview" && (
+          <ThemePackPreview
+            data={data}
+            assets={assets}
+            fontFamilyName={fontFamilyName}
+            hasFont={!!family && family.faces.some((f) => assets.get(f.assetId))}
+            scope={previewScope}
+          />
+        )}
         {tab === "theme" && <ThemeTab data={data} set={set} />}
 
         {tab === "font" && (
-          <Section title="Font family" hint="A family is one or more files — regular, bold, italic and so on — that the app picks between by weight and style. WOFF2 is smallest; WOFF, TTF and OTF work too. Up to 4 MB a file and 12 files. Make sure you have the right to distribute them.">
+          <Section title="Font family" hint={`A family is one or more files — regular, bold, italic and so on — that the app picks between by weight and style. WOFF2 is smallest; WOFF, TTF and OTF work too. Up to ${ASSET_LIMITS.font / 1024 / 1024} MB a file and ${MAX_FONT_FACES} files. Make sure you have the right to distribute them.`}>
             <div className="space-y-4 rounded-xl border border-border p-4">
               <Input value={family?.family ?? ""} maxLength={40} placeholder="Family name, e.g. Inter" onChange={(e) => setFont({ family: e.target.value, faces: family?.faces ?? [] })} />
 
@@ -257,7 +412,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
         )}
 
         {tab === "sounds" && (
-          <Section title="Sounds" hint="Replace any of Crystal's sounds. WAV, MP3, OGG or M4A, up to 2 MB each — short clips feel best.">
+          <Section title="Sounds" hint={`Replace any of Crystal's sounds. WAV, MP3, OGG or M4A, up to ${ASSET_LIMITS.sound / 1024 / 1024} MB each — short clips feel best.`}>
             <div className="divide-y divide-border/60 rounded-xl border border-border">
               {PACK_SOUNDS.map((key) => {
                 const id = data.sounds[key];

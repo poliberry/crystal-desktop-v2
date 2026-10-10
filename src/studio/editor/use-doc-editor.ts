@@ -2,19 +2,12 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
+import type { Tool } from "@/studio/editor/tools";
+import { groupExists } from "@/studio/model/doc";
 import { History } from "@/studio/model/history";
 import type { Doc } from "@/studio/model/types";
 
-export type Tool =
-  | "select"
-  | "hand"
-  | "rect"
-  | "ellipse"
-  | "text"
-  | "screen"
-  | "seat"
-  | "floor"
-  | `prop:${string}`;
+export type { Tool };
 
 /**
  * The state of one open design: its document and the history behind it, what is
@@ -47,10 +40,14 @@ export function useDocEditor(initial: Doc, onChange: (doc: Doc) => void, history
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const [selection, setSelectionState] = useState<string[]>([]);
   const [tool, setTool] = useState<Tool>("select");
+  /** The group being worked inside (entered by double-clicking it), as its chain "g1/g2"; "" is the top level. */
+  const [scopeState, setScope] = useState("");
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
   const doc = history.current.value;
+  // A group that has since been dissolved (or undone away) is no longer one to be inside.
+  const scope = groupExists(doc, scopeState) ? scopeState : "";
 
   const setSelection = useCallback((ids: string[]) => setSelectionState(ids), []);
 
@@ -101,6 +98,8 @@ export function useDocEditor(initial: Doc, onChange: (doc: Doc) => void, history
     setSelection,
     tool,
     setTool,
+    scope,
+    setScope,
   };
 }
 

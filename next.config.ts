@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
   compress: true,
   productionBrowserSourceMaps: false,
   poweredByHeader: false,
+  // Paper.js (Studio's Pathfinder) has Node-only canvas code that the server-side render of a client
+  // component tries to bundle and can't. It is only ever used in the browser, loaded on first use.
+  serverExternalPackages: ["paper"],
   // Tree-shake large packages per route — less JS parsed = less heap
   experimental: {
     optimizePackageImports: [

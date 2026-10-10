@@ -38,6 +38,10 @@ files:
   # electron-updater's runtime dependency tree. Listed explicitly (rather than
   # all of node_modules) to keep devDependencies out of the packaged app.
   - node_modules/electron-updater/**
+  # Crystal Studio's terminal and build step: native, so they are also unpacked from the asar below.
+  - node_modules/node-pty/**
+  - node_modules/esbuild/**
+  - node_modules/@esbuild/**
   - node_modules/builder-util-runtime/**
   - node_modules/fs-extra/**
   - node_modules/graceful-fs/**
@@ -58,6 +62,9 @@ files:
   - "!**/*.tsbuildinfo"
 asarUnpack:
   - resources/**
+  - node_modules/node-pty/**
+  - node_modules/esbuild/**
+  - node_modules/@esbuild/**
 # Register crystal:// as a custom URL scheme so the OS routes OAuth callbacks
 # (crystal://auth/callback?...) back to this app after the system browser
 # completes the auth flow.

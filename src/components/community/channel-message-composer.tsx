@@ -100,6 +100,11 @@ export function ChannelMessageComposer({
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const serverEmojis = useQuery(api.communityEmojis.list, { communityId });
+  // What the bots in this community offer. A command is run only when the text is exactly one of
+  // these; anything else — a `/shrug` nobody handles — is sent as the ordinary message it is.
+  const botCommands = useQuery(api.bots.commandsFor, { communityId }) ?? [];
+  const invokeCommand = useMutation(api.bots.invokeCommand);
+  const [commandError, setCommandError] = useState<string | null>(null);
   const mentionNames = useMentionNames(communityId);
 
   useEffect(() => {
@@ -176,9 +181,32 @@ export function ChannelMessageComposer({
     }, 3000);
   };
 
+  /** The commands that fit what has been typed so far, while it is still just `/word`. */
+  const commandMatches = (() => {
+    const m = text.match(/^\/([a-z0-9_-]*)$/i);
+    if (!m || botCommands.length === 0) return [];
+    return botCommands.filter((c) => c.name.startsWith(m[1].toLowerCase())).slice(0, 8);
+  })();
+
   const handleSend = async () => {
     const trimmed = text.trim();
     if (!trimmed && pending.length === 0) return;
+    const cmd = pending.length === 0 ? trimmed.match(/^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i) : null;
+    const known = cmd ? botCommands.filter((c) => c.name === cmd[1].toLowerCase()) : [];
+    if (cmd && known.length > 0) {
+      setCommandError(null);
+      setSending(true);
+      try {
+        await invokeCommand({ channelId, command: cmd[1], args: cmd[2], botId: known.length === 1 ? known[0].botId : undefined });
+        setText("");
+      } catch (e) {
+        setCommandError(e instanceof Error ? e.message.replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0] : "That command didn't work.");
+      } finally {
+        setSending(false);
+        textareaRef.current?.focus();
+      }
+      return;
+    }
     if (typingDebounce.current) clearTimeout(typingDebounce.current);
     void stopTyping({ channelId });
     setSending(true);
@@ -281,6 +309,29 @@ export function ChannelMessageComposer({
   return (
     <div ref={dropZoneRef} className="relative shrink-0 bg-background p-2 pb-[17px]">
       <ComposerDropOverlay active={isDraggingOver} />
+      {commandMatches.length > 0 && (
+        <div className="absolute bottom-full left-3 mb-1 flex max-h-56 w-72 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+          {commandMatches.map((c) => (
+            <button
+              key={`${c.botId}-${c.name}`}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setText(`/${c.name} `)}
+              className="flex flex-col rounded px-2 py-1 text-left text-sm hover:bg-accent"
+            >
+              <span>
+                <span className="font-medium">/{c.name}</span> <span className="text-xs text-muted-foreground">{c.botName}</span>
+              </span>
+              <span className="text-xs text-muted-foreground">{c.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {commandError && (
+        <button type="button" onClick={() => setCommandError(null)} className="mb-2 block w-full truncate rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-left text-xs text-destructive">
+          {commandError}
+        </button>
+      )}
       {autocomplete && suggestions.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-48 w-56 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
           {suggestions.map((s, index) => (

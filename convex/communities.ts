@@ -1,4 +1,6 @@
 import { requireCommunityOpen } from "./lib/moderation";
+import { removeInstall } from "./lib/botAccess";
+import { fireMemberEvent } from "./lib/botEvents";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
@@ -536,6 +538,7 @@ export const join = mutation({
     }
 
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: Date.now() });
+    await fireMemberEvent(ctx, communityId, "member.joined", me);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
       await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
@@ -566,6 +569,7 @@ export const leave = mutation({
       .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .collect();
     for (const role of roles) await ctx.db.delete(role._id);
+    await fireMemberEvent(ctx, communityId, "member.left", me);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
       await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`, `community:${communityId}:channels`);
@@ -721,6 +725,12 @@ export const remove = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     if (community.ownerId !== me._id) throw new Error("Only the owner can delete a community.");
+
+    // Bots go first, with their roles and memberships, so none is left pointing at a community that's gone.
+    for (const install of await ctx.db.query("botInstalls").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
+      const bot = await ctx.db.get(install.botId);
+      await removeInstall(ctx, install, bot?.userId ?? me._id);
+    }
 
     const [members, roles, channels] = await Promise.all([
       ctx.db
@@ -1027,7 +1037,7 @@ export const pruneInactiveMembers = mutation({
 
 /** Drop someone out of every voice channel in a community. Their client
  * watches its own participant row and leaves when it disappears. */
-async function disconnectFromAllVoice(
+export async function disconnectFromAllVoice(
   ctx: MutationCtx,
   communityId: Id<"communities">,
   userId: Id<"users">
@@ -1049,7 +1059,7 @@ async function disconnectFromAllVoice(
 }
 
 /** Remove a membership and everything hanging off it. Shared by kick and ban. */
-async function removeMembership(
+export async function removeMembership(
   ctx: MutationCtx,
   communityId: Id<"communities">,
   userId: Id<"users">
@@ -1067,6 +1077,10 @@ async function removeMembership(
   for (const role of roles) await ctx.db.delete(role._id);
 
   await disconnectFromAllVoice(ctx, communityId, userId);
+  if (membership) {
+    const gone = await ctx.db.get(userId);
+    if (gone) await fireMemberEvent(ctx, communityId, "member.left", gone);
+  }
 }
 
 export const kickMember = mutation({
@@ -1093,7 +1107,7 @@ function generateInviteCode(length = 8): string {
   return Array.from(bytes, (b) => INVITE_CHARS[b % INVITE_CHARS.length]).join("");
 }
 
-async function freshInviteCode(ctx: QueryCtx): Promise<string> {
+export async function freshInviteCode(ctx: QueryCtx): Promise<string> {
   let code = generateInviteCode();
   while (
     await ctx.db
@@ -1364,6 +1378,7 @@ export const joinByInviteCode = mutation({
         userId: me._id,
         joinedAt: Date.now(),
       });
+      await fireMemberEvent(ctx, community._id, "member.joined", me);
     }
     return community._id;
   },

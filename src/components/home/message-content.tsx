@@ -16,7 +16,12 @@ import {
   CUSTOM_EMOJI_IMAGE_SCHEME,
   substituteEmojiShortcodes,
 } from "@/lib/custom-emoji";
-import { classifyUrl, extractInviteCodes, extractUrls } from "@/lib/message-links";
+import {
+  classifyUrl,
+  extractInviteCodes,
+  extractUrls,
+  isCrystalAppUrl,
+} from "@/lib/message-links";
 import {
   MENTION_LINK_SCHEME,
   parseMentionLink,
@@ -355,7 +360,12 @@ export function MessageContent({ text, edited, communityId }: MessageContentProp
   const myUserId = me?._id as string | undefined;
   const urls = extractUrls(text);
   const mediaUrls = urls.filter((url) => classifyUrl(url) !== "link");
-  const linkUrls = urls.filter((url) => classifyUrl(url) === "link");
+  // Crystal pages have their own message affordances (currently server
+  // invites). Never unfurl the site's OG metadata as a second card; invite
+  // links are still rendered below by InviteEmbedCard.
+  const linkUrls = urls.filter(
+    (url) => classifyUrl(url) === "link" && !isCrystalAppUrl(url),
+  );
   const inviteCodes = extractInviteCodes(text);
 
   return (

@@ -9,7 +9,7 @@
  *
  * Three forms, all carrying the same code:
  *
- *   https://crystal.poliberry.com/invite/<code>   what's shared
+ *   https://usecrystal.app/invite/<code>          what's shared
  *   crystal://invite/<code>                       what the web page hands the
  *                                                 desktop app, over the
  *                                                 protocol it already owns
@@ -22,13 +22,14 @@
  * handler and the landing page.
  */
 
-/** Where invite links point. Overridable so a self-hosted or preview
- * deployment mints links to itself rather than to production. */
-export const INVITE_ORIGIN =
-  process.env.NEXT_PUBLIC_INVITE_ORIGIN ?? "https://crystal.poliberry.com";
+import { APP_ORIGIN, APP_PROTOCOL } from "@/lib/deeplinks";
 
-/** The custom scheme the desktop app is registered for — see electron/main.ts. */
-export const APP_PROTOCOL = "crystal";
+/** Where invite links point: our own site, which is also what the app treats as its own links (see
+ * lib/deeplinks.ts). Overridable so a preview deployment mints links to itself rather than to
+ * production. Invites minted before this was our domain (`crystal.poliberry.com`) still open. */
+export const INVITE_ORIGIN = process.env.NEXT_PUBLIC_INVITE_ORIGIN ?? APP_ORIGIN;
+
+export { APP_PROTOCOL };
 
 /** Codes are what `communities.getOrCreateInviteCode` mints: short and
  * alphanumeric. The bound is here so a stray word in a message isn't mistaken

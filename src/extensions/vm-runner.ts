@@ -1,4 +1,4 @@
-import { newQuickJSWASMModule, type QuickJSContext, type QuickJSHandle, type QuickJSRuntime, type QuickJSWASMModule } from "quickjs-emscripten";
+import { newQuickJSWASMModule, newVariant, type QuickJSContext, type QuickJSHandle, type QuickJSRuntime, type QuickJSWASMModule } from "quickjs-emscripten";
 import variant from "@jitl/quickjs-singlefile-browser-release-sync";
 
 import { OPS, type Budget, type FaultReason, type FromWorker } from "@/extensions/protocol";
@@ -25,8 +25,27 @@ const MAX_STACK = 512 * 1024;
 const MAX_MESSAGES_PER_SEC = 120;
 const UI_MIN_INTERVAL_MS = 100;
 
+/**
+ * One engine per Worker, so one WebAssembly heap per extension — and that heap is given a
+ * hard ceiling. QuickJS's own memory limit (`setMemoryLimit`) counts objects but not the
+ * large buffers behind strings and arrays, so on its own a script can `'x'.repeat(1e6)` its
+ * way to hundreds of megabytes (measured: 300 MB against a 32 MB limit). Capping the heap
+ * itself closes that: past the ceiling an allocation fails with "out of memory" inside the
+ * engine, and the engine carries on working afterwards.
+ *
+ * The ceiling is twice the allowance, never less than the 16 MB the engine starts with
+ * plus room, because the engine's own bookkeeping lives in the same heap.
+ */
+const WASM_PAGE = 64 * 1024;
+const WASM_INITIAL_PAGES = 256; // 16 MB, what the engine needs to start
+
 let modulePromise: Promise<QuickJSWASMModule> | null = null;
-const loadQuickJS = () => (modulePromise ??= newQuickJSWASMModule(variant));
+const loadQuickJS = (memoryBytes: number) =>
+  (modulePromise ??= (() => {
+    const maximum = Math.max(WASM_INITIAL_PAGES + 128, Math.ceil((memoryBytes * 2) / WASM_PAGE));
+    const wasmMemory = new WebAssembly.Memory({ initial: WASM_INITIAL_PAGES, maximum });
+    return newQuickJSWASMModule(newVariant(variant, { wasmMemory }));
+  })());
 
 export interface Runner {
   dispatch(name: string, data: unknown, seq: number): void;
@@ -38,7 +57,7 @@ export async function createRunner(
   boot: { source: string; manifest: { name: string; version: string; capabilities: string[]; network: string[] }; granted: string[]; budget: Budget },
   send: (m: FromWorker) => void,
 ): Promise<Runner> {
-  const QuickJS = await loadQuickJS();
+  const QuickJS = await loadQuickJS(boot.budget.memoryBytes);
   const rt: QuickJSRuntime = QuickJS.newRuntime();
   rt.setMemoryLimit(boot.budget.memoryBytes);
   rt.setMaxStackSize(MAX_STACK);
@@ -145,6 +164,11 @@ export async function createRunner(
         }
       } else if (op === "log") {
         const [level, line] = JSON.parse(arg) as [string, string];
+        // The SDK catches what a handler throws and logs it. Running out of memory (or time) is
+        // not a mistake in the code to be reported and forgotten: it is a limit, and it stops it.
+        if (level === "error" && /^(out of memory|interrupted)$/i.test(String(line).trim())) {
+          return interpret(String(line).trim(), "The extension");
+        }
         send({ t: "log", level: (["log", "info", "warn", "error"].includes(level) ? level : "log") as "log", text: String(line).slice(0, 1000) });
       }
     } catch {
@@ -196,14 +220,9 @@ export async function createRunner(
     });
 
   run(SDK_PRELUDE, "sdk.js", 200);
-  // The SDK reads its manifest once; after that the global is no longer needed by anything.
+  // The SDK takes the host doors into its own closure and removes them from the global scope
+  // before the extension's code runs (see sdk-prelude.ts), so there is nothing to hide here.
   if (!dead) run(boot.source, "extension.js", boot.budget.bootMs);
-  if (!dead) {
-    // Hide the host doors from the extension's own code from here on.
-    const hide = ctx.evalCode("(function(){var s=__send,c=__call;Object.defineProperty(globalThis,'__send',{value:s,enumerable:false});Object.defineProperty(globalThis,'__call',{value:c,enumerable:false});})()");
-    if (hide.error) hide.error.dispose();
-    else hide.value.dispose();
-  }
 
   const runnerReply = (id: number, ok: boolean, value: string | undefined) => {
     if (dead) return;

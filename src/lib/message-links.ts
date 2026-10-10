@@ -2,6 +2,21 @@ const URL_RE = /https?:\/\/[^\s<]+[^\s<.,:;"')\]]/g;
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|svg)(\?.*)?$/i;
 const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?.*)?$/i;
 
+/** Crystal links are already rendered by the app when they carry a known
+ * in-app payload (for example, a server invite). They should not also create
+ * a generic Open Graph card from the Crystal landing page. */
+export function isCrystalAppUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      (parsed.hostname === "usecrystal.app" || parsed.hostname === "www.usecrystal.app")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function extractUrls(text: string): string[] {
   const matches = text.match(URL_RE) ?? [];
   return Array.from(new Set(matches));

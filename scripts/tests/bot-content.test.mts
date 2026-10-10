@@ -1,0 +1,22 @@
+// Run: npx tsx scripts/tests/bot-content.test.mts   (embeds and buttons validation)
+import { validateEmbeds } from "../../convex/lib/embeds";
+import { validateComponents } from "../../convex/lib/components";
+let f = 0, p = 0; const ok = (n: string, c: boolean, d?: unknown) => { c ? p++ : (f++, console.log("FAIL", n, JSON.stringify(d))); };
+const bad = (n: string, fn: () => unknown, re?: RegExp) => { try { fn(); ok(n, false, "no throw"); } catch (e) { ok(n, !re || re.test((e as Error).message), (e as Error).message); } };
+const good = validateEmbeds([{ title: "  Hi\u202e  ", description: "d\u0007x", url: "https://a.example/p", color: 0xff0000, timestamp: "2026-01-01T00:00:00Z", author: { name: "A", iconUrl: "https://a.example/i.png" }, footer: { text: "f" }, image: { url: "https://a.example/x.png" }, thumbnail: { url: "https://a.example/t.png" }, fields: [{ name: "n", value: "v", inline: true }], evil: "<script>" }]);
+ok("embed rebuilt: unknown keys dropped, bidi/control stripped", good[0].title === "Hi" && good[0].description === "dx" && !("evil" in good[0]) && good[0].timestamp === Date.parse("2026-01-01T00:00:00Z"), good);
+ok("undefined/null → none", validateEmbeds(undefined).length === 0 && validateEmbeds(null).length === 0);
+bad("not a list", () => validateEmbeds("x"), /list/); bad("too many", () => validateEmbeds(Array(11).fill({ title: "x" })), /up to 10/); bad("empty embed", () => validateEmbeds([{}]), /empty/);
+for (const [n, e] of [["javascript: link", { title: "x", url: "javascript:alert(1)" }], ["http link", { title: "x", url: "http://a.example" }], ["credentials", { title: "x", url: "https://u:p@a.example" }], ["data: image", { image: { url: "data:image/png;base64,AAAA" } }]] as const) bad(n, () => validateEmbeds([e]), /https/);
+bad("image without url", () => validateEmbeds([{ image: {} }]), /needs an address/); bad("colour out of range", () => validateEmbeds([{ title: "x", color: 0x1000000 }]), /colour/); bad("string colour", () => validateEmbeds([{ title: "x", color: "red" }]), /colour/);
+bad("title too long", () => validateEmbeds([{ title: "x".repeat(257) }]), /256/); bad("description too long", () => validateEmbeds([{ description: "x".repeat(4097) }]), /4096/);
+bad("26 fields", () => validateEmbeds([{ fields: Array(26).fill({ name: "a", value: "b" }) }]), /25/); bad("field missing value", () => validateEmbeds([{ fields: [{ name: "a" }] }]), /needs a name and a value/);
+bad("total over 6000", () => validateEmbeds([{ description: "x".repeat(4000) }, { description: "y".repeat(2100) }]), /6000/); bad("bad timestamp", () => validateEmbeds([{ title: "x", timestamp: "nope" }]), /timestamp/);
+const row = validateComponents([{ buttons: [{ customId: "yes", label: "Yes", style: "success" }, { label: "Docs", style: "link", url: "https://example.com/x" }] }]);
+ok("buttons rebuilt", row[0].buttons[0].customId === "yes" && row[0].buttons[1].url === "https://example.com/x" && !row[0].buttons[1].customId, row);
+bad("6 rows", () => validateComponents(Array(6).fill({ buttons: [{ customId: "a", label: "a" }] })), /5 rows/); bad("6 buttons", () => validateComponents([{ buttons: Array.from({ length: 6 }, (_, i) => ({ customId: `c${i}`, label: "x" })) }]), /1 to 5/);
+bad("javascript: link button", () => validateComponents([{ buttons: [{ label: "x", style: "link", url: "javascript:1" }] }]), /https|valid/); bad("link with customId", () => validateComponents([{ buttons: [{ label: "x", style: "link", url: "https://a.example", customId: "x" }] }]), /link/);
+bad("non-link without customId", () => validateComponents([{ buttons: [{ label: "x" }] }]), /customId/); bad("bad customId chars", () => validateComponents([{ buttons: [{ label: "x", customId: "a<b>" }] }]), /customId/);
+bad("duplicate customId", () => validateComponents([{ buttons: [{ label: "a", customId: "d" }, { label: "b", customId: "d" }] }]), /share/); bad("no label or emoji", () => validateComponents([{ buttons: [{ customId: "a" }] }]), /label/);
+bad("unknown style", () => validateComponents([{ buttons: [{ label: "x", customId: "a", style: "rainbow" }] }]), /style/); bad("empty row", () => validateComponents([{ buttons: [] }]), /1 to 5/);
+console.log(f ? `${f} FAILED (${p} passed)` : `ALL PASSED (${p})`); process.exit(f ? 1 : 0);

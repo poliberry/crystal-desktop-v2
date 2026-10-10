@@ -1,7 +1,7 @@
 import { app } from "electron";
 import * as path from "node:path";
 
-import type { ChannelDefinition } from "./channels";
+import type { AppIdentity, ChannelDefinition } from "./channels";
 
 /**
  * Make a channel its own application as far as the OS is concerned.
@@ -23,20 +23,23 @@ import type { ChannelDefinition } from "./channels";
  * installs already keep it, and pointing it somewhere new would silently log
  * everyone out and lose their local settings. The side channels have no such
  * history — the builds that would have had one couldn't start.
+ *
+ * Crystal Studio is a new application, so it follows the side channels' rule on every channel, Stable included: its own
+ * name, its own data directory (so its own sign-in, and a single-instance lock that doesn't collide with Crystal's).
  */
-export function applyChannelIdentity(channel: ChannelDefinition): void {
-  if (channel.id !== "stable") {
+export function applyAppIdentity(channel: ChannelDefinition, identity: AppIdentity): void {
+  if (identity.kind === "studio" || channel.id !== "stable") {
     // Sets the userData directory too (Electron derives it from the app name),
     // but only for paths not yet resolved — so this has to run before anything
     // touches app paths, and `setPath` is passed explicitly rather than left
     // to that ordering.
-    app.setName(channel.productName);
-    app.setPath("userData", path.join(app.getPath("appData"), channel.productName));
+    app.setName(identity.productName);
+    app.setPath("userData", path.join(app.getPath("appData"), identity.productName));
   }
 
   // Windows requires the App User Model ID to be set before the app is ready
   // for OS toast notifications to be supported (Notification.isSupported()).
   if (process.platform === "win32") {
-    app.setAppUserModelId(channel.appId);
+    app.setAppUserModelId(identity.appId);
   }
 }

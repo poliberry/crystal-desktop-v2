@@ -3,11 +3,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
-import { applyChannelIdentity } from "./appIdentity";
+import { applyAppIdentity } from "./appIdentity";
 import * as backgroundNotifier from "./backgroundNotifier";
-import { REPO, resolveRunningChannel } from "./channels";
+import { appIdentity, CHANNELS, REPO, resolveRunningApp, resolveRunningChannel, type AppKind } from "./channels";
+import { isAppLink, parseDeepLink, parseStudioLink, STUDIO_PROTOCOL, type DeepLink } from "./deeplink";
+import { LinkQueue, startsNewDocument } from "./linkQueue";
 import richPresence from "./richPresence";
 import systemAudio from "./systemAudio";
+import { registerStudioBuild } from "./studioBuild";
+import { registerStudioFs } from "./studioFs";
+import { registerStudioTerminal } from "./studioTerminal";
 import updater from "./updater";
 
 const RELEASES_URL = `https://github.com/${REPO.owner}/${REPO.repo}/releases`;
@@ -46,11 +51,26 @@ const channel = resolveRunningChannel({
   isPackaged: app.isPackaged,
 });
 
+/**
+ * Which application this process is: Crystal, or Crystal Studio — the same code, packaged twice (see
+ * scripts/electron-builder-config.cjs). Studio is its own installed app: it opens only the Studio window, quits when that
+ * is closed, and leaves everything that belongs to the chat client (tray, notifications, rich presence, audio capture)
+ * to Crystal.
+ */
+const appKind = resolveRunningApp({ appPath: app.getAppPath() });
+const isStudioApp = appKind === "studio";
+const identity = appIdentity(channel, appKind);
+/**
+ * Whose icon files this run draws. A run from source shows the real app's artwork, not the Development channel's own
+ * (a different colour, so installed builds can be told apart): what you see while building is what ships.
+ */
+const iconIdentity = !app.isPackaged && appKind === "crystal" ? appIdentity(CHANNELS.stable, "crystal") : identity;
+
 // Before anything else: this decides the app's name, its data directory and
 // (through that directory) its single-instance lock, so it has to run before
 // any of the three is read. See electron/appIdentity.ts for why a channel that
 // skips it can't start at all while Stable is running.
-applyChannelIdentity(channel);
+applyAppIdentity(channel, identity);
 
 const PRELOAD = path.join(__dirname, "preload.js");
 
@@ -115,7 +135,7 @@ function macAudioExclusions(): string {
   // capture its own output back into the call.
   return isDev
     ? "com.github.Electron,Electron"
-    : `${channel.appId},${channel.productName}`;
+    : `${identity.appId},${identity.productName}`;
 }
 
 function stopMacAudioChild(): void {
@@ -141,7 +161,7 @@ function toTransferable(buf: Buffer): ArrayBuffer {
  */
 function appIconPath(): string | undefined {
   const candidate = isDev
-    ? path.join(__dirname, "..", "build", channel.icon)
+    ? path.join(__dirname, "..", "build", iconIdentity.icon)
     : path.join(process.resourcesPath, "icon.png");
   return fs.existsSync(candidate) ? candidate : undefined;
 }
@@ -228,7 +248,7 @@ function framelessFor(headerHeight: number) {
  * the titlebar, Aero snap, etc.) instead of only our own button. */
 function wireWindowStateEvents(win: BrowserWindow): void {
   const send = () => {
-    if (!win.isDestroyed()) win.webContents.send("window:maximized-changed", win.isMaximized());
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("window:maximized-changed", win.isMaximized());
   };
   win.on("maximize", send);
   win.on("unmaximize", send);
@@ -236,7 +256,7 @@ function wireWindowStateEvents(win: BrowserWindow): void {
   // The traffic lights go away in full screen, and the room the renderer left
   // for them with them.
   const sendFullScreen = () => {
-    if (!win.isDestroyed()) win.webContents.send("window:fullscreen-changed", win.isFullScreen());
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("window:fullscreen-changed", win.isFullScreen());
   };
   win.on("enter-full-screen", sendFullScreen);
   win.on("leave-full-screen", sendFullScreen);
@@ -255,23 +275,28 @@ const activeCallWebContents = new Set<number>();
 let isQuitting = false;
 
 // ---------------------------------------------------------------------------
-// crystal:// deep-link / OAuth callback handling
+// Deep links: crystal://… and https://usecrystal.app/… (see ./deeplink.ts)
 //
-// The app registers crystal:// as its default protocol client. When the OS
-// browser completes an OAuth flow and redirects to crystal://auth/callback,
-// the OS opens (or focuses) this app and passes the URL. We forward it to
-// the renderer via IPC so Clerk can complete the auth handshake.
+// The app is the registered handler for crystal://, and an https link on our own site is one of
+// ours too. They reach us five ways, and each ends in `handleCrystalUrl`:
+//   - the OS launching us with the link as an argument (Windows / Linux, a cold start);
+//   - `open-url` (macOS, a crystal:// link, running or not);
+//   - `continue-activity` (macOS universal links: a usecrystal.app link clicked anywhere, once the
+//     signed build carries the associated-domains entitlement for the domain);
+//   - `second-instance` (Windows / Linux, a link opened while we are running);
+//   - a click on one of our links inside the app itself, which never needs the browser.
+// Anything `parseDeepLink` doesn't recognise is ignored: a link to someone else's site is never ours.
 // ---------------------------------------------------------------------------
 
 let pendingProtocolUrl: string | null = null;
 
-// Windows / Linux: crystal:// may arrive as a CLI argument on a fresh launch
-// (the OS re-runs the app with the URL as an argv entry).
-const crystalArgUrl = process.argv.find((a) => a.startsWith("crystal://"));
-if (crystalArgUrl) pendingProtocolUrl = crystalArgUrl;
+// A link this application handles: Crystal's own kinds, or — for Studio — what `parseStudioLink` knows.
+const isOurLink = (raw: string): boolean => (isStudioApp ? parseStudioLink(raw) !== null : parseDeepLink(raw) !== null);
+const deepLinkArg = (args: readonly string[]) => args.find(isOurLink);
 
-// macOS: crystal:// URLs arrive via the open-url event, which fires both
-// when the app is already running and when it is launched fresh.
+const startupLink = deepLinkArg(process.argv);
+if (startupLink) pendingProtocolUrl = startupLink;
+
 app.on("open-url", (event, url) => {
   event.preventDefault();
   if (app.isReady()) {
@@ -281,46 +306,96 @@ app.on("open-url", (event, url) => {
   }
 });
 
-// Enforce a single app instance so that crystal:// redirects from the system
-// browser always land in the existing window rather than a second process.
-// Skipped in dev: Electron dev builds share an app identity and the lock would
-// cause each new `bun dev` invocation to quit the process immediately.
-if (!isDev) {
+app.on("continue-activity", (event, type, _userInfo, details) => {
+  const url = (details as { webpageURL?: string } | undefined)?.webpageURL;
+  if (isStudioApp || type !== "NSUserActivityTypeBrowsingWeb" || !url || !parseDeepLink(url)) return;
+  event.preventDefault();
+  if (app.isReady()) handleCrystalUrl(url);
+  else pendingProtocolUrl = url;
+});
+
+// Enforce a single app instance so that a link opened while we are running always lands in the
+// existing window rather than a second process. That is also how "open the other app" works: starting an app that is
+// already running hands it the link and brings it forward.
+//
+// In development too. This used to be skipped there because every dev build shared one identity, so a second one would
+// quit at once; Crystal and Crystal Studio now have their own names and data folders (see appIdentity.ts), so each has a
+// lock of its own and the two coexist.
+{
   const gotSingleInstanceLock = app.requestSingleInstanceLock();
   if (!gotSingleInstanceLock) {
     app.quit();
   } else {
     app.on("second-instance", (_event, commandLine) => {
-      const url = commandLine.find((a) => a.startsWith("crystal://"));
+      const url = deepLinkArg(commandLine);
       if (url) handleCrystalUrl(url);
+      else if (isStudioApp) createOrFocusStudioWindow();
       else createOrFocusMainWindow();
     });
   }
 }
 
 /**
- * Route a `crystal://` URL to the renderer.
- *
- * Two kinds now. `crystal://auth/callback?...` completes an OAuth handshake;
- * `crystal://invite/<code>` is an invitation, handed over by the web page an
- * `https://…/invite/<code>` link lands on. The web link is the one that gets
- * shared, because it means something in a browser, on a phone, and in every
- * other chat app — this scheme is only ever the last hop.
+ * Links wait here until the page can take them (see ./linkQueue.ts). A sign-in callback is the
+ * exception: it is what signs the person in, so it goes as soon as the page has loaded.
+ */
+let linkWindow: BrowserWindow | null = null;
+const links = new LinkQueue<DeepLink>((link) => {
+  const win = linkWindow;
+  if (!win || win.isDestroyed()) return;
+  if (link.kind === "invite") win.webContents.send("invite:open", link.code);
+  else if (link.kind === "authorize") win.webContents.send("install:open", link.search);
+});
+
+function sendDeepLink(win: BrowserWindow, link: DeepLink): void {
+  if (link.kind === "open") return;
+  if (link.kind === "auth") {
+    const send = () => win.webContents.send("auth:callback", link.url);
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", send);
+    else send();
+    return;
+  }
+  linkWindow = win;
+  links.push(link);
+}
+
+/**
+ * Route a link to the renderer: `crystal://auth/callback?…` completes a sign-in, an invite opens
+ * the join dialog, `…/oauth/authorize?…` opens the add-a-bot / add-an-extension flow. Shared links
+ * are the https ones, because they mean something in a browser, on a phone and in every other chat
+ * app; the scheme is the hand-off from a web page to an installed app.
  */
 function handleCrystalUrl(url: string): void {
-  const isAuth = url.startsWith("crystal://auth/callback");
-  const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(url);
-  if (!isAuth && !invite) return;
+  if (isStudioApp) return handleStudioUrl(url);
+  const link = parseDeepLink(url);
+  if (!link) return;
 
   createOrFocusMainWindow();
+  if (link.kind === "open") return;
   if (!mainWindow || mainWindow.isDestroyed()) {
-    // Window not yet ready — stored and delivered on did-finish-load.
     pendingProtocolUrl = url;
     return;
   }
-  if (invite) mainWindow.webContents.send("invite:open", invite[1]);
-  else mainWindow.webContents.send("auth:callback", url);
+  sendDeepLink(mainWindow, link);
 }
+
+/** Studio's links: bring it forward, and finish a sign-in that came back through the browser. */
+function handleStudioUrl(url: string): void {
+  const link = parseStudioLink(url);
+  if (!link) return;
+  createOrFocusStudioWindow();
+  if (!studioWindow || studioWindow.isDestroyed()) {
+    pendingProtocolUrl = url;
+    return;
+  }
+  if (link.kind === "auth") sendDeepLink(studioWindow, { kind: "auth", url: link.url });
+}
+
+ipcMain.on("deeplink:ready", (event) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  linkWindow = mainWindow;
+  links.markReady();
+});
 
 // ---------------------------------------------------------------------------
 
@@ -356,7 +431,10 @@ function createWindow(): void {
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https:") || url.startsWith("http:")) {
+    // One of our own links (an invite, an add-a-bot link) opens right here, not in the browser.
+    if (isAppLink(url)) {
+      handleCrystalUrl(url);
+    } else if (url.startsWith("https:") || url.startsWith("http:")) {
       void shell.openExternal(url);
     }
     return { action: "deny" };
@@ -372,8 +450,17 @@ function createWindow(): void {
       : url.startsWith("http://crystal.localhost");
     if (!isApp) {
       event.preventDefault();
-      void shell.openExternal(url);
+      if (isAppLink(url)) handleCrystalUrl(url);
+      else void shell.openExternal(url);
     }
+  });
+
+  // A new page has no link handlers until it says so: whatever arrives now waits for its "ready".
+  // Only a real page load counts. `did-start-loading` also fires for iframes and for the router's
+  // pushState, neither of which discards the page, so using it left links stuck for good.
+  links.reset();
+  win.webContents.on("did-start-navigation", (details) => {
+    if (startsNewDocument(details)) links.reset();
   });
 
   // If the app was launched via a crystal:// URL, forward it once the
@@ -381,11 +468,8 @@ function createWindow(): void {
   if (pendingProtocolUrl) {
     const pendingUrl = pendingProtocolUrl;
     pendingProtocolUrl = null;
-    win.webContents.once("did-finish-load", () => {
-      const invite = /^crystal:\/\/invite\/([a-zA-Z0-9]{4,32})\/?$/.exec(pendingUrl);
-      if (invite) win.webContents.send("invite:open", invite[1]);
-      else win.webContents.send("auth:callback", pendingUrl);
-    });
+    const link = parseDeepLink(pendingUrl);
+    if (link) sendDeepLink(win, link);
   }
 
   // Closing the window (the X button, Alt+F4, etc.) hides it instead of
@@ -431,7 +515,15 @@ function createWindow(): void {
     if (restoreTimer) clearTimeout(restoreTimer);
     restoreTimer = null;
   });
-  win.on("closed", () => activeCallWebContents.delete(win.webContents.id));
+  // The id is read now, not in the handler: by the time `closed` fires the window and its
+  // webContents are destroyed, and touching either throws "Object has been destroyed" — which
+  // Electron shows as an error dialog, on every quit.
+  const webContentsId = win.webContents.id;
+  win.on("closed", () => {
+    activeCallWebContents.delete(webContentsId);
+    // Don't leave a reference to a destroyed window for later code to trip over.
+    if (mainWindow === win) mainWindow = null;
+  });
 
   wireWindowStateEvents(win);
   mainWindow = win;
@@ -462,13 +554,22 @@ let pipWindow: BrowserWindow | null = null;
  * displays whatever JPEG frames the main window streams to it over IPC. See
  * `pip:send-frame`/`pip:frame` below and `src/app/pip/page.tsx`.
  */
+/** Send to the main window if there still is one. During quit the pip window and the tray can
+ * outlive it by a moment, and sending to a destroyed window throws. */
+function sendToMain(channel: string, ...args: unknown[]): void {
+  const win = mainWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send(channel, ...args);
+}
+
 /** Tells the main window the pip window's actual current content size, so
  * it can capture frames at a resolution that matches instead of a fixed
  * guess — capturing smaller than the window means the browser upscales a
  * low-res JPEG to fill it, which is what caused the pixelation. */
 function reportPipSize(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
   const { width, height } = win.getContentBounds();
-  mainWindow?.webContents.send("pip:size", { width, height });
+  sendToMain("pip:size", { width, height });
 }
 
 function createOrFocusPipWindow(options?: { width?: number; height?: number; title?: string }): void {
@@ -487,7 +588,7 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
     alwaysOnTop: true,
     frame: false,
     backgroundColor: "#000000",
-    title: options?.title ?? channel.productName,
+    title: options?.title ?? identity.productName,
     icon: appIconPath(),
     webPreferences: {
       preload: PRELOAD,
@@ -512,7 +613,7 @@ function createOrFocusPipWindow(options?: { width?: number; height?: number; tit
 
   win.on("closed", () => {
     pipWindow = null;
-    mainWindow?.webContents.send("pip:closed");
+    sendToMain("pip:closed");
   });
 
   pipWindow = win;
@@ -559,10 +660,15 @@ function createOrFocusAdminWindow(): void {
   adminWindow = win;
 }
 
-/** Crystal Studio: a creator's workspace, in a window of its own — a design tool
- * wants the whole screen, and keeping it separate means closing the chat doesn't
- * lose an open project. A singleton, like the editor and the console. */
+/** Crystal Studio's window, in the Crystal Studio application: a creator's workspace — a design tool wants the whole
+ * screen. A singleton, like the editor and the console. */
+/** Studio's title bar is its menu bar: 30px, as Illustrator's is. Keep in step with `h-[30px]` on the
+ * header in src/studio/shell/studio-app.tsx, or the traffic lights stop being centred on it. */
+const STUDIO_TITLEBAR_HEIGHT = 30;
+
 function createOrFocusStudioWindow(): void {
+  // Only the Crystal Studio application has this window. Crystal opens that application instead (see `openApp`).
+  if (!isStudioApp) return;
   if (studioWindow && !studioWindow.isDestroyed()) {
     studioWindow.show();
     studioWindow.focus();
@@ -575,9 +681,11 @@ function createOrFocusStudioWindow(): void {
     minHeight: 640,
     autoHideMenuBar: true,
     icon: appIconPath(),
-    ...framelessFor(36),
+    ...framelessFor(STUDIO_TITLEBAR_HEIGHT),
     webPreferences: {
       preload: PRELOAD,
+      // Tells the page it is Crystal Studio the application, not a window of Crystal (see `app` in preload.ts).
+      additionalArguments: isStudioApp ? ["--crystal-app=studio"] : [],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -590,11 +698,95 @@ function createOrFocusStudioWindow(): void {
     if (url.startsWith("https:")) void shell.openExternal(url);
     return { action: "deny" };
   });
+  // Studio never leaves its own pages inside this window: a sign-in provider (or anything else) opens in the browser.
+  win.webContents.on("will-navigate", (event, url) => {
+    const ours = isDev ? url.startsWith("http://localhost:") : url.startsWith("http://crystal.localhost");
+    if (ours) return;
+    event.preventDefault();
+    const link = parseStudioLink(url);
+    if (link) handleStudioUrl(url);
+    else if (url.startsWith("https:")) void shell.openExternal(url);
+  });
+  // Studio holds back a close that would throw away unsaved work (a `beforeunload` guard). Electron
+  // blocks the close without a word unless told otherwise, so ask: Leave closes anyway.
+  win.webContents.on("will-prevent-unload", (event) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: "warning",
+      buttons: ["Leave", "Stay"],
+      defaultId: 1,
+      cancelId: 1,
+      title: "Unsaved changes",
+      message: "You have changes in Studio that aren't saved.",
+      detail: "If you leave now, they are lost.",
+    });
+    if (choice === 0) event.preventDefault();
+  });
   wireWindowStateEvents(win);
   win.on("closed", () => {
     studioWindow = null;
   });
   studioWindow = win;
+
+  // Launched by a link (a sign-in coming back, or Crystal's "Open Studio"): act on it once the page can take it.
+  if (isStudioApp && pendingProtocolUrl) {
+    const pending = pendingProtocolUrl;
+    pendingProtocolUrl = null;
+    const link = parseStudioLink(pending);
+    if (link?.kind === "auth") sendDeepLink(win, { kind: "auth", url: link.url });
+  }
+}
+
+/**
+ * Open one of the two applications from the other (Crystal's Creator tab opens Studio; Studio's account menu opens
+ * Crystal). They are separate programs, so this never makes a window of its own: it asks the operating system to start
+ * the other one, or to bring it forward if it is already running.
+ *
+ *  - Installed: its `crystal://open` / `crystal-studio://open` link. The OS finds the program by its scheme, starts it if
+ *    it isn't running, and a running one gets the link through its single-instance lock and comes to the front.
+ *  - Not installed: say so and offer the download, rather than failing silently or opening something that isn't it.
+ *  - Development: nothing is installed or registered, so this starts the other one itself from the same checkout. The
+ *    single-instance lock is what turns a second start into "bring the running one forward".
+ */
+const APPS: Record<AppKind, { name: string; link: string }> = {
+  crystal: { name: "Crystal", link: "crystal://open" },
+  studio: { name: "Crystal Studio", link: `${STUDIO_PROTOCOL}://open` },
+};
+
+function launchDevApp(target: AppKind): void {
+  const env: NodeJS.ProcessEnv = { ...process.env, CRYSTAL_APP: target };
+  delete env.ELECTRON_RUN_AS_NODE;
+  spawn(process.execPath, [app.getAppPath(), APPS[target].link], { env, detached: true, stdio: "ignore" }).unref();
+}
+
+async function openApp(target: AppKind): Promise<void> {
+  if (target === appKind) {
+    if (isStudioApp) createOrFocusStudioWindow();
+    else createOrFocusMainWindow();
+    return;
+  }
+  if (isDev) return launchDevApp(target);
+
+  const { name, link } = APPS[target];
+  if (app.getApplicationNameForProtocol(link)) {
+    try {
+      await shell.openExternal(link);
+      return;
+    } catch {
+      // Registered but unable to start (moved or deleted since): treat it as not installed.
+    }
+  }
+  const options: Electron.MessageBoxOptions = {
+    type: "info",
+    buttons: ["Download", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    title: `${name} isn't installed`,
+    message: `${name} isn't installed on this computer.`,
+    detail: `${name} is a separate app. Download it from the releases page, install it, and this will open it.`,
+  };
+  const focused = BrowserWindow.getFocusedWindow();
+  const { response } = focused ? await dialog.showMessageBox(focused, options) : await dialog.showMessageBox(options);
+  if (response === 0) await shell.openExternal(RELEASES_URL);
 }
 
 /**
@@ -664,6 +856,13 @@ function createOrFocusEditorWindow(options: {
 }
 
 app.whenReady().then(async () => {
+  // A packaged macOS app gets its Dock icon from its bundle. A run from source is the stock Electron app, whose icon is
+  // Electron's, so set ours; Windows and Linux take the window icon (see `appIconPath`).
+  if (!app.isPackaged && process.platform === "darwin" && app.dock) {
+    const dockIcon = nativeImage.createFromPath(path.join(__dirname, "..", "build", iconIdentity.macIcon));
+    if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+  }
+
   // Production: intercept http://crystal.localhost and serve the static
   // Next.js export from the out/ directory. This gives Clerk a stable,
   // fixed origin (unlike the old random-port serve-handler) so session
@@ -727,12 +926,18 @@ app.whenReady().then(async () => {
   // signing in to. Worth knowing now that channels have their own sessions: a
   // callback delivered to a channel with no sign-in in flight simply does
   // nothing, and the flow can be restarted from the right one.
-  app.setAsDefaultProtocolClient("crystal");
+  if (isStudioApp) {
+    // Studio is the handler for its own scheme only: claiming `crystal://` would take sign-in callbacks and invites
+    // away from Crystal. Not in development, where this registers the bare Electron binary.
+    if (!isDev) app.setAsDefaultProtocolClient(STUDIO_PROTOCOL);
+  } else {
+    app.setAsDefaultProtocolClient("crystal");
+  }
 
   const ses = session.defaultSession;
 
   // Prime pactl / recorder detection so the first share starts faster.
-  void systemAudio.warmUp().catch(() => {});
+  if (!isStudioApp) void systemAudio.warmUp().catch(() => {});
 
   // Grant media + display capture for the renderer (LiveKit + screen share),
   // plus clipboard-write for the invite-code copy button (navigator.clipboard
@@ -865,7 +1070,8 @@ app.whenReady().then(async () => {
     platform: process.platform,
     channel: channel.id,
     channelLabel: channel.label,
-    productName: channel.productName,
+    app: appKind,
+    productName: identity.productName,
     versions: {
       electron: process.versions.electron,
       chrome: process.versions.chrome,
@@ -947,10 +1153,25 @@ app.whenReady().then(async () => {
       return true;
     },
   );
-  ipcMain.handle("studio:open", () => {
-    createOrFocusStudioWindow();
+  ipcMain.handle("studio:open", async () => {
+    await openApp("studio");
     return true;
   });
+  ipcMain.handle("studio:open-crystal", async () => {
+    await openApp("crystal");
+    return true;
+  });
+  // Studio's projects are plain files in Documents/Crystal Studio. Only the Studio window may
+  // ask for them — see studioFs.ts for what is and isn't reachable. Crystal doesn't serve them at all: Studio is its own
+  // application, and this is its half of the work.
+  if (isStudioApp) {
+    const isStudioSender = (sender: Electron.WebContents) => !!studioWindow && !studioWindow.isDestroyed() && sender === studioWindow.webContents;
+    const studioFs = registerStudioFs(path.join(app.getPath("documents"), "Crystal Studio"), isStudioSender);
+    // The code workbench: a terminal in the project folder, and the build that bundles an extension.
+    const studioTerminals = registerStudioTerminal((rel) => studioFs.dirPath(rel), isStudioSender);
+    registerStudioBuild((rel) => studioFs.dirPath(rel), (rel, text) => studioFs.writeText(rel, text), isStudioSender);
+    app.on("before-quit", () => studioTerminals.closeAll());
+  }
   ipcMain.handle("admin:open", () => {
     createOrFocusAdminWindow();
     return true;
@@ -991,7 +1212,7 @@ app.whenReady().then(async () => {
   const sendAccentColor = () => {
     const color = systemAccentColor();
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("system:accent-color-changed", color);
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("system:accent-color-changed", color);
     }
   };
   // Debounced, and read *after* the pause rather than when the notification
@@ -1033,14 +1254,16 @@ app.whenReady().then(async () => {
   // Tray icon: lets the app keep running (and keep watching for
   // notifications) after the window is closed, per the `close` handler in
   // createWindow() above.
-  const tray = new Tray(trayIconImage());
-  tray.setToolTip(channel.productName);
+  // Studio has none: closing its window quits it.
+  const tray = isStudioApp ? null : new Tray(trayIconImage());
+  if (tray) {
+  tray.setToolTip(identity.productName);
   // Without this macOS swallows the first click of a double-click and delays
   // the menu; the tray has no double-click behaviour to preserve.
   if (process.platform === "darwin") tray.setIgnoreDoubleClickEvents(true);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: `Open ${channel.productName}`, click: () => createOrFocusMainWindow() },
+      { label: `Open ${identity.productName}`, click: () => createOrFocusMainWindow() },
       { type: "separator" },
       {
         label: "Quit",
@@ -1052,24 +1275,26 @@ app.whenReady().then(async () => {
     ])
   );
   tray.on("click", () => createOrFocusMainWindow());
+  }
 
   backgroundNotifier.init({
     getMainWindow: () => mainWindow,
     onNavigate: (target) => {
-      mainWindow?.webContents.send("notifications:navigate", target);
+      sendToMain("notifications:navigate", target);
     },
   });
 
   ipcMain.handle(
     "notifications:configure",
     (_event, url: string, token: string | null, userId: string | null) => {
-      backgroundNotifier.configure(url, token, userId);
+      // Crystal watches for messages; Studio has nothing to tell anyone and must not toast a second time.
+      if (!isStudioApp) backgroundNotifier.configure(url, token, userId);
     }
   );
   ipcMain.handle(
     "notifications:set-active-view",
     (_event, view: { kind: "conversation" | "channel"; id: string } | null) => {
-      backgroundNotifier.setActiveView(view);
+      if (!isStudioApp) backgroundNotifier.setActiveView(view);
     }
   );
 
@@ -1100,7 +1325,7 @@ app.whenReady().then(async () => {
   updater.init();
   updater.onStateChange((state) => {
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("updater:state-changed", state);
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("updater:state-changed", state);
     }
   });
   ipcMain.handle("updater:state", () => updater.getState());
@@ -1257,12 +1482,14 @@ app.whenReady().then(async () => {
   // detectables catalog on a cold cache shouldn't hold up the first paint.
   richPresence.onChange((activities) => {
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("rich-presence:changed", activities);
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("rich-presence:changed", activities);
     }
   });
-  void richPresence.start().catch((err) => {
-    console.warn("[rich-presence] failed to start:", err);
-  });
+  if (!isStudioApp) {
+    void richPresence.start().catch((err) => {
+      console.warn("[rich-presence] failed to start:", err);
+    });
+  }
 
   ipcMain.handle("rich-presence:get", () => richPresence.getActivities());
   ipcMain.handle("rich-presence:status", () => richPresence.getStatus());
@@ -1304,15 +1531,22 @@ app.whenReady().then(async () => {
     if (idle && global.gc) try { global.gc(); } catch { /* ignore */ }
   }, 90_000).unref();
 
-  createWindow();
-
-  app.on("activate", () => createOrFocusMainWindow());
+  if (isStudioApp) {
+    createOrFocusStudioWindow();
+    app.on("activate", () => createOrFocusStudioWindow());
+  } else {
+    createWindow();
+    app.on("activate", () => createOrFocusMainWindow());
+  }
 });
 
 // The main window hides instead of closing (see its `close` handler above),
 // so the app now only quits via the tray's "Quit" item or the OS itself —
 // never just because every window happened to be hidden/closed.
-app.on("window-all-closed", () => {});
+app.on("window-all-closed", () => {
+  // Crystal Studio is a document-style app with no tray to live in: closing its last window ends it.
+  if (isStudioApp) app.quit();
+});
 
 app.on("before-quit", () => {
   isQuitting = true;

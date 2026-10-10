@@ -106,6 +106,12 @@ export const listMembers = query({
   },
 });
 
+/** A bot's role is its grant. It is changed from the community's Bots settings, by someone who
+ * holds what they give — not here, where a role editor could hand a bot more than that. */
+function assertNotBotRole(role: Doc<"roles">) {
+  if (role.managedBotId) throw new Error("This role belongs to a bot. Change what it can do in the community's Bots settings.");
+}
+
 /** Enforces role hierarchy: you can only manage roles below your own highest
  * role, unless you own the community. */
 async function assertCanManageRole(
@@ -162,6 +168,7 @@ export const update = mutation({
     const community = await requireCommunity(ctx, role.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_ROLES);
     await assertCanManageRole(ctx, community, role, me._id);
+    assertNotBotRole(role);
 
     const patch: { name?: string; color?: string; permissions?: number; hoist?: boolean } = {};
     if (name !== undefined && !role.isEveryone) {
@@ -238,6 +245,7 @@ export const duplicate = mutation({
     const community = await requireCommunity(ctx, role.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_ROLES);
     await assertCanManageRole(ctx, community, role, me._id);
+    assertNotBotRole(role);
 
     const existing = await ctx.db
       .query("roles")
@@ -267,6 +275,7 @@ export const remove = mutation({
     const community = await requireCommunity(ctx, role.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_ROLES);
     await assertCanManageRole(ctx, community, role, me._id);
+    assertNotBotRole(role);
 
     const assignments = await ctx.db
       .query("memberRoles")
@@ -292,6 +301,7 @@ export const assign = mutation({
     if (!role || role.communityId !== communityId) throw new Error("Role not found.");
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_ROLES);
     await assertCanManageRole(ctx, community, role, me._id);
+    assertNotBotRole(role);
     await requireMember(ctx, communityId, userId);
 
     const existing = await ctx.db
@@ -313,6 +323,7 @@ export const unassign = mutation({
     if (!role) return;
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_ROLES);
     await assertCanManageRole(ctx, community, role, me._id);
+    assertNotBotRole(role);
 
     const existing = await ctx.db
       .query("memberRoles")

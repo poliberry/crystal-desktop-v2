@@ -805,3 +805,44 @@ export const streamOf = query({
     return null;
   },
 });
+
+// --- Presence for accounts that aren't a person at a keyboard (bots) -------------------------------
+
+export type BotStatus = "online" | "idle" | "dnd" | "invisible";
+export interface BotActivity {
+  type: "playing" | "listening" | "watching" | "streaming";
+  name: string;
+  details?: string;
+  state?: string;
+  startedAt?: number;
+}
+
+/**
+ * Set a bot's status and activities, and count the call as a sign of life.
+ *
+ * A bot has no app open that heartbeats on its own, so it does what a client does: it presents as
+ * one live session (`bot`, desktop-class so activities aren't dropped) and calls this about every
+ * 30 seconds. The same stale sweep that turns a closed laptop offline turns a stopped bot offline
+ * a minute after its last call — nothing here needs to know a bot has died.
+ *
+ * Everything goes through `reconcile`, the one place `effective` is written, so a bot's status is
+ * computed by exactly the rule a person's is.
+ */
+export async function applyBotPresence(ctx: MutationCtx, userId: Id<"users">, input: { status?: BotStatus; activities?: BotActivity[] }): Promise<void> {
+  const now = Date.now();
+  const session = await ctx.db.query("presenceSessions").withIndex("by_user_device", (q) => q.eq("userId", userId).eq("deviceId", "bot")).unique();
+  if (session) await ctx.db.patch(session._id, { isIdle: false, lastHeartbeat: now });
+  else await ctx.db.insert("presenceSessions", { userId, deviceId: "bot", platform: "desktop", isIdle: false, lastHeartbeat: now });
+
+  const manualStatus = input.status ?? undefined;
+  const existing = await ctx.db.query("presence").withIndex("by_user", (q) => q.eq("userId", userId)).unique();
+  const status = manualStatus ?? existing?.manualStatus ?? "online";
+  const activities = status === "invisible" ? [] : (input.activities ?? (existing ? activitiesOf(existing) : [])).map((a) => ({ ...a }));
+  if (!existing) {
+    await ctx.db.insert("presence", { userId, manualStatus: status, isIdle: false, lastHeartbeat: now, effective: computeEffective(status, false), activities });
+    return;
+  }
+  const changed = existing.manualStatus !== status || (input.activities !== undefined && !sameStoredActivities(activitiesOf(existing), activities));
+  await ctx.db.patch(existing._id, { lastHeartbeat: now, ...(changed ? { manualStatus: status, activities, activity: undefined } : {}) });
+  await reconcile(ctx, userId);
+}

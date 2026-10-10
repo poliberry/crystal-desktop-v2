@@ -1,6 +1,7 @@
 import { SCENE_LIMITS, type SceneSpec } from "../../../convex/lib/creationSpecs";
 import { MAX_LAYERS } from "@/lib/cosmetic-layers";
 import { boundsOf, nodesInOrder, round } from "@/studio/model/doc";
+import { bakesToPicture, fxBox, hasFx } from "@/studio/model/fx";
 import type { Doc, ImageNode, Node, PropNode, SeatNode, ShapeNode, TextNode } from "@/studio/model/types";
 
 /**
@@ -24,12 +25,15 @@ export interface Problem {
  * while only checking. */
 export type UrlOf = (assetId: string) => string | undefined;
 
+/** The address a node with effects was uploaded to once rendered to a picture. Absent while only checking. */
+export type BakedUrlOf = (nodeId: string) => string | undefined;
+
 // --- Limits mirrored from the app --------------------------------------------------------------
 
 /** How far past the avatar a decoration may reach, in percent of its width — see
  * DECORATION_MARGIN in src/lib/cosmetic-layers.ts. */
-const DECORATION_MARGIN = 30;
-const STICKER_MAX_WIDTH = 70;
+export const DECORATION_MARGIN = 30;
+export const STICKER_MAX_WIDTH = 70;
 
 const pct = (value: number, of: number) => round((value / of) * 100);
 
@@ -59,23 +63,29 @@ export interface CompiledLayer {
   strokeWidth?: number;
 }
 
-function toLayer(node: Node, doc: Doc, urlOf: UrlOf | undefined): CompiledLayer | null {
+function toLayer(node: Node, doc: Doc, urlOf: UrlOf | undefined, bakedOf: BakedUrlOf | undefined): CompiledLayer | null {
   const { w: AW } = doc.artboard;
   // A decoration is placed from the avatar's centre; a sticker from the card's top.
   const anchor = doc.kind === "decoration" ? "center" : "top";
-  const cx = node.x + node.w / 2;
-  const cy = node.y + node.h / 2;
+  // A node with effects goes out as the picture it renders to: its turned bounds grown by what
+  // the effects reach, with the turn already in the pixels.
+  const baked = hasFx(node);
+  const g = baked ? fxBox(node) : { x: node.x, y: node.y, w: node.w, h: node.h };
+  const cx = g.x + g.w / 2;
+  const cy = g.y + g.h / 2;
+  const rotation = baked ? 0 : node.rotation;
   const base = {
     id: node.id,
     anchor,
     x: pct(cx, AW),
     y: anchor === "center" ? pct(cy - doc.artboard.h / 2, AW) : pct(cy, AW),
-    width: pct(node.w, AW),
-    height: pct(node.h, AW),
-    rotation: node.rotation ? round(node.rotation) : undefined,
+    width: pct(g.w, AW),
+    height: pct(g.h, AW),
+    rotation: rotation ? round(rotation) : undefined,
     opacity: node.opacity < 1 ? round(node.opacity) : undefined,
   } as const;
 
+  if (baked) return { ...base, kind: "image", url: bakedOf?.(node.id) ?? "" };
   if (node.type === "image") {
     const url = urlOf?.((node as ImageNode).assetId);
     return { ...base, kind: "image", url: url ?? "" };
@@ -113,22 +123,23 @@ function toLayer(node: Node, doc: Doc, urlOf: UrlOf | undefined): CompiledLayer 
 }
 
 /** The layers of a decoration or sticker, bottom first. */
-export function compileLayers(doc: Doc, urlOf?: UrlOf): CompiledLayer[] {
+export function compileLayers(doc: Doc, urlOf?: UrlOf, bakedOf?: BakedUrlOf): CompiledLayer[] {
   return nodesInOrder(doc)
-    .filter((n) => !n.hidden && (n.type === "image" || n.type === "shape" || n.type === "text"))
-    .map((n) => toLayer(n, doc, urlOf))
+    .filter((n) => !n.hidden && (n.type === "image" || n.type === "shape" || n.type === "text" || n.type === "path"))
+    .map((n) => toLayer(n, doc, urlOf, bakedOf))
     .filter((l): l is CompiledLayer => l !== null);
 }
 
 export function checkCosmetic(doc: Doc, assetExists: (id: string) => boolean): Problem[] {
   const problems: Problem[] = [];
-  const visible = nodesInOrder(doc).filter((n) => !n.hidden && (n.type === "image" || n.type === "shape" || n.type === "text"));
+  const visible = nodesInOrder(doc).filter((n) => !n.hidden && (n.type === "image" || n.type === "shape" || n.type === "text" || n.type === "path"));
   if (visible.length === 0) problems.push({ severity: "error", message: "There's nothing to submit yet — add some artwork." });
   if (visible.length > MAX_LAYERS) problems.push({ severity: "error", message: `A cosmetic has at most ${MAX_LAYERS} layers; this has ${visible.length}.` });
 
   const { w: AW, h: AH } = doc.artboard;
   for (const n of visible) {
-    const b = boundsOf(n);
+    // What it covers includes whatever its effects reach: a shadow past the edge is past the edge.
+    const b = hasFx(n) ? fxBox(n) : boundsOf(n);
     if (n.type === "image" && !assetExists((n as ImageNode).assetId)) {
       problems.push({ severity: "error", message: `“${n.name}” has lost its picture.`, nodeId: n.id });
     }
@@ -151,10 +162,28 @@ export function checkCosmetic(doc: Doc, assetExists: (id: string) => boolean): P
   return problems;
 }
 
+/**
+ * What is wrong with the artwork of a nameplate or profile effect on its own. It can be empty (the design may be all
+ * generators on the timeline), so unlike a cosmetic it isn't an error to have nothing drawn; the rest is the same.
+ */
+export function checkArtwork(doc: Doc, assetExists: (id: string) => boolean): Problem[] {
+  const problems: Problem[] = [];
+  for (const n of nodesInOrder(doc)) {
+    if (n.hidden || !(n.type === "image" || n.type === "shape" || n.type === "text" || n.type === "path")) continue;
+    if (n.type === "image" && !assetExists((n as ImageNode).assetId)) problems.push({ severity: "error", message: `“${n.name}” has lost its picture.`, nodeId: n.id });
+    if (n.w < 1 || n.h < 1) problems.push({ severity: "error", message: `“${n.name}” is too small to see.`, nodeId: n.id });
+    if (n.type === "text" && !(n as TextNode).text.trim()) problems.push({ severity: "error", message: `“${n.name}” has no text.`, nodeId: n.id });
+    if (n.opacity < 0.05) problems.push({ severity: "warning", message: `“${n.name}” is almost invisible.`, nodeId: n.id });
+  }
+  return problems;
+}
+
 // --- Scenes --------------------------------------------------------------------------------------
 
 export function checkScene(doc: Doc, assetExists: (id: string) => boolean): Problem[] {
   const problems: Problem[] = [];
+  const AWc = doc.artboard.w;
+  const AHc = doc.artboard.h;
   const nodes = nodesInOrder(doc);
   const bg = nodes.find((n): n is ImageNode => n.type === "image" && n.role === "background");
   if (!bg) problems.push({ severity: "error", message: "Set a background picture — it's the room itself." });
@@ -166,6 +195,17 @@ export function checkScene(doc: Doc, assetExists: (id: string) => boolean): Prob
   if (!nodes.some((n) => n.type === "floor")) problems.push({ severity: "error", message: "Mark where the floor starts, so people know where they can walk." });
   if (nodes.filter((n) => n.type === "floor").length > 1) problems.push({ severity: "error", message: "A room has one floor line." });
 
+  const art = sceneArtwork(doc);
+  if (art.length > SCENE_LIMITS.overlay) problems.push({ severity: "error", message: `At most ${SCENE_LIMITS.overlay} pieces of artwork can be drawn on a room; there are ${art.length}. Group some into one with Pathfinder, or remove some.` });
+  for (const n of art) {
+    if (n.type === "image" && !assetExists((n as ImageNode).assetId)) problems.push({ severity: "error", message: `“${n.name}” has lost its picture.`, nodeId: n.id });
+    if (n.w < 1 || n.h < 1) problems.push({ severity: "error", message: `“${n.name}” is too small to see.`, nodeId: n.id });
+    if (n.type === "text" && !(n as TextNode).text.trim()) problems.push({ severity: "error", message: `“${n.name}” has no text.`, nodeId: n.id });
+    const b = fxBox(n);
+    // A little past the edge is fine (a glow reaches); a long way is a picture the room can't show.
+    if (b.x + b.w < 0 || b.y + b.h < 0 || b.x > AWc || b.y > AHc) problems.push({ severity: "warning", message: `“${n.name}” is entirely outside the room, so it won't be seen.`, nodeId: n.id });
+    if (n.opacity < 0.05) problems.push({ severity: "warning", message: `“${n.name}” is almost invisible.`, nodeId: n.id });
+  }
   const seats = nodes.filter((n) => n.type === "seat");
   const props = nodes.filter((n) => n.type === "prop");
   if (seats.length > SCENE_LIMITS.seats) problems.push({ severity: "error", message: `At most ${SCENE_LIMITS.seats} seats.` });
@@ -198,8 +238,19 @@ export function checkScene(doc: Doc, assetExists: (id: string) => boolean): Prob
   return problems;
 }
 
-/** A scene document as the spec the server rebuilds. `backgroundUrl` is the uploaded address. */
-export function compileScene(doc: Doc, name: string, backgroundUrl: string): SceneSpec {
+/**
+ * The artwork drawn on a room, bottom first: every visible picture, shape, path and piece of text
+ * that sits above the room's background in the stack (what is below it is behind it, and the
+ * background covers it).
+ */
+export function sceneArtwork(doc: Doc): Node[] {
+  const all = nodesInOrder(doc);
+  const bg = all.findIndex((n) => n.type === "image" && n.role === "background");
+  return all.filter((n, i) => i > bg && !n.hidden && bakesToPicture(doc, n) && !(n.type === "image" && n.role === "background"));
+}
+
+/** A scene document as the spec the server rebuilds. `backgroundUrl` is the uploaded address; `artworkUrl` gives the uploaded picture of a piece of artwork. */
+export function compileScene(doc: Doc, name: string, backgroundUrl: string, artworkUrl?: BakedUrlOf): SceneSpec {
   const { w: AW, h: AH } = doc.artboard;
   const nodes = nodesInOrder(doc);
   const screen = nodes.find((n) => n.type === "screen");
@@ -226,5 +277,13 @@ export function compileScene(doc: Doc, name: string, backgroundUrl: string): Sce
         on: p.on,
       })),
     lights: doc.scene ?? { dimOnShare: false, amount: 0.6 },
+    overlay: sceneArtwork(doc)
+      .map((n) => {
+        // Drawn to its own picture, turned and with its effects: so its box is the effect box, and the room
+        // shows exactly the picture, not the node.
+        const b = fxBox(n);
+        return { url: artworkUrl?.(n.id) ?? "", x: pct(b.x, AW), y: pct(b.y, AH), w: pct(b.w, AW), h: pct(b.h, AH), opacity: n.opacity };
+      })
+      .filter((o) => artworkUrl === undefined || o.url !== ""),
   };
 }

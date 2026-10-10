@@ -1,6 +1,7 @@
 "use client";
 import { api } from "../../convex/_generated/api";
 import type { ConvexReactClient } from "convex/react";
+import { typeForUpload } from "@/lib/media-type";
 
 async function hashOf(file: File): Promise<string> {
   try {
@@ -31,7 +32,7 @@ export async function tryUploadViaR2(
     const ticket = await convex.action(api.cdn.createUploadUrl, {
       kind: (kind === "backgrounds" ? "banners" : kind) as never,
       fileName: file.name || "upload",
-      contentType: file.type || "application/octet-stream",
+      contentType: typeForUpload(file),
       contentHash: hash,
       ownerId: opts?.ownerId,
       ext,
@@ -41,7 +42,7 @@ export async function tryUploadViaR2(
     const { uploadUrl, key, publicUrl } = ticket as { uploadUrl: string; key: string; publicUrl: string };
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
+      headers: { "Content-Type": typeForUpload(file) },
       body: file,
     });
     if (!res.ok) return null;
@@ -50,7 +51,7 @@ export async function tryUploadViaR2(
       await convex.mutation(api.cdn.confirmUpload, {
         key,
         fileName: file.name,
-        fileType: file.type || "application/octet-stream",
+        fileType: typeForUpload(file),
         fileSize: file.size,
         kind: (kind === "backgrounds" ? "banners" : kind) as never,
         ownerId: opts?.ownerId,

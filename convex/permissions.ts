@@ -35,6 +35,9 @@ export const PERMISSIONS = {
   MANAGE_GAME_SERVERS: 1 << 18,
   /** Create, edit and cancel events and scrims. */
   MANAGE_EVENTS: 1 << 19,
+  /** Add bots and integrations to the community, decide what they may do, and remove them.
+   * A person can only give a bot permissions they hold themselves — see convex/lib/botAuth.ts. */
+  MANAGE_INTEGRATIONS: 1 << 20,
 } as const;
 
 export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

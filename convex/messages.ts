@@ -9,6 +9,7 @@ import { allowsReply, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
+import { effectiveFileType } from "./lib/mediaType";
 
 function r2UrlForKey(key: string): string | null {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
@@ -149,7 +150,7 @@ export const list = query({
             return {
               id: attachment._id,
               fileName: attachment.fileName,
-              fileType: attachment.fileType,
+              fileType: effectiveFileType(attachment.fileType, attachment.fileName),
               fileSize: attachment.fileSize,
               url,
             };
@@ -302,7 +303,7 @@ export const send = mutation({
     });
 
     for (const attachment of attachments ?? []) {
-      await ctx.db.insert("messageAttachments", { messageId, ...attachment });
+      await ctx.db.insert("messageAttachments", { messageId, ...attachment, fileType: effectiveFileType(attachment.fileType, attachment.fileName) });
     }
 
     // I've obviously "read" up to the message I just sent.
@@ -580,7 +581,7 @@ export const listAttachments = query({
               id: attachment._id,
               messageId: message._id,
               fileName: attachment.fileName,
-              fileType: attachment.fileType,
+              fileType: effectiveFileType(attachment.fileType, attachment.fileName),
               fileSize: attachment.fileSize,
               url: cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null),
               createdAt: message._creationTime,

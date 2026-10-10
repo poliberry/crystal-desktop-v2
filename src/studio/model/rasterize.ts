@@ -1,5 +1,7 @@
 import { boundsOf, nodesInOrder } from "@/studio/model/doc";
-import type { Doc, ImageNode, Node, ShapeNode, TextNode, ThemePackData } from "@/studio/model/types";
+import { bakesToPicture, fxBox, hasFx } from "@/studio/model/fx";
+import { bakeScale, drawNode, renderFx } from "@/studio/model/fx-render";
+import type { Doc, Node, ThemePackData } from "@/studio/model/types";
 
 /**
  * Pictures made in the browser for the store listing.
@@ -26,54 +28,10 @@ function loadImage(blob: Blob): Promise<HTMLImageElement> {
   });
 }
 
+const box0 = (n: Node) => ({ x: n.x, y: n.y, w: n.w, h: n.h });
+
 function toBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't make the picture."))), "image/png"));
-}
-
-function drawNode(ctx: CanvasRenderingContext2D, n: Node, images: Map<string, HTMLImageElement>) {
-  const c = { x: n.x + n.w / 2, y: n.y + n.h / 2 };
-  ctx.save();
-  ctx.globalAlpha = n.opacity;
-  ctx.translate(c.x, c.y);
-  if (n.rotation) ctx.rotate((n.rotation * Math.PI) / 180);
-  ctx.translate(-n.w / 2, -n.h / 2);
-
-  if (n.type === "image") {
-    const img = images.get((n as ImageNode).assetId);
-    if (img) ctx.drawImage(img, 0, 0, n.w, n.h);
-  } else if (n.type === "shape") {
-    const s = n as ShapeNode;
-    ctx.beginPath();
-    if (s.shape === "ellipse") ctx.ellipse(n.w / 2, n.h / 2, n.w / 2, n.h / 2, 0, 0, Math.PI * 2);
-    else ctx.roundRect(0, 0, n.w, n.h, Math.min(s.radius, n.w / 2, n.h / 2));
-    ctx.fillStyle = s.fill;
-    ctx.fill();
-    if (s.strokeWidth > 0) {
-      ctx.lineWidth = s.strokeWidth;
-      ctx.strokeStyle = s.stroke;
-      ctx.stroke();
-    }
-  } else if (n.type === "text") {
-    const t = n as TextNode;
-    ctx.font = `${t.italic ? "italic " : ""}${t.fontWeight} ${t.fontSize}px system-ui, sans-serif`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = t.align;
-    const x = t.align === "left" ? 0 : t.align === "right" ? n.w : n.w / 2;
-    const lines = t.text.split("\n");
-    const lh = t.fontSize * 1.15;
-    const top = n.h / 2 - ((lines.length - 1) * lh) / 2;
-    lines.forEach((line, i) => {
-      if (t.strokeWidth > 0) {
-        ctx.lineWidth = t.strokeWidth * 2;
-        ctx.lineJoin = "round";
-        ctx.strokeStyle = t.stroke;
-        ctx.strokeText(line, x, top + i * lh);
-      }
-      ctx.fillStyle = t.color;
-      ctx.fillText(line, x, top + i * lh);
-    });
-  }
-  ctx.restore();
 }
 
 async function imagesFor(doc: Doc, getBlob: (id: string) => Promise<Blob | null>) {
@@ -84,6 +42,23 @@ async function imagesFor(doc: Doc, getBlob: (id: string) => Promise<Blob | null>
     if (blob) images.set(n.assetId, await loadImage(blob));
   }
   return images;
+}
+
+/**
+ * Every visible node that has effects, rendered to a PNG: what is uploaded in its place when the
+ * design is compiled. Keyed by node id.
+ */
+export async function bakeEffects(doc: Doc, getBlob: (id: string) => Promise<Blob | null>): Promise<Map<string, Blob>> {
+  const baked = new Map<string, Blob>();
+  const todo = nodesInOrder(doc).filter((n) => !n.hidden && bakesToPicture(doc, n));
+  if (todo.length === 0) return baked;
+  const images = await imagesFor(doc, getBlob);
+  for (const n of todo) {
+    const box = fxBox(n);
+    const { canvas } = renderFx(n, images, bakeScale(box));
+    baked.set(n.id, await toBlob(canvas));
+  }
+  return baked;
 }
 
 /** A decoration on a stand-in avatar, or a sticker on a stand-in card, as a square-ish PNG. */
@@ -134,7 +109,42 @@ export async function rasterizeCosmetic(doc: Doc, getBlob: (id: string) => Promi
     ctx.fillStyle = "rgba(255,255,255,0.25)";
     ctx.fillRect(20, AH * 0.28 + 70, 80, 9);
   }
-  for (const n of nodesInOrder(doc)) if (!n.hidden && (n.type === "image" || n.type === "shape" || n.type === "text")) drawNode(ctx, n, images);
+  for (const n of nodesInOrder(doc)) {
+    if (n.hidden || !(n.type === "image" || n.type === "shape" || n.type === "text" || n.type === "path")) continue;
+    if (hasFx(n)) {
+      const { canvas: fxCanvas, box } = renderFx(n, images, Math.min(bakeScale(box0(n)), scale * 2));
+      ctx.save();
+      ctx.globalAlpha = n.opacity;
+      ctx.drawImage(fxCanvas, box.x, box.y, box.w, box.h);
+      ctx.restore();
+    } else drawNode(ctx, n, images);
+  }
+  return toBlob(canvas);
+}
+
+/**
+ * A drawn design as it is: its artboard, transparent where nothing is drawn, with no stand-in avatar or card behind it.
+ * What a still nameplate or profile effect is sent as, and the picture of a design the store shows.
+ */
+export async function rasterizeArtwork(doc: Doc, getBlob: (id: string) => Promise<Blob | null>, maxSide = 1600): Promise<Blob> {
+  const images = await imagesFor(doc, getBlob);
+  const { w: AW, h: AH } = doc.artboard;
+  const scale = Math.min(2, maxSide / Math.max(AW, AH));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(AW * scale));
+  canvas.height = Math.max(1, Math.round(AH * scale));
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(scale, scale);
+  for (const n of nodesInOrder(doc)) {
+    if (n.hidden || !(n.type === "image" || n.type === "shape" || n.type === "text" || n.type === "path")) continue;
+    if (hasFx(n)) {
+      const { canvas: fxCanvas, box } = renderFx(n, images, Math.min(bakeScale(box0(n)), scale * 2));
+      ctx.save();
+      ctx.globalAlpha = n.opacity;
+      ctx.drawImage(fxCanvas, box.x, box.y, box.w, box.h);
+      ctx.restore();
+    } else drawNode(ctx, n, images);
+  }
   return toBlob(canvas);
 }
 

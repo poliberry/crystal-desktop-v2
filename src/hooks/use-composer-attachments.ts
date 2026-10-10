@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useIsOnline } from "@/hooks/use-is-online";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits";
+import { typeForUpload } from "@/lib/media-type";
 
 /**
  * Attachment handling shared by the DM and channel composers: the file
@@ -133,7 +134,7 @@ export function useComposerAttachments(
                 const uploadUrl = await generateUploadUrl();
                 const res = await fetch(uploadUrl, {
                   method: "POST",
-                  headers: { "Content-Type": file.type || "application/octet-stream" },
+                  headers: { "Content-Type": typeForUpload(file) },
                   body: file,
                 });
                 if (res.ok) {
@@ -147,7 +148,7 @@ export function useComposerAttachments(
           if (!storageId && !cdnKey) deferredAny = true;
 
           let previewUrl: string | undefined;
-          if (isImage(file.type)) {
+          if (isImage(typeForUpload(file))) {
             previewUrl = URL.createObjectURL(file);
             previewUrls.current.add(previewUrl);
           }
@@ -160,7 +161,7 @@ export function useComposerAttachments(
               cdnUrl,
               file,
               fileName: nameFor(file, index),
-              fileType: file.type || "application/octet-stream",
+              fileType: typeForUpload(file),
               fileSize: file.size,
               previewUrl,
             },

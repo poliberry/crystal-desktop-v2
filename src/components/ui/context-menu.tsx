@@ -195,8 +195,13 @@ function ContextMenuSubContent({
   )
 }
 
+function ContextMenuShortcut({ className, ...props }: React.ComponentProps<"span">) {
+  return <span data-slot="context-menu-shortcut" className={cn("text-muted-foreground ml-auto pl-6 text-xs tracking-widest", className)} {...props} />
+}
+
 export {
   ContextMenu,
+  ContextMenuShortcut,
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,

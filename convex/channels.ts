@@ -20,6 +20,8 @@ import {
   requireCommunityPermission,
 } from "./permissions";
 import { visibleActivities } from "./lib/activities";
+import { evictBotFromVoice } from "./lib/botAccess";
+import { fireChannelEvent, fireVoiceEvent } from "./lib/botEvents";
 import { notifyUsers } from "./notifications";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
@@ -131,6 +133,69 @@ export const get = query({
   },
 });
 
+/**
+ * Insert a channel at the end of its community's list. Shared by a person creating one and a bot
+ * creating one, so both get the same position, the same cache clearing and the same event.
+ */
+export async function createChannelRow(
+  ctx: MutationCtx,
+  community: Doc<"communities">,
+  actorId: Id<"users">,
+  c: { name: string; type: "text" | "voice"; categoryId?: Id<"channelCategories">; lounge?: boolean; channelSurface?: ChannelSurface; gameId?: string; topic?: string },
+): Promise<Id<"channels">> {
+  const communityId = community._id;
+  const existing = await ctx.db
+    .query("channels")
+    .withIndex("by_community", (q) => q.eq("communityId", communityId))
+    .collect();
+  const position = existing.reduce((max, ch) => Math.max(max, ch.position), -1) + 1;
+
+  const channelId = await ctx.db.insert("channels", {
+    communityId,
+    name: c.name,
+    type: c.type,
+    categoryId: c.categoryId,
+    position,
+    createdAt: Date.now(),
+    ...(c.topic ? { topic: c.topic } : {}),
+    ...(c.type === "voice" && c.lounge ? { isLounge: true, loungeScene: "living-room" } : {}),
+    ...(c.channelSurface ? { surface: c.channelSurface } : {}),
+    ...(c.gameId ? { gameId: c.gameId } : {}),
+  });
+  const created = await ctx.db.get(channelId);
+  if (created) await fireChannelEvent(ctx, "channel.created", created);
+  try {
+    const { cacheInvalidateKeys } = await import("./cache");
+    await cacheInvalidateKeys(`community:${communityId}:user:${actorId}:channels`, `community:${communityId}:channels`);
+  } catch {}
+  return channelId;
+}
+
+/** Delete a channel and everything in it. Shared by a person and a bot. */
+export async function deleteChannelCascade(ctx: MutationCtx, channel: Doc<"channels">, actorId: Id<"users">): Promise<void> {
+  const channelId = channel._id;
+  const [messages, overwrites, voiceParticipants] = await Promise.all([
+    ctx.db.query("channelMessages").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect(),
+    ctx.db.query("channelPermissionOverwrites").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect(),
+    ctx.db.query("channelCallParticipants").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect(),
+  ]);
+  for (const message of messages) {
+    const attachments = await ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect();
+    for (const attachment of attachments) await ctx.db.delete(attachment._id);
+    for (const reaction of await ctx.db.query("channelMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect()) await ctx.db.delete(reaction._id);
+    await ctx.db.delete(message._id);
+  }
+  for (const overwrite of overwrites) await ctx.db.delete(overwrite._id);
+  for (const participant of voiceParticipants) await ctx.db.delete(participant._id);
+  // Told before it goes, while the bots can still be checked against it.
+  await fireChannelEvent(ctx, "channel.deleted", channel);
+  await ctx.db.delete(channelId);
+  try {
+    const { cacheInvalidateKeys } = await import("./cache");
+    await cacheInvalidateKeys(`community:${channel.communityId}:user:${actorId}:channels`, `channel:${channelId}:meta`, `channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`);
+  } catch {}
+}
+
 export const create = mutation({
   args: {
     communityId: v.id("communities"),
@@ -162,27 +227,7 @@ export const create = mutation({
     }
     if (gameId !== undefined && !community.clanGames?.some((g) => g.id === gameId)) throw new Error("The clan doesn't play that.");
 
-    const existing = await ctx.db
-      .query("channels")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .collect();
-    const position = existing.reduce((max, c) => Math.max(max, c.position), -1) + 1;
-
-    const channelId = await ctx.db.insert("channels", {
-      communityId,
-      name: trimmed,
-      type,
-      categoryId,
-      position,
-      createdAt: Date.now(),
-      ...(type === "voice" && lounge ? { isLounge: true, loungeScene: "living-room" } : {}),
-      ...(channelSurface ? { surface: channelSurface } : {}),
-      ...(gameId ? { gameId } : {}),
-    });
-    try {
-      const { cacheInvalidateKeys } = await import("./cache");
-      await cacheInvalidateKeys(`community:${communityId}:user:${me._id}:channels`, `community:${communityId}:channels`);
-    } catch {}
+    const channelId = await createChannelRow(ctx, community, me._id, { name: trimmed, type, categoryId, lounge, channelSurface, gameId });
     return channelId;
   },
 });
@@ -206,7 +251,11 @@ export const update = mutation({
       patch.name = trimmed;
     }
     if (topic !== undefined) patch.topic = topic;
-    if (Object.keys(patch).length > 0) await ctx.db.patch(channelId, patch);
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(channelId, patch);
+      const changed = await ctx.db.get(channelId);
+      if (changed) await fireChannelEvent(ctx, "channel.updated", changed);
+    }
     try {
       const { cacheInvalidateKeys } = await import("./cache");
       await cacheInvalidateKeys(`community:${channel.communityId}:user:${me._id}:channels`, `channel:${channelId}:meta`);
@@ -251,35 +300,7 @@ export const remove = mutation({
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
 
-    const [messages, overwrites, voiceParticipants] = await Promise.all([
-      ctx.db
-        .query("channelMessages")
-        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-        .collect(),
-      ctx.db
-        .query("channelPermissionOverwrites")
-        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-        .collect(),
-      ctx.db
-        .query("channelCallParticipants")
-        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-        .collect(),
-    ]);
-    for (const message of messages) {
-      const attachments = await ctx.db
-        .query("channelMessageAttachments")
-        .withIndex("by_message", (q) => q.eq("messageId", message._id))
-        .collect();
-      for (const attachment of attachments) await ctx.db.delete(attachment._id);
-      await ctx.db.delete(message._id);
-    }
-    for (const overwrite of overwrites) await ctx.db.delete(overwrite._id);
-    for (const participant of voiceParticipants) await ctx.db.delete(participant._id);
-    await ctx.db.delete(channelId);
-    try {
-      const { cacheInvalidateKeys } = await import("./cache");
-      await cacheInvalidateKeys(`community:${community._id}:user:${me._id}:channels`, `channel:${channelId}:meta`, `channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`);
-    } catch {}
+    await deleteChannelCascade(ctx, channel, me._id);
   },
 });
 
@@ -475,7 +496,12 @@ export const disconnectMember = mutation({
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    if (row) {
+      await ctx.db.delete(row._id);
+      await fireVoiceEvent(ctx, channelId, userId, "left");
+      // A bot doesn't notice its row going away the way a person's app does; end the connection itself.
+      await evictBotFromVoice(ctx, userId, [channelId]);
+    }
   },
 });
 
@@ -619,6 +645,7 @@ export const recordVoiceJoin = internalMutation({
       .unique();
     if (existing) return;
     await ctx.db.insert("channelCallParticipants", { channelId, userId, joinedAt: Date.now() });
+    await fireVoiceEvent(ctx, channelId, userId, "joined");
     await notifyVoiceChannelActivity(ctx, {
       channelId,
       actorId: userId,
@@ -635,7 +662,10 @@ export const recordVoiceLeave = internalMutation({
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    if (row) {
+      await ctx.db.delete(row._id);
+      await fireVoiceEvent(ctx, channelId, userId, "left");
+    }
 
     const remaining = await ctx.db
       .query("channelCallParticipants")

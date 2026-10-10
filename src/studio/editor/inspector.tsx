@@ -1,85 +1,21 @@
 "use client";
 
 import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, ArrowDownToLine, ArrowUp, ArrowUpToLine, ArrowDown, ImageIcon } from "lucide-react";
-import { useEffect, useState } from "react";
 
 import { SCENE_PROP_KINDS } from "../../../convex/lib/creationSpecs";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { ColourField, NumberField, Row, Section } from "@/studio/editor/fields";
+import { keyLabel } from "@/studio/editor/keys";
+import { polygonPoints, starPoints } from "@/studio/model/path";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { PROP_ASPECT } from "@/components/lounge/lounge-props";
 import { boundsOf, patchNodes, reorder, round, unionBounds } from "@/studio/model/doc";
 import type { DocEditor } from "@/studio/editor/use-doc-editor";
-import type { Node, PropNode, ShapeNode, TextNode } from "@/studio/model/types";
+import type { Node, PathNode, PropNode, ShapeNode, TextNode } from "@/studio/model/types";
 import type { LoadedAsset } from "@/studio/storage/assets";
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-[72px_1fr] items-center gap-2">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-2 border-b border-border/60 p-3">
-      <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-/** A number you can type into, applied as you type and left alone while it is half-written. */
-function NumberField({ label, value, onChange, step = 1, min, max, suffix }: { label: string; value: number; onChange: (n: number) => void; step?: number; min?: number; max?: number; suffix?: string }) {
-  const [text, setText] = useState(String(round(value)));
-  const [focused, setFocused] = useState(false);
-  useEffect(() => {
-    if (!focused) setText(String(round(value)));
-  }, [value, focused]);
-  return (
-    <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-2 text-xs focus-within:ring-1 focus-within:ring-ring">
-      <span className="text-muted-foreground">{label}</span>
-      <input
-        value={text}
-        inputMode="decimal"
-        onFocus={() => setFocused(true)}
-        onBlur={() => {
-          setFocused(false);
-          setText(String(round(value)));
-        }}
-        onChange={(e) => {
-          setText(e.target.value);
-          const n = Number(e.target.value);
-          if (e.target.value.trim() !== "" && Number.isFinite(n)) onChange(Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n)));
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-            e.preventDefault();
-            const n = round(value + (e.key === "ArrowUp" ? step : -step) * (e.shiftKey ? 10 : 1));
-            onChange(Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n)));
-          }
-        }}
-        className="h-7 min-w-0 flex-1 bg-transparent text-right outline-none"
-      />
-      {suffix && <span className="text-muted-foreground">{suffix}</span>}
-    </label>
-  );
-}
-
-function ColourField({ value, onChange }: { value: string; onChange: (c: string) => void }) {
-  const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#ffffff";
-  return (
-    <div className="flex items-center gap-2">
-      <input type="color" value={hex} onChange={(e) => onChange(e.target.value)} className="size-7 shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5" />
-      <Input value={value} onChange={(e) => onChange(e.target.value)} className="h-7 font-mono text-xs" />
-    </div>
-  );
-}
 
 export function Inspector({ editor, assets, onSetBackground }: { editor: DocEditor; assets: Map<string, LoadedAsset>; onSetBackground?: (id: string) => void }) {
   const { doc, selection, commit } = editor;
@@ -139,7 +75,7 @@ export function Inspector({ editor, assets, onSetBackground }: { editor: DocEdit
 
   return (
     <div>
-      <Section title={one ? one.name : `${nodes.length} selected`}>
+      <Section title="Align">
         <div className="grid grid-cols-6 gap-1">
           {(
             [
@@ -173,7 +109,7 @@ export function Inspector({ editor, assets, onSetBackground }: { editor: DocEdit
       </Section>
 
       {one && (
-        <Section title="Position">
+        <Section title="Transform">
           <div className="grid grid-cols-2 gap-1.5">
             <NumberField label="X" value={one.x} onChange={(x) => patch({ x }, "x")} />
             <NumberField label="Y" value={one.y} onChange={(y) => patch({ y }, "y")} />
@@ -193,13 +129,15 @@ export function Inspector({ editor, assets, onSetBackground }: { editor: DocEdit
         </Section>
       )}
 
-      <Section title="Appearance">
-        <Row label="Opacity">
-          <Slider min={0} max={100} step={1} value={[Math.round((one?.opacity ?? 1) * 100)]} onValueChange={([v]) => patch({ opacity: v / 100 }, "opacity")} />
-        </Row>
-      </Section>
-
       {one?.type === "shape" && <ShapeFields node={one} patch={patch} />}
+      {one?.type === "path" && <PathFields node={one} patch={patch} />}
+      {nodes.some((n) => n.group) && (
+        <Section title="Group">
+          <p className="text-[11px] text-[var(--ai-dim)]">
+            {nodes.length === 1 ? "Part of a group." : `${nodes.length} objects.`} Ungroup with {keyLabel("mod+shift+g")}; double-click an object to select just it.
+          </p>
+        </Section>
+      )}
       {one?.type === "text" && <TextFields node={one} patch={patch} />}
       {one?.type === "image" && (
         <Section title="Picture">
@@ -259,11 +197,8 @@ type Patcher = (p: Partial<Node> | ((n: Node) => Partial<Node>), key: string) =>
 
 function ShapeFields({ node, patch }: { node: ShapeNode; patch: Patcher }) {
   return (
-    <Section title="Shape">
-      <Row label="Fill">
-        <ColourField value={node.fill} onChange={(fill) => patch({ fill } as Partial<Node>, "fill")} />
-      </Row>
-      <Row label="Stroke">
+    <Section title="Stroke">
+      <Row label="Colour">
         <ColourField value={node.stroke} onChange={(stroke) => patch({ stroke } as Partial<Node>, "stroke")} />
       </Row>
       <div className="grid grid-cols-2 gap-1.5">
@@ -274,9 +209,42 @@ function ShapeFields({ node, patch }: { node: ShapeNode; patch: Patcher }) {
   );
 }
 
+/**
+ * A path's own settings. Polygons and stars remember how they were made, so their sides, points and
+ * depth can be changed here until an anchor is moved with Direct Selection; after that the outline
+ * is its own, and this says so.
+ */
+function PathFields({ node, patch }: { node: PathNode; patch: Patcher }) {
+  const live = node.live;
+  return (
+    <Section title="Path">
+      {live?.kind === "polygon" && (
+        <NumberField label="Sides" value={live.sides} min={3} max={60} onChange={(sides) => patch({ live: { kind: "polygon", sides: Math.round(sides) }, points: polygonPoints(sides) } as Partial<Node>, "sides")} />
+      )}
+      {live?.kind === "star" && (
+        <div className="grid grid-cols-2 gap-1.5">
+          <NumberField label="Pts" value={live.points} min={3} max={40} onChange={(points) => patch({ live: { ...live, points: Math.round(points) }, points: starPoints(points, live.inner) } as Partial<Node>, "starpts")} />
+          <NumberField label="Dep" value={Math.round(live.inner * 100)} min={5} max={95} suffix="%" onChange={(v) => patch({ live: { ...live, inner: v / 100 }, points: starPoints(live.points, v / 100) } as Partial<Node>, "starin")} />
+        </div>
+      )}
+      <p className="text-[11px] text-[var(--ai-dim)]">
+        {node.points.length} anchor point{node.points.length === 1 ? "" : "s"}, {node.closed ? "closed" : "open"}.
+        {live ? " Moving an anchor with the Direct Selection tool makes it a free path." : " Edit it with the Direct Selection tool (A)."}
+      </p>
+      {node.points.some((p) => p.m) && <p className="text-[11px] text-[var(--ai-dim)]">A compound path: where one contour lies inside another there is a hole. Release it with {keyLabel("mod+alt+8")}.</p>}
+      {node.points.length >= 3 && !node.points.some((p) => p.m) && (
+        <label className="flex items-center justify-between gap-2 text-[11px]">
+          Closed path
+          <Switch checked={node.closed} onCheckedChange={(closed) => patch({ closed } as Partial<Node>, "closed")} />
+        </label>
+      )}
+    </Section>
+  );
+}
+
 function TextFields({ node, patch }: { node: TextNode; patch: Patcher }) {
   return (
-    <Section title="Text">
+    <Section title="Character">
       <Textarea value={node.text} maxLength={120} onChange={(e) => patch({ text: e.target.value } as Partial<Node>, "text")} className="min-h-16 text-sm" />
       <div className="grid grid-cols-2 gap-1.5">
         <NumberField label="Size" value={node.fontSize} min={4} max={400} onChange={(fontSize) => patch({ fontSize } as Partial<Node>, "fsize")} />
@@ -298,9 +266,6 @@ function TextFields({ node, patch }: { node: TextNode; patch: Patcher }) {
           <Switch checked={node.italic} onCheckedChange={(italic) => patch({ italic } as Partial<Node>, "italic")} />
         </label>
       </div>
-      <Row label="Colour">
-        <ColourField value={node.color} onChange={(color) => patch({ color } as Partial<Node>, "color")} />
-      </Row>
       <Row label="Outline">
         <ColourField value={node.stroke} onChange={(stroke) => patch({ stroke } as Partial<Node>, "ostroke")} />
       </Row>

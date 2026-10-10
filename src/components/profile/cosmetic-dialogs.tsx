@@ -1,5 +1,6 @@
 "use client";
 
+import { CosmeticMedia } from "@/components/motion/cosmetic-media";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, Loader2, Upload } from "lucide-react";
@@ -535,8 +536,7 @@ export function ProfileEffectDialog({
       <div className="space-y-2">
         <div className="flex h-40 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-[repeating-conic-gradient(#0000_0_25%,#ffffff12_0_50%)] bg-[length:16px_16px]">
           {current ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={current} alt="" className="h-full w-full object-cover" />
+            <div className="relative size-full"><CosmeticMedia src={current} /></div>
           ) : (
             <p className="text-sm text-muted-foreground">Nothing uploaded yet</p>
           )}

@@ -148,7 +148,7 @@ export function OutboxFlusher() {
                 dm ? api.messages.generateUploadUrl : api.channelMessages.generateUploadUrl,
                 {},
               );
-              storageId = await uploadToStorage(uploadUrl, stored.blob);
+              storageId = await uploadToStorage(uploadUrl, stored.blob.type ? stored.blob : new Blob([stored.blob], { type: attachment.fileType }));
             }
           }
           if (!storageId && !cdnKey) throw new Error("Attachment never uploaded.");

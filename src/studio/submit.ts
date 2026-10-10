@@ -2,9 +2,15 @@ import type { ConvexReactClient } from "convex/react";
 
 import { api } from "../../convex/_generated/api";
 import { uploadCreation } from "@/lib/creation-upload";
-import { compileLayers, compileScene, checkCosmetic, checkScene, type Problem } from "@/studio/model/compile";
+import { compileLayers, compileScene, checkArtwork, checkCosmetic, checkScene, sceneArtwork, type Problem } from "@/studio/model/compile";
 import { nodesInOrder } from "@/studio/model/doc";
-import { posterFromVideo, rasterizeCosmetic, rasterizeThemePack } from "@/studio/model/rasterize";
+import { bakeEffects, posterFromVideo, rasterizeArtwork, rasterizeCosmetic, rasterizeThemePack } from "@/studio/model/rasterize";
+import { checkMotionProject, compilePublished, layersUsed, motionIsStatic } from "@/studio/model/motion-doc";
+import { MotionRenderer, loadMotionImages } from "@/lib/motion-render";
+import { canvasToPng, renderFx, bakeScale } from "@/studio/model/fx-render";
+import { fxBox } from "@/studio/model/fx";
+import { motionImageUrls, type MotionSpec } from "../../convex/lib/motion";
+
 import { checkThemePack, fontOf, themePackSpecInput } from "@/studio/model/theme-pack";
 import type { AssetMeta, ImageNode, Project } from "@/studio/model/types";
 import { getAssetBlob, getProject, listAssets } from "@/studio/storage/db";
@@ -58,6 +64,109 @@ async function uploadBlob(c: Ctx, blob: Blob, name: string): Promise<string> {
 
 type Item = Record<string, unknown>;
 
+/**
+ * A nameplate or profile effect made in the canvas and timeline editors.
+ *
+ * One that never changes is sent as a plain picture, exactly as before: nothing for anyone to play. One that moves is
+ * published as a motion design — every layer rendered to a picture, uploaded, and the timeline checked, written and
+ * named by its hash by the server (see convex/motion.ts) — and the grant carries the address that comes back.
+ */
+async function motionItems(c: Ctx, project: Project, assets: Map<string, AssetMeta>): Promise<{ items: Item[]; preview?: string }> {
+  const doc = project.doc!;
+  const spec = project.motion!;
+  const kind = project.kind === "nameplate" ? "nameplate" : "profileEffect";
+  const blobOf = (id: string) => getAssetBlob(id);
+
+  if (motionIsStatic(spec)) {
+    c.progress("Rendering the picture…");
+    const url = await uploadBlob(c, await rasterizeArtwork(doc, blobOf), `${project.name}.png`);
+    return { items: [{ kind, artworkUrl: url }], preview: url };
+  }
+
+  // Every layer on the timeline, drawn by the canvas editor's own renderer, as a picture.
+  for (const n of nodesInOrder(doc)) if (n.type === "image" && !n.hidden) await uploadAsset(c, assets.get((n as ImageNode).assetId)!);
+  const images = new Map<string, HTMLImageElement>();
+  for (const n of nodesInOrder(doc)) {
+    if (n.type !== "image" || images.has(n.assetId)) continue;
+    const blob = await blobOf(n.assetId);
+    if (blob) images.set(n.assetId, await loadMotionImage(URL.createObjectURL(blob)));
+  }
+  const pictures = new Map<string, string>();
+  let drawn = 0;
+  for (const id of layersUsed(spec)) {
+    const node = doc.nodes[id];
+    if (!node || node.hidden) continue;
+    c.progress(`Rendering layer ${++drawn}…`);
+    const { canvas } = renderFx(node, images, bakeScale(fxBox(node)));
+    pictures.set(id, await uploadBlob(c, await canvasToPng(canvas), `${project.name}-layer-${id}.png`));
+  }
+  // Pictures imported straight onto the timeline are project files, uploaded once each.
+  const studioToUrl = new Map<string, string>();
+  for (const url of motionImageUrls(spec)) {
+    const m = /^studio:asset\/([\w-]+)$/.exec(url);
+    const meta = m && assets.get(m[1]);
+    if (!meta) throw new Error("A picture on the timeline is missing from this project.");
+    studioToUrl.set(url, await uploadAsset(c, meta));
+  }
+  const mapped = mapImageUrls(spec, (u) => studioToUrl.get(u) ?? u);
+  const final = compilePublished(mapped, project.name, (id) => pictures.get(id), (u) => u);
+
+  c.progress("Publishing the animation…");
+  const published = (await c.convex.action(api.motion.publish, { spec: final })) as { url: string; spec: MotionSpec };
+
+  // The store picture: a frame from the middle of it, as it looks worn.
+  c.progress("Making the store picture…");
+  const preview = await uploadBlob(c, await frameOf(published.spec, project), `${project.name}.png`);
+  return { items: [{ kind, artworkUrl: published.url }], preview };
+}
+
+/** The design with every picture's address passed through `fn`: the project's own `studio:asset/…` names to where they were uploaded. */
+function mapImageUrls(spec: MotionSpec, fn: (url: string) => string): MotionSpec {
+  const walk = (clips: MotionSpec["clips"]): MotionSpec["clips"] =>
+    clips.map((cl) => (cl.source.type === "image" ? { ...cl, source: { ...cl.source, url: fn(cl.source.url) } } : cl.source.type === "compound" ? { ...cl, source: { ...cl.source, clips: walk(cl.source.clips) } } : cl));
+  return { ...spec, clips: walk(spec.clips) };
+}
+
+function loadMotionImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("A picture in this design couldn't be read."));
+    img.src = url;
+  });
+}
+
+/** One still frame of a published design, as the PNG the store shows: over a card (an effect) or a name strip (a nameplate). */
+async function frameOf(spec: MotionSpec, project: Project): Promise<Blob> {
+  const images = await loadMotionImages(motionImageUrls(spec));
+  const scale = 1;
+  const r = new MotionRenderer(spec, images, scale);
+  const frame = r.render(spec.duration * 0.45);
+  const stage = spec.stage;
+  const canvas = document.createElement("canvas");
+  canvas.width = stage.w;
+  canvas.height = stage.h;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#23232a";
+  ctx.fillRect(0, 0, stage.w, stage.h);
+  if (project.kind === "effect") {
+    ctx.fillStyle = "#4b4585";
+    ctx.fillRect(0, 0, stage.w, stage.h * 0.28);
+    ctx.fillStyle = "#4b4b55";
+    ctx.beginPath();
+    ctx.arc(80, stage.h * 0.3, 54, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = "#4b4b55";
+    ctx.beginPath();
+    ctx.arc(70, stage.h / 2, stage.h * 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = project.kind === "nameplate" ? 0.85 : 1;
+  ctx.drawImage(frame, 0, 0, stage.w, stage.h);
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't make the picture."))), "image/png"));
+}
+
 /** One project as the items `submitCreation` takes, with the store picture it implies. */
 async function itemsFor(c: Ctx, project: Project, assets: Map<string, AssetMeta>): Promise<{ items: Item[]; preview?: string }> {
   const blobOf = (id: string) => getAssetBlob(id);
@@ -66,13 +175,22 @@ async function itemsFor(c: Ctx, project: Project, assets: Map<string, AssetMeta>
     case "sticker": {
       const doc = project.doc!;
       for (const n of nodesInOrder(doc)) if (n.type === "image" && !n.hidden) await uploadAsset(c, assets.get((n as ImageNode).assetId)!);
-      const layers = compileLayers(doc, (id) => c.uploaded.get(id)).map((l) => JSON.parse(JSON.stringify(l)));
+      // Gradients, shadows, glows and shaders can't be described to the app's layer renderer, so a node that
+      // uses them goes up as the picture it renders to, and is compiled as an ordinary image layer.
+      const bakedUrls = new Map<string, string>();
+      const baked = await bakeEffects(doc, blobOf);
+      for (const [nodeId, blob] of baked) {
+        c.progress("Rendering effects…");
+        bakedUrls.set(nodeId, await uploadBlob(c, blob, `${project.name}-fx-${nodeId}.png`));
+      }
+      const layers = compileLayers(doc, (id) => c.uploaded.get(id), (nodeId) => bakedUrls.get(nodeId)).map((l) => JSON.parse(JSON.stringify(l)));
       c.progress("Making the store picture…");
       const preview = await uploadBlob(c, await rasterizeCosmetic(doc, blobOf), `${project.name}.png`);
       return { items: [{ kind: project.kind === "decoration" ? "avatarDecoration" : "profileSticker", layers }], preview };
     }
     case "nameplate":
     case "effect": {
+      if (project.doc && project.motion) return motionItems(c, project, assets);
       const meta = project.picture && assets.get(project.picture.assetId);
       if (!meta) throw new Error("Add the artwork first.");
       const url = await uploadAsset(c, meta);
@@ -84,7 +202,18 @@ async function itemsFor(c: Ctx, project: Project, assets: Map<string, AssetMeta>
       const meta = bg && assets.get(bg.assetId);
       if (!meta) throw new Error("Set the room's background picture first.");
       const url = await uploadAsset(c, meta);
-      const spec = compileScene(doc, project.name, url);
+      // Everything drawn on the room goes up as pictures laid over it: pictures placed in the room are uploaded
+      // first (a baked picture may contain them), then each piece of artwork is rendered and uploaded.
+      for (const n of sceneArtwork(doc)) if (n.type === "image") await uploadAsset(c, assets.get((n as ImageNode).assetId)!);
+      const artwork = new Map<string, string>();
+      const baked = await bakeEffects(doc, blobOf);
+      let drawn = 0;
+      for (const [nodeId, blob] of baked) {
+        if (!sceneArtwork(doc).some((n) => n.id === nodeId)) continue;
+        c.progress(`Rendering artwork ${++drawn}…`);
+        artwork.set(nodeId, await uploadBlob(c, blob, `${project.name}-art-${nodeId}.png`));
+      }
+      const spec = compileScene(doc, project.name, url, (nodeId) => artwork.get(nodeId));
       // A shop card shows a picture; a room that is a clip needs one drawn from it.
       let preview = url;
       if (meta.type.startsWith("video/")) {
@@ -112,6 +241,26 @@ async function itemsFor(c: Ctx, project: Project, assets: Map<string, AssetMeta>
   }
 }
 
+const GRANT_KIND: Partial<Record<Project["kind"], string>> = {
+  decoration: "avatarDecoration",
+  sticker: "profileSticker",
+  nameplate: "nameplate",
+  effect: "profileEffect",
+  scene: "loungeScene",
+  themePack: "themePack",
+};
+
+/** What kinds of item a project is sold as, one per item: how Studio finds the listing it could update. */
+export async function grantKindsOf(project: Project, lookup: (id: string) => Promise<Project | null> = getProject): Promise<string[]> {
+  if (project.kind !== "pack") return GRANT_KIND[project.kind] ? [GRANT_KIND[project.kind]!] : [];
+  const kinds: string[] = [];
+  for (const id of project.pack?.projectIds ?? []) {
+    const p = await lookup(id);
+    if (p && GRANT_KIND[p.kind]) kinds.push(GRANT_KIND[p.kind]!);
+  }
+  return kinds;
+}
+
 /** Everything wrong with a project, by the same rules the server will apply. */
 export async function checkProject(project: Project, assets: Map<string, AssetMeta>, lookup: (id: string) => Promise<Project | null> = getProject): Promise<Problem[]> {
   const has = (id: string) => assets.has(id);
@@ -131,7 +280,14 @@ export async function checkProject(project: Project, assets: Map<string, AssetMe
       break;
     case "nameplate":
     case "effect":
-      if (!project.picture || !has(project.picture.assetId)) problems.push({ severity: "error", message: "Add the artwork." });
+      if (project.doc && project.motion) {
+        problems.push(...checkArtwork(project.doc, has), ...checkMotionProject(project.doc, project.motion, has));
+        // A picture imported onto the timeline must still be a file of the project.
+        for (const u of motionImageUrls(project.motion)) {
+          const m = /^studio:asset\/([\w-]+)$/.exec(u);
+          if (!m || !has(m[1])) problems.push({ severity: "error", message: "A picture on the timeline has been removed from this project." });
+        }
+      } else if (!project.picture || !has(project.picture.assetId)) problems.push({ severity: "error", message: "Add the artwork." });
       break;
     case "themePack":
       problems.push(...checkThemePack(project.themePack!, project.listing.name || project.name, assets));
@@ -162,7 +318,14 @@ export async function checkProject(project: Project, assets: Map<string, AssetMe
 }
 
 /** Upload, build and submit. Returns the new submission's id. */
-export async function submitProject(convex: ConvexReactClient, project: Project, progress: Progress): Promise<string> {
+export interface StoreLink {
+  /** The live listing this changes, rather than making a new one. */
+  updatesSkuId?: string;
+  /** A submission of this project still waiting for review, which this one takes the place of. */
+  supersedes?: string;
+}
+
+export async function submitProject(convex: ConvexReactClient, project: Project, progress: Progress, link: StoreLink = {}): Promise<string> {
   const c: Ctx = { convex, progress, uploaded: new Map() };
   const own = new Map((await listAssets(project.id)).map((a) => [a.id, a]));
   const found = await checkProject(project, own);
@@ -195,6 +358,8 @@ export async function submitProject(convex: ConvexReactClient, project: Project,
     previewUrl,
     priceCents: cents,
     currency: "usd",
+    ...(link.updatesSkuId ? { updatesSkuId: link.updatesSkuId as never } : {}),
+    ...(link.supersedes ? { supersedes: link.supersedes as never } : {}),
   });
   return id as string;
 }

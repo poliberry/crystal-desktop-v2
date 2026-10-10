@@ -1,5 +1,6 @@
 "use client";
 
+import { CosmeticMedia } from "@/components/motion/cosmetic-media";
 import { useQuery } from "convex/react";
 import { Check, ImagePlus, Loader2, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -450,8 +451,7 @@ function RecentGrid({
           {kind === "nameplate" && isVideoNameplate(image.url) ? (
             <video src={image.url} muted loop playsInline className="size-full object-cover" />
           ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={image.url} alt="" draggable={false} className="size-full object-cover" />
+            <CosmeticMedia src={image.url} />
           )}
           {image.isCurrent && (
             <span className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">

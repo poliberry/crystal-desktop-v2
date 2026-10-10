@@ -78,6 +78,30 @@ export function getRecentViewsSnapshot(): RecentView[] {
   return readRecentViews();
 }
 
+/**
+ * Drop every entry `keep` rejects, persisting the result.
+ *
+ * Used to evict entries that point at communities the user isn't in — or at
+ * ids that never were communities at all (a bad deep link or notification
+ * payload only has to be opened once to be recorded, and from then on it
+ * would be resubscribed on every launch). Recent views are only preload
+ * hints, so dropping one costs at most a cold load the next time that place
+ * is actually opened.
+ */
+export function pruneRecentViews(keep: (view: RecentView) => boolean): void {
+  if (typeof window === "undefined") return;
+  const current = readRecentViews();
+  const next = current.filter(keep);
+  if (next.length === current.length) return;
+  cache = next;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
+  } catch {
+    /* ignore quota/availability errors — the list is only an optimisation */
+  }
+  for (const listener of listeners) listener();
+}
+
 const EMPTY: RecentView[] = [];
 
 /** Server snapshot for `useSyncExternalStore` — nothing is "recent" during

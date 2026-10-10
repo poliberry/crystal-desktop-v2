@@ -13,7 +13,9 @@ import { ReportRecord } from "@/components/admin/records/report";
 import { SkuRecord } from "@/components/admin/records/sku";
 import { ExtensionRecord } from "@/components/admin/records/extension";
 import { SubmissionRecord } from "@/components/admin/records/submission";
+import { BotsSection } from "@/components/admin/sections/bots";
 import { ExtensionsSection } from "@/components/admin/sections/extensions";
+import { GuidesSection } from "@/components/admin/sections/guides";
 import { TicketRecord } from "@/components/admin/records/ticket";
 import { UserRecord } from "@/components/admin/records/user";
 import { CatalogSection, CategoriesSection } from "@/components/admin/sections/catalog";
@@ -42,6 +44,8 @@ const SECTIONS: Record<string, () => React.JSX.Element> = {
   catalog: CatalogSection,
   submissions: SubmissionsSection,
   extensions: ExtensionsSection,
+  bots: BotsSection,
+  guides: GuidesSection,
   categories: CategoriesSection,
   finance: RevenueSection,
   orders: OrdersSection,

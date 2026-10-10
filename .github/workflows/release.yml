@@ -186,6 +186,12 @@ jobs:
               release/*.yml
               release/*.blockmap
               !release/builder-debug.yml
+              release-studio/*.AppImage
+              release-studio/*.deb
+              release-studio/*.yml
+              release-studio/*.blockmap
+              !release-studio/builder-debug.yml
+              release-installer/*.AppImage
           - os: windows-latest
             target: win
             artifact-glob: |
@@ -193,6 +199,11 @@ jobs:
               release/*.yml
               release/*.blockmap
               !release/builder-debug.yml
+              release-studio/*.exe
+              release-studio/*.yml
+              release-studio/*.blockmap
+              !release-studio/builder-debug.yml
+              release-installer/*.exe
           - os: macos-latest
             target: mac
             # The system-audio helper (native/) is a Swift binary compiled on
@@ -215,6 +226,12 @@ jobs:
               release/*.yml
               release/*.blockmap
               !release/builder-debug.yml
+              release-studio/*.dmg
+              release-studio/*.zip
+              release-studio/*.yml
+              release-studio/*.blockmap
+              !release-studio/builder-debug.yml
+              release-installer/*.dmg
     runs-on: ${{ matrix.os }}
     env:
       # Read by scripts/electron-builder-config.cjs (product name, appId, icon,
@@ -353,6 +370,26 @@ jobs:
       - name: Package (${{ matrix.target }})
         run: bunx electron-builder --${{ matrix.target }} ${{ matrix.extra-args }} --config scripts/electron-builder-config.cjs --publish never
 
+      # Crystal Studio is a second application on the same release: its own name, id, icon, URL scheme and update
+      # metadata (studio*.yml, so it can't clobber the latest*.yml Crystal updates from), written to release-studio/.
+      # Same compiled code, same version.
+      - name: Package Crystal Studio (${{ matrix.target }})
+        env:
+          CRYSTAL_APP: studio
+        run: bunx electron-builder --${{ matrix.target }} ${{ matrix.extra-args }} --config scripts/electron-builder-config.cjs --publish never
+
+      # The installer: the one file a person downloads first. It lets them choose Crystal, Crystal Studio or both, then
+      # fetches those from this release and checks them against the hashes in the update metadata above. It is packaged
+      # from a small folder of its own (scripts/stage-installer.mjs) so it isn't the size of the whole app, publishes no
+      # update metadata (it always reads the newest release when it runs), and is a disk image, a portable exe and an
+      # AppImage: no installer to install the installer.
+      - name: Package the installer (${{ matrix.target }})
+        env:
+          CRYSTAL_APP: installer
+        run: |
+          bun scripts/stage-installer.mjs
+          bunx electron-builder --${{ matrix.target }} ${{ matrix.extra-args }} --config scripts/electron-builder-config.cjs --publish never
+
       # The failure this guards against ships silently: electron-builder logs
       # "skipped macOS application code signing" as a warning and produces a
       # .dmg like nothing happened, but the bundle inside carries only the
@@ -369,11 +406,13 @@ jobs:
         if: matrix.native
         run: |
           set -euo pipefail
-          APP="$(find release -maxdepth 2 -type d -name '*.app' | head -1)"
-          if [ -z "$APP" ]; then
-            echo "::error::No .app bundle found under release/."
+          # All three: Crystal.app, Crystal Studio.app and the installer each need to be sealed.
+          APPS="$(find release release-studio release-installer -maxdepth 2 -type d -name '*.app')"
+          if [ "$(echo "$APPS" | grep -c .)" -ne 3 ]; then
+            echo "::error::Expected the Crystal, Crystal Studio and installer .app bundles, found: $APPS"
             exit 1
           fi
+          echo "$APPS" | while IFS= read -r APP; do
           echo "Verifying $APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign --display --verbose=2 "$APP"
@@ -414,6 +453,7 @@ jobs:
           else
             echo "Ad-hoc build — spctl will reject it by design; not asserting trust."
           fi
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -444,9 +484,17 @@ jobs:
           body: |
             ## Install
 
-            **Windows** — `Crystal-Setup-${{ needs.check.outputs.current_version }}.exe`
-            **Linux** — `Crystal-${{ needs.check.outputs.current_version }}.AppImage` or `.deb`
-            **macOS** (Apple Silicon) — `Crystal-${{ needs.check.outputs.current_version }}.dmg`
+            Download **the installer** for your computer and run it. It asks what you'd like (Crystal, Crystal Studio, or
+            both) and where to put it, then downloads and sets them up.
+
+            **Windows** — `Crystal-Installer-${{ needs.check.outputs.current_version }}.exe` (runs directly; nothing to install)
+            **macOS** (Apple Silicon) — `Crystal-Installer-${{ needs.check.outputs.current_version }}.dmg`
+            **Linux** — `Crystal-Installer-${{ needs.check.outputs.current_version }}.AppImage` (make it executable, then run it)
+
+            ### Or install an app directly
+
+            **Crystal** — `Crystal-Setup-${{ needs.check.outputs.current_version }}.exe` (Windows), `Crystal-${{ needs.check.outputs.current_version }}.dmg` (macOS), `Crystal-${{ needs.check.outputs.current_version }}.AppImage` or `.deb` (Linux)
+            **Crystal Studio** — `Crystal-Studio-Setup-${{ needs.check.outputs.current_version }}.exe` (Windows), `Crystal-Studio-${{ needs.check.outputs.current_version }}.dmg` (macOS), `Crystal-Studio-${{ needs.check.outputs.current_version }}.AppImage` or `.deb` (Linux)
 
             ### Opening the macOS build the first time
 

@@ -4,6 +4,7 @@ import { CallProvider } from "@/components/call/call-provider";
 import { HomeLayout } from "@/components/home/home-layout";
 import { NavigationProvider } from "@/components/home/navigation-context";
 import { PageSidebarProvider } from "@/components/pages/page-sidebar";
+import { InstallDeepLinkHandler } from "@/components/install-deeplink-handler";
 import { InviteDeepLinkHandler } from "@/components/invite-deeplink-handler";
 import { VerifyMembershipHost } from "@/components/community/verify-membership-host";
 import { TabsProvider } from "@/components/home/tabs-context";
@@ -11,85 +12,24 @@ import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TopNav } from "@/components/top-nav";
 import { WindowControls } from "@/components/window-controls";
 import AuthFlow from "@/components/auth/auth-flow";
+import { SignInBackdrop } from "@/components/auth/sign-in-backdrop";
+import dynamic from "next/dynamic";
 import { Show } from "@clerk/react";
 import { Google_Sans_Flex } from "next/font/google";
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import { BirthdayProvider } from "@/components/home/birthday-provider";
 import { RightSidebarHost, RightSidebarProvider } from "@/components/sidebar/right-sidebar";
 import { ResizableSidebarProvider } from "@/components/sidebar/resizable-sidebar";
 import { UnifiedSidebar } from "@/components/sidebar/unified-sidebar";
 import { Sidebar, SidebarInset } from "@/components/ui/sidebar";
 
+/** three.js is large and only the signed-out screen wants it. */
+const LoginScene = dynamic(() => import("@/components/auth/login-scene"), { ssr: false });
+
 const googleSansFlex = Google_Sans_Flex({
   subsets: ["latin"],
 });
 
-const sayings = [
-  "Lounge with friends",
-  "Jam out to tunes",
-  "Get deep into a study sesh",
-  "Debate about pineapple on pizza",
-  "Share memes with the gang",
-  "Have heated discussions with mates",
-  "Get your community engaged",
-  "Come up with the next big thing",
-  "Chat, play and create",
-];
-
 export default function HomePage() {
-  const [text, setText] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const sleep = (ms: number) =>
-      new Promise((resolve) => setTimeout(resolve, ms));
-
-    const getRandomSaying = (previous: string) => {
-      const options = sayings.filter((saying) => saying !== previous);
-      return options[Math.floor(Math.random() * options.length)];
-    };
-
-    const animate = async () => {
-      let previous = "";
-
-      while (!cancelled) {
-        // Pause typing animation when tab is hidden/signed-in view is up —
-        // avoids waking the renderer every 30-50ms for a hidden component.
-        if (typeof document !== "undefined" && document.hidden) {
-          await sleep(1000);
-          continue;
-        }
-        const saying = getRandomSaying(previous);
-        previous = saying;
-
-        // Type
-        for (let i = 0; i <= saying.length; i++) {
-          if (cancelled) return;
-          setText(saying.slice(0, i));
-          await sleep(50);
-        }
-
-        // Keep it on screen
-        await sleep(3000);
-
-        // Delete
-        for (let i = saying.length; i >= 0; i--) {
-          if (cancelled) return;
-          setText(saying.slice(0, i));
-          await sleep(30);
-        }
-      }
-    };
-
-    animate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   return (
     <main className="h-full dark">
       <Show when="signed-out">
@@ -101,37 +41,19 @@ export default function HomePage() {
             <WindowControls className="ml-1 z-[999] pointer-events-auto border-none" />
           </header>
           <div className="flex flex-row w-full h-full">
-            <div className="h-full w-full animated-gradient">
-              <img
-                src="/login-overlay.png"
-                alt="overlay"
-                className="absolute bottom-0 w-full object-center mix-blend-color-dodge opacity-50"
-              />
-              <div className="absolute top-9 left-2 w-[60%] h-[90%] flex flex-col justify-between">
+            <div className="relative h-full w-full overflow-hidden bg-[#06080c]">
+              <SignInBackdrop />
+              {/* Drawn once, with nothing moving, in the lower part of the panel under the headline. */}
+              <LoginScene className="pointer-events-none absolute bottom-0 left-0 h-[55%] w-full" />
+              <div className="absolute top-9 left-2 z-10 flex w-[60%] flex-col gap-7 pl-6">
                 <img src="/logo.svg" alt="Crystal" className="w-24" />
-                <div className="flex flex-col gap-1">
-                  <h1
-                    className={`${googleSansFlex.className} font-black tracking-[-10%] text-4xl`}
-                  >
-                    THE NEW WAY TO
-                  </h1>
-                  <h1
-                    className={`${googleSansFlex.className} font-black tracking-[-10%] uppercase text-6xl bg-white text-black py-3 px-5 text-wrap w-fit rounded-3xl`}
-                  >
-                    {text}
-                    <motion.span
-                      animate={{ opacity: [1, 0] }}
-                      transition={{
-                        duration: 0.6,
-                        repeat: Infinity,
-                        repeatType: "reverse",
-                      }}
-                      className="font-normal px-1"
-                    >
-                      |
-                    </motion.span>
-                  </h1>
-                </div>
+                <h1
+                  className={`${googleSansFlex.className} text-[clamp(2.4rem,min(5.4vw,8.6vh),5rem)] font-black leading-[0.98] tracking-[-0.045em] text-white`}
+                >
+                  <span className="block">Chat,</span>
+                  <span className="block">Play,</span>
+                  <span className="block bg-gradient-to-r from-emerald-300 via-teal-300 to-blue-400 bg-clip-text text-transparent">Create.</span>
+                </h1>
               </div>
             </div>
             <div className="h-full w-1/2 bg-background z-[50]">
@@ -151,6 +73,7 @@ export default function HomePage() {
                 {/* Inside NavigationProvider: accepting an invite jumps
                     straight into the server it was for. */}
                 <InviteDeepLinkHandler />
+                <InstallDeepLinkHandler />
                 <VerifyMembershipHost />
                 {/* Both halves of a page — its menu in the sidebar, its
                     content beside it — need to find each other. */}

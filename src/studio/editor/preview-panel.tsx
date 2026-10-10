@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { SceneOverlayArt } from "@/components/lounge/scene-overlay";
+import { useEffect, useMemo, useState } from "react";
 
 import { ScenePropView } from "@/components/lounge/lounge-props";
 import { SceneBackground } from "@/components/lounge/scene-background";
@@ -8,6 +9,9 @@ import { LayerContent } from "@/components/profile/layer-content";
 import { layerStyle, type CosmeticLayer } from "@/lib/cosmetic-layers";
 import { compileLayers, compileScene } from "@/studio/model/compile";
 import { nodesInOrder } from "@/studio/model/doc";
+import { rasterizeArtwork } from "@/studio/model/rasterize";
+import { getAssetBlob } from "@/studio/storage/db";
+import { useBakedLayers } from "@/studio/editor/use-baked-layers";
 import type { Doc, ImageNode } from "@/studio/model/types";
 import type { LoadedAsset } from "@/studio/storage/assets";
 import { cn } from "@/lib/utils";
@@ -100,12 +104,14 @@ function StickerPreview({ layers, avatarUrl, name, doc }: { layers: CosmeticLaye
   );
 }
 
-function ScenePreview({ doc, assets, name, avatarUrl }: { doc: Doc; assets: Map<string, LoadedAsset>; name: string; avatarUrl?: string }) {
+function ScenePreview({ doc, assets, name, avatarUrl, baked }: { doc: Doc; assets: Map<string, LoadedAsset>; name: string; avatarUrl?: string; baked: Map<string, string> }) {
   const [sharing, setSharing] = useState(false);
   const spec = useMemo(() => {
     const bg = nodesInOrder(doc).find((n): n is ImageNode => n.type === "image" && n.role === "background");
-    return compileScene(doc, name, bg ? (assets.get(bg.assetId)?.url ?? "") : "");
-  }, [doc, assets, name]);
+    // The artwork is the pictures it will be sent as (rendered as submission renders them), so what is
+    // shown is what the room will show. A piece still being drawn is simply left out until it is.
+    return compileScene(doc, name, bg ? (assets.get(bg.assetId)?.url ?? "") : "", (id) => baked.get(id));
+  }, [doc, assets, name, baked]);
   const bgNode = nodesInOrder(doc).find((n): n is ImageNode => n.type === "image" && n.role === "background");
   const bgIsVideo = !!bgNode && !!assets.get(bgNode.assetId)?.type.startsWith("video/");
   const dim = spec.lights.dimOnShare && sharing;
@@ -122,6 +128,7 @@ function ScenePreview({ doc, assets, name, avatarUrl }: { doc: Doc; assets: Map<
             <SceneBackground url={spec.backgroundUrl} video={bgIsVideo} />
           </div>
         )}
+        <SceneOverlayArt overlay={spec.overlay} />
         <div className="absolute inset-0 bg-[#05030a] transition-opacity duration-1000" style={{ opacity: dim ? spec.lights.amount : 0 }} />
         <div
           className="absolute overflow-hidden rounded-[0.3cqw] bg-black"
@@ -155,15 +162,79 @@ function ScenePreview({ doc, assets, name, avatarUrl }: { doc: Doc; assets: Map<
   );
 }
 
+/**
+ * A nameplate's or profile effect's artwork as it is worn, still: behind a name, faint and faded as the app draws every
+ * nameplate, or over a profile card. (The Animate tab plays the whole design; this is just what is drawn on the canvas.)
+ */
+function WornPreview({ doc, avatarUrl, name }: { doc: Doc; avatarUrl?: string; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    const timer = setTimeout(async () => {
+      try {
+        const blob = await rasterizeArtwork(doc, getAssetBlob, 800);
+        if (!live) return;
+        made = URL.createObjectURL(blob);
+        setUrl((old) => {
+          if (old) URL.revokeObjectURL(old);
+          return made;
+        });
+      } catch {
+        // A picture that can't be drawn leaves the last one up.
+      }
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [doc]);
+  useEffect(() => () => setUrl((old) => (old && URL.revokeObjectURL(old), null)), []);
+
+  if (doc.kind === "nameplate") {
+    return (
+      <div className="space-y-2 p-4">
+        {[name, "A friend", "Someone else"].map((n, i) => (
+          <div key={i} className="relative flex h-11 items-center gap-2.5 overflow-hidden rounded-lg bg-card px-3">
+            {url && /* eslint-disable-next-line @next/next/no-img-element */ <img src={url} alt="" aria-hidden className="fade-mask-l pointer-events-none absolute inset-0 size-full object-cover opacity-20" />}
+            <span className="relative flex size-7 items-center justify-center overflow-hidden rounded-full bg-neutral-600 text-[10px] font-semibold text-white">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {avatarUrl ? <img src={avatarUrl} alt="" className="size-full object-cover" /> : n.slice(0, 2).toUpperCase()}
+            </span>
+            <span className="relative text-sm font-medium">{n}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="p-4">
+      <div className="relative mx-auto h-64 w-72 overflow-hidden rounded-2xl bg-neutral-800">
+        <div className="h-[28%] bg-gradient-to-br from-violet-500/50 to-sky-500/40" />
+        <span className="absolute top-[18%] left-4 flex size-16 items-center justify-center overflow-hidden rounded-full border-4 border-neutral-800 bg-neutral-600 text-sm font-semibold text-white">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {avatarUrl ? <img src={avatarUrl} alt="" className="size-full object-cover" /> : name.slice(0, 2).toUpperCase()}
+        </span>
+        <p className="absolute top-[56%] left-4 text-sm font-semibold text-white">{name}</p>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        {url && <img src={url} alt="" aria-hidden className="pointer-events-none absolute inset-0 size-full object-cover" />}
+      </div>
+    </div>
+  );
+}
+
 export function PreviewPanel({ doc, assets, avatarUrl, name }: { doc: Doc; assets: Map<string, LoadedAsset>; avatarUrl?: string; name: string }) {
+  // Objects with effects (and every path) go out as pictures; the preview draws the same pictures.
+  const baked = useBakedLayers(doc, assets);
   const layers = useMemo(
     () =>
-      doc.kind === "scene"
+      doc.kind === "scene" || doc.kind === "nameplate" || doc.kind === "effect"
         ? []
-        : (compileLayers(doc, (id) => assets.get(id)?.url) as unknown as CosmeticLayer[]).filter((l) => (l.kind && l.kind !== "image") || l.url),
-    [doc, assets],
+        : (compileLayers(doc, (id) => assets.get(id)?.url, (id) => baked.get(id)) as unknown as CosmeticLayer[]).filter((l) => (l.kind && l.kind !== "image") || l.url),
+    [doc, assets, baked],
   );
+  if (doc.kind === "nameplate" || doc.kind === "effect") return <WornPreview doc={doc} avatarUrl={avatarUrl} name={name} />;
   if (doc.kind === "decoration") return <DecorationPreview layers={layers} avatarUrl={avatarUrl} name={name} />;
   if (doc.kind === "sticker") return <StickerPreview layers={layers} avatarUrl={avatarUrl} name={name} doc={doc} />;
-  return <ScenePreview doc={doc} assets={assets} name={name || "Scene"} avatarUrl={avatarUrl} />;
+  return <ScenePreview doc={doc} assets={assets} name={name || "Scene"} avatarUrl={avatarUrl} baked={baked} />;
 }

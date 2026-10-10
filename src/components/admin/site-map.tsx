@@ -2,6 +2,8 @@
 
 import { useQuery } from "convex/react";
 import {
+  Bot,
+  BookOpen,
   Puzzle,
   BarChart3,
   CircleDollarSign,
@@ -71,6 +73,8 @@ export const SITE_MAP: { label: string; items: SiteMapItem[] }[] = [
     items: [
       { id: "broadcast", label: "System messages", icon: Megaphone, permission: "system.broadcast" },
       { id: "extensions", label: "Extensions", icon: Puzzle, permission: "system.manage" },
+      { id: "bots", label: "Bot listings", icon: Bot, permission: "system.manage" },
+      { id: "guides", label: "Studio guides", icon: BookOpen, permission: "docs.write" },
       { id: "system", label: "System account", icon: Settings2, permission: "system.manage" },
       { id: "staff", label: "Staff & roles", icon: Users, permission: "staff.manage" },
       { id: "audit", label: "Audit log", icon: ScrollText, permission: "audit.read" },

@@ -43,6 +43,8 @@ export interface AppInfo {
   /** Installed application name, which differs per channel so channels can be
    * installed side by side ("Crystal", "Crystal Canary"). */
   productName: string;
+  /** Crystal, or the standalone Crystal Studio application. */
+  app?: "crystal" | "studio";
   versions: {
     electron: string;
     chrome: string;
@@ -196,6 +198,9 @@ export type NavigateTarget =
 export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
+  /** "studio" in the standalone Crystal Studio application, "crystal" everywhere else (Studio's window inside Crystal
+   * included). Optional: an older preload has none. */
+  appKind?: "crystal" | "studio";
   appInfo(): Promise<AppInfo>;
   /**
    * The user's custom stylesheet, kept as a real file in the app's data
@@ -298,6 +303,14 @@ export interface DesktopAPI {
   invites?: {
     onOpen(cb: (code: string) => void): () => void;
   };
+  /** Say the page can take deep links; ones that arrived earlier are delivered then. */
+  deeplinks?: {
+    ready(): void;
+  };
+  /** Links to add a bot or an extension (`…/oauth/authorize?…`), handed over with their query string. */
+  installs?: {
+    onOpen(cb: (search: string) => void): () => void;
+  };
   /**
    * "Pop out" a video tile into a real, separate always-on-top
    * `BrowserWindow` — not Document Picture-in-Picture, which Electron's
@@ -347,6 +360,45 @@ export interface DesktopAPI {
   /** Opens Crystal Studio, the creator workspace, in its own window. */
   studio: {
     open(): Promise<boolean>;
+    /** Open (or bring forward) Crystal itself. Optional: an older preload has none. */
+    openCrystal?(): Promise<boolean>;
+    /**
+     * Studio's project files, in Documents/Crystal Studio. Paths are relative to that folder and
+     * use `/`; anything that would leave it is refused. Only the Studio window can call these.
+     */
+    fs: {
+      /** The folder's real path, for display. */
+      root(): Promise<string>;
+      listDir(rel: string): Promise<{ name: string; isDir: boolean; size: number; mtimeMs: number }[]>;
+      exists(rel: string): Promise<boolean>;
+      readText(rel: string): Promise<string>;
+      writeText(rel: string, text: string): Promise<void>;
+      readBytes(rel: string): Promise<Uint8Array>;
+      writeBytes(rel: string, data: Uint8Array): Promise<void>;
+      mkdir(rel: string): Promise<void>;
+      removeFile(rel: string): Promise<void>;
+      /** Move a file or folder to the Trash; nothing is deleted if that fails. */
+      trash(rel: string): Promise<void>;
+      rename(from: string, to: string): Promise<void>;
+      /** Show a file or folder in Finder / Explorer. */
+      reveal(rel: string): Promise<void>;
+    };
+    /** A real shell in a project folder. Studio window only; started by the person, never automatically. */
+    terminal: {
+      open(folder: string, cols: number, rows: number): Promise<string>;
+      write(id: string, data: string): Promise<void>;
+      resize(id: string, cols: number, rows: number): Promise<void>;
+      kill(id: string): Promise<void>;
+      onData(cb: (id: string, data: string) => void): () => void;
+      onExit(cb: (id: string, code: number) => void): () => void;
+    };
+    /** Bundle an extension project's `src/` into `dist/extension.js`. */
+    build: {
+      extension(folder: string): Promise<
+        | { ok: true; code: string; bytes: number; files: number }
+        | { ok: false; errors: { file?: string; line?: number; column?: number; text: string }[] }
+      >;
+    };
   };
   /** Opens the staff-only administration console in its own window. */
   admin: {

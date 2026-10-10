@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { SignIn } from "@clerk/clerk-react";
 import { Show } from "@clerk/react";
-import { Loader2, MonitorDown } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
+import AuthFlow from "@/components/auth/auth-flow";
 import { api } from "../../../convex/_generated/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
-import { inviteDeepLink, parseInviteCode } from "@/lib/invites";
+import { OpenInAppButton, useOpenInApp } from "@/components/open-in-app";
+import { parseInviteCode } from "@/lib/invites";
 
 /**
  * Where an invite link lands.
@@ -40,7 +41,7 @@ function codeFromLocation(): string | null {
   return tail ? parseInviteCode(tail) : null;
 }
 
-function InviteCard({ code }: { code: string }) {
+function InviteCard({ code, appLink }: { code: string; appLink: string | null }) {
   const invite = useQuery(api.communities.resolveInvite, { code });
   const joinByInviteCode = useMutation(api.communities.joinByInviteCode);
   const [joining, setJoining] = useState(false);
@@ -119,20 +120,7 @@ function InviteCard({ code }: { code: string }) {
           )}
         </Button>
 
-        {!inApp && (
-          <Button
-            variant="outline"
-            className="w-full"
-            // Assigning rather than opening a tab: the browser hands the URL to
-            // the OS and, if nothing is registered for the scheme, simply does
-            // nothing — which is the right outcome for someone who hasn't
-            // installed the app.
-            onClick={() => window.location.assign(inviteDeepLink(code))}
-          >
-            <MonitorDown className="size-4" />
-            Open in the Crystal app
-          </Button>
-        )}
+        {!inApp && <OpenInAppButton link={appLink} className="w-full" />}
       </div>
     </div>
   );
@@ -140,6 +128,9 @@ function InviteCard({ code }: { code: string }) {
 
 export default function InvitePage() {
   const [code, setCode] = useState<string | null | undefined>(undefined);
+  // Tries the app once as the page loads (signed in or not: someone with the app is the likeliest
+  // person to be signed in there), and keeps a button for when that didn't take.
+  const appLink = useOpenInApp();
 
   // On mount, not during render: the code lives in `window.location`, which
   // doesn't exist while this is being prerendered into a static file.
@@ -166,17 +157,13 @@ export default function InvitePage() {
               <p className="text-center text-sm text-muted-foreground">
                 Sign in to accept this invite.
               </p>
-              <SignIn
-                // Back here afterwards, invite and all, rather than to the
-                // app's front page with the invitation lost.
-                forceRedirectUrl={
-                  typeof window === "undefined" ? undefined : window.location.href
-                }
-              />
+              {/* Back here afterwards, invite and all, rather than to the app's front page. */}
+              <AuthFlow returnTo={window.location.pathname + window.location.search} />
+              <OpenInAppButton link={appLink} className="w-full" />
             </div>
           </Show>
           <Show when="signed-in">
-            <InviteCard code={code} />
+            <InviteCard code={code} appLink={appLink} />
           </Show>
         </>
       )}

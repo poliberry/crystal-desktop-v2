@@ -19,6 +19,18 @@ export interface Budget {
 
 export const DEFAULT_BUDGET: Budget = { memoryBytes: 32 * 1024 * 1024, bootMs: 500, eventMs: 100, cpuShare: 0.25, windowMs: 10_000 };
 
+/** What an extension may ask of the host, and how often. Read by the host, and by the guides that say so. */
+export const HOST_LIMITS = {
+  activeTimers: 5,
+  minTimeoutMs: 250,
+  minIntervalMs: 1000,
+  maxTimerMs: 60 * 60 * 1000,
+  callsPerSecond: 60,
+  redrawsPerSecond: 15,
+  noticesPerMinute: 5,
+  logLines: 200,
+} as const;
+
 export interface BootInfo {
   source: string;
   manifest: { name: string; version: string; capabilities: string[]; network: string[] };

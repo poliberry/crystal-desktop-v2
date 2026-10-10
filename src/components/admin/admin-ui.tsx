@@ -40,7 +40,8 @@ export type StaffPermission =
   | "finance.refund"
   | "finance.payout"
   | "staff.manage"
-  | "audit.read";
+  | "audit.read"
+  | "docs.write";
 
 interface StaffValue {
   userId: string;

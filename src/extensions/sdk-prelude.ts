@@ -18,7 +18,15 @@ export const SDK_PRELUDE = String.raw`
   var pending = new Map();
   var timers = new Map();
   var nextTimer = 1;
-  var manifest = JSON.parse(__manifest);
+  // The two doors to the host, and the manifest, are taken into this closure and then removed
+  // from the global scope, so the extension's own code (which runs after this) can't name them.
+  // The SDK below is what talks to the host; the host checks everything it is sent regardless.
+  var hostSend = g.__send;
+  var hostCall = g.__call;
+  var manifest = JSON.parse(g.__manifest);
+  delete g.__send;
+  delete g.__call;
+  delete g.__manifest;
 
   function log(level, args) {
     var parts = [];
@@ -26,12 +34,12 @@ export const SDK_PRELUDE = String.raw`
       var a = args[i];
       try { parts.push(typeof a === 'string' ? a : JSON.stringify(a)); } catch (e) { parts.push(String(a)); }
     }
-    __send('log', JSON.stringify([level, parts.join(' ')]));
+    hostSend('log', JSON.stringify([level, parts.join(' ')]));
   }
 
   function call(op, args) {
     return new Promise(function (resolve, reject) {
-      var id = __call(op, JSON.stringify(args === undefined ? null : args));
+      var id = hostCall(op, JSON.stringify(args === undefined ? null : args));
       pending.set(id, { resolve: resolve, reject: reject });
     });
   }
@@ -95,7 +103,7 @@ export const SDK_PRELUDE = String.raw`
   }
 
   var ui = {
-    render: function (tree) { __send('ui', JSON.stringify(tree)); },
+    render: function (tree) { hostSend('ui', JSON.stringify(tree)); },
     stack: function (children, o) { return merge({ type: 'stack', children: children || [] }, o); },
     row: function (children, o) { return merge({ type: 'stack', direction: 'row', children: children || [] }, o); },
     column: function (children, o) { return merge({ type: 'stack', direction: 'column', children: children || [] }, o); },

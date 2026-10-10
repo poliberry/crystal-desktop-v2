@@ -1,5 +1,7 @@
 "use client";
 
+import type { SceneOverlay } from "../../../convex/lib/creationSpecs";
+import { SceneOverlayArt } from "@/components/lounge/scene-overlay";
 import { useMemo } from "react";
 import { useQuery } from "convex/react";
 import { Gem, Music4, Palette, Rocket, Type } from "lucide-react";
@@ -172,7 +174,7 @@ function GrantPreview({ grant, viewer, size }: { grant: PreviewGrant; viewer: Vi
       );
 
     case "loungeScene": {
-      let scene: { backgroundUrl?: string; screen?: { x: number; y: number; w: number; h: number } } = {};
+      let scene: { backgroundUrl?: string; screen?: { x: number; y: number; w: number; h: number }; overlay?: SceneOverlay[] } = {};
       try {
         scene = JSON.parse(grant.payload ?? "");
       } catch {
@@ -185,6 +187,7 @@ function GrantPreview({ grant, viewer, size }: { grant: PreviewGrant; viewer: Vi
               <SceneBackground url={scene.backgroundUrl} />
             </div>
           )}
+          <SceneOverlayArt overlay={scene.overlay} />
           {scene.screen && (
             <div
               className="absolute bg-black/70 ring-1 ring-sky-300/40"

@@ -1,0 +1,239 @@
+/*
+ * The canvas editor's chrome, built to the proportions of Adobe Illustrator's workspace (measured
+ * from a reference screenshot, at 1x): a 30px menu bar, a 32px control bar, a 28px document tab strip,
+ * a single 40px toolbar column on 24px tool pitch, flat panels with 26px headers in a 240px dock
+ * beside a 36px icon strip, and a 20px status bar.
+ *
+ * The colours are NOT Illustrator's fixed greys. They are made from this app's theme tokens so the
+ * editor follows dark, light and theme packs, but they keep Illustrator's tonal relationships:
+ *   body (menu, control bar, toolbar, panel bodies)  = the card colour            (Illustrator #535353)
+ *   headers (tab strip, panel headers, dock bars)    = a step darker than body    (#424242)
+ *   pasteboard                                       = a step lighter than body   (#606060)
+ *   fields                                           = a step darker than body    (#454545)
+ *   hairlines between regions                        = darker still               (#303030)
+ * The one fixed colour is the selection blue, a canvas colour (Illustrator's layer colour): it has
+ * to read against any artwork, so it can't follow the theme.
+ *
+ * Everything is scoped to `.ai` so nothing leaks into the rest of the app.
+ */
+.ai {
+  --ai-body: var(--card);
+  --ai-header: color-mix(in oklch, var(--card), black 24%);
+  --ai-pasteboard: color-mix(in oklch, var(--card), var(--foreground) 13%);
+  --ai-field: color-mix(in oklch, var(--card), black 20%);
+  --ai-edge: color-mix(in oklch, var(--card), black 48%);
+  --ai-line: color-mix(in oklch, var(--card), var(--foreground) 10%);
+  --ai-hover: color-mix(in oklch, var(--card), var(--foreground) 11%);
+  --ai-pressed: color-mix(in oklch, var(--card), black 22%);
+  --ai-text: color-mix(in oklch, var(--foreground), transparent 12%);
+  --ai-dim: color-mix(in oklch, var(--foreground), transparent 42%);
+  --ai-select: oklch(0.68 0.17 262);
+  --ai-row-active: color-mix(in oklch, var(--ai-select) 38%, var(--card));
+  --ai-accent: var(--sidebar-primary, var(--ai-select));
+
+  --ai-ruler-bg: var(--ai-body);
+  --ai-ruler-tick: color-mix(in oklch, var(--foreground), transparent 45%);
+  --ai-ruler-text: color-mix(in oklch, var(--foreground), transparent 30%);
+  --ai-ruler-edge: var(--ai-edge);
+
+  font-family: "Segoe UI", "Adobe Clean", system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  line-height: 1.25;
+  color: var(--ai-text);
+  background: var(--ai-body);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+.ai input,
+.ai textarea,
+.ai select {
+  user-select: text;
+  font-family: inherit;
+}
+.ai ::selection {
+  background: color-mix(in oklch, var(--ai-select), transparent 55%);
+}
+.ai * {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground), transparent 72%) transparent;
+}
+
+/* Menu bar items: flat text, a lighter box when open or hovered. */
+.ai-menu {
+  height: 100%;
+  padding: 0 9px;
+  font-size: 12px;
+  color: var(--ai-text);
+}
+.ai-menu:hover,
+.ai-menu[data-state="open"] {
+  background: var(--ai-hover);
+  color: var(--foreground);
+}
+
+/* A tool or icon button. */
+.ai-tool {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 24px;
+  border-radius: 2px;
+  color: var(--ai-text);
+}
+.ai-tool:hover {
+  background: var(--ai-hover);
+  color: var(--foreground);
+}
+.ai-tool[aria-pressed="true"],
+.ai-tool[data-active="true"] {
+  background: var(--ai-pressed);
+  color: var(--foreground);
+}
+.ai-tool:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.ai-tool:focus-visible {
+  outline: 1px solid var(--ai-select);
+  outline-offset: -1px;
+}
+/* The small triangle in a tool's corner that says "more tools are grouped here". */
+.ai-tool[data-group="true"]::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border-style: solid;
+  border-width: 0 0 4px 4px;
+  border-color: transparent transparent var(--ai-dim) transparent;
+}
+
+/* A field: dark inset, 1px darker border, as the control bar and panels have. */
+.ai-field {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 4px;
+  background: var(--ai-field);
+  border: 1px solid var(--ai-edge);
+  border-radius: 2px;
+  font-size: 11px;
+  color: var(--ai-text);
+}
+.ai-field:focus-within {
+  border-color: var(--ai-select);
+}
+.ai-field input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  background: transparent;
+  outline: none;
+}
+/* A bordered square button — the dropdown chevron attached beside a field. */
+.ai-chev {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  background: var(--ai-body);
+  border: 1px solid var(--ai-edge);
+  border-radius: 2px;
+  color: var(--ai-dim);
+}
+.ai-chev:hover {
+  color: var(--foreground);
+  background: var(--ai-hover);
+}
+.ai-button {
+  height: 20px;
+  padding: 0 9px;
+  border: 1px solid var(--ai-edge);
+  border-radius: 3px;
+  background: var(--ai-body);
+  font-size: 11px;
+  color: var(--ai-text);
+}
+.ai-button:hover {
+  background: var(--ai-hover);
+}
+.ai-button:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* A label that opens something: dotted underline. */
+.ai-link {
+  border-bottom: 1px dotted var(--ai-dim);
+  cursor: pointer;
+}
+.ai-link:hover {
+  color: var(--foreground);
+}
+
+/* Hairline between regions and the dark gutters between panel groups. */
+.ai-edge-b {
+  border-bottom: 1px solid var(--ai-edge);
+}
+.ai-edge-r {
+  border-right: 1px solid var(--ai-edge);
+}
+.ai-edge-l {
+  border-left: 1px solid var(--ai-edge);
+}
+.ai-edge-t {
+  border-top: 1px solid var(--ai-edge);
+}
+.ai-gutter {
+  background: var(--ai-edge);
+}
+
+/* A panel group's tab strip: tabs sit on the dark header; the active one is the body colour and bold. */
+.ai-tabstrip {
+  display: flex;
+  align-items: stretch;
+  height: 26px;
+  background: var(--ai-header);
+}
+.ai-ptab {
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--ai-dim);
+}
+.ai-ptab:hover {
+  color: var(--foreground);
+}
+.ai-ptab[aria-selected="true"] {
+  background: var(--ai-body);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* A document tab (above the canvas). */
+.ai-doctab {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--ai-dim);
+  background: transparent;
+}
+.ai-doctab:hover {
+  color: var(--foreground);
+}
+.ai-doctab[aria-selected="true"] {
+  background: var(--ai-body);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.ai-well {
+  background: var(--ai-field);
+}
+.ai-pasteboard {
+  background: var(--ai-pasteboard);
+}

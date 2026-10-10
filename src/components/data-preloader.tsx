@@ -18,6 +18,7 @@ import {
   getRecentViewsSnapshot,
   getServerSnapshot,
   keyOf,
+  pruneRecentViews,
   subscribeRecentViews,
   type RecentView,
 } from "@/lib/recent-views";
@@ -203,17 +204,42 @@ export function DataPreloader() {
 const STRUCTURE_COMMUNITY_BUDGET = 3;
 
 function PreloadEverything() {
-  const communities = useQuery(api.communities.listMine) ?? [];
+  const listMine = useQuery(api.communities.listMine);
+  const communities = listMine ?? [];
   const conversations = useQuery(api.conversations.listMine) ?? [];
   const recent = useRecentViews();
+
+  // The ids the caller is actually a member of — the only ones worth warming.
+  // Recent views and pinned tabs come from localStorage and the URL hash, so
+  // a bad deep link, notification payload or stale entry can hold an id that
+  // was never a community (e.g. an asset id). Subscribing to community
+  // queries with one fails argument validation on every launch, so anything
+  // outside this set is skipped — and pruned below so it stops recurring.
+  const memberIds = useMemo(
+    () => new Set((communities as any[]).map((c) => String((c as any).id))),
+    [communities],
+  );
+
+  // Entries pointing outside the membership are preload hints for places that
+  // can never load. Dropping them is safe: a hint is re-recorded the next
+  // time the place is actually opened.
+  useEffect(() => {
+    if (!listMine) return;
+    pruneRecentViews((view) => view.type === "dm" || memberIds.has(view.communityId));
+  }, [listMine, memberIds]);
 
   // The server being used right now — its channels are the ones about to be
   // clicked through, even the ones never opened before. `channels.list` for it
   // is already subscribed by CommunityPreloader, and Convex dedupes identical
   // subscriptions, so asking again costs nothing.
-  const currentCommunityId = recent.find((v) => v.type === "channel")?.communityId as
+  const rawCurrentCommunityId = recent.find((v) => v.type === "channel")?.communityId as
     | Id<"communities">
     | undefined;
+  // Ignored until it matches the membership: see `memberIds` above.
+  const currentCommunityId =
+    rawCurrentCommunityId && memberIds.has(String(rawCurrentCommunityId))
+      ? rawCurrentCommunityId
+      : undefined;
   const currentCommunityChannels =
     useQuery(api.channels.list, currentCommunityId ? { communityId: currentCommunityId } : "skip") ??
     [];

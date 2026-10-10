@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
 import { isActive } from "./lib/entitlements";
 import {
@@ -14,11 +14,13 @@ import {
   type LayerArg,
 } from "./lib/cosmeticLayers";
 import { normalizeSceneSpec, normalizeThemePackSpec } from "./lib/creationSpecs";
-import { creationFolder, dropR2Url } from "./lib/r2";
+import { creationArtworkUrl, creationFolder, dropR2Url } from "./lib/r2";
+import { isMotionAddress } from "./lib/motionAddress";
 import { CURRENCIES } from "./catalog";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { audit, requireStaff } from "./lib/staff";
+import { listingPatch, refreshedGrant, updateBlocker } from "./lib/listingUpdate";
 
 /**
  * What a buyer sees and does with what they own.
@@ -157,23 +159,6 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 /** What staff keep of a creator sale unless they decide otherwise, in basis
  * points of what the creator keeps. */
 const DEFAULT_CREATOR_SHARE_BPS = 8000;
-
-/**
- * The artwork address, checked.
- *
- * It has to be on our own CDN, in the folder the uploader's own upload went to.
- * Anything else — a link to some other site, or someone else's file — would be
- * drawn into other people's profiles, and an address elsewhere can change what it
- * shows after staff approved it.
- */
-function creationArtworkUrl(url: string, clerkId: string): string {
-  const base = (process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "").replace(/\/$/, "");
-  if (!base) throw new Error("Creator uploads aren't available right now.");
-  if (!url.startsWith(`${base}/${creationFolder(clerkId)}`) || url.length > 500) {
-    throw new Error("Upload the artwork through Crystal first.");
-  }
-  return url;
-}
 
 /** The grant a creation gives, built here from the artwork rather than accepted
  * as JSON from the client: placement comes from the defaults, run through the
@@ -338,8 +323,15 @@ function buildCreationItem(
       return { kind: item.kind, label: name, payload: JSON.stringify(normalize(layers)) };
     }
     case "profileEffect":
-    case "nameplate":
+    case "nameplate": {
+      // An animated one is a published motion design (see motion.ts): a content-addressed file the server wrote after
+      // checking it. A picture or clip is, as before, the creator's own upload.
+      if (/\.json$/i.test(item.artworkUrl.split(/[?#]/)[0] ?? "")) {
+        if (!isMotionAddress(item.artworkUrl)) throw new Error("Publish the animation through Crystal first.");
+        return { kind: item.kind, label: name, payload: item.artworkUrl };
+      }
       return { kind: item.kind, label: name, payload: assertUrl(item.artworkUrl) };
+    }
     case "loungeScene":
       return { kind: item.kind, label: name, payload: JSON.stringify(normalizeSceneSpec({ ...item.spec, name }, assertUrl)) };
     case "themePack":
@@ -361,6 +353,10 @@ export const submitCreation = mutation({
     previewUrl: v.optional(v.string()),
     priceCents: v.number(),
     currency: v.string(),
+    /** A listing of the creator's that this changes, rather than making a new one: see `listingUpdate.ts`. */
+    updatesSkuId: v.optional(v.id("skus")),
+    /** One of the creator's own submissions still waiting for review that this one takes the place of. */
+    supersedes: v.optional(v.id("marketplaceSubmissions")),
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
@@ -391,6 +387,14 @@ export const submitCreation = mutation({
       throw new Error("A pack can hold one of each kind of thing.");
     }
 
+    // Sending a change to something still waiting takes its place, so a creator who spots a mistake while
+    // it is in the queue doesn't have to withdraw it by hand or queue two copies.
+    if (args.supersedes) {
+      const old = await ctx.db.get(args.supersedes);
+      if (!old || old.creatorId !== me._id) throw new Error("That isn't yours.");
+      if (old.status === "pending") await ctx.db.delete(old._id);
+    }
+
     const open = await ctx.db
       .query("marketplaceSubmissions")
       .withIndex("by_creator", (q) => q.eq("creatorId", me._id))
@@ -398,6 +402,19 @@ export const submitCreation = mutation({
       .take(50);
     if (open.filter((s) => s.status === "pending").length >= MAX_OPEN_SUBMISSIONS) {
       throw new Error("You have a lot waiting for review already. Wait for some to be reviewed first.");
+    }
+
+    if (args.updatesSkuId) {
+      const sku = await ctx.db.get(args.updatesSkuId);
+      const waiting = await ctx.db.query("marketplaceSubmissions").withIndex("by_updates_sku", (q) => q.eq("updatesSkuId", args.updatesSkuId).eq("status", "pending")).take(5);
+      const blocked = updateBlocker({
+        sku: sku ? { creatorId: sku.creatorId, status: sku.status, grants: sku.grants } : null,
+        creatorId: me._id,
+        kinds: args.items.map((i) => i.kind),
+        // Our own pending update was removed above if the creator said it is being replaced.
+        otherPending: waiting.length > 0,
+      });
+      if (blocked) throw new Error(blocked);
     }
 
     const grants = args.items.map((item) => buildCreationItem(item, name, me.clerkId));
@@ -418,6 +435,7 @@ export const submitCreation = mutation({
       requestedPriceCents: args.priceCents,
       currency: args.currency,
       status: "pending",
+      ...(args.updatesSkuId ? { updatesSkuId: args.updatesSkuId } : {}),
       createdAt: now,
       updatedAt: now,
     });
@@ -475,8 +493,25 @@ export const myCreations = query({
         }),
     );
     const liveBySubmission = new Map(live.filter((x) => x !== null).map((x) => [x.submissionId, x]));
+    // For an update that hasn't been approved yet: whether the listing it changes is still on sale.
+    const updated = new Map<string, { status: string } | null>();
+    for (const s of submissions) {
+      if (s.updatesSkuId && !updated.has(s.updatesSkuId)) {
+        const target = await ctx.db.get(s.updatesSkuId);
+        updated.set(s.updatesSkuId, target ? { status: target.status } : null);
+      }
+    }
 
-    return submissions.map((s) => {
+    // A listing that has been updated is one listing: only its newest approved submission is shown, not the
+    // original as well (which would show the old artwork, and count its sales twice).
+    const newest = new Set<string>();
+    const shown = submissions.filter((s) => {
+      if (s.status !== "approved" || !s.skuId) return true;
+      if (newest.has(s.skuId)) return false;
+      newest.add(s.skuId);
+      return true;
+    });
+    return shown.map((s) => {
       const published = liveBySubmission.get(s._id);
       const grant = s.grants[0];
       return {
@@ -484,13 +519,20 @@ export const myCreations = query({
         name: s.name,
         description: s.description,
         kind: grant?.kind ?? "unknown",
+        kinds: s.grants.map((g) => g.kind),
         payload: grant?.payload,
         previewUrl: s.previewUrl ?? (grant ? previewOf(grant) : undefined),
         status: s.status,
         reviewNote: s.reviewNote,
         priceCents: published?.sku.priceCents ?? s.requestedPriceCents,
+        requestedPriceCents: s.requestedPriceCents,
         currency: s.currency,
         createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        /** The listing this changes, if it is an update rather than a new listing. */
+        updatesSkuId: s.updatesSkuId ?? null,
+        updatesSku: s.updatesSkuId ? (updated.get(s.updatesSkuId) ?? null) : null,
+        skuId: s.skuId ?? null,
         sku: published
           ? {
               id: published.sku._id,
@@ -534,6 +576,8 @@ export const adminSubmission = query({
     if (!row) return null;
     const creator = await ctx.db.get(row.creatorId);
     const sku = row.skuId ? await ctx.db.get(row.skuId) : null;
+    // For an update: the listing it replaces, as it is now, so a reviewer can compare.
+    const updates = row.updatesSkuId ? await ctx.db.get(row.updatesSkuId) : null;
     // How this creator has fared before: the thing a reviewer wants to know.
     const history = await ctx.db
       .query("marketplaceSubmissions")
@@ -543,6 +587,7 @@ export const adminSubmission = query({
       ...row,
       creator: creator ? { id: creator._id, username: creator.username, name: creator.name, imageUrl: creator.imageUrl } : null,
       sku: sku ? { id: sku._id, slug: sku.slug, status: sku.status } : null,
+      updates: updates ? { id: updates._id, slug: updates.slug, status: updates.status, name: updates.name, description: updates.description, priceCents: updates.priceCents, imageUrl: updates.imageUrl, grants: updates.grants } : null,
       past: {
         approved: history.filter((h) => h.status === "approved").length,
         rejected: history.filter((h) => h.status === "rejected").length,
@@ -564,11 +609,72 @@ export const adminRejectSubmission = mutation({
   },
 });
 
+/** What owners are brought up to date per run, so a popular listing doesn't need one huge write. */
+const REFRESH_BATCH = 200;
+
+/**
+ * Approve a change to a live listing: the listing is replaced in place, so its address, category, sales history and
+ * everyone who owns it are unaffected. What staff may adjust is the price; by default it stays what it is, because
+ * a creator changing the artwork hasn't necessarily agreed a new price with anyone.
+ */
+export async function approveUpdate(ctx: MutationCtx, staffId: Id<"users">, row: Doc<"marketplaceSubmissions">, priceCents: number | undefined): Promise<Id<"skus">> {
+  const skuId = row.updatesSkuId!;
+  const sku = await ctx.db.get(skuId);
+  if (!sku) throw new Error("The listing this updates no longer exists.");
+  if (sku.status !== "active") throw new Error("The listing this updates is no longer on sale.");
+  const kinds = row.grants.map((g) => g.kind);
+  const blocked = updateBlocker({ sku: { creatorId: sku.creatorId, status: sku.status, grants: sku.grants }, creatorId: row.creatorId, kinds, otherPending: false });
+  if (blocked) throw new Error(blocked);
+  if (!row.grants.every((g) => (CREATION_KINDS as readonly string[]).includes(g.kind))) throw new Error("This submission isn't something a creator can sell.");
+  const price = priceCents ?? sku.priceCents;
+  if (!Number.isInteger(price) || price < 0 || price > MAX_CREATION_CENTS || (price > 0 && price < MIN_PAID_CENTS)) throw new Error("Price must be free, or between 0.50 and 500.00.");
+
+  const now = Date.now();
+  const grants = row.grants.map((g) => ({ kind: g.kind as CreationKind, payload: g.payload, label: g.label }));
+  const { priceChanged: _changed, ...patch } = listingPatch(sku, { name: row.name, description: row.description, grants, previewUrl: row.previewUrl, fallbackImage: previewOf(row.grants[0]) }, price, now);
+  void _changed;
+  await ctx.db.patch(skuId, patch);
+  await ctx.db.patch(row._id, { status: "approved", skuId, updatedAt: now });
+  await audit(ctx, staffId, "catalog.submission.approve", { type: "submission", id: row._id }, `Update to SKU ${sku.slug}${price !== sku.priceCents ? ` · price ${sku.priceCents} → ${price}` : ""}`);
+  // People who already own it get the new artwork. What they have equipped is a copy they may have adjusted, so
+  // that stays as it is until they equip again.
+  await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId, after: null });
+  if (price > 0 || sku.priceCents > 0) await ctx.scheduler.runAfter(0, internal.payments.syncSku, { skuId });
+  return skuId;
+}
+
+/** Bring the entitlements of everyone who owns a listing up to date with it, a batch at a time. */
+export async function refreshBatch(ctx: MutationCtx, skuId: Id<"skus">, after: string | null): Promise<{ updated: number; more: boolean }> {
+  const sku = await ctx.db.get(skuId);
+  if (!sku) return { updated: 0, more: false };
+  const page = await ctx.db.query("entitlements").withIndex("by_sku", (q) => q.eq("skuId", skuId)).paginate({ numItems: REFRESH_BATCH, cursor: after });
+  let updated = 0;
+  for (const e of page.page) {
+    if (e.revokedAt !== undefined) continue;
+    const grant = refreshedGrant(e.kind, sku.grants);
+    // A kind the update no longer has isn't taken away from people who paid for it: they keep what they bought.
+    if (grant && (grant.payload !== e.payload || grant.label !== e.label)) {
+      await ctx.db.patch(e._id, { payload: grant.payload, label: grant.label });
+      updated++;
+    }
+  }
+  if (!page.isDone) await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId, after: page.continueCursor });
+  return { updated, more: !page.isDone };
+}
+
+export const refreshOwners = internalMutation({
+  args: { skuId: v.id("skus"), after: v.union(v.string(), v.null()) },
+  handler: async (ctx, { skuId, after }) => {
+    await refreshBatch(ctx, skuId, after);
+  },
+});
+
 export const adminApproveSubmission = mutation({
   args: {
     submissionId: v.id("marketplaceSubmissions"),
-    categoryId: v.id("skuCategories"),
-    slug: v.string(),
+    /** Not needed for an update: the listing keeps the category and address it has. */
+    categoryId: v.optional(v.id("skuCategories")),
+    slug: v.optional(v.string()),
     /** Staff may price it differently from what was asked. */
     priceCents: v.optional(v.number()),
     /** What the creator keeps, in basis points. Defaults to 80%. */
@@ -579,6 +685,8 @@ export const adminApproveSubmission = mutation({
     const staff = await requireStaff(ctx, "catalog.write");
     const row = await ctx.db.get(submissionId);
     if (!row || row.status !== "pending") throw new Error("That submission is no longer pending.");
+    if (row.updatesSkuId) return approveUpdate(ctx, staff.user._id, row, priceCents);
+    if (!categoryId || !slug) throw new Error("Choose a category and an address for the new listing.");
     const category = await ctx.db.get(categoryId);
     if (!category) throw new Error("Category not found.");
     if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) || slug.length > 60) throw new Error("Invalid SKU slug.");

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import type { SceneSpecProp } from "../../convex/lib/creationSpecs";
+import type { SceneOverlay, SceneSpecProp } from "../../convex/lib/creationSpecs";
 
 /**
  * The rooms a lounge can be.
@@ -343,6 +343,8 @@ export interface ResolvedScene {
   /** Built-in art, or undefined when `backgroundUrl` is used. */
   art?: ReactNode;
   backgroundUrl?: string;
+  /** Artwork drawn on the room by its creator, over `backgroundUrl`. */
+  overlay?: SceneOverlay[];
 }
 
 export function resolveScene(channel: {
@@ -355,6 +357,7 @@ export function resolveScene(channel: {
     seats?: SceneSeat[];
     props?: { id: string; kind: string; x: number; y: number; size: number; interactive: boolean; on: boolean }[];
     lights?: { dimOnShare: boolean; amount: number };
+    overlay?: SceneOverlay[];
   };
 }): ResolvedScene {
   if (channel.loungeScene === "custom" && channel.loungeSceneCustom) {
@@ -368,6 +371,7 @@ export function resolveScene(channel: {
       props: (c.props ?? []) as SceneSpecProp[],
       lights: c.lights ?? { dimOnShare: false, amount: 0.6 },
       backgroundUrl: c.backgroundUrl,
+      overlay: c.overlay,
     };
   }
   const scene = BY_ID.get(channel.loungeScene ?? "living-room") ?? LOUNGE_SCENES[0];

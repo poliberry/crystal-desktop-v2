@@ -105,21 +105,74 @@ export interface Guides {
   y: number[];
 }
 
+/** What a moving box may snap to. */
+export interface SnapOptions {
+  /** Smart guides: the artboard's edges and middle, and the other objects'. */
+  smart: boolean;
+  /** The document's ruler guides. */
+  guides: boolean;
+  /** Grid spacing in document units, or null for no grid snapping. */
+  grid: number | null;
+}
+
+export const DEFAULT_SNAP: SnapOptions = { smart: true, guides: true, grid: null };
+
+/** The lines a single edge may snap to: the artboard's (and any ruler guides) on one axis. */
+export function snapLines(doc: Doc, axis: "x" | "y", opts: SnapOptions = DEFAULT_SNAP): number[] {
+  const size = axis === "x" ? doc.artboard.w : doc.artboard.h;
+  const lines: number[] = opts.smart ? [0, size / 2, size] : [];
+  if (opts.guides && doc.guides) lines.push(...doc.guides[axis]);
+  return lines;
+}
+
 /**
- * Nudge a moving box so its edges and centre meet the artboard's and the other
- * nodes', within a few screen pixels, and say which lines it met so they can be
+ * One value pulled onto the nearest of `lines`, or failing that onto the grid, when
+ * within `threshold`; otherwise unchanged.
+ */
+export function snapScalar(v: number, lines: number[], threshold: number, grid: number | null = null): number {
+  let best = v;
+  let dist = threshold;
+  let found = false;
+  for (const l of lines) {
+    const d = Math.abs(l - v);
+    if (d <= dist) {
+      dist = d;
+      best = l;
+      found = true;
+    }
+  }
+  if (found) return best;
+  if (grid && grid > 0) {
+    const g = Math.round(v / grid) * grid;
+    if (Math.abs(g - v) <= threshold) return g;
+  }
+  return v;
+}
+
+/**
+ * Nudge a moving box so its edges and centre meet the artboard's, the other
+ * nodes' and any ruler guides, within a few screen pixels (or the grid, if there
+ * is one and nothing else is close), and say which lines it met so they can be
  * drawn. `threshold` is in document units — the caller divides pixels by zoom.
  */
-export function snapMove(moving: Rect, doc: Doc, ignore: Set<string>, threshold: number): { dx: number; dy: number; guides: Guides } {
-  const xs: number[] = [0, doc.artboard.w / 2, doc.artboard.w];
-  const ys: number[] = [0, doc.artboard.h / 2, doc.artboard.h];
-  for (const id of doc.order) {
-    if (ignore.has(id)) continue;
-    const n = doc.nodes[id];
-    if (!n || n.hidden || n.type === "floor") continue;
-    const b = boundsOf(n);
-    xs.push(b.x, b.x + b.w / 2, b.x + b.w);
-    ys.push(b.y, b.y + b.h / 2, b.y + b.h);
+export function snapMove(
+  moving: Rect,
+  doc: Doc,
+  ignore: Set<string>,
+  threshold: number,
+  opts: SnapOptions = DEFAULT_SNAP,
+): { dx: number; dy: number; guides: Guides } {
+  const xs: number[] = snapLines(doc, "x", opts);
+  const ys: number[] = snapLines(doc, "y", opts);
+  if (opts.smart) {
+    for (const id of doc.order) {
+      if (ignore.has(id)) continue;
+      const n = doc.nodes[id];
+      if (!n || n.hidden || n.type === "floor") continue;
+      const b = boundsOf(n);
+      xs.push(b.x, b.x + b.w / 2, b.x + b.w);
+      ys.push(b.y, b.y + b.h / 2, b.y + b.h);
+    }
   }
   const mx = [moving.x, moving.x + moving.w / 2, moving.x + moving.w];
   const my = [moving.y, moving.y + moving.h / 2, moving.y + moving.h];
@@ -145,7 +198,32 @@ export function snapMove(moving: Rect, doc: Doc, ignore: Set<string>, threshold:
   };
   const bx = best(mx, xs);
   const by = best(my, ys);
-  return { dx: bx.delta, dy: by.delta, guides: { x: bx.hit, y: by.hit } };
+  let dx = bx.delta;
+  let dy = by.delta;
+  // Nothing else was close on an axis: the grid, by whichever edge is nearest a line of it.
+  if (opts.grid && opts.grid > 0) {
+    const toGrid = (mine: number[]) => {
+      let delta = 0;
+      let dist = threshold + 1;
+      for (const m of mine) {
+        const d = Math.round(m / opts.grid!) * opts.grid! - m;
+        if (Math.abs(d) < dist) {
+          dist = Math.abs(d);
+          delta = d;
+        }
+      }
+      return dist <= threshold ? delta : 0;
+    };
+    if (bx.hit.length === 0) dx = toGrid(mx);
+    if (by.hit.length === 0) dy = toGrid(my);
+  }
+  return { dx, dy, guides: { x: bx.hit, y: by.hit } };
+}
+
+/** The pan and zoom that fit `rect` (document units) into a viewport of `size`, centred. */
+export function viewForRect(rect: Rect, size: { w: number; h: number }, pad = 24, min = 0.05, max = 8): { zoom: number; x: number; y: number } {
+  const zoom = Math.max(min, Math.min(max, (size.w - pad * 2) / Math.max(rect.w, 1e-6), (size.h - pad * 2) / Math.max(rect.h, 1e-6)));
+  return { zoom, x: size.w / 2 - (rect.x + rect.w / 2) * zoom, y: size.h / 2 - (rect.y + rect.h / 2) * zoom };
 }
 
 export function intersects(a: Rect, b: Rect): boolean {

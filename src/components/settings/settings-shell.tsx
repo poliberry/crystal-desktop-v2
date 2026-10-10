@@ -1,5 +1,6 @@
 "use client";
 
+import { CosmeticMedia } from "@/components/motion/cosmetic-media";
 import {
   Accessibility,
   Bell,
@@ -221,9 +222,8 @@ export function SettingsShell({
                     >
                       <div className="relative flex items-center gap-2 px-3 py-2.5">
                         {me?.nameplateUrl && (
-                          <img
+                          <CosmeticMedia
                             src={me.nameplateUrl}
-                            alt=""
                             className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
                           />
                         )}

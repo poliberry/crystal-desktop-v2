@@ -1,5 +1,7 @@
 "use client";
 
+import { isMotionUrl } from "../../../convex/lib/motion";
+import { MotionPlayer } from "@/components/motion/motion-player";
 import { useCachedImageSrc } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
 
@@ -39,13 +41,14 @@ export function Nameplate({
    * row and masks it towards the text, but the boxes differ. */
   className?: string;
 }) {
+  const motion = isMotionUrl(url);
   const isVideo = isVideoNameplate(url);
   // Images only — a nameplate video is tens of times the size of one of these
   // pictures, and it's already a `<video src>` streaming from the network
   // rather than a single fetch to hold as a blob. Called unconditionally
   // (hooks are), with `undefined` for a video or when there's nothing to
   // show, which the hook is happy to do nothing with.
-  const cachedUrl = useCachedImageSrc(url && !isVideo ? url : undefined);
+  const cachedUrl = useCachedImageSrc(url && !isVideo && !motion ? url : undefined);
 
   if (!url) return null;
 
@@ -53,6 +56,9 @@ export function Nameplate({
     "fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20",
     className,
   );
+
+  // An animated nameplate made in Crystal Studio is a design played live on a canvas, not a file the browser plays.
+  if (motion) return <MotionPlayer url={url} className={shared} />;
 
   if (isVideo) {
     return (

@@ -2,17 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { CREATION_MAX_BYTES } from "@/lib/creation-upload";
 import { newId } from "@/studio/model/doc";
 import type { AssetMeta } from "@/studio/model/types";
 import { deleteAsset, getAssetBlob, listAssets, putAsset } from "@/studio/storage/db";
 
 /** What a project may hold. A pack of pictures, not a media library. */
 export const ASSET_LIMITS = {
-  image: 8 * 1024 * 1024,
+  image: CREATION_MAX_BYTES,
   /** A scene's looping background clip. */
-  video: 8 * 1024 * 1024,
-  font: 4 * 1024 * 1024,
-  sound: 2 * 1024 * 1024,
+  video: CREATION_MAX_BYTES,
+  font: CREATION_MAX_BYTES,
+  sound: CREATION_MAX_BYTES,
+  /** Icons stay small on purpose: they are SVG line art that is drawn through a mask everywhere
+   * the app shows that icon, so a large one is a mistake (or worse), not a richer icon. */
   icon: 64 * 1024,
 } as const;
 

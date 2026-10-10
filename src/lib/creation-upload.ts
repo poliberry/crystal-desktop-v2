@@ -5,7 +5,11 @@ import { api } from "../../convex/_generated/api";
 /** What a creator may upload as artwork — mirrors the server's list, which is
  * what actually decides. */
 export const CREATION_ACCEPT = "image/png,image/gif,image/webp,image/jpeg,video/webm,video/mp4";
-export const CREATION_MAX_BYTES = 8 * 1024 * 1024;
+/** The largest single file a creator can upload: one number for Studio's editors, its limits
+ * text and this uploader, so a file the editor accepts is a file that can be sent. */
+export const CREATION_MAX_BYTES = 10 * 1024 * 1024;
+/** `10 MB`, for copy and messages. */
+export const CREATION_MAX_LABEL = `${CREATION_MAX_BYTES / 1024 / 1024} MB`;
 
 async function sha256(file: File): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
@@ -21,7 +25,7 @@ async function sha256(file: File): Promise<string> {
  * it would not work.
  */
 export async function uploadCreation(convex: ConvexReactClient, file: File): Promise<string> {
-  if (file.size > CREATION_MAX_BYTES) throw new Error("That file is over 8 MB.");
+  if (file.size > CREATION_MAX_BYTES) throw new Error(`That file is over ${CREATION_MAX_LABEL}.`);
   const ticket = (await convex.action(api.cdn.createUploadUrl, {
     kind: "creations",
     fileName: file.name || "artwork",

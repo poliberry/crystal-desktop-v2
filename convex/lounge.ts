@@ -290,6 +290,7 @@ export const setScene = mutation({
         seats: spec.seats,
         props: spec.props,
         lights: spec.lights,
+        overlay: spec.overlay,
       },
     });
   },

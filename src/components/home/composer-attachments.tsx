@@ -1,9 +1,10 @@
 "use client";
 
-import { FileText, ImageIcon, Upload, X } from "lucide-react";
+import { FileText, Film, ImageIcon, Music, Upload, X } from "lucide-react";
 import { useEffect } from "react";
 
 import type { PendingAttachment } from "@/hooks/use-composer-attachments";
+import { attachmentKind } from "@/lib/media-type";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -41,11 +42,10 @@ export function ComposerAttachments({
             />
           ) : (
             <div className="flex size-10 shrink-0 items-center justify-center rounded bg-background/60">
-              {attachment.fileType.startsWith("image/") ? (
-                <ImageIcon className="size-4 text-muted-foreground" />
-              ) : (
-                <FileText className="size-4 text-muted-foreground" />
-              )}
+              {(() => {
+                const Icon = { image: ImageIcon, audio: Music, video: Film, file: FileText }[attachmentKind(attachment.fileType, attachment.fileName)];
+                return <Icon className="size-4 text-muted-foreground" />;
+              })()}
             </div>
           )}
           <div className="min-w-0 leading-tight">

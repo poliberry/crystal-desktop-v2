@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { useSmoothScrollRef } from "@/hooks/use-smooth-scroll";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -35,30 +34,25 @@ export function DmProfilePanel({
     conversationId,
   }) as MemberProfileMember[] | undefined;
   const member = members?.find((entry) => entry.userId === userId);
-  const smoothRef = useSmoothScrollRef<HTMLDivElement>();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* A plain scroller rather than `ScrollArea`: Radix wraps its viewport's
-          children in a `display: table` div, and a percentage height inside
-          that resolves to auto — which is exactly what the card needs to fill
-          the column. */}
-      <div ref={smoothRef} className="min-h-0 flex-1 overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col w-full">
+      {/* The profile card owns scrolling through its internal `ScrollArea`;
+          keeping this host clipped prevents a second scrollbar and a small
+          overflow around the full-height card. */}
+      <div className="min-h-0 flex-1 overflow-hidden">
         {/* Nothing at all until the query lands, rather than a placeholder
             card: this panel is a copy of information already on screen, and a
             skeleton of it would be the loudest thing in the window. */}
         {member && (
-          // `min-h-full` here and `flex-1` on the card: it runs the height of
-          // the panel when there's little to say, and grows past it into the
-          // scroll when there's a lot.
-          <div className="flex min-h-full flex-col justify-center p-3 -mt-6 overflow-hidden">
-            <MemberProfileCard
-              member={member}
-              className="flex-1"
-              // The card is *in* the conversation its Message button opens.
-              hideMessageAction
-            />
-          </div>
+          // The card is the surface of the sidebar, so it should fill the
+          // viewport and use its own scroller when content is taller.
+          <MemberProfileCard
+            member={member}
+            className="h-full min-h-0 w-full min-w-0 max-w-full -translate-y-2 rounded-none p-0"
+            // The card is *in* the conversation its Message button opens.
+            hideMessageAction
+          />
         )}
       </div>
     </div>

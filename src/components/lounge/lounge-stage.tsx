@@ -15,6 +15,7 @@ import { LoungeAvatar, useIsSpeaking } from "@/components/lounge/lounge-avatar";
 import { LoungeChat, type LoungeChatMessage } from "@/components/lounge/lounge-chat";
 import { EVENT_TTL, type LoungeEvent } from "@/components/lounge/lounge-effects";
 import { SceneBackdrop, SceneBackground } from "@/components/lounge/scene-background";
+import { SceneOverlayArt } from "@/components/lounge/scene-overlay";
 import { ScenePropView, useLoungeProps } from "@/components/lounge/lounge-props";
 import { LoungeRemote, TvScreen, type TvChannel } from "@/components/lounge/lounge-tv";
 import { defaultSpot, useLoungePresence } from "@/components/lounge/use-lounge-presence";
@@ -479,6 +480,7 @@ export function LoungeStage({ roomName, controller, onLeave, channelId, communit
             transition={{ type: "spring", stiffness: 140, damping: 24, mass: 0.9 }}
           >
             {art}
+            <SceneOverlayArt overlay={scene.overlay} />
 
             {/* Lights down: the room darkens and the screen throws its light on it. */}
             <motion.div

@@ -1,0 +1,9 @@
+{
+  "name": "@crystal/bot",
+  "version": "1.4.0",
+  "description": "Build bots for Crystal. Zero dependencies; needs Node 18 or newer.",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "license": "UNLICENSED"
+}

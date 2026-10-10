@@ -1,5 +1,7 @@
 "use client";
 
+import { isMotionUrl } from "../../../convex/lib/motion";
+import { MotionPlayer } from "@/components/motion/motion-player";
 import { useLoopedPlayback } from "@/hooks/use-looped-playback";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import { useEffect, useRef, useState } from "react";
@@ -96,9 +98,12 @@ export function ProfileEffectLayer({
   animate?: boolean;
   rounded?: string;
 }) {
-  const playback = useLoopedPlayback(src, animate);
+  const motion = isMotionUrl(src);
+  // A picture effect plays once and holds; a motion design says for itself how it loops (see its `loop`).
+  const playback = useLoopedPlayback(motion ? undefined : src, animate);
 
   if (!src) return null;
+  if (motion) return <MotionPlayer url={src} animate={animate} className={cn("z-20", rounded)} />;
   return (
     <img
       // A new element per play: an `<img>` cannot be rewound, but a fresh one

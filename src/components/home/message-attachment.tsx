@@ -16,6 +16,7 @@ import {
 import { copyImageToClipboard } from "@/lib/clipboard-image";
 import { downloadFile, formatBytes } from "@/lib/download";
 import { useCachedAttachmentSrc } from "@/lib/image-cache";
+import { attachmentKind } from "@/lib/media-type";
 
 /** One row of `messageAttachments`, as the message queries return it. Shared
  * by DM and channel messages — the two tables store attachments identically. */
@@ -197,14 +198,16 @@ export function AttachmentView({
   createdAt?: number;
 }) {
   if (!attachment.url) return null;
-  if (attachment.fileType.startsWith("image/")) {
-    return <ImageAttachment attachment={attachment} author={author} createdAt={createdAt} />;
+  // By the stored type, repaired from the extension: files stored before uploads did that
+  // (a .wav or .mov with an empty type) are `application/octet-stream` and still play.
+  switch (attachmentKind(attachment.fileType, attachment.fileName)) {
+    case "image":
+      return <ImageAttachment attachment={attachment} author={author} createdAt={createdAt} />;
+    case "audio":
+      return <AudioAttachment url={attachment.url} fileName={attachment.fileName} />;
+    case "video":
+      return <VideoAttachment url={attachment.url} fileName={attachment.fileName} />;
+    default:
+      return <FileAttachment attachment={attachment} />;
   }
-  if (attachment.fileType.startsWith("audio/")) {
-    return <AudioAttachment url={attachment.url} fileName={attachment.fileName} />;
-  }
-  if (attachment.fileType.startsWith("video/")) {
-    return <VideoAttachment url={attachment.url} fileName={attachment.fileName} />;
-  }
-  return <FileAttachment attachment={attachment} />;
 }

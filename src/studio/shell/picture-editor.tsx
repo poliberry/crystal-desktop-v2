@@ -9,10 +9,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ProfileEffectLayer } from "@/components/profile/profile-card-cosmetics";
 import { SubmitPanel } from "@/studio/shell/submit-panel";
 import type { Project } from "@/studio/model/types";
-import { useProjectAssets } from "@/studio/storage/assets";
+import { ASSET_LIMITS, useProjectAssets } from "@/studio/storage/assets";
 
 const ACCEPT = "image/png,image/gif,image/webp,image/jpeg,video/webm,video/mp4";
-const MAX = 8 * 1024 * 1024;
+const MAX = ASSET_LIMITS.image;
+const LIMIT_MB = MAX / 1024 / 1024;
 
 /**
  * Nameplates and profile effects are a single picture (or short clip) each — there
@@ -32,7 +33,7 @@ export function PictureEditor({ project, onChange }: { project: Project; onChang
     if (!file) return;
     setError(null);
     if (!ACCEPT.split(",").includes(file.type)) return setError("Use a PNG, GIF, WebP or JPEG picture, or a short WebM or MP4 clip.");
-    if (file.size > MAX) return setError("That file is over 8 MB.");
+    if (file.size > MAX) return setError(`That file is over ${LIMIT_MB} MB.`);
     setBusy(true);
     try {
       const previous = project.picture?.assetId;
@@ -63,8 +64,8 @@ export function PictureEditor({ project, onChange }: { project: Project; onChang
           </label>
           <p className="text-xs text-muted-foreground">
             {project.kind === "nameplate"
-              ? "Drawn faintly behind a name and faded towards the text, so wide, simple artwork works best. Up to 8 MB; a short looping clip is allowed."
-              : "Played once over the whole profile card and then held still for a while. Transparent PNG, GIF or WebP, up to 8 MB."}
+              ? `Drawn faintly behind a name and faded towards the text, so wide, simple artwork works best. Up to ${LIMIT_MB} MB; a short looping clip is allowed.`
+              : `Played once over the whole profile card and then held still for a while. Transparent PNG, GIF or WebP, up to ${LIMIT_MB} MB.`}
           </p>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>

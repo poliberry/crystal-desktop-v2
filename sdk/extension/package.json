@@ -1,0 +1,9 @@
+{
+  "name": "@crystal/extension",
+  "version": "1.1.0",
+  "description": "Build extensions for Crystal. Bundled into your extension's single script; no dependencies.",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "license": "UNLICENSED"
+}

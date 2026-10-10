@@ -11,6 +11,13 @@ import { httpAction } from "./_generated/server";
 
 const http = httpRouter();
 
+// The Bot API. One prefix route: botHttp.ts authenticates and dispatches, and botApi.ts decides
+// what a bot may do. Only the methods it uses are registered.
+import { handle as botApiHandler } from "./botHttp";
+for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"] as const) {
+  http.route({ pathPrefix: "/bot/v1/", method, handler: botApiHandler });
+}
+
 // See convex/lib/liveKitWebhook.ts. Point your LiveKit project's webhook URL
 // at `<this deployment's .convex.site URL>/livekit/webhook`. Signature
 // verification (and all node-only work) happens in that "use node" action —

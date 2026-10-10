@@ -1,0 +1,14 @@
+name = "crystal-api"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+account_id = "b57ae29e048be84024b3453a52bdb3f6"
+
+# The Bot API's real address. Today that is the dev deployment, because that is where the bot
+# functions have been deployed and what the website is built against; when production is set up,
+# change this one line and run `wrangler deploy` again. Bots keep using api.usecrystal.app.
+[vars]
+CONVEX_SITE_URL = "https://brainy-cardinal-730.convex.site"
+
+[[routes]]
+pattern = "api.usecrystal.app"
+custom_domain = true

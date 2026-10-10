@@ -1,12 +1,13 @@
 "use client";
 
-import { Armchair, Frame, ImageIcon, Package, Palette, Sparkles, Stamp, UserRound, type LucideIcon } from "lucide-react";
+import { Armchair, Bot, Frame, ImageIcon, Package, Palette, Puzzle, Sparkles, Stamp, UserRound, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { KIND_LABEL, type ProjectKind } from "@/studio/model/types";
+import { getDesktopAPI } from "@/lib/desktop";
+import { KIND_LABEL, isCodeKind, type ProjectKind } from "@/studio/model/types";
 import { cn } from "@/lib/utils";
 
 export const KIND_ICON: Record<ProjectKind, LucideIcon> = {
@@ -17,6 +18,8 @@ export const KIND_ICON: Record<ProjectKind, LucideIcon> = {
   scene: Armchair,
   themePack: Palette,
   pack: Package,
+  extension: Puzzle,
+  bot: Bot,
 };
 
 const BLURB: Record<ProjectKind, string> = {
@@ -27,18 +30,23 @@ const BLURB: Record<ProjectKind, string> = {
   scene: "A room for lounge channels, with a screen, seats and props.",
   themePack: "A font, colours, sounds and icons for the whole app.",
   pack: "Several of your cosmetics, sold together.",
+  extension: "A panel inside Crystal, written in TypeScript and run in a sandbox.",
+  bot: "A TypeScript app on your own server that joins communities and responds to them.",
 };
 
 const GROUPS: { title: string; kinds: ProjectKind[] }[] = [
   { title: "Cosmetics", kinds: ["decoration", "sticker", "nameplate", "effect"] },
   { title: "Rooms", kinds: ["scene"] },
   { title: "Packs", kinds: ["themePack", "pack"] },
+  { title: "Code", kinds: ["extension", "bot"] },
 ];
 
 export function NewProjectDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpenChange: (o: boolean) => void; onCreate: (kind: ProjectKind, name: string) => Promise<void> }) {
   const [kind, setKind] = useState<ProjectKind>("decoration");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // Code projects are folders of files, which only the desktop app can keep.
+  const canCode = !!getDesktopAPI()?.studio?.fs;
 
   const go = async () => {
     setBusy(true);
@@ -65,13 +73,16 @@ export function NewProjectDialog({ open, onOpenChange, onCreate }: { open: boole
               <div className="grid gap-2 sm:grid-cols-2">
                 {g.kinds.map((k) => {
                   const Icon = KIND_ICON[k] ?? Frame;
+                  const unavailable = isCodeKind(k) && !canCode;
                   return (
                     <button
                       key={k}
                       type="button"
+                      disabled={unavailable}
+                      title={unavailable ? "Extensions and bots are made in the Crystal desktop app" : undefined}
                       onClick={() => setKind(k)}
                       aria-pressed={kind === k}
-                      className={cn("flex items-start gap-3 rounded-xl border p-3 text-left transition-colors", kind === k ? "border-primary bg-primary/5" : "border-border hover:border-foreground/30")}
+                      className={cn("flex items-start gap-3 rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50", kind === k ? "border-primary bg-primary/5" : "border-border hover:border-foreground/30")}
                     >
                       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
                         <Icon className="size-4" />

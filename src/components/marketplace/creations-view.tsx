@@ -23,8 +23,8 @@ function useCreations() {
 }
 
 function StatusBadge({ creation }: { creation: Creation }) {
-  if (creation.status === "pending") return <Badge variant="outline">In review</Badge>;
-  if (creation.status === "rejected") return <Badge variant="destructive">Needs changes</Badge>;
+  if (creation.status === "pending") return <Badge variant="outline">{creation.updatesSkuId ? "Update in review" : "In review"}</Badge>;
+  if (creation.status === "rejected") return <Badge variant="destructive">{creation.updatesSkuId ? "Update needs changes" : "Needs changes"}</Badge>;
   if (creation.sku?.status === "active") return <Badge className="bg-emerald-500/90 text-white">Live</Badge>;
   return <Badge variant="secondary">Retired</Badge>;
 }

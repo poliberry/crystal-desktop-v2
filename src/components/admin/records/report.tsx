@@ -22,6 +22,7 @@ import { useConsole, useOpenEntity } from "@/components/admin/console-state";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatRelative } from "@/lib/money";
+import { attachmentKind } from "@/lib/media-type";
 
 const TONE: Record<string, Tone> = { open: "warn", reviewing: "info", resolved: "good", dismissed: "neutral" };
 const pretty = (value: string) => value.replace(/_/g, " ");
@@ -84,17 +85,44 @@ export function ReportRecord({ id }: { id: string }) {
             ) : (
               <p className="text-sm text-muted-foreground">No text was attached.</p>
             )}
-            {!!report.evidence?.attachments?.length && (
-              <ul className="space-y-1 text-sm">
-                {report.evidence.attachments.map((a, i) => (
-                  <li key={`${a.fileName}-${i}`} className="text-muted-foreground">
-                    📎 {a.fileName}
-                  </li>
-                ))}
-              </ul>
-            )}
+            {!!report.evidence?.attachments?.length && <EvidenceFiles files={report.evidence.attachments} />}
           </div>
         </Panel>
+
+        {!!report.evidence?.history?.length && (
+          <Panel
+            title="Their last 24 hours here"
+            description={`Everything @${report.evidence.authorUsername ?? "they"} said in the same place before the report, oldest first${
+              report.evidence.historyTruncated ? " (capped - there is more than this)" : ""
+            }. Captured with the report.`}
+          >
+            <ol className="max-h-96 space-y-2 overflow-y-auto pr-1">
+              {report.evidence.history.map((m, i) => (
+                <li
+                  key={`${m.at}-${i}`}
+                  className={`rounded-lg border px-3 py-2 text-sm ${
+                    m.reported ? "border-rose-400/60 bg-rose-400/10" : "border-foreground/10 bg-foreground/5"
+                  }`}
+                >
+                  <p className="mb-1 text-xs text-muted-foreground">
+                    {formatDate(m.at, true)}
+                    {m.reported ? " · reported message" : ""}
+                  </p>
+                  {m.text ? (
+                    <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                  ) : (
+                    !m.attachments?.length && <p className="text-muted-foreground">(no text)</p>
+                  )}
+                  {!!m.attachments?.length && (
+                    <div className="mt-2">
+                      <EvidenceFiles files={m.attachments} />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </Panel>
+        )}
 
         {report.resolution && (
           <Panel title={report.status === "resolved" ? "Resolution" : "Why it was dismissed"}>
@@ -230,6 +258,85 @@ export function ReportRecord({ id }: { id: string }) {
         placeholder={closing === "resolved" ? "What was decided and done" : "Why it's being dismissed"}
         onConfirm={(resolution) => setStatus({ reportId, status: closing!, resolution })}
       />
+    </div>
+  );
+}
+
+type EvidenceFile = { fileName: string; url?: string; fileType?: string };
+
+/** Only web addresses, so a stored value can't be a `javascript:` link. */
+function safeUrl(url?: string): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The files on a reported message. Pictures are shown, and sound and video are played where they
+ * are, so staff don't have to download or open each one; anything else is a link. Links open in a
+ * new tab. The kind comes from the stored type, repaired from the file name: a `.wav` or `.mov` that
+ * was stored with no type is still sound or video. */
+function EvidenceFiles({ files }: { files: EvidenceFile[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {files.map((f, i) => {
+        const url = safeUrl(f.url);
+        const key = `${f.fileName}-${i}`;
+        if (!url) {
+          return (
+            <span key={key} className="text-sm text-muted-foreground">
+              📎 {f.fileName} <span className="text-xs">(no longer available)</span>
+            </span>
+          );
+        }
+        const kind = attachmentKind(f.fileType, f.fileName);
+        if (kind === "audio" || kind === "video") {
+          return (
+            <div key={key} className="max-w-full overflow-hidden rounded-lg border border-foreground/10 bg-foreground/5">
+              {kind === "video" ? (
+                <video src={url} controls preload="metadata" playsInline className="max-h-72 max-w-full bg-black" />
+              ) : (
+                <audio src={url} controls preload="metadata" className="w-72 max-w-full" />
+              )}
+              <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate" title={f.fileName}>
+                  {kind === "video" ? "🎞" : "🔊"} {f.fileName}
+                </span>
+                <a href={url} target="_blank" rel="noopener noreferrer" className="shrink-0 hover:text-foreground">
+                  Open
+                </a>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <a
+            key={key}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group block max-w-full overflow-hidden rounded-lg border border-foreground/10 bg-foreground/5 hover:border-foreground/30"
+            title={f.fileName}
+          >
+            {kind === "image" ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={url}
+                alt={f.fileName}
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                className="max-h-64 max-w-full object-contain"
+              />
+            ) : null}
+            <span className="block truncate px-2 py-1 text-xs text-muted-foreground group-hover:text-foreground">
+              📎 {f.fileName}
+            </span>
+          </a>
+        );
+      })}
     </div>
   );
 }

@@ -21,11 +21,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 const yaml = require("js-yaml");
 
-const { CHANNELS, resolveChannelId } = require("../dist-electron/channels.js");
+const { CHANNELS, appIdentity, resolveAppKind, resolveChannelId } = require("../dist-electron/channels.js");
 
 const repoRoot = path.join(__dirname, "..");
 const channelId = resolveChannelId(process.env.CRYSTAL_CHANNEL) ?? "stable";
 const channel = CHANNELS[channelId];
+// Crystal, or Crystal Studio: a second application built from the same code (CRYSTAL_APP=studio), with its own name, id,
+// icon, URL scheme, install location and update metadata, so it installs, launches and updates on its own.
+const appKind = resolveAppKind(process.env.CRYSTAL_APP) ?? "crystal";
+const app = appIdentity(channel, appKind);
+const studio = appKind === "studio";
 
 const base = yaml.load(fs.readFileSync(path.join(repoRoot, "electron-builder.yml"), "utf8"));
 
@@ -81,28 +86,50 @@ const macSigning = hasSigningCertificate
       notarize: false,
     };
 
-module.exports = {
+// The Dock and Finder draw an icon exactly as supplied, so the macOS icon is the one with the margin Apple's icons have
+// (scripts/make-icons.mjs makes it).
+const macIcon = `build/${app.macIcon}`;
+
+const appConfig = {
   ...base,
-  appId: channel.appId,
-  productName: channel.productName,
-  icon: `build/${channel.icon}`,
+  appId: app.appId,
+  productName: app.productName,
+  icon: `build/${app.icon}`,
+  // Studio's installers go in a folder of their own: both applications write `builder-debug.yml` and friends, and the
+  // release workflow uploads each folder separately.
+  directories: { ...base.directories, output: studio ? "release-studio" : base.directories.output },
+  // The same release carries both applications. Studio's update metadata is `studio.yml` / `studio-mac.yml` /
+  // `studio-linux.yml`, so it can't overwrite Crystal's `latest*.yml` (nor be mistaken for it by Crystal's updater).
+  publish: studio ? { ...base.publish, channel: app.feedChannel } : base.publish,
+  // The URL scheme the OS sends to this application. Studio's is its own, so installing it takes nothing from Crystal.
+  protocols: studio ? { name: app.productName, schemes: [app.scheme] } : base.protocols,
   // Stamped into the packaged package.json, and read back at runtime by
   // `resolveRunningChannel` — this is how the app knows which channel it is.
-  extraMetadata: { ...base.extraMetadata, buildChannel: channel.id },
+  extraMetadata: {
+    ...base.extraMetadata,
+    buildChannel: channel.id,
+    buildApp: appKind,
+    // Linux names the .deb and its .desktop entry from these; Studio must not share Crystal's.
+    ...(studio ? { name: "crystal-studio", desktopName: "crystal-studio" } : {}),
+  },
   // Replaces the base entry rather than adding to it: the app asks for
   // `icon.png` at runtime whichever channel it is, so each channel ships its
   // own icon under that one name.
-  extraResources: [{ from: `build/${channel.icon}`, to: "icon.png" }],
+  extraResources: [
+    { from: `build/${app.icon}`, to: "icon.png" },
+  ],
   mac: {
     ...base.mac,
     ...macSigning,
+    icon: macIcon,
     // A platform block *replaces* the shared `extraResources` rather than
     // adding to it, so the mac entry (the system-audio helper) would otherwise
     // leave the packaged app without the `icon.png` the main process looks up
     // at runtime — which is what the tray falls back to. Both, explicitly.
     extraResources: [
-      ...(base.mac?.extraResources ?? []),
-      { from: `build/${channel.icon}`, to: "icon.png" },
+      // The system-audio helper belongs to Crystal's calls; Studio has none.
+      ...(studio ? [] : (base.mac?.extraResources ?? [])),
+      { from: `build/${app.icon}`, to: "icon.png" },
     ],
   },
   // A product name with a space in it ("Crystal Canary") is exactly the
@@ -110,9 +137,45 @@ module.exports = {
   // electron-builder writes dashes into latest.yml while GitHub's asset upload
   // writes dots, and the auto-updater 404s. Every artifact therefore uses the
   // channel's space-free `fileName` instead of ${productName}.
-  artifactName: `${channel.fileName}-\${version}.\${ext}`,
+  artifactName: `${app.fileName}-\${version}.\${ext}`,
   nsis: {
     ...base.nsis,
-    artifactName: `${channel.fileName}-Setup-\${version}.\${ext}`,
+    artifactName: `${app.fileName}-Setup-\${version}.\${ext}`,
+    // Its own entry in Add/Remove Programs and its own Start menu shortcut (the name is derived from the product).
+    shortcutName: app.productName,
   },
 };
+
+/**
+ * The installer (CRYSTAL_APP=installer): the one file a person downloads, which fetches Crystal and Crystal Studio from
+ * the channel's newest release (electron/installer). A single self-contained download on each platform — a disk image,
+ * a portable exe that needs no installing itself, an AppImage — and no update metadata: it always reads the newest
+ * release when it runs, and `latest*.yml` is Crystal's.
+ */
+const installerName = channel.id === "stable" ? "Crystal Setup" : `Crystal ${channel.label} Setup`;
+const installerFile = `${channel.fileName}-Installer`;
+const installerResources = [
+  { from: `build/${channel.icon}`, to: "icon.png" },
+  { from: "build/icon-studio.png", to: "icon-studio.png" },
+];
+const installerConfig = {
+  copyright: base.copyright,
+  compression: base.compression,
+  asar: true,
+  appId: `${channel.appId}.installer`,
+  productName: installerName,
+  icon: `build/${channel.icon}`,
+  // Packaged from its own small app folder (scripts/stage-installer.mjs), not from the repo: electron-builder bundles every
+  // dependency in the nearest package.json, which here would be the whole app's.
+  directories: { ...base.directories, app: ".installer-app", output: "release-installer" },
+  publish: null,
+  extraMetadata: { buildChannel: channel.id, buildApp: "installer", desktopName: "crystal-installer" },
+  extraResources: installerResources,
+  artifactName: `${installerFile}-\${version}.\${ext}`,
+  mac: { ...macSigning, icon: `build/${appIdentity(channel, "crystal").macIcon}`, category: base.mac?.category, target: ["dmg"], extraResources: installerResources },
+  win: { target: ["portable"] },
+  portable: { artifactName: `${installerFile}-\${version}.\${ext}` },
+  linux: { target: ["AppImage"], category: base.linux?.category, maintainer: base.linux?.maintainer },
+};
+
+module.exports = process.env.CRYSTAL_APP === "installer" ? installerConfig : appConfig;

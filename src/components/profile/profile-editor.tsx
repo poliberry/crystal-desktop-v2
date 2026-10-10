@@ -1,5 +1,6 @@
 "use client";
 
+import { CosmeticMedia } from "@/components/motion/cosmetic-media";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -367,12 +368,7 @@ export function ProfileEditor({
                 filled={!!values.nameplateUrl}
                 className="h-12"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={values.nameplateUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
+                <CosmeticMedia src={values.nameplateUrl} />
               </RailTile>
             </RailSection>
 
@@ -470,12 +466,7 @@ export function ProfileEditor({
                   label="Edit profile effect"
                   filled={!!values.profileEffect}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={values.profileEffect}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
+                  <CosmeticMedia src={values.profileEffect} />
                 </RailTile>
                 <RailTile
                   onClick={() => setDialog("stickers")}

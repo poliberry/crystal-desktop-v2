@@ -298,6 +298,9 @@ const profileCosmetics = {
 export default defineSchema({
   users: defineTable({
     clerkId: v.string(),
+    /** This account is a bot's: it has no person behind it and no way to sign in. Its `clerkId` is
+     * a placeholder (`bot:…`). Set once when the bot is created and never changed. */
+    isBot: v.optional(v.boolean()),
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
@@ -801,6 +804,9 @@ export default defineSchema({
     permissions: v.number(),
     position: v.number(),
     isEveryone: v.boolean(),
+    /** This role is a bot's grant, kept by the Bots tab: it can't be edited, renamed or deleted
+     * from the role editor, because what a bot may do is decided there, by someone who holds it. */
+    managedBotId: v.optional(v.id("bots")),
     /** "Display members with this role separately from online members" —
      * mirrors Discord's per-role hoist toggle. Used to group the member
      * list (src/components/community/member-list.tsx). */
@@ -921,6 +927,8 @@ export default defineSchema({
           ),
         ),
         lights: v.optional(v.object({ dimOnShare: v.boolean(), amount: v.number() })),
+        /** Artwork drawn on the room, over the background: see `SceneOverlay`. Absent on older scenes. */
+        overlay: v.optional(v.array(v.object({ url: v.string(), x: v.number(), y: v.number(), w: v.number(), h: v.number(), opacity: v.number() }))),
       }),
     ),
     /** What the room is about right now. Set by anyone in it, and gone when
@@ -936,6 +944,114 @@ export default defineSchema({
 
   /** Something a person can install to extend Crystal: its identity and who made it.
    * What it does is in its versions, each reviewed on its own. */
+  // --- Bots ---------------------------------------------------------------------------------
+
+  /**
+   * A bot: an app that runs on its author's own servers and acts in communities through the Bot API.
+   * It is an account of its own (`userId`), added to a community by someone with Manage
+   * Integrations (see `botInstalls`). Only a hash of its token is stored.
+   */
+  bots: defineTable({
+    ownerId: v.id("users"),
+    /** The bot's own account, which is what appears in member lists and as the author of its messages. */
+    userId: v.id("users"),
+    name: v.string(),
+    description: v.string(),
+    imageUrl: v.optional(v.string()),
+    /** `private`: only its author can add it. `public`: anyone with Manage Integrations can. */
+    visibility: v.union(v.literal("private"), v.literal("public")),
+    tokenPrefix: v.string(),
+    tokenHash: v.string(),
+    tokenRotatedAt: v.number(),
+    /** Encrypted. Signs the events Crystal sends to the bot. */
+    signingSecret: v.string(),
+    /** Where events and slash commands are delivered. https only; see `assertPanelUrl`. */
+    endpointUrl: v.optional(v.string()),
+    /** What it asks for. What it is actually given is on each install. */
+    permissions: v.number(),
+    scopes: v.array(v.string()),
+    commands: v.array(v.object({ name: v.string(), description: v.string() })),
+    /** When the bot last asked for events. A bot with no endpoint is sent events only while it is polling (see `botEvents.poll`). */
+    lastPolledAt: v.optional(v.number()),
+    /** Where an install link may send the browser afterwards. Exact matches only; see `redirectAllowed`. */
+    redirectUris: v.optional(v.array(v.string())),
+    /**
+     * A change to the bot's public listing (its name, description and picture, or making it public) waiting for
+     * review. `visibility: "public"` always means approved; the bot keeps its approved listing until this is. See
+     * convex/lib/listingUpdate.ts.
+     */
+    pending: v.optional(v.object({ name: v.string(), description: v.string(), imageUrl: v.optional(v.string()), bio: v.optional(v.string()), bannerUrl: v.optional(v.string()), makePublic: v.boolean(), submittedAt: v.number() })),
+    /** What staff said about the last listing change, so the author can see why it was turned down. */
+    lastReview: v.optional(v.object({ ok: v.boolean(), note: v.optional(v.string()), at: v.number() })),
+    /** Staff can stop a bot everywhere at once. */
+    suspendedAt: v.optional(v.number()),
+    suspendedReason: v.optional(v.string()),
+    /** Delivery is switched off after many failures in a row; the author turns it back on. */
+    eventsDisabledAt: v.optional(v.number()),
+    consecutiveFailures: v.number(),
+    lastDelivery: v.optional(v.object({ at: v.number(), ok: v.boolean(), status: v.optional(v.number()), error: v.optional(v.string()) })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_user", ["userId"])
+    .index("by_token_prefix", ["tokenPrefix"])
+    .index("by_visibility", ["visibility", "createdAt"]),
+
+  /**
+   * A bot added to a community, and what it was given.
+   *
+   * `permissions` is what the installer granted, and is also the bot's managed role. `authorisedBy`
+   * is whose authority it is: the bot can only ever do what that member can still do (see
+   * `effectivePermissions`), so it loses what they lose.
+   */
+  botInstalls: defineTable({
+    botId: v.id("bots"),
+    communityId: v.id("communities"),
+    authorisedBy: v.id("users"),
+    permissions: v.number(),
+    scopes: v.array(v.string()),
+    roleId: v.id("roles"),
+    installedAt: v.number(),
+    authorisedAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_bot", ["botId"])
+    .index("by_community_bot", ["communityId", "botId"]),
+
+  /** What a bot did, or tried to, and what was installed or changed. Kept for 30 days. */
+  botAudit: defineTable({
+    botId: v.id("bots"),
+    communityId: v.optional(v.id("communities")),
+    /** The person behind it, for what a person did (installing, changing, using a command). */
+    actorId: v.optional(v.id("users")),
+    action: v.string(),
+    ok: v.boolean(),
+    detail: v.optional(v.string()),
+    at: v.number(),
+  })
+    .index("by_bot_at", ["botId", "at"])
+    .index("by_community_at", ["communityId", "at"])
+    .index("by_actor_action_at", ["actorId", "action", "at"]),
+
+  /** A bot's request counts, one row per bot per minute. */
+  /**
+   * Events waiting for a bot that collects them (no endpoint: it asks, instead of being called). Kept
+   * a few minutes, oldest dropped past a cap; a bot that isn't polling has nothing queued at all.
+   * The cursor a bot holds is the `_creationTime` of the last event it has seen.
+   */
+  botEvents: defineTable({
+    botId: v.id("bots"),
+    event: v.any(),
+  }).index("by_bot", ["botId"]),
+
+  botRate: defineTable({
+    botId: v.id("bots"),
+    windowStart: v.number(),
+    requests: v.number(),
+    sends: v.number(),
+  }).index("by_bot", ["botId"]),
+
   extensions: defineTable({
     slug: v.string(),
     publisherId: v.id("users"),
@@ -1371,6 +1487,41 @@ export default defineSchema({
     /** Idempotency key for the durable send outbox — see the twin field on
      * `messages` above and src/lib/outbox.ts. */
     clientId: v.optional(v.string()),
+    /** Rich cards a bot attached. Only bots can set these; always rebuilt by
+     * `validateEmbeds` (convex/lib/embeds.ts) before they get here. */
+    /** Rows of buttons a bot attached (convex/lib/components.ts). */
+    components: v.optional(
+      v.array(
+        v.object({
+          buttons: v.array(
+            v.object({
+              customId: v.optional(v.string()),
+              label: v.string(),
+              style: v.union(v.literal("primary"), v.literal("secondary"), v.literal("success"), v.literal("danger"), v.literal("link")),
+              url: v.optional(v.string()),
+              emoji: v.optional(v.string()),
+              disabled: v.optional(v.boolean()),
+            }),
+          ),
+        }),
+      ),
+    ),
+    embeds: v.optional(
+      v.array(
+        v.object({
+          title: v.optional(v.string()),
+          description: v.optional(v.string()),
+          url: v.optional(v.string()),
+          color: v.optional(v.number()),
+          timestamp: v.optional(v.number()),
+          author: v.optional(v.object({ name: v.string(), url: v.optional(v.string()), iconUrl: v.optional(v.string()) })),
+          footer: v.optional(v.object({ text: v.string(), iconUrl: v.optional(v.string()) })),
+          image: v.optional(v.object({ url: v.string() })),
+          thumbnail: v.optional(v.object({ url: v.string() })),
+          fields: v.optional(v.array(v.object({ name: v.string(), value: v.string(), inline: v.optional(v.boolean()) }))),
+        }),
+      ),
+    ),
   })
     .index("by_channel", ["channelId"])
     .index("by_client_id", ["clientId"])
@@ -1924,6 +2075,39 @@ export default defineSchema({
     .index("by_actor", ["actorId", "createdAt"])
     .index("by_target", ["targetType", "targetId"]),
 
+  // --- Studio guides and articles ----------------------------------------------
+
+  /**
+   * A page in Studio's guides. Written in the Admin Console; a page whose `slug` matches one that
+   * ships with the app replaces it, and removing it brings the shipped one back. Markdown only.
+   */
+  studioDocs: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    topic: v.union(v.literal("general"), v.literal("canvas"), v.literal("extensions"), v.literal("bots")),
+    kind: v.union(v.literal("guide"), v.literal("article"), v.literal("reference")),
+    section: v.string(),
+    summary: v.string(),
+    body: v.string(),
+    order: v.number(),
+    /** Drafts are seen only in the Admin Console. */
+    published: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    updatedBy: v.id("users"),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_published", ["published", "updatedAt"]),
+
+  /** The last versions of a page, so an edit can be undone. Capped per page. */
+  studioDocRevisions: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    body: v.string(),
+    editedBy: v.id("users"),
+    createdAt: v.number(),
+  }).index("by_slug", ["slug", "createdAt"]),
+
   // --- Reports --------------------------------------------------------------
 
   /**
@@ -1966,8 +2150,29 @@ export default defineSchema({
         text: v.optional(v.string()),
         authorName: v.optional(v.string()),
         authorUsername: v.optional(v.string()),
-        attachments: v.optional(v.array(v.object({ fileName: v.string(), url: v.optional(v.string()) }))),
+        attachments: v.optional(
+          v.array(v.object({ fileName: v.string(), url: v.optional(v.string()), fileType: v.optional(v.string()) }))
+        ),
         context: v.optional(v.string()),
+        /** The reported person's messages from the 24 hours before the report,
+         * in the same place as the reported message. A snapshot, so it still
+         * says what was said if they delete it afterwards. */
+        history: v.optional(
+          v.array(
+            v.object({
+              at: v.number(),
+              text: v.optional(v.string()),
+              attachments: v.optional(
+                v.array(
+                  v.object({ fileName: v.string(), url: v.optional(v.string()), fileType: v.optional(v.string()) })
+                )
+              ),
+              /** The one that was actually reported. */
+              reported: v.optional(v.boolean()),
+            })
+          )
+        ),
+        historyTruncated: v.optional(v.boolean()),
       })
     ),
     status: v.union(
@@ -2128,11 +2333,15 @@ export default defineSchema({
     status: v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected")),
     reviewNote: v.optional(v.string()),
     skuId: v.optional(v.id("skus")),
+    /** Set when this changes a listing that is already on sale: approving it replaces that listing in place
+     * (see convex/lib/listingUpdate.ts) instead of making a new one. */
+    updatesSkuId: v.optional(v.id("skus")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_creator", ["creatorId", "createdAt"])
-    .index("by_status", ["status", "createdAt"]),
+    .index("by_status", ["status", "createdAt"])
+    .index("by_updates_sku", ["updatesSkuId", "status"]),
 
   /** Stripe Connect identity for creators who have completed onboarding. */
   creatorAccounts: defineTable({
@@ -2236,7 +2445,8 @@ export default defineSchema({
     .index("by_user", ["userId", "createdAt"])
     .index("by_user_sku", ["userId", "skuId"])
     .index("by_order", ["orderId"])
-    .index("by_community", ["communityId"]),
+    .index("by_community", ["communityId"])
+    .index("by_sku", ["skuId"]),
 
   /** Stripe webhook events already handled, so a retried delivery is a no-op. */
   stripeEvents: defineTable({

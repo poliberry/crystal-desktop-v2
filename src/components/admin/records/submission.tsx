@@ -40,7 +40,8 @@ export function SubmissionRecord({ id }: { id: string }) {
     if (!submission) return;
     retitle({ kind: "submission", id }, submission.name, submission.creator ? `by @${submission.creator.username}` : undefined);
     setSlug((s) => s || slugify(submission.name));
-    setPrice((p) => p || (submission.requestedPriceCents / 100).toFixed(2));
+    // An update starts from the price it has now: a creator changing the artwork hasn't agreed a new price with anyone.
+    setPrice((p) => p || ((submission.updates?.priceCents ?? submission.requestedPriceCents) / 100).toFixed(2));
   }, [submission, id, retitle]);
 
   useEffect(() => {
@@ -55,7 +56,8 @@ export function SubmissionRecord({ id }: { id: string }) {
   const kind = (submission.grants[0]?.kind ?? "plan") as GrantKind;
   const cents = Math.round(Number(price) * 100);
   const shareBps = Math.round(Number(share) * 100);
-  const valid = !!categoryId && !!slug && Number.isFinite(cents) && cents >= 0 && shareBps >= 0 && shareBps <= 9500;
+  const updating = !!submission.updates;
+  const valid = (updating || (!!categoryId && !!slug)) && Number.isFinite(cents) && cents >= 0 && shareBps >= 0 && shareBps <= 9500;
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -66,7 +68,24 @@ export function SubmissionRecord({ id }: { id: string }) {
           <StatusPill tone={pending ? "warn" : submission.status === "approved" ? "good" : "bad"}>{submission.status}</StatusPill>
         </header>
 
-        <Panel title="Preview" description="On your own avatar and profile." flush>
+        {submission.updates && (
+          <Panel title={`Update to “${submission.updates.name}”`} description={`The live listing (${submission.updates.slug}) stays as it is until this is approved; approving replaces it in place — its address, sales and owners are unchanged.`}>
+            <div className="space-y-3 text-sm">
+              <Fields
+                items={[
+                  ["Name", submission.updates.name === submission.name ? "unchanged" : `${submission.updates.name} → ${submission.name}`],
+                  ["Description", (submission.updates.description ?? "") === (submission.description ?? "") ? "unchanged" : "changed (below)"],
+                  ["Price", `${formatMoney(submission.updates.priceCents, submission.currency, { free: true })}${submission.requestedPriceCents !== submission.updates.priceCents ? ` → asking ${formatMoney(submission.requestedPriceCents, submission.currency, { free: true })}` : " (unchanged)"}`],
+                  ["Status of the listing", submission.updates.status],
+                ]}
+              />
+              <p className="text-xs font-medium text-muted-foreground">As it is now</p>
+              <SkuPreview grants={submission.updates.grants as { kind: GrantKind; payload?: string; label?: string }[]} size="md" className="min-h-48" />
+            </div>
+          </Panel>
+        )}
+
+        <Panel title={updating ? "As updated" : "Preview"} description="On your own avatar and profile." flush>
           <SkuPreview grants={submission.grants as { kind: GrantKind; payload?: string; label?: string }[]} size="lg" className="min-h-72" />
         </Panel>
 
@@ -100,7 +119,8 @@ export function SubmissionRecord({ id }: { id: string }) {
         {pending && write ? (
           <Panel title="Decision">
             <div className="space-y-3">
-              <div className="space-y-1.5">
+              {updating && <p className="rounded-lg bg-sky-500/10 p-2 text-xs">An update to a live listing. It keeps its category, address, creator share and place in the shop.</p>}
+              {!updating && <div className="space-y-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Category</label>
                 <Select value={categoryId} onValueChange={setCategoryId}>
                   <SelectTrigger className="w-full">
@@ -114,25 +134,29 @@ export function SubmissionRecord({ id }: { id: string }) {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
+              </div>}
+              {!updating && <label className="block space-y-1.5 text-xs font-medium text-muted-foreground">
                 Slug
                 <Input value={slug} onChange={(e) => setSlug(slugify(e.target.value))} className="font-mono" />
-              </label>
+              </label>}
               <div className="grid grid-cols-2 gap-3">
                 <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                   Price ({submission.currency.toUpperCase()})
                   <Input type="number" min="0" step="0.01" value={price} disabled={!staff.can("pricing.write")} onChange={(e) => setPrice(e.target.value)} />
                 </label>
-                <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-                  Creator keeps (%)
-                  <Input type="number" min="0" max="95" value={share} onChange={(e) => setShare(e.target.value)} />
-                </label>
+                {!updating && (
+                  <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                    Creator keeps (%)
+                    <Input type="number" min="0" max="95" value={share} onChange={(e) => setShare(e.target.value)} />
+                  </label>
+                )}
               </div>
-              <label className="flex items-center justify-between text-sm">
-                Feature it
-                <Switch checked={featured} onCheckedChange={setFeatured} />
-              </label>
+              {!updating && (
+                <label className="flex items-center justify-between text-sm">
+                  Feature it
+                  <Switch checked={featured} onCheckedChange={setFeatured} />
+                </label>
+              )}
               <div className="flex gap-2 pt-1">
                 <Button
                   className="flex-1"
@@ -141,15 +165,12 @@ export function SubmissionRecord({ id }: { id: string }) {
                     const skuId = await run(
                       "approve",
                       () =>
-                        approve({
-                          submissionId,
-                          categoryId: categoryId as Id<"skuCategories">,
-                          slug,
-                          priceCents: cents,
-                          creatorShareBps: shareBps,
-                          featured,
-                        }),
-                      "Approved and on sale.",
+                        approve(
+                          updating
+                            ? { submissionId, priceCents: cents }
+                            : { submissionId, categoryId: categoryId as Id<"skuCategories">, slug, priceCents: cents, creatorShareBps: shareBps, featured },
+                        ),
+                      updating ? "Approved. The live listing is updated." : "Approved and on sale.",
                     );
                     if (skuId) open({ kind: "sku", id: skuId, title: submission.name, subtitle: "Item" }, "tab");
                   }}
@@ -160,7 +181,7 @@ export function SubmissionRecord({ id }: { id: string }) {
                   <X /> Reject
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">Approving puts it on sale straight away. Rejecting tells the creator why.</p>
+              <p className="text-xs text-muted-foreground">{updating ? "Approving updates the live listing and brings owners' copies up to date. Rejecting leaves the listing as it is and tells the creator why." : "Approving puts it on sale straight away. Rejecting tells the creator why."}</p>
             </div>
           </Panel>
         ) : (

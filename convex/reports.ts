@@ -5,6 +5,7 @@ import { mutation, query, type MutationCtx } from "./_generated/server";
 import { requireMember } from "./communities";
 import { audit, requireStaff } from "./lib/staff";
 import { getCurrentUserOrThrow } from "./users";
+import { effectiveFileType } from "./lib/mediaType";
 
 const categoryValidator = v.union(
   v.literal("spam"),
@@ -33,6 +34,110 @@ const MAX_REPORTS_PER_DAY = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DETAILS = 1000;
 const MAX_EVIDENCE_TEXT = 4000;
+
+type EvidenceAttachment = { fileName: string; url?: string; fileType?: string };
+type HistoryEntry = NonNullable<Evidence["history"]>[number];
+
+/** How far back, how many rows to look through, and how many to keep. The scan
+ * is bounded because these tables have no index by author. */
+const HISTORY_WINDOW_MS = DAY_MS;
+const HISTORY_SCAN_LIMIT = 600;
+const HISTORY_KEEP = 100;
+const MAX_HISTORY_TEXT = 1000;
+
+async function attachmentUrl(
+  ctx: MutationCtx,
+  a: { cdnUrl?: string; storageId?: Id<"_storage"> }
+): Promise<string | undefined> {
+  if (a.cdnUrl) return a.cdnUrl;
+  return a.storageId ? ((await ctx.storage.getUrl(a.storageId)) ?? undefined) : undefined;
+}
+
+type AttachmentRow = {
+  fileName: string;
+  fileType: string;
+  cdnUrl?: string;
+  storageId?: Id<"_storage">;
+};
+
+async function toEvidenceAttachments(ctx: MutationCtx, rows: AttachmentRow[]): Promise<EvidenceAttachment[]> {
+  return Promise.all(
+    rows.map(async (a) => ({ fileName: a.fileName, fileType: effectiveFileType(a.fileType, a.fileName), url: await attachmentUrl(ctx, a) }))
+  );
+}
+
+/**
+ * The reported person's last 24 hours in the place the report was made (the
+ * conversation or channel), oldest first.
+ *
+ * Deliberately limited to that place: the reporter was verified as someone who
+ * can see it, and a report is not a way to pull in rooms they were never in.
+ * Staff can open the account for the rest.
+ */
+async function recentHistory(
+  ctx: MutationCtx,
+  where: { kind: "dm"; conversationId: Id<"conversations"> } | { kind: "channel"; channelId: Id<"channels"> },
+  authorId: Id<"users">,
+  reportedId: string
+): Promise<{ history: HistoryEntry[]; truncated: boolean }> {
+  const since = Date.now() - HISTORY_WINDOW_MS;
+  const history: HistoryEntry[] = [];
+  let scanned = 0;
+  let truncated = false;
+
+  if (where.kind === "dm") {
+    const rows = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", where.conversationId).gte("_creationTime", since))
+      .order("desc")
+      .take(HISTORY_SCAN_LIMIT);
+    scanned = rows.length;
+    for (const m of rows) {
+      if (m.authorId !== authorId) continue;
+      if (history.length >= HISTORY_KEEP) {
+        truncated = true;
+        break;
+      }
+      const files = await ctx.db
+        .query("messageAttachments")
+        .withIndex("by_message", (q) => q.eq("messageId", m._id))
+        .collect();
+      history.push({
+        at: m._creationTime,
+        text: m.text?.slice(0, MAX_HISTORY_TEXT),
+        attachments: files.length ? await toEvidenceAttachments(ctx, files) : undefined,
+        reported: m._id === reportedId || undefined,
+      });
+    }
+  } else {
+    const rows = await ctx.db
+      .query("channelMessages")
+      .withIndex("by_channel", (q) => q.eq("channelId", where.channelId).gte("_creationTime", since))
+      .order("desc")
+      .take(HISTORY_SCAN_LIMIT);
+    scanned = rows.length;
+    for (const m of rows) {
+      if (m.authorId !== authorId) continue;
+      if (history.length >= HISTORY_KEEP) {
+        truncated = true;
+        break;
+      }
+      const files = await ctx.db
+        .query("channelMessageAttachments")
+        .withIndex("by_message", (q) => q.eq("messageId", m._id))
+        .collect();
+      history.push({
+        at: m._creationTime,
+        text: m.text?.slice(0, MAX_HISTORY_TEXT),
+        attachments: files.length ? await toEvidenceAttachments(ctx, files) : undefined,
+        reported: m._id === reportedId || undefined,
+      });
+    }
+  }
+  // Hit the scan cap: there may be older messages in the window we never read.
+  if (scanned >= HISTORY_SCAN_LIMIT) truncated = true;
+  return { history: history.reverse(), truncated };
+}
 
 /**
  * What is being reported, worked out here from the target itself.
@@ -78,17 +183,22 @@ async function buildEvidence(
       .query("messageAttachments")
       .withIndex("by_message", (q) => q.eq("messageId", message._id))
       .collect();
+    const dm = await recentHistory(
+      ctx,
+      { kind: "dm", conversationId: message.conversationId },
+      message.authorId,
+      message._id
+    );
     return {
       targetUserId: message.authorId,
       evidence: {
         text: message.text?.slice(0, MAX_EVIDENCE_TEXT),
         authorName: author?.name,
         authorUsername: author?.username,
-        attachments: attachments.map((a) => ({
-          fileName: a.fileName,
-          url: a.cdnUrl,
-        })),
+        attachments: await toEvidenceAttachments(ctx, attachments),
         context: "Direct message",
+        history: dm.history,
+        historyTruncated: dm.truncated || undefined,
       },
     };
   }
@@ -106,6 +216,12 @@ async function buildEvidence(
       .query("channelMessageAttachments")
       .withIndex("by_message", (q) => q.eq("messageId", message._id))
       .collect();
+    const recent = await recentHistory(
+      ctx,
+      { kind: "channel", channelId: channel._id },
+      message.authorId,
+      message._id
+    );
     return {
       targetUserId: message.authorId,
       communityId: channel.communityId,
@@ -113,8 +229,10 @@ async function buildEvidence(
         text: message.text?.slice(0, MAX_EVIDENCE_TEXT),
         authorName: author?.name,
         authorUsername: author?.username,
-        attachments: attachments.map((a) => ({ fileName: a.fileName, url: a.cdnUrl })),
+        attachments: await toEvidenceAttachments(ctx, attachments),
         context: `#${channel.name} in ${community?.name ?? "a community"}`,
+        history: recent.history,
+        historyTruncated: recent.truncated || undefined,
       },
     };
   }

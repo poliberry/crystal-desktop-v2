@@ -36,11 +36,16 @@ export function SubmissionsView() {
               <span className="size-14 shrink-0 rounded-lg bg-card" />
             )}
             <div className="min-w-0 flex-1 space-y-1">
-              <p className="truncate text-sm font-medium">{c.name}</p>
+              <p className="truncate text-sm font-medium">
+                {c.name}
+                {c.updatesSkuId && <span className="ml-2 rounded bg-sky-500/15 px-1.5 py-0.5 align-middle text-[10px] font-medium text-sky-400">Update</span>}
+              </p>
               <p className="text-xs text-muted-foreground">
                 {meta?.label ?? c.kind} · {c.priceCents === 0 ? "Free" : `$${(c.priceCents / 100).toFixed(2)}`}
                 {c.sku && ` · ${c.sku.sales} sold`}
               </p>
+              {c.updatesSkuId && c.status === "pending" && <p className="text-xs text-muted-foreground">The store page is unchanged until this is approved.</p>}
+              {c.updatesSkuId && c.status === "rejected" && <p className="text-xs text-muted-foreground">The store page is unchanged.</p>}
               {c.reviewNote && <p className="text-xs">{c.reviewNote}</p>}
             </div>
             <Badge variant="secondary" className={cn("shrink-0 gap-1", s.tone)}>

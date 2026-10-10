@@ -51,8 +51,13 @@ export const SCENE_BACKGROUND_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif",
 export const SCENE_LIMITS = {
   seats: 24,
   props: 24,
+  /** Pictures of drawn artwork laid over the room (see `SceneOverlay`). */
+  overlay: 40,
   name: 60,
 } as const;
+
+/** What an overlay picture can be: a still picture with transparency, never a clip or a page. */
+export const SCENE_OVERLAY_EXTENSIONS = ["png", "webp", "gif"] as const;
 
 export interface SceneRect {
   x: number;
@@ -75,6 +80,23 @@ export interface SceneSpecProp {
   on: boolean;
 }
 
+/**
+ * One piece of artwork drawn on the room: a picture placed over the background, below the screen's
+ * glow, the props and the people. Studio draws shapes, paths, text and effects to pictures (the same
+ * way a decoration's are) and sends them here, so what was drawn in the editor is what the room shows.
+ * Where it goes is in percent of the room picture, so it scales with the room.
+ */
+export interface SceneOverlay {
+  url: string;
+  /** Top-left corner, percent of the room's width and height. A little past the edge is allowed (a glow reaches). */
+  x: number;
+  y: number;
+  /** Size, percent of the room's width and height. */
+  w: number;
+  h: number;
+  opacity: number;
+}
+
 export interface SceneSpec {
   v: 1;
   name: string;
@@ -84,6 +106,8 @@ export interface SceneSpec {
   seats: { x: number; y: number }[];
   props: SceneSpecProp[];
   lights: { dimOnShare: boolean; amount: number };
+  /** Drawn artwork over the background, bottom first. Absent on scenes made before it existed. */
+  overlay: SceneOverlay[];
 }
 
 const ID = /^[a-zA-Z0-9_-]{1,32}$/;
@@ -145,6 +169,24 @@ export function normalizeSceneSpec(input: unknown, assertUrl: UrlCheck): SceneSp
     });
   }
 
+  const overlay: SceneOverlay[] = [];
+  for (const item of Array.isArray(raw.overlay) ? raw.overlay.slice(0, SCENE_LIMITS.overlay) : []) {
+    const r = (item ?? {}) as Record<string, unknown>;
+    const url = assertUrl(String(r.url ?? ""), "scene artwork");
+    const ext = extensionOf(url);
+    if (ext && !(SCENE_OVERLAY_EXTENSIONS as readonly string[]).includes(ext)) {
+      throw new Error("Artwork on a scene has to be a PNG, WebP or GIF picture.");
+    }
+    overlay.push({
+      url,
+      x: num(r.x, -50, 150, 0),
+      y: num(r.y, -50, 150, 0),
+      w: num(r.w, 0.1, 200, 10),
+      h: num(r.h, 0.1, 200, 10),
+      opacity: num(r.opacity, 0.02, 1, 1),
+    });
+  }
+
   const l = (raw.lights ?? {}) as Record<string, unknown>;
   return {
     v: 1,
@@ -155,6 +197,7 @@ export function normalizeSceneSpec(input: unknown, assertUrl: UrlCheck): SceneSp
     seats,
     props,
     lights: { dimOnShare: l.dimOnShare === true, amount: num(l.amount, 0.2, 0.85, 0.6) },
+    overlay,
   };
 }
 

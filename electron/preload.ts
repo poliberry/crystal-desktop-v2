@@ -5,6 +5,8 @@ import type { UpdaterState } from "./updater";
 const api = {
   isElectron: true,
   platform: process.platform,
+  /** Which application this window belongs to: "studio" for the standalone Crystal Studio app. */
+  appKind: process.argv.includes("--crystal-app=studio") ? ("studio" as const) : ("crystal" as const),
   appInfo: () => ipcRenderer.invoke("app:info"),
   customCss: {
     read: () => ipcRenderer.invoke("custom-css:read"),
@@ -126,6 +128,18 @@ const api = {
       return () => ipcRenderer.removeListener("invite:open", handler);
     },
   },
+  /** Tells the app the page can take deep links now (invites, add-a-bot links); queued ones are sent. */
+  deeplinks: {
+    ready: () => ipcRenderer.send("deeplink:ready"),
+  },
+  /** Fires when a link to add a bot or an extension reaches the app: its query string. */
+  installs: {
+    onOpen: (cb: (search: string) => void) => {
+      const handler = (_e: IpcRendererEvent, search: string) => cb(search);
+      ipcRenderer.on("install:open", handler);
+      return () => ipcRenderer.removeListener("install:open", handler);
+    },
+  },
   pip: {
     open: (options?: { width?: number; height?: number; title?: string }) =>
       ipcRenderer.invoke("pip:open", options),
@@ -153,6 +167,43 @@ const api = {
   },
   studio: {
     open: () => ipcRenderer.invoke("studio:open"),
+    openCrystal: () => ipcRenderer.invoke("studio:open-crystal"),
+    /** Studio's project files. Paths are relative to Documents/Crystal Studio. */
+    fs: {
+      root: () => ipcRenderer.invoke("studio:fs:root"),
+      listDir: (rel: string) => ipcRenderer.invoke("studio:fs:listDir", rel),
+      exists: (rel: string) => ipcRenderer.invoke("studio:fs:exists", rel),
+      readText: (rel: string) => ipcRenderer.invoke("studio:fs:readText", rel),
+      writeText: (rel: string, text: string) => ipcRenderer.invoke("studio:fs:writeText", rel, text),
+      readBytes: (rel: string) => ipcRenderer.invoke("studio:fs:readBytes", rel),
+      writeBytes: (rel: string, data: Uint8Array) => ipcRenderer.invoke("studio:fs:writeBytes", rel, data),
+      mkdir: (rel: string) => ipcRenderer.invoke("studio:fs:mkdir", rel),
+      removeFile: (rel: string) => ipcRenderer.invoke("studio:fs:removeFile", rel),
+      trash: (rel: string) => ipcRenderer.invoke("studio:fs:trash", rel),
+      rename: (from: string, to: string) => ipcRenderer.invoke("studio:fs:rename", from, to),
+      reveal: (rel: string) => ipcRenderer.invoke("studio:fs:reveal", rel),
+    },
+    /** A terminal in a project folder (Studio window only). */
+    terminal: {
+      open: (folder: string, cols: number, rows: number) => ipcRenderer.invoke("studio:term:open", folder, cols, rows),
+      write: (id: string, data: string) => ipcRenderer.invoke("studio:term:write", id, data),
+      resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke("studio:term:resize", id, cols, rows),
+      kill: (id: string) => ipcRenderer.invoke("studio:term:kill", id),
+      onData: (cb: (id: string, data: string) => void) => {
+        const h = (_e: IpcRendererEvent, id: string, data: string) => cb(id, data);
+        ipcRenderer.on("studio:term:data", h);
+        return () => ipcRenderer.removeListener("studio:term:data", h);
+      },
+      onExit: (cb: (id: string, code: number) => void) => {
+        const h = (_e: IpcRendererEvent, id: string, code: number) => cb(id, code);
+        ipcRenderer.on("studio:term:exit", h);
+        return () => ipcRenderer.removeListener("studio:term:exit", h);
+      },
+    },
+    /** Bundle an extension project's src/ into dist/extension.js. */
+    build: {
+      extension: (folder: string) => ipcRenderer.invoke("studio:build:extension", folder),
+    },
   },
   admin: {
     open: () => ipcRenderer.invoke("admin:open"),

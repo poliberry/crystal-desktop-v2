@@ -31,7 +31,9 @@ export type StaffPermission =
   | "finance.refund"
   | "finance.payout"
   | "staff.manage"
-  | "audit.read";
+  | "audit.read"
+  /** Write Studio's guides and articles. */
+  | "docs.write";
 
 const ALL_BUT_FINANCE: StaffPermission[] = [
   "catalog.read",
@@ -50,6 +52,7 @@ const ALL_BUT_FINANCE: StaffPermission[] = [
   "support.act",
   "system.broadcast",
   "system.manage",
+  "docs.write",
 ];
 
 export const ROLE_PERMISSIONS: Record<StaffRole, readonly StaffPermission[]> = {
@@ -68,6 +71,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly StaffPermission[]> = {
     "audit.read",
     "system.broadcast",
     "system.manage",
+    "docs.write",
   ],
   moderator: ["users.read", "users.moderate", "communities.read", "reports.read", "reports.act"],
   support: ["users.read", "communities.read", "reports.read", "support.read", "support.act"],

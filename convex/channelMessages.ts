@@ -1,9 +1,9 @@
 import { requireCommunityOpen } from "./lib/moderation";
 import { paginationOptsValidator } from "convex/server";
-import { v } from "convex/values";
+import { v, type ObjectType } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
 import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
@@ -13,6 +13,10 @@ import { unexpiredCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
+import { describeMessage, dispatchMessageCreated, fireCommunityEvent } from "./lib/botEvents";
+import type { ActionRow } from "./lib/components";
+import type { Embed } from "./lib/embeds";
+import { effectiveFileType } from "./lib/mediaType";
 
 function r2UrlForKey(key: string): string | null {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
@@ -205,7 +209,7 @@ export const list = query({
             return {
               id: attachment._id,
               fileName: attachment.fileName,
-              fileType: attachment.fileType,
+              fileType: effectiveFileType(attachment.fileType, attachment.fileName),
               fileSize: attachment.fileSize,
               url: cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null),
             };
@@ -235,10 +239,13 @@ export const list = query({
                 // Not overridden per server: the frame is worn by the account.
                 avatarDecoration: effectiveDecoration(author),
                 isBirthday: isBirthdayNow(author),
+                isBot: !!author.isBot,
                 roleColor: decoration?.roleColor,
               }
             : null,
           attachments,
+          embeds: message.embeds ?? [],
+          components: message.components ?? [],
           reactions: await reactionsFor(ctx, message._id, me._id),
         };
       })
@@ -275,190 +282,237 @@ async function requireNotTimedOut(
   }
 }
 
-export const send = mutation({
-  args: {
-    channelId: v.id("channels"),
-    text: v.optional(v.string()),
-    attachments: v.optional(
-      v.array(
-        v.object({
-          storageId: v.optional(v.id("_storage")),
-          cdnKey: v.optional(v.string()),
-          cdnUrl: v.optional(v.string()),
-          fileName: v.string(),
-          fileType: v.string(),
-          fileSize: v.number(),
-        })
-      )
-    ),
-    /** The message being replied to. Dropped silently unless it's in this
-     * channel. */
-    replyToId: v.optional(v.id("channelMessages")),
-    /** Whether the reply notifies its target — defaults to true, the "@"
-     * toggle sends false. */
-    pingReply: v.optional(v.boolean()),
-    /** Idempotency key from the durable send outbox — see convex/messages.ts
-     * and src/lib/outbox.ts. */
-    clientId: v.optional(v.string()),
-  },
-  handler: async (ctx, { channelId, text, attachments, replyToId, pingReply, clientId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
-    await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
-    await requireNotTimedOut(ctx, channelId, me._id);
-    {
-      const channel = await ctx.db.get(channelId);
-      if (channel) await requireCommunityOpen(ctx, channel.communityId, "post");
-    }
+/** What sending a message takes. Shared by the `send` mutation and the Bot API, so a bot's message
+ * goes through exactly what a person's does: mentions, notifications, unread state, caches. */
+const sendArgs = {
+  channelId: v.id("channels"),
+  text: v.optional(v.string()),
+  attachments: v.optional(
+    v.array(
+      v.object({
+        storageId: v.optional(v.id("_storage")),
+        cdnKey: v.optional(v.string()),
+        cdnUrl: v.optional(v.string()),
+        fileName: v.string(),
+        fileType: v.string(),
+        fileSize: v.number(),
+      })
+    )
+  ),
+  /** The message being replied to. Dropped silently unless it's in this
+   * channel. */
+  replyToId: v.optional(v.id("channelMessages")),
+  /** Whether the reply notifies its target — defaults to true, the "@"
+   * toggle sends false. */
+  pingReply: v.optional(v.boolean()),
+  /** Idempotency key from the durable send outbox — see convex/messages.ts
+   * and src/lib/outbox.ts. */
+  clientId: v.optional(v.string()),
+};
+export type SendArgs = ObjectType<typeof sendArgs>;
 
-    if (clientId) {
-      const existing = await ctx.db
-        .query("channelMessages")
-        .withIndex("by_client_id", (q) => q.eq("clientId", clientId))
-        .unique();
-      if (existing) return existing._id;
-    }
-
-    const trimmed = text?.trim();
-    if (!trimmed && (!attachments || attachments.length === 0)) {
-      throw new Error("Message needs text or an attachment.");
-    }
-
-    for (const attachment of attachments ?? []) {
-      if (attachment.storageId) {
-        await requireWithinUploadLimit(ctx, attachment.storageId, MAX_ATTACHMENT_BYTES, "Attachments");
-      } else if (!attachment.cdnKey && !attachment.cdnUrl) {
-        throw new Error("Attachment missing storageId/cdnKey");
-      }
-    }
-
-    const replyTarget = replyToId ? await ctx.db.get(replyToId) : null;
-    const validReplyToId =
-      replyTarget && replyTarget.channelId === channelId ? replyToId : undefined;
-    const replyPingUserId =
-      validReplyToId && pingReply !== false && replyTarget && replyTarget.authorId !== me._id
-        ? replyTarget.authorId
-        : null;
-
-    const messageId = await ctx.db.insert("channelMessages", {
-      channelId,
-      authorId: me._id,
-      text: trimmed || undefined,
-      replyToId: validReplyToId,
-      clientId: clientId || undefined,
-    });
-
-    for (const attachment of attachments ?? []) {
-      await ctx.db.insert("channelMessageAttachments", { messageId, ...attachment });
-    }
-
+/**
+ * Post a message as `me`. The caller has already said who `me` is. Unless `permissionChecked`, this
+ * checks they may send in the channel; a bot's caller has done its own check, which is stricter
+ * (it also cuts the bot down to what the person who authorised it can still do).
+ */
+export async function sendChannelMessage(
+  ctx: MutationCtx,
+  me: Doc<"users">,
+  { channelId, text, attachments, replyToId, pingReply, clientId }: SendArgs,
+  opts: { permissionChecked?: boolean; /** Already validated by `validateEmbeds`. Only the Bot API passes these. */ embeds?: Embed[]; /** Already validated by `validateComponents`. */ components?: ActionRow[] } = {}
+): Promise<Id<"channelMessages">> {
+  if (!opts.permissionChecked) await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
+  await requireNotTimedOut(ctx, channelId, me._id);
+  {
     const channel = await ctx.db.get(channelId);
-    // Denormalised so unread state is a field comparison rather than a
-    // "newest message" query per channel — see the schema.
-    if (channel) await ctx.db.patch(channelId, { lastMessageAt: Date.now() });
-    // Having just written it, I've read it.
-    if (channel) await markChannelRead(ctx, channelId, channel.communityId, me._id);
+    if (channel) await requireCommunityOpen(ctx, channel.communityId, "post");
+  }
 
-    if (channel && trimmed) {
-      const mentioned = await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id);
-      // Rendered once and shared by both notifications below — it's a plain
-      // text body, so the `<@id>` tags have to become readable names here;
-      // nothing downstream of this renders them.
-      const bodyText = await renderMentionsAsText(ctx, trimmed);
+  if (clientId) {
+    const existing = await ctx.db
+      .query("channelMessages")
+      .withIndex("by_client_id", (q) => q.eq("clientId", clientId))
+      .unique();
+    if (existing) return existing._id;
+  }
 
-      if (mentioned.length > 0) {
+  const trimmed = text?.trim();
+  if (!trimmed && (!attachments || attachments.length === 0) && !opts.embeds?.length && !opts.components?.length) {
+    throw new Error("Message needs text, an attachment, an embed or buttons.");
+  }
+
+  for (const attachment of attachments ?? []) {
+    if (attachment.storageId) {
+      await requireWithinUploadLimit(ctx, attachment.storageId, MAX_ATTACHMENT_BYTES, "Attachments");
+    } else if (!attachment.cdnKey && !attachment.cdnUrl) {
+      throw new Error("Attachment missing storageId/cdnKey");
+    }
+  }
+
+  const replyTarget = replyToId ? await ctx.db.get(replyToId) : null;
+  const validReplyToId =
+    replyTarget && replyTarget.channelId === channelId ? replyToId : undefined;
+  const replyPingUserId =
+    validReplyToId && pingReply !== false && replyTarget && replyTarget.authorId !== me._id
+      ? replyTarget.authorId
+      : null;
+
+  const messageId = await ctx.db.insert("channelMessages", {
+    channelId,
+    authorId: me._id,
+    text: trimmed || undefined,
+    replyToId: validReplyToId,
+    clientId: clientId || undefined,
+    ...(opts.embeds?.length ? { embeds: opts.embeds } : {}),
+    ...(opts.components?.length ? { components: opts.components } : {}),
+  });
+
+  for (const attachment of attachments ?? []) {
+    await ctx.db.insert("channelMessageAttachments", { messageId, ...attachment, fileType: effectiveFileType(attachment.fileType, attachment.fileName) });
+  }
+
+  const channel = await ctx.db.get(channelId);
+  // Denormalised so unread state is a field comparison rather than a
+  // "newest message" query per channel — see the schema.
+  if (channel) await ctx.db.patch(channelId, { lastMessageAt: Date.now() });
+  // Having just written it, I've read it.
+  if (channel) await markChannelRead(ctx, channelId, channel.communityId, me._id);
+
+  if (channel && trimmed) {
+    const mentioned = await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id);
+    // Rendered once and shared by both notifications below — it's a plain
+    // text body, so the `<@id>` tags have to become readable names here;
+    // nothing downstream of this renders them.
+    const bodyText = await renderMentionsAsText(ctx, trimmed);
+
+    if (mentioned.length > 0) {
+      await notifyUsers(ctx, {
+        userIds: mentioned,
+        actorId: me._id,
+        type: "channel_mention",
+        channelId,
+        communityId: channel.communityId,
+        channelMessageId: messageId,
+        title: `${me.name} mentioned you in #${channel.name}`,
+        body: bodyText,
+        isMention: true,
+      });
+    }
+
+    // Everyone else in the channel.
+    //
+    // Only reaches people whose per-server setting is "all messages":
+    // `notifyUsers` asks `allowsChannelMessage(policy, communityId, false)`
+    // for each of them, so the default ("mentions only") is untouched and
+    // nobody starts getting notified without having asked to be.
+    //
+    // Membership alone can't decide who this is. A private channel is
+    // private because of permission overwrites, so notifying past them
+    // would leak both the message and the channel's existence.
+    const community = await ctx.db.get(channel.communityId);
+    if (community) {
+      const mentionedSet = new Set<string>(mentioned);
+      const members = await ctx.db
+        .query("communityMembers")
+        .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
+        .collect();
+
+      const others: Id<"users">[] = [];
+      for (const member of members) {
+        if (member.userId === me._id || mentionedSet.has(member.userId)) continue;
+        // The reply target gets the `reply` notification below instead.
+        if (member.userId === replyPingUserId) continue;
+        const perms = await getChannelPermissions(ctx, community, channelId, member.userId);
+        if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
+        others.push(member.userId);
+      }
+
+      if (others.length > 0) {
         await notifyUsers(ctx, {
-          userIds: mentioned,
+          userIds: others,
           actorId: me._id,
           type: "channel_mention",
           channelId,
           communityId: channel.communityId,
           channelMessageId: messageId,
-          title: `${me.name} mentioned you in #${channel.name}`,
+          title: `${me.name} in #${channel.name}`,
           body: bodyText,
-          isMention: true,
-        });
-      }
-
-      // Everyone else in the channel.
-      //
-      // Only reaches people whose per-server setting is "all messages":
-      // `notifyUsers` asks `allowsChannelMessage(policy, communityId, false)`
-      // for each of them, so the default ("mentions only") is untouched and
-      // nobody starts getting notified without having asked to be.
-      //
-      // Membership alone can't decide who this is. A private channel is
-      // private because of permission overwrites, so notifying past them
-      // would leak both the message and the channel's existence.
-      const community = await ctx.db.get(channel.communityId);
-      if (community) {
-        const mentionedSet = new Set<string>(mentioned);
-        const members = await ctx.db
-          .query("communityMembers")
-          .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
-          .collect();
-
-        const others: Id<"users">[] = [];
-        for (const member of members) {
-          if (member.userId === me._id || mentionedSet.has(member.userId)) continue;
-          // The reply target gets the `reply` notification below instead.
-          if (member.userId === replyPingUserId) continue;
-          const perms = await getChannelPermissions(ctx, community, channelId, member.userId);
-          if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
-          others.push(member.userId);
-        }
-
-        if (others.length > 0) {
-          await notifyUsers(ctx, {
-            userIds: others,
-            actorId: me._id,
-            type: "channel_mention",
-            channelId,
-            communityId: channel.communityId,
-            channelMessageId: messageId,
-            title: `${me.name} in #${channel.name}`,
-            body: bodyText,
-            isMention: false,
-          });
-        }
-      }
-    }
-
-    // The reply ping — even for an attachment-only reply, and regardless of
-    // the target's per-server "all messages" setting (a direct reply is
-    // addressed to them). Skipped when they were also @-mentioned: that
-    // notification is the more specific one.
-    if (channel && replyPingUserId) {
-      const mentionedReplyTarget =
-        trimmed &&
-        (await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id)).includes(
-          replyPingUserId
-        );
-      if (!mentionedReplyTarget) {
-        await notifyUsers(ctx, {
-          userIds: [replyPingUserId],
-          actorId: me._id,
-          type: "reply",
-          channelId,
-          communityId: channel.communityId,
-          channelMessageId: messageId,
-          title: `${me.name} replied to you in #${channel.name}`,
-          body: trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+          isMention: false,
         });
       }
     }
+  }
 
-    try {
-      const { cacheInvalidateKeys } = await import("./cache");
-      await cacheInvalidateKeys(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:messages:20`, `channel:${channelId}:messages:25`, `channel:${channelId}:meta`);
-    } catch {}
-    try {
-      const { internal } = await import("./_generated/api");
-      await ctx.scheduler.runAfter(0, internal.cache.invalidateChannelCache, { channelId });
-    } catch {}
+  // The reply ping — even for an attachment-only reply, and regardless of
+  // the target's per-server "all messages" setting (a direct reply is
+  // addressed to them). Skipped when they were also @-mentioned: that
+  // notification is the more specific one.
+  if (channel && replyPingUserId) {
+    const mentionedReplyTarget =
+      trimmed &&
+      (await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id)).includes(
+        replyPingUserId
+      );
+    if (!mentionedReplyTarget) {
+      await notifyUsers(ctx, {
+        userIds: [replyPingUserId],
+        actorId: me._id,
+        type: "reply",
+        channelId,
+        communityId: channel.communityId,
+        channelMessageId: messageId,
+        title: `${me.name} replied to you in #${channel.name}`,
+        body: trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+      });
+    }
+  }
 
-    return messageId;
+  try {
+    const { cacheInvalidateKeys } = await import("./cache");
+    await cacheInvalidateKeys(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:messages:20`, `channel:${channelId}:messages:25`, `channel:${channelId}:meta`);
+  } catch {}
+  try {
+    const { internal } = await import("./_generated/api");
+    await ctx.scheduler.runAfter(0, internal.cache.invalidateChannelCache, { channelId });
+  } catch {}
+
+  // Bots in this community that can see the channel are told. Never allowed to get in the way.
+  if (channel) await dispatchMessageCreated(ctx, channel, messageId, me);
+
+  return messageId;
+}
+
+export const send = mutation({
+  args: sendArgs,
+  handler: async (ctx, args) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    return sendChannelMessage(ctx, me, args);
   },
 });
+
+/** Rewrite a message's text and/or cards. Shared by a person's edit and a bot's. */
+export async function editChannelMessage(
+  ctx: MutationCtx,
+  message: Doc<"channelMessages">,
+  change: { text?: string; embeds?: Embed[]; components?: ActionRow[] },
+): Promise<void> {
+  const patch: Partial<Doc<"channelMessages">> = {};
+  if (change.text !== undefined) {
+    const t = change.text.trim();
+    if (!t && !(change.embeds ?? message.embeds)?.length && !(change.components ?? message.components)?.length) throw new Error("Message can't be empty.");
+    patch.text = t || undefined;
+  }
+  if (change.embeds !== undefined) patch.embeds = change.embeds.length ? change.embeds : undefined;
+  if (change.components !== undefined) patch.components = change.components.length ? change.components : undefined;
+  // Converge rather than re-stamp `editedAt` when an outbox retry replays the same edit.
+  const same = Object.entries(patch).every(([k, v]) => JSON.stringify((message as Record<string, unknown>)[k]) === JSON.stringify(v));
+  if (same) return;
+  await ctx.db.patch(message._id, { ...patch, editedAt: Date.now() });
+  const channel = await ctx.db.get(message.channelId);
+  const fresh = await ctx.db.get(message._id);
+  if (channel && fresh) await fireCommunityEvent(ctx, channel.communityId, "message.updated", { channelId: channel._id, message: await describeMessage(ctx, fresh) }, { scope: "messages.read", channelId: channel._id, exceptUserId: message.authorId });
+}
 
 export const update = mutation({
   args: { messageId: v.id("channelMessages"), text: v.string() },
@@ -467,15 +521,23 @@ export const update = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) return;
     if (message.authorId !== me._id) throw new Error("You can only edit your own messages.");
-
-    const trimmed = text.trim();
-    if (!trimmed) throw new Error("Message can't be empty.");
-    // Converge rather than re-stamp `editedAt` when an outbox retry replays the
-    // same edit.
-    if (message.text === trimmed) return;
-    await ctx.db.patch(messageId, { text: trimmed, editedAt: Date.now() });
+    if (!text.trim()) throw new Error("Message can't be empty.");
+    await editChannelMessage(ctx, message, { text });
   },
 });
+
+/** Delete a message and what hangs off it. Shared by a person's delete, a bot's, and bulk delete. */
+export async function deleteChannelMessage(ctx: MutationCtx, message: Doc<"channelMessages">, by?: Id<"users">): Promise<void> {
+  const [attachments, reactions] = await Promise.all([
+    ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect(),
+    ctx.db.query("channelMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect(),
+  ]);
+  for (const attachment of attachments) await ctx.db.delete(attachment._id);
+  for (const reaction of reactions) await ctx.db.delete(reaction._id);
+  await ctx.db.delete(message._id);
+  const channel = await ctx.db.get(message.channelId);
+  if (channel) await fireCommunityEvent(ctx, channel.communityId, "message.deleted", { channelId: channel._id, messageId: message._id }, { scope: "messages.read", channelId: channel._id, exceptUserId: by });
+}
 
 export const remove = mutation({
   args: { messageId: v.id("channelMessages") },
@@ -487,22 +549,32 @@ export const remove = mutation({
     if (message.authorId !== me._id) {
       await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.MANAGE_MESSAGES);
     }
-
-    const [attachments, reactions] = await Promise.all([
-      ctx.db
-        .query("channelMessageAttachments")
-        .withIndex("by_message", (q) => q.eq("messageId", messageId))
-        .collect(),
-      ctx.db
-        .query("channelMessageReactions")
-        .withIndex("by_message", (q) => q.eq("messageId", messageId))
-        .collect(),
-    ]);
-    for (const attachment of attachments) await ctx.db.delete(attachment._id);
-    for (const reaction of reactions) await ctx.db.delete(reaction._id);
-    await ctx.db.delete(messageId);
+    await deleteChannelMessage(ctx, message, me._id);
   },
 });
+
+/** Put a reaction in (or take it out) for `userId`. Shared by a person and a bot. Returns whether anything changed. */
+export async function setChannelReaction(ctx: MutationCtx, message: Doc<"channelMessages">, userId: Id<"users">, emoji: string, desired?: "add" | "remove"): Promise<boolean> {
+  const existing = await ctx.db
+    .query("channelMessageReactions")
+    .withIndex("by_message_user_emoji", (q) => q.eq("messageId", message._id).eq("userId", userId).eq("emoji", emoji))
+    .unique();
+  const shouldExist = desired ? desired === "add" : !existing;
+  let changed = false;
+  if (existing && !shouldExist) {
+    await ctx.db.delete(existing._id);
+    changed = true;
+  } else if (!existing && shouldExist) {
+    await ctx.db.insert("channelMessageReactions", { messageId: message._id, userId, emoji });
+    changed = true;
+  }
+  if (changed) {
+    const channel = await ctx.db.get(message.channelId);
+    const user = await ctx.db.get(userId);
+    if (channel && user) await fireCommunityEvent(ctx, channel.communityId, shouldExist ? "reaction.added" : "reaction.removed", { channelId: channel._id, messageId: message._id, emoji, user: { id: user._id, username: user.username, name: user.name, isBot: !!user.isBot } }, { scope: "messages.read", channelId: channel._id, exceptUserId: userId });
+  }
+  return changed;
+}
 
 export const toggleReaction = mutation({
   args: {
@@ -517,19 +589,7 @@ export const toggleReaction = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
     await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
-
-    const existing = await ctx.db
-      .query("channelMessageReactions")
-      .withIndex("by_message_user_emoji", (q) =>
-        q.eq("messageId", messageId).eq("userId", me._id).eq("emoji", emoji)
-      )
-      .unique();
-    const shouldExist = desired ? desired === "add" : !existing;
-    if (existing && !shouldExist) {
-      await ctx.db.delete(existing._id);
-    } else if (!existing && shouldExist) {
-      await ctx.db.insert("channelMessageReactions", { messageId, userId: me._id, emoji });
-    }
+    await setChannelReaction(ctx, message, me._id, emoji, desired);
   },
 });
 
@@ -631,7 +691,7 @@ export const listAttachments = query({
               id: attachment._id,
               messageId: message._id,
               fileName: attachment.fileName,
-              fileType: attachment.fileType,
+              fileType: effectiveFileType(attachment.fileType, attachment.fileName),
               fileSize: attachment.fileSize,
               url: cdnUrl ?? (anyAtt.storageId ? await ctx.storage.getUrl(anyAtt.storageId as never) : null),
               createdAt: message._creationTime,

@@ -101,3 +101,21 @@ export function isR2Url(url: string | null | undefined): boolean {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
   return !!base && url.startsWith(base.replace(/\/$/, "") + "/");
 }
+
+/**
+ * The artwork address, checked.
+ *
+ * It has to be on our own CDN, in the folder the uploader's own upload went to.
+ * Anything else — a link to some other site, or someone else's file — would be
+ * drawn into other people's profiles, and an address elsewhere can change what it
+ * shows after staff approved it.
+ */
+export function creationArtworkUrl(url: string, clerkId: string): string {
+  const base = (process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "").replace(/\/$/, "");
+  if (!base) throw new Error("Creator uploads aren't available right now.");
+  if (!url.startsWith(`${base}/${creationFolder(clerkId)}`) || url.length > 500) {
+    throw new Error("Upload the artwork through Crystal first.");
+  }
+  return url;
+}
+

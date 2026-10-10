@@ -4,8 +4,11 @@ import { Armchair, Tv } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { PROP_ASPECT, ScenePropView } from "@/components/lounge/lounge-props";
-import { addNode, boundsOf, centre, duplicateNodes, makeSceneObject, makeShape, makeText, newId, nodesInOrder, patchNodes, removeNodes, reorder, round, unionBounds } from "@/studio/model/doc";
-import type { Doc, Node, PropNode, TextNode } from "@/studio/model/types";
+import { defaultBrush, fitFreehand } from "@/studio/model/brush";
+import { addNode, boundsOf, centre, duplicateNodes, expandGroups, groupAt, guidesOf, makeLine, makePathFromWorld, makeSceneObject, makeShape, makeShapePath, makeText, newId, nodesInOrder, patchNodes, removeGuide, round, setGuide, unionBounds, type GuideAxis } from "@/studio/model/doc";
+import { insertAnchor, isSmooth, localToWorld, moveAnchors, moveHandle, nearestOnPath, pathD, refit, removeAnchors, toLocal, toggleSmooth, worldToLocal } from "@/studio/model/path";
+import { dragScale, oppositeAnchor, rotateNodes, scaleNodes } from "@/studio/model/transform";
+import type { Doc, Node, PathNode, PathPoint, PropNode, TextNode } from "@/studio/model/types";
 import type { DocEditor, Tool } from "@/studio/editor/use-doc-editor";
 import {
   HANDLES,
@@ -14,17 +17,44 @@ import {
   normaliseAngle,
   normalisedRect,
   resizeNode,
+  snapLines,
   snapMove,
+  snapScalar,
+  viewForRect,
   type Guides,
   type Handle,
   type Rect,
+  type SnapOptions,
 } from "@/studio/editor/geometry";
+import { FxView } from "@/studio/editor/fx-view";
+import { hasFx } from "@/studio/model/fx";
+import * as A from "@/studio/editor/actions";
+import { toolForKey } from "@/studio/editor/tools";
+import { RULER_SIZE, Ruler, RulerCorner } from "@/studio/editor/rulers";
+import { defaultGridSize, type SetViewPrefs, type ViewPrefs } from "@/studio/editor/view-prefs";
+import type { ViewCommands } from "@/studio/editor/view-menu";
 import type { LoadedAsset } from "@/studio/storage/assets";
 import { cn } from "@/lib/utils";
 
 const SNAP_PX = 6;
-const HANDLE_PX = 9;
+const HANDLE_PX = 7;
 const ROTATE_OFFSET_PX = 26;
+/** How far a guide line reaches either side of the artboard, in document units. */
+const GUIDE_REACH = 50_000;
+/** A click on a guide lands within this many screen pixels of it. */
+const GUIDE_GRAB_PX = 5;
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 8;
+
+/** The guide being dragged: a new one from a ruler, or an existing one picked up. */
+interface GuideDrag {
+  axis: GuideAxis;
+  /** Which of the document's guides this is, or null for a new one. */
+  index: number | null;
+  position: number;
+  /** Over the ruler it came from, so letting go would delete it. */
+  discard: boolean;
+}
 
 type Drag =
   | { kind: "pan"; startX: number; startY: number; panX: number; panY: number }
@@ -32,11 +62,26 @@ type Drag =
   | { kind: "resize"; handle: Handle; orig: Node; lock: boolean }
   | { kind: "rotate"; orig: Node }
   | { kind: "marquee"; start: { x: number; y: number }; base: string[] }
-  | { kind: "create"; tool: Tool; start: { x: number; y: number } };
+  | { kind: "create"; tool: Tool; start: { x: number; y: number } }
+  | { kind: "guide"; axis: GuideAxis; index: number | null }
+  | { kind: "scale"; hx: -1 | 0 | 1; hy: -1 | 0 | 1; box: { x: number; y: number; w: number; h: number }; anchor: { x: number; y: number }; orig: Node[] }
+  | { kind: "spin"; pivot: { x: number; y: number }; start: number; orig: Node[] }
+  | { kind: "anchor"; orig: PathNode; local: PathPoint[]; from: { x: number; y: number }; indices: Set<number>; moved: boolean }
+  | { kind: "handle"; orig: PathNode; local: PathPoint[]; index: number; which: "in" | "out" }
+  | { kind: "pen" }
+  | { kind: "brush" }
+  | { kind: "zoom"; start: { x: number; y: number }; alt: boolean; client: { x: number; y: number } };
+
+/** `b` moved onto the nearest multiple of 45° from `a`, at the same distance. */
+function constrain45(a: { x: number; y: number }, b: { x: number; y: number }) {
+  const d = Math.hypot(b.x - a.x, b.y - a.y);
+  const ang = Math.round(Math.atan2(b.y - a.y, b.x - a.x) / (Math.PI / 4)) * (Math.PI / 4);
+  return { x: a.x + Math.cos(ang) * d, y: a.y + Math.sin(ang) * d };
+}
 
 // --- A node, drawn --------------------------------------------------------------------------------
 
-function NodeView({ node, assets, doc }: { node: Node; assets: Map<string, LoadedAsset>; doc: Doc }) {
+function NodeView({ node, assets, doc, outline, lineW, zoom }: { node: Node; assets: Map<string, LoadedAsset>; doc: Doc; outline: boolean; lineW: number; zoom: number }) {
   const box: React.CSSProperties = {
     position: "absolute",
     left: node.x,
@@ -47,6 +92,25 @@ function NodeView({ node, assets, doc }: { node: Node; assets: Map<string, Loade
     opacity: node.opacity,
   };
   const common = { "data-node-id": node.id } as const;
+
+  // Gradients and effects are drawn by the same code that renders them for the store.
+  if (!outline && hasFx(node)) return <FxView node={node} assets={assets} zoom={zoom} />;
+
+  // Outline view: the shape of every picture, shape and line of text, none of its paint.
+  if (outline && (node.type === "image" || node.type === "shape" || node.type === "text")) {
+    return (
+      <div
+        {...common}
+        style={{
+          ...box,
+          opacity: 1,
+          boxSizing: "border-box",
+          border: `${lineW}px solid rgba(255,255,255,0.8)`,
+          borderRadius: node.type === "shape" ? (node.shape === "ellipse" ? "50%" : node.radius) : 0,
+        }}
+      />
+    );
+  }
 
   switch (node.type) {
     case "image": {
@@ -97,6 +161,13 @@ function NodeView({ node, assets, doc }: { node: Node; assets: Map<string, Loade
         >
           {node.text}
         </div>
+      );
+    case "path":
+      // Only reached in Outline view; otherwise a path is drawn by FxView.
+      return (
+        <svg {...common} className="absolute overflow-visible" style={{ left: node.x, top: node.y, width: node.w, height: node.h, transform: node.rotation ? `rotate(${node.rotation}deg)` : undefined }}>
+          <path d={pathD(node.points, node.closed, node.w, node.h)} fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth={lineW} style={{ pointerEvents: "stroke" }} />
+        </svg>
       );
     case "screen":
       return (
@@ -188,14 +259,32 @@ export function Canvas({
   assets,
   avatarUrl,
   onDropFiles,
+  prefs,
+  setPrefs,
+  commands,
+  readout,
+  onZoom,
+  onNotice,
 }: {
   editor: DocEditor;
   assets: Map<string, LoadedAsset>;
   avatarUrl?: string;
   onDropFiles?: (files: File[], at: { x: number; y: number }) => void;
+  prefs: ViewPrefs;
+  setPrefs: SetViewPrefs;
+  /** Filled in with this canvas's view commands, for a menu outside it to call. */
+  commands: React.RefObject<ViewCommands | null>;
+  /** Where the pointer's position is written, as it moves (an element elsewhere in the editor). */
+  readout: React.RefObject<HTMLSpanElement | null>;
+  /** Told the zoom whenever it changes (1 = 100%). */
+  onZoom?: (zoom: number) => void;
+  /** Somewhere to say why something couldn't be done. */
+  onNotice?: (message: string) => void;
 }) {
-  const { doc, commit, selection, setSelection, tool, setTool } = editor;
+  const { doc, commit, selection, setSelection, tool, setTool, scope, setScope } = editor;
   const viewport = useRef<HTMLDivElement>(null);
+  const topMarker = useRef<HTMLDivElement>(null);
+  const leftMarker = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState({ zoom: 1, x: 0, y: 0 });
   const [fitted, setFitted] = useState(false);
@@ -203,23 +292,49 @@ export function Canvas({
   const [ghost, setGhost] = useState<Rect | null>(null);
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [guideDrag, setGuideDrag] = useState<GuideDrag | null>(null);
+  /** The guide last made or picked up, by where it is: what Delete removes when nothing else is selected. */
+  const [guideSel, setGuideSel] = useState<{ axis: GuideAxis; position: number } | null>(null);
+
+  /** The Pen's path in progress, in artboard units (handles as absolute positions), and where the pointer is. */
+  const [pen, setPen] = useState<PathPoint[]>([]);
+  const [penHover, setPenHover] = useState<{ x: number; y: number } | null>(null);
+  // The Paintbrush: the pointer's track while the button is down, and the same track as state to draw it.
+  const brushRef = useRef<{ x: number; y: number }[]>([]);
+  const [brushLive, setBrushLive] = useState<{ x: number; y: number }[] | null>(null);
+  const [lineGhost, setLineGhost] = useState<{ a: { x: number; y: number }; b: { x: number; y: number } } | null>(null);
+  /** The anchors picked with the Direct Selection tool, by index into the selected path. */
+  const [anchors, setAnchors] = useState<number[]>([]);
+  const penRef = useRef(pen);
+  penRef.current = pen;
   const drag = useRef<Drag | null>(null);
-  const clipboard = useRef<Node[]>([]);
   const viewRef = useRef(view);
   viewRef.current = view;
   const docRef = useRef(doc);
   docRef.current = doc;
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+
+  const inset = prefs.rulers ? RULER_SIZE : 0;
+  const gridSize = prefs.gridSize ?? defaultGridSize(doc.kind);
+  /** What a dragged edge or object may snap to. */
+  const snapOpts = useCallback(
+    (): SnapOptions => ({ smart: prefsRef.current.smartGuides, guides: prefsRef.current.showGuides, grid: prefsRef.current.snapGrid ? (prefsRef.current.gridSize ?? defaultGridSize(docRef.current.kind)) : null }),
+    [],
+  );
 
   // --- fit -----------------------------------------------------------------------------------
   const m = doc.kind === "decoration" ? doc.artboard.w * 0.3 : 0;
   const fit = useCallback(() => {
     if (size.w === 0) return;
     const pad = 56;
+    const availW = size.w - inset;
+    const availH = size.h - inset;
     const cw = doc.artboard.w + m * 2;
     const ch = doc.artboard.h + m * 2;
-    const zoom = Math.max(0.05, Math.min((size.w - pad * 2) / cw, (size.h - pad * 2) / ch, 4));
-    setView({ zoom, x: (size.w - doc.artboard.w * zoom) / 2, y: (size.h - doc.artboard.h * zoom) / 2 });
-  }, [size, doc.artboard.w, doc.artboard.h, m]);
+    const zoom = Math.max(MIN_ZOOM, Math.min((availW - pad * 2) / cw, (availH - pad * 2) / ch, 4));
+    setView({ zoom, x: inset + (availW - doc.artboard.w * zoom) / 2, y: inset + (availH - doc.artboard.h * zoom) / 2 });
+  }, [size, inset, doc.artboard.w, doc.artboard.h, m]);
 
   useLayoutEffect(() => {
     const el = viewport.current;
@@ -243,11 +358,39 @@ export function Canvas({
 
   const zoomAt = useCallback((factor: number, px: number, py: number) => {
     setView((v) => {
-      const zoom = Math.max(0.05, Math.min(8, v.zoom * factor));
+      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, v.zoom * factor));
       const k = zoom / v.zoom;
       return { zoom, x: px - (px - v.x) * k, y: py - (py - v.y) * k };
     });
   }, []);
+
+  // Hand the View menu what it needs to move the view.
+  useEffect(() => {
+    commands.current = {
+      fit,
+      actualSize: () => zoomAt(1 / viewRef.current.zoom, inset + (size.w - inset) / 2, inset + (size.h - inset) / 2),
+      zoomIn: () => zoomAt(1.25, inset + (size.w - inset) / 2, inset + (size.h - inset) / 2),
+      zoomOut: () => zoomAt(0.8, inset + (size.w - inset) / 2, inset + (size.h - inset) / 2),
+      setZoom: (z) => zoomAt(z / viewRef.current.zoom, inset + (size.w - inset) / 2, inset + (size.h - inset) / 2),
+    };
+    return () => {
+      commands.current = null;
+    };
+  }, [commands, fit, zoomAt, inset, size]);
+
+  useEffect(() => {
+    onZoom?.(view.zoom);
+  }, [view.zoom, onZoom]);
+
+  /** Frame a rectangle (document units) in the window. */
+  const zoomToRect = useCallback(
+    (r: Rect) => {
+      // Centred within the space right of and below the rulers, so the inset is added back.
+      const v = viewForRect(r, { w: size.w - inset, h: size.h - inset }, 24, MIN_ZOOM, MAX_ZOOM);
+      setView({ zoom: v.zoom, x: v.x + inset, y: v.y + inset });
+    },
+    [size, inset],
+  );
 
   // Wheel: pinch / ctrl to zoom, otherwise pan. Native so it can be non-passive.
   useEffect(() => {
@@ -268,6 +411,42 @@ export function Canvas({
   const single = selected.length === 1 ? selected[0] : null;
   const selBounds = useMemo(() => unionBounds(selected), [selected]);
 
+  /** What the keyboard and double-click handlers need that changes every render, read when they run. */
+  const latest = useRef({ tool, anchors, single, selection, scope });
+  latest.current = { tool, anchors, single, selection, scope };
+
+  // Different selection, different anchors.
+  const singleId = single?.id ?? null;
+  useEffect(() => setAnchors([]), [singleId]);
+
+  /** Write back a path whose anchors were edited (in its original local pixels), refitting its box. */
+  const commitPath = useCallback(
+    (orig: PathNode, local: PathPoint[], key: string) => {
+      const f = refit(orig, local);
+      // Editing anchors ends "polygon with N sides": the outline is now its own.
+      commit((cur) => patchNodes(cur, [orig.id], { ...f, live: undefined } as Partial<Node>), key);
+    },
+    [commit],
+  );
+
+  // --- the Pen ---------------------------------------------------------------------------------
+  const finishPen = useCallback(
+    (closed: boolean, pts?: PathPoint[]) => {
+      const list = pts ?? penRef.current;
+      setPen([]);
+      setPenHover(null);
+      const node = makePathFromWorld(list, closed && list.length >= 3, closed && list.length >= 3 ? { fill: "#8b5cf6", strokeWidth: 0, join: "miter" } : { fill: "none", strokeWidth: 3 });
+      if (!node) return;
+      commit((cur) => addNode(cur, node), `create-${node.id}`);
+      setSelection([node.id]);
+    },
+    [commit, setSelection],
+  );
+  // Leaving the Pen (Escape, or choosing another tool) finishes the path as an open one.
+  useEffect(() => {
+    if (tool !== "pen" && penRef.current.length) finishPen(false);
+  }, [tool, finishPen]);
+
   // --- creating ---------------------------------------------------------------------------------
   const place = useCallback(
     (t: Tool, area: Rect | null, at: { x: number; y: number }) => {
@@ -277,6 +456,10 @@ export function Canvas({
       if (t === "rect" || t === "ellipse") {
         const a = dragged ? area! : { x: at.x - 60, y: at.y - 60, w: 120, h: 120 };
         node = makeShape(t, a.x, a.y, a.w, a.h);
+      } else if (t === "polygon" || t === "star") {
+        const a = dragged ? area! : { x: at.x - 60, y: at.y - 60, w: 120, h: 120 };
+        const o = prefsRef.current;
+        node = makeShapePath(t === "polygon" ? { kind: "polygon", sides: o.polygonSides } : { kind: "star", points: o.starPoints, inner: o.starInner }, a);
       } else if (t === "text") {
         const text = makeText(at.x - 80, at.y - 24);
         node = dragged ? { ...text, x: area!.x, y: area!.y, w: area!.w, h: Math.max(area!.h, 24) } : text;
@@ -319,12 +502,35 @@ export function Canvas({
     [commit, setSelection, setTool],
   );
 
+  // --- guides -----------------------------------------------------------------------------------
+  const guideDragRef = useRef<GuideDrag | null>(null);
+  const setGuideDragBoth = useCallback((g: GuideDrag | null) => {
+    guideDragRef.current = g;
+    setGuideDrag(g);
+  }, []);
+
+  /** A point pulled onto the guides and grid it is near, unless snapping is off (⌘/Ctrl). */
+  const snapPoint = (p: { x: number; y: number }, e: { ctrlKey: boolean; metaKey: boolean }) => {
+    if (e.ctrlKey || e.metaKey) return p;
+    const o = snapOpts();
+    const t = SNAP_PX / viewRef.current.zoom;
+    const d = docRef.current;
+    return { x: snapScalar(p.x, snapLines(d, "x", o), t, o.grid), y: snapScalar(p.y, snapLines(d, "y", o), t, o.grid) };
+  };
+
   // --- pointer ----------------------------------------------------------------------------------
   const onPointerDown = (e: React.PointerEvent) => {
     const el = viewport.current;
     if (!el) return;
-    el.setPointerCapture(e.pointerId);
+    // Capture keeps the drag going outside the canvas; if the pointer can't be captured (it has already
+    // gone, as when a touch is cancelled) the gesture simply carries on without.
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* not capturable */
+    }
     const world = toWorld(e.clientX, e.clientY);
+    const target = e.target as HTMLElement;
 
     if (e.button === 1 || tool === "hand" || spaceDown) {
       drag.current = { kind: "pan", startX: e.clientX, startY: e.clientY, panX: view.x, panY: view.y };
@@ -332,13 +538,98 @@ export function Canvas({
     }
     if (e.button !== 0) return;
 
-    if (tool !== "select") {
-      drag.current = { kind: "create", tool, start: world };
+    // A ruler: pull a new guide out of it. The top ruler makes horizontal guides (a y position).
+    const ruler = target.closest("[data-ruler]")?.getAttribute("data-ruler");
+    if (ruler) {
+      if (prefsRef.current.lockGuides) return;
+      const axis: GuideAxis = ruler === "top" ? "y" : "x";
+      drag.current = { kind: "guide", axis, index: null };
+      setGuideSel(null);
+      setGuideDragBoth({ axis, index: null, position: round(axis === "x" ? world.x : world.y), discard: true });
       return;
     }
 
+    if (tool === "zoom") {
+      drag.current = { kind: "zoom", start: world, alt: e.altKey, client: { x: e.clientX, y: e.clientY } };
+      return;
+    }
+
+    if (tool === "brush") {
+      brushRef.current = [world];
+      setBrushLive([world]);
+      drag.current = { kind: "brush" };
+      return;
+    }
+
+    if (tool === "pen") {
+      const p = snapPoint(world, e);
+      const pts = penRef.current;
+      // Back on the first point: close the path.
+      if (pts.length >= 3 && Math.hypot(p.x - pts[0].x, p.y - pts[0].y) * viewRef.current.zoom < 8) {
+        finishPen(true);
+        return;
+      }
+      setPen([...pts, { x: p.x, y: p.y }]);
+      drag.current = { kind: "pen" };
+      return;
+    }
+
+    if (tool !== "select" && tool !== "direct") {
+      drag.current = { kind: "create", tool, start: snapPoint(world, e) };
+      return;
+    }
+
+    // An existing guide: pick it up (unless guides are locked).
+    const guideAttr = target.closest("[data-guide]")?.getAttribute("data-guide");
+    if (guideAttr && !prefsRef.current.lockGuides) {
+      const [axis, i] = guideAttr.split(":") as [GuideAxis, string];
+      const index = Number(i);
+      const position = guidesOf(docRef.current)[axis][index];
+      if (position !== undefined) {
+        drag.current = { kind: "guide", axis, index };
+        setSelection([]);
+        setGuideSel({ axis, position });
+        setGuideDragBoth({ axis, index, position, discard: false });
+        return;
+      }
+    }
+    setGuideSel(null);
+
+    // The box round several selected objects (or a group): scale or turn them together.
+    const mh = target.closest("[data-mhandle]")?.getAttribute("data-mhandle");
+    const movable = selected.filter((n) => !n.locked);
+    if (mh && movable.length > 1 && selBounds) {
+      if (mh === "rotate") {
+        const pivot = { x: selBounds.x + selBounds.w / 2, y: selBounds.y + selBounds.h / 2 };
+        drag.current = { kind: "spin", pivot, start: angleTo(pivot, world), orig: movable };
+      } else {
+        const def = HANDLES.find((h) => h.id === mh)!;
+        drag.current = { kind: "scale", hx: def.hx, hy: def.hy, box: selBounds, anchor: oppositeAnchor(selBounds, def.hx, def.hy), orig: movable };
+      }
+      return;
+    }
+
+    // Direct Selection on a path: an anchor point, or one of its curve handles.
+    if (tool === "direct" && single?.type === "path" && !single.locked) {
+      const a = target.closest("[data-anchor]")?.getAttribute("data-anchor");
+      const hin = target.closest("[data-hin]")?.getAttribute("data-hin");
+      const hout = target.closest("[data-hout]")?.getAttribute("data-hout");
+      if (hin != null || hout != null) {
+        drag.current = { kind: "handle", orig: single, local: toLocal(single), index: Number(hin ?? hout), which: hin != null ? "in" : "out" };
+        return;
+      }
+      if (a != null) {
+        const i = Number(a);
+        const picked = anchors.includes(i) ? anchors : e.shiftKey ? [...anchors, i] : [i];
+        const next = e.shiftKey && anchors.includes(i) ? anchors.filter((x) => x !== i) : picked;
+        setAnchors(next);
+        drag.current = { kind: "anchor", orig: single, local: toLocal(single), from: worldToLocal(single, world), indices: new Set(next), moved: false };
+        return;
+      }
+    }
+
     const handleId = (e.target as HTMLElement).closest("[data-handle]")?.getAttribute("data-handle");
-    if (handleId && single) {
+    if (handleId && single && tool === "select") {
       if (handleId === "rotate") drag.current = { kind: "rotate", orig: single };
       else {
         const lock = single.type === "image" || single.type === "prop" || single.type === "seat" ? !e.shiftKey : e.shiftKey;
@@ -350,7 +641,13 @@ export function Canvas({
     const hitId = (e.target as HTMLElement).closest("[data-node-id]")?.getAttribute("data-node-id");
     const hit = hitId ? doc.nodes[hitId] : null;
     if (hit && !hit.locked) {
-      let ids = selection.includes(hit.id) ? selection : e.shiftKey ? [...selection, hit.id] : [hit.id];
+      // Selecting part of a group selects all of it; the Direct Selection tool picks one.
+      // Clicking something outside the group being worked in leaves it.
+      const inScope = !scope || groupAt(doc, hit.id, scope) !== null || (doc.nodes[hit.id].group ?? "").startsWith(scope);
+      const sc = inScope ? scope : "";
+      if (!inScope) setScope("");
+      const wholeGroups = (ids: string[]) => (tool === "select" ? expandGroups(doc, ids, sc) : ids);
+      let ids = selection.includes(hit.id) ? selection : wholeGroups(e.shiftKey ? [...selection, hit.id] : [hit.id]);
       let working = doc;
       // Alt-drag takes a copy along and leaves the original where it was.
       if (e.altKey) {
@@ -372,10 +669,34 @@ export function Canvas({
     }
     // Empty space: a marquee, which keeps the selection only with shift.
     drag.current = { kind: "marquee", start: world, base: e.shiftKey ? selection : [] };
-    if (!e.shiftKey) setSelection([]);
+    if (!e.shiftKey) {
+      setSelection([]);
+      setAnchors([]);
+    }
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    const rect = viewport.current?.getBoundingClientRect();
+    if (rect) {
+      // Tell the rulers and the readout where the pointer is, without re-rendering for it.
+      const lx = e.clientX - rect.left;
+      const ly = e.clientY - rect.top;
+      if (topMarker.current) {
+        topMarker.current.style.display = "block";
+        topMarker.current.style.transform = `translateX(${Math.max(0, lx - RULER_SIZE)}px)`;
+      }
+      if (leftMarker.current) {
+        leftMarker.current.style.display = "block";
+        leftMarker.current.style.transform = `translateY(${Math.max(0, ly - RULER_SIZE)}px)`;
+      }
+      if (readout.current) {
+        const p = toWorld(e.clientX, e.clientY);
+        readout.current.textContent = `X ${round(p.x, 1)}   Y ${round(p.y, 1)}`;
+      }
+    }
+
+    if (latest.current.tool === "pen" && penRef.current.length) setPenHover(snapPoint(toWorld(e.clientX, e.clientY), e));
+
     const d = drag.current;
     if (!d) return;
     const world = toWorld(e.clientX, e.clientY);
@@ -383,15 +704,73 @@ export function Canvas({
 
     if (d.kind === "pan") {
       setView((v) => ({ ...v, x: d.panX + (e.clientX - d.startX), y: d.panY + (e.clientY - d.startY) }));
+    } else if (d.kind === "guide") {
+      const r = viewport.current!.getBoundingClientRect();
+      const local = d.axis === "x" ? e.clientX - r.left : e.clientY - r.top;
+      // Back over the ruler it came from (or off the canvas) throws the guide away.
+      const discard = local < (prefsRef.current.rulers ? RULER_SIZE : 0);
+      const raw = d.axis === "x" ? world.x : world.y;
+      // Onto the grid when snapping to it is on, unless ⌘/Ctrl or Shift is held.
+      const grid = snapOpts().grid;
+      const snapped = grid && !e.shiftKey && !e.ctrlKey && !e.metaKey ? Math.round(raw / grid) * grid : raw;
+      setGuideDragBoth({ axis: d.axis, index: d.index, position: round(snapped), discard });
+    } else if (d.kind === "brush") {
+      const last = brushRef.current[brushRef.current.length - 1];
+      // Points closer than a couple of screen pixels add only noise.
+      if (last && Math.hypot(world.x - last.x, world.y - last.y) * zoom < 2) return;
+      brushRef.current.push(world);
+      setBrushLive([...brushRef.current]);
+    } else if (d.kind === "pen") {
+      // Dragging out of a point makes it smooth: the handle follows the pointer and the other mirrors it.
+      const p = snapPoint(world, e);
+      setPen((cur) => {
+        const last = cur[cur.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) * zoom < 3) return cur;
+        const next = [...cur];
+        next[next.length - 1] = { x: last.x, y: last.y, outX: p.x, outY: p.y, inX: 2 * last.x - p.x, inY: 2 * last.y - p.y };
+        return next;
+      });
+    } else if (d.kind === "anchor") {
+      const to = worldToLocal(d.orig, world);
+      let dx = to.x - d.from.x;
+      let dy = to.y - d.from.y;
+      if (!d.moved && Math.hypot(dx, dy) * zoom < 3) return;
+      d.moved = true;
+      // Shift keeps it to one axis, as it does for moving objects.
+      if (e.shiftKey) {
+        if (Math.abs(dx) > Math.abs(dy)) dy = 0;
+        else dx = 0;
+      }
+      commitPath(d.orig, moveAnchors(d.local, d.indices, { x: dx, y: dy }), "anchor");
+    } else if (d.kind === "handle") {
+      commitPath(d.orig, moveHandle(d.local, d.index, d.which, worldToLocal(d.orig, world), e.altKey), "handle");
+    } else if (d.kind === "scale") {
+      const { sx, sy } = dragScale(d.box, d.hx, d.hy, d.anchor, world, e.shiftKey);
+      const patches = new Map(scaleNodes(d.orig, d.anchor, sx, sy).map((p) => [p.id, p.patch]));
+      commit((cur) => patchNodes(cur, [...patches.keys()], (n) => patches.get(n.id) ?? {}), "scale");
+    } else if (d.kind === "spin") {
+      let delta = angleTo(d.pivot, world) - d.start;
+      if (e.shiftKey) delta = Math.round(delta / 15) * 15;
+      const patches = new Map(rotateNodes(d.orig, d.pivot, delta).map((p) => [p.id, p.patch]));
+      commit((cur) => patchNodes(cur, [...patches.keys()], (n) => patches.get(n.id) ?? {}), "spin");
+    } else if (d.kind === "zoom") {
+      const r = normalisedRect(d.start, world);
+      // Only a drag of some size is a box; anything less is a click.
+      if (r.w * zoom > 4 || r.h * zoom > 4) setGhost(r);
+    } else if (d.kind === "create" && d.tool === "line") {
+      let b = snapPoint(world, e);
+      if (e.shiftKey) b = constrain45(d.start, b);
+      setLineGhost({ a: d.start, b });
     } else if (d.kind === "create") {
-      setGhost(normalisedRect(d.start, world));
+      setGhost(normalisedRect(d.start, snapPoint(world, e)));
     } else if (d.kind === "marquee") {
       const r = normalisedRect(d.start, world);
       setMarquee(r);
       const hits = nodesInOrder(docRef.current)
         .filter((n) => !n.locked && !n.hidden && intersects(boundsOf(n), r))
         .map((n) => n.id);
-      setSelection([...new Set([...d.base, ...hits])]);
+      const all = [...new Set([...d.base, ...hits])];
+      setSelection(latest.current.tool === "select" ? expandGroups(docRef.current, all, latest.current.scope) : all);
     } else if (d.kind === "move") {
       let dx = world.x - d.start.x;
       let dy = world.y - d.start.y;
@@ -408,7 +787,7 @@ export function Canvas({
       const box = unionBounds(origNodes);
       let guidesNow: Guides = { x: [], y: [] };
       if (box && !e.ctrlKey && !e.metaKey) {
-        const snap = snapMove({ ...box, x: box.x + dx, y: box.y + dy }, current, new Set(ids), SNAP_PX / zoom);
+        const snap = snapMove({ ...box, x: box.x + dx, y: box.y + dy }, current, new Set(ids), SNAP_PX / zoom, snapOpts());
         dx += snap.dx;
         dy += snap.dy;
         guidesNow = snap.guides;
@@ -426,19 +805,22 @@ export function Canvas({
     } else if (d.kind === "resize") {
       const o = d.orig;
       let r = resizeNode(o, d.handle, world, d.lock);
-      // Snap the dragged edge to artboard edges close by, for a clean fit.
+      // Snap the dragged edge to the artboard's edges, ruler guides and grid close by, for a clean fit.
+      // Not while ⌘/Ctrl is held, and not for a turned object, whose edges aren't on the axes.
       const t = SNAP_PX / zoom;
-      if (!o.rotation) {
-        const a = docRef.current.artboard;
-        const snapTo = (v: number, lines: number[]) => lines.find((l) => Math.abs(l - v) < t) ?? v;
-        if (d.handle.includes("e")) r = { ...r, w: snapTo(r.x + r.w, [0, a.w / 2, a.w]) - r.x };
+      if (!o.rotation && !e.ctrlKey && !e.metaKey) {
+        const so = snapOpts();
+        const xs = snapLines(docRef.current, "x", so);
+        const ys = snapLines(docRef.current, "y", so);
+        const snapTo = (v: number, lines: number[]) => snapScalar(v, lines, t, so.grid);
+        if (d.handle.includes("e")) r = { ...r, w: snapTo(r.x + r.w, xs) - r.x };
         if (d.handle.includes("w")) {
-          const nx = snapTo(r.x, [0, a.w / 2, a.w]);
+          const nx = snapTo(r.x, xs);
           r = { ...r, w: r.w + (r.x - nx), x: nx };
         }
-        if (d.handle.includes("s")) r = { ...r, h: snapTo(r.y + r.h, [0, a.h / 2, a.h]) - r.y };
+        if (d.handle.includes("s")) r = { ...r, h: snapTo(r.y + r.h, ys) - r.y };
         if (d.handle.includes("n")) {
-          const ny = snapTo(r.y, [0, a.h / 2, a.h]);
+          const ny = snapTo(r.y, ys);
           r = { ...r, h: r.h + (r.y - ny), y: ny };
         }
       }
@@ -467,19 +849,81 @@ export function Canvas({
   const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
-    viewport.current?.releasePointerCapture(e.pointerId);
+    try {
+      viewport.current?.releasePointerCapture(e.pointerId);
+    } catch {
+      /* wasn't captured */
+    }
     setGuides({ x: [], y: [] });
     setMarquee(null);
     if (!d) return;
-    if (d.kind === "create") {
-      const world = toWorld(e.clientX, e.clientY);
+    if (d.kind === "brush") {
+      const raw = brushRef.current;
+      brushRef.current = [];
+      setBrushLive(null);
+      const o = prefsRef.current;
+      const fitted = fitFreehand(raw, Math.max(0.5, 2 / viewRef.current.zoom));
+      const node = makePathFromWorld(fitted, false, {
+        fill: "none",
+        stroke: o.brushColor,
+        strokeWidth: o.brushSize,
+        cap: "round",
+        join: "round",
+        ...(o.brushType !== "round" ? { brush: defaultBrush(o.brushType) } : {}),
+      }, "Brush stroke");
+      if (node) {
+        commit((cur) => addNode(cur, node), `create-${node.id}`);
+        setSelection([node.id]);
+      }
+      return;
+    }
+    if (d.kind === "create" && d.tool === "line") {
+      let b = snapPoint(toWorld(e.clientX, e.clientY), e);
+      if (e.shiftKey) b = constrain45(d.start, b);
+      setLineGhost(null);
+      if (Math.hypot(b.x - d.start.x, b.y - d.start.y) * viewRef.current.zoom > 3) {
+        const node = makeLine(d.start, b);
+        if (node) {
+          commit((cur) => addNode(cur, node), `create-${node.id}`);
+          setSelection([node.id]);
+        }
+      }
+      setTool("select");
+    } else if (d.kind === "create") {
+      const world = snapPoint(toWorld(e.clientX, e.clientY), e);
       place(d.tool, ghost, world);
       setGhost(null);
+    } else if (d.kind === "guide") {
+      const g = guideDragRef.current;
+      setGuideDragBoth(null);
+      if (g) {
+        if (g.discard) {
+          // Dropped back on the ruler: an existing guide is deleted; a new one was never made.
+          if (g.index !== null) commit((cur) => removeGuide(cur, g.axis, g.index!));
+          setGuideSel(null);
+        } else {
+          commit((cur) => setGuide(cur, g.axis, g.index, g.position));
+          // Making a guide shows guides, as pulling one from a ruler does anywhere else.
+          if (!prefsRef.current.showGuides) setPrefs({ showGuides: true });
+          // Selected, so Delete can take it away.
+          setGuideSel({ axis: g.axis, position: g.position });
+        }
+      }
+    } else if (d.kind === "zoom") {
+      const area = ghost;
+      setGhost(null);
+      const zoom = viewRef.current.zoom;
+      if (area && area.w * zoom > 4 && area.h * zoom > 4) zoomToRect(area);
+      else {
+        const r = viewport.current!.getBoundingClientRect();
+        zoomAt(d.alt ? 0.5 : 2, d.client.x - r.left, d.client.y - r.top);
+      }
     } else if (d.kind === "move" && !d.moved && !d.shift) {
-      // A click on something already selected narrows to it.
-      setSelection([d.clickedId]);
+      // A click on something already selected narrows to it (all of it, if it is in a group).
+      setSelection(latest.current.tool === "select" ? expandGroups(docRef.current, [d.clickedId], latest.current.scope) : [d.clickedId]);
     } else if (d.kind === "move" && !d.moved && d.shift && selection.includes(d.clickedId) && selection.length > 1) {
-      setSelection(selection.filter((id) => id !== d.clickedId));
+      const drop = new Set(latest.current.tool === "select" ? expandGroups(docRef.current, [d.clickedId], latest.current.scope) : [d.clickedId]);
+      setSelection(selection.filter((id) => !drop.has(id)));
     }
   };
 
@@ -498,66 +942,126 @@ export function Canvas({
         e.preventDefault();
         return;
       }
-      if (mod && e.key.toLowerCase() === "z") {
+      if (e.key === "Escape" && latest.current.scope) setScope("");
+      // View commands, bound as Illustrator binds them. Matched on `code` where an Option
+      // press would change `key` (⌥; is "…" on a Mac).
+      const p = prefsRef.current;
+      const plain = mod && !e.shiftKey && !e.altKey;
+      if (plain && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        setPrefs({ rulers: !p.rulers });
+      } else if (plain && e.code === "Semicolon") {
+        e.preventDefault();
+        setPrefs({ showGuides: !p.showGuides });
+      } else if (mod && e.altKey && !e.shiftKey && e.code === "Semicolon") {
+        e.preventDefault();
+        setPrefs({ lockGuides: !p.lockGuides });
+      } else if (plain && e.code === "Quote") {
+        e.preventDefault();
+        setPrefs({ grid: !p.grid });
+      } else if (mod && e.shiftKey && !e.altKey && e.code === "Quote") {
+        e.preventDefault();
+        setPrefs({ snapGrid: !p.snapGrid });
+      } else if (plain && e.key.toLowerCase() === "u") {
+        e.preventDefault();
+        setPrefs({ smartGuides: !p.smartGuides });
+      } else if (plain && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        setPrefs({ outline: !p.outline });
+      } else if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) editor.redo();
         else editor.undo();
-      } else if (mod && e.key.toLowerCase() === "y") {
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "a") {
         e.preventDefault();
-        editor.redo();
+        A.deselect(editor);
       } else if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
-        setSelection(docRef.current.order.filter((id) => !docRef.current.nodes[id].locked));
+        A.selectAll(editor);
       } else if (mod && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        if (ids.length) {
-          const dup = duplicateNodes(docRef.current, ids);
-          commit(dup.doc);
-          setSelection(dup.ids);
-        }
+        A.duplicate(editor);
+      } else if (mod && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+        A.cut(editor);
       } else if (mod && e.key.toLowerCase() === "c") {
-        clipboard.current = ids.map((id) => docRef.current.nodes[id]).filter(Boolean);
+        A.copy(editor);
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        A.paste(editor, "place");
       } else if (mod && e.key.toLowerCase() === "v") {
-        if (clipboard.current.length) {
-          e.preventDefault();
-          let next = docRef.current;
-          const made: string[] = [];
-          for (const n of clipboard.current) {
-            if (n.type === "screen" || n.type === "floor") continue;
-            const copy = { ...n, id: newId(), x: n.x + 20, y: n.y + 20 } as Node;
-            next = addNode(next, copy);
-            made.push(copy.id);
-          }
-          commit(next);
-          setSelection(made);
-        }
-      } else if (mod && e.key === "0") {
+        e.preventDefault();
+        A.paste(editor);
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        A.paste(editor, "back");
+      } else if (mod && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        A.paste(editor, "front");
+      } else if (mod && e.code === "Digit8") {
+        e.preventDefault();
+        void (e.altKey ? A.releaseCompound(editor) : A.makeCompound(editor)).then((m) => m && onNotice?.(m));
+      } else if (mod && e.code === "Digit2" && !e.shiftKey) {
+        e.preventDefault();
+        if (e.altKey) A.unlockAll(editor);
+        else A.lockSelection(editor);
+      } else if (mod && e.code === "Digit3" && !e.shiftKey) {
+        e.preventDefault();
+        if (e.altKey) A.showAll(editor);
+        else A.hideSelection(editor);
+      } else if (e.code === "BracketRight" && !e.altKey) {
+        // Illustrator arranges with ⌘]; the bare key stays as it was in this editor.
+        e.preventDefault();
+        A.arrange(editor, e.shiftKey ? "front" : "up");
+      } else if (e.code === "BracketLeft" && !e.altKey) {
+        e.preventDefault();
+        A.arrange(editor, e.shiftKey ? "back" : "down");
+      } else if (mod && e.code === "Digit0") {
+        // ⌘0 fits the artboard, ⌥⌘0 fits everything: here the same, as there is one artboard.
         e.preventDefault();
         fit();
-      } else if (mod && e.key === "1") {
+      } else if (mod && e.code === "Digit1") {
         e.preventDefault();
-        zoomAt(1 / viewRef.current.zoom, size.w / 2, size.h / 2);
+        commands.current?.actualSize();
       } else if (mod && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
-        zoomAt(1.25, size.w / 2, size.h / 2);
+        commands.current?.zoomIn();
       } else if (mod && e.key === "-") {
         e.preventDefault();
-        zoomAt(0.8, size.w / 2, size.h / 2);
+        commands.current?.zoomOut();
+      } else if (latest.current.tool === "pen" && penRef.current.length && (e.key === "Backspace" || e.key === "Enter")) {
+        e.preventDefault();
+        if (e.key === "Enter") finishPen(false);
+        else setPen((cur) => cur.slice(0, -1));
+      } else if ((e.key === "Delete" || e.key === "Backspace") && latest.current.tool === "direct" && latest.current.single?.type === "path" && latest.current.anchors.length) {
+        e.preventDefault();
+        const node = latest.current.single;
+        const left = removeAnchors(toLocal(node), new Set(latest.current.anchors));
+        if (left.length < 2) A.remove(editor);
+        else commitPath(node, left, "del-anchor");
+        setAnchors([]);
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        A.ungroup(editor);
+      } else if (mod && e.key.toLowerCase() === "g") {
+        e.preventDefault();
+        A.group(editor);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && guideSel && ids.length === 0) {
+        e.preventDefault();
+        const at = guidesOf(docRef.current)[guideSel.axis].indexOf(guideSel.position);
+        if (at >= 0) commit((cur) => removeGuide(cur, guideSel.axis, at));
+        setGuideSel(null);
       } else if ((e.key === "Delete" || e.key === "Backspace") && ids.length) {
         e.preventDefault();
-        commit(removeNodes(docRef.current, ids.filter((id) => !docRef.current.nodes[id]?.locked)));
-        setSelection([]);
+        A.remove(editor);
       } else if (e.key.startsWith("Arrow") && ids.length) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
         const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
         commit((cur) => patchNodes(cur, ids, (n) => (n.type === "floor" ? { y: n.y + dy } : { x: n.x + dx, y: n.y + dy })), "nudge");
-      } else if (!mod && e.key === "]") commit(reorder(docRef.current, ids, e.shiftKey ? "front" : "up"));
-      else if (!mod && e.key === "[") commit(reorder(docRef.current, ids, e.shiftKey ? "back" : "down"));
-      else if (!mod && !e.altKey) {
-        const map: Record<string, Tool> = { v: "select", h: "hand", r: "rect", o: "ellipse", t: "text" };
-        const next = map[e.key.toLowerCase()];
+      } else if (!mod && !e.altKey && !e.shiftKey) {
+        const next = toolForKey(e.key, docRef.current.kind);
         if (next) setTool(next);
       }
     };
@@ -568,7 +1072,7 @@ export function Canvas({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [selection, editor, commit, setSelection, setTool, fit, zoomAt, size]);
+  }, [selection, guideSel, editor, commit, commands, setPrefs, setSelection, setTool, setScope, fit, finishPen, commitPath, onNotice]);
 
   // --- dropping files -----------------------------------------------------------------------------
   const onDrop = (e: React.DragEvent) => {
@@ -579,38 +1083,175 @@ export function Canvas({
 
   const hs = HANDLE_PX / view.zoom;
   const lineW = 1 / view.zoom;
-  const cursor = spaceDown || tool === "hand" ? (drag.current?.kind === "pan" ? "grabbing" : "grab") : tool !== "select" ? "crosshair" : "default";
-  const showResize = single && !single.locked && single.type !== "floor";
+  const dragging = drag.current?.kind;
+  const cursor =
+    dragging === "guide"
+      ? guideDrag?.axis === "x"
+        ? "col-resize"
+        : "row-resize"
+      : spaceDown || tool === "hand"
+        ? dragging === "pan"
+          ? "grabbing"
+          : "grab"
+        : tool === "zoom"
+          ? "zoom-in"
+          : tool !== "select" && tool !== "direct"
+            ? "crosshair"
+            : "default";
+  const showResize = single && !single.locked && single.type !== "floor" && tool !== "direct";
+  const showGroupBox = selected.length > 1 && tool !== "direct" && !selected.every((n) => n.locked) && selBounds;
+  const direct = tool === "direct" && single?.type === "path" && !single.locked ? single : null;
+  const directLocal = direct ? toLocal(direct) : [];
+  const toW = (p: { x: number; y: number }) => (direct ? localToWorld(direct, p) : p);
   const cornersOnly = single?.type === "prop" || single?.type === "seat";
 
+  // The part of the document in view, so grid and guides only reach as far as the screen does.
+  const seen = {
+    x0: -view.x / view.zoom,
+    y0: -view.y / view.zoom,
+    w: size.w / view.zoom,
+    h: size.h / view.zoom,
+  };
+  const userGuides = guidesOf(doc);
+  const guidesVisible = prefs.showGuides;
+  /** Guides can be picked up with the pointer in the Selection tool, when they're not locked. */
+  const guidesGrabbable = guidesVisible && !prefs.lockGuides && tool === "select";
+  // Fine grid lines vanish when they'd be a smear; the stronger every-fifth lines stay.
+  const gridPx = gridSize * view.zoom;
+  const gridOn = prefs.grid && gridPx * 5 >= 6;
+  const gridMinor = gridPx >= 6;
+  const gridColour = (a: number) => `rgba(120,160,255,${a})`;
+
   return (
+    <>
     <div
       ref={viewport}
-      className="relative size-full touch-none overflow-hidden bg-[#141418] select-none"
+      className="ai-pasteboard absolute inset-0 touch-none overflow-hidden select-none"
       style={{ cursor }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
+      onPointerLeave={() => {
+        if (topMarker.current) topMarker.current.style.display = "none";
+        if (leftMarker.current) leftMarker.current.style.display = "none";
+        if (readout.current) readout.current.textContent = "";
+      }}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onDoubleClick={(e) => {
+        const t = e.target as HTMLElement | SVGElement;
+        if (t.closest("[data-ruler]")) return;
+        // Double-click with the Hand fits the artboard.
+        if (tool === "hand") return fit();
+        // The Pen: finish the path (the two clicks each placed a point; drop the repeat).
+        if (tool === "pen") {
+          const pts = penRef.current;
+          const near = (a: PathPoint, b: PathPoint) => Math.hypot(a.x - b.x, a.y - b.y) * viewRef.current.zoom < 3;
+          return finishPen(false, pts.length > 1 && near(pts[pts.length - 1], pts[pts.length - 2]) ? pts.slice(0, -1) : pts);
+        }
+        // Direct Selection on a path: an anchor flips between corner and smooth; the outline gets a new anchor.
+        if (tool === "direct" && single?.type === "path") {
+          const a = t.closest("[data-anchor]")?.getAttribute("data-anchor");
+          const local = toLocal(single);
+          if (a != null) return commitPath(single, toggleSmooth(local, Number(a), single.closed), "smooth");
+          const hit = nearestOnPath(local, single.closed, worldToLocal(single, toWorld(e.clientX, e.clientY)));
+          if (hit && hit.dist * viewRef.current.zoom < 8) {
+            const ins = insertAnchor(local, single.closed, hit.segment, hit.t);
+            commitPath(single, ins.points, "add-anchor");
+            setAnchors([ins.index]);
+          }
+          return;
+        }
+        // Select tool on a grouped object: go inside its group — now a click picks what is in it, a
+        // subgroup as one thing and anything else on its own. Escape (or a click outside) comes back out.
+        if (tool === "select") {
+          const id = t.closest("[data-node-id]")?.getAttribute("data-node-id");
+          const d = docRef.current;
+          if (!id || !d.nodes[id] || d.nodes[id].locked) return;
+          const sc = latest.current.scope;
+          const g = groupAt(d, id, sc);
+          if (!g) return;
+          const entered = g.join("/");
+          setScope(entered);
+          setSelection(expandGroups(d, [id], entered));
+        }
+      }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
     >
       <div className="absolute top-0 left-0" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`, transformOrigin: "0 0", width: doc.artboard.w, height: doc.artboard.h }}>
         <Backdrop doc={doc} avatarUrl={avatarUrl} />
+
+        {/* The grid, behind the artwork. Anchored to the document's origin so it lines up with the rulers. */}
+        {gridOn && (
+          <div
+            className="pointer-events-none absolute"
+            style={{
+              left: Math.floor(seen.x0 / (gridSize * 5)) * gridSize * 5,
+              top: Math.floor(seen.y0 / (gridSize * 5)) * gridSize * 5,
+              width: seen.w + gridSize * 10,
+              height: seen.h + gridSize * 10,
+              backgroundImage: [
+                `linear-gradient(to right, ${gridColour(0.28)} ${lineW}px, transparent ${lineW}px)`,
+                `linear-gradient(to bottom, ${gridColour(0.28)} ${lineW}px, transparent ${lineW}px)`,
+                ...(gridMinor
+                  ? [`linear-gradient(to right, ${gridColour(0.1)} ${lineW}px, transparent ${lineW}px)`, `linear-gradient(to bottom, ${gridColour(0.1)} ${lineW}px, transparent ${lineW}px)`]
+                  : []),
+              ].join(", "),
+              backgroundSize: [
+                `${gridSize * 5}px ${gridSize * 5}px`,
+                `${gridSize * 5}px ${gridSize * 5}px`,
+                ...(gridMinor ? [`${gridSize}px ${gridSize}px`, `${gridSize}px ${gridSize}px`] : []),
+              ].join(", "),
+            }}
+          />
+        )}
+
         {doc.order.map((id) => {
           const n = doc.nodes[id];
-          return n && !n.hidden ? <NodeView key={id} node={n} assets={assets} doc={doc} /> : null;
+          if (!n || n.hidden) return null;
+          const view1 = <NodeView key={id} node={n} assets={assets} doc={doc} outline={prefs.outline} lineW={lineW} zoom={view.zoom} />;
+          // Inside a group, everything else is dimmed and out of reach, as in Illustrator's isolation mode.
+          const outside = !!scope && !(n.group === scope || n.group?.startsWith(scope + "/"));
+          return outside ? (
+            <div key={id} className="pointer-events-none" style={{ opacity: 0.3 }}>
+              {view1}
+            </div>
+          ) : (
+            view1
+          );
         })}
 
         {/* The artboard's own edge. */}
-        <div className="pointer-events-none absolute border border-sky-400/50" style={{ left: 0, top: 0, width: doc.artboard.w, height: doc.artboard.h, borderWidth: lineW }} />
+        <div className="pointer-events-none absolute border border-black" style={{ left: 0, top: 0, width: doc.artboard.w, height: doc.artboard.h, borderWidth: lineW }} />
+
+        {/* Ruler guides. The one being dragged is drawn from the drag, not from the document. */}
+        {guidesVisible &&
+          (["x", "y"] as const).flatMap((axis) =>
+            userGuides[axis].map((pos, i) => {
+              if (guideDrag && guideDrag.index === i && guideDrag.axis === axis) return null;
+              const selectedGuide = guideSel?.axis === axis && guideSel.position === pos;
+              return (
+                <GuideLine
+                  key={`${axis}${i}`}
+                  axis={axis}
+                  position={pos}
+                  data={`${axis}:${i}`}
+                  seen={seen}
+                  lineW={lineW}
+                  grab={guidesGrabbable ? GUIDE_GRAB_PX / view.zoom : 0}
+                  selected={selectedGuide}
+                />
+              );
+            }),
+          )}
+        {guideDrag && !guideDrag.discard && <GuideLine axis={guideDrag.axis} position={guideDrag.position} seen={seen} lineW={lineW} grab={0} selected />}
 
         {/* Hover/selection outlines. */}
         {selected.map((n) => (
-          <div key={n.id} className="pointer-events-none absolute border-sky-400" style={{ left: n.x, top: n.y, width: n.w, height: n.h, transform: n.rotation ? `rotate(${n.rotation}deg)` : undefined, borderWidth: lineW * 1.5, borderStyle: "solid" }} />
+          <div key={n.id} className="pointer-events-none absolute border-[var(--ai-select)]" style={{ left: n.x, top: n.y, width: n.w, height: n.h, transform: n.rotation ? `rotate(${n.rotation}deg)` : undefined, borderWidth: lineW * 1.5, borderStyle: "solid" }} />
         ))}
         {selected.length > 1 && selBounds && (
-          <div className="pointer-events-none absolute border-sky-400/60" style={{ left: selBounds.x, top: selBounds.y, width: selBounds.w, height: selBounds.h, borderWidth: lineW, borderStyle: "dashed" }} />
+          <div className="pointer-events-none absolute border-[var(--ai-select)]" style={{ left: selBounds.x, top: selBounds.y, width: selBounds.w, height: selBounds.h, borderWidth: lineW, borderStyle: "dashed" }} />
         )}
 
         {/* Handles for a single node. */}
@@ -620,7 +1261,7 @@ export function Canvas({
               <div
                 key={h.id}
                 data-handle={h.id}
-                className="pointer-events-auto absolute border-sky-500 bg-white"
+                className="pointer-events-auto absolute border-[var(--ai-select)] bg-white"
                 style={{
                   left: `${(h.hx + 1) * 50}%`,
                   top: `${(h.hy + 1) * 50}%`,
@@ -635,13 +1276,93 @@ export function Canvas({
                 }}
               />
             ))}
-            <div className="absolute bg-sky-400/70" style={{ left: "50%", top: -(ROTATE_OFFSET_PX / view.zoom), width: lineW, height: ROTATE_OFFSET_PX / view.zoom, marginLeft: -lineW / 2 }} />
+            <div className="absolute bg-[var(--ai-select)]" style={{ left: "50%", top: -(ROTATE_OFFSET_PX / view.zoom), width: lineW, height: ROTATE_OFFSET_PX / view.zoom, marginLeft: -lineW / 2 }} />
             <div
               data-handle="rotate"
-              className="pointer-events-auto absolute rounded-full border-sky-500 bg-white"
+              className="pointer-events-auto absolute rounded-full border-[var(--ai-select)] bg-white"
               style={{ left: "50%", top: -(ROTATE_OFFSET_PX / view.zoom), width: hs, height: hs, marginLeft: -hs / 2, marginTop: -hs / 2, borderWidth: lineW * 1.5, borderStyle: "solid", cursor: "grab" }}
             />
           </div>
+        )}
+
+        {/* The box round several objects (a group, or any multiple selection): handles to scale and turn them together. */}
+        {showGroupBox && selBounds && (
+          <div className="pointer-events-none absolute" style={{ left: selBounds.x, top: selBounds.y, width: selBounds.w, height: selBounds.h }}>
+            {HANDLES.map((h) => (
+              <div
+                key={h.id}
+                data-mhandle={h.id}
+                className="pointer-events-auto absolute border-[var(--ai-select)] bg-white"
+                style={{ left: `${(h.hx + 1) * 50}%`, top: `${(h.hy + 1) * 50}%`, width: hs, height: hs, marginLeft: -hs / 2, marginTop: -hs / 2, borderWidth: lineW * 1.5, borderStyle: "solid", cursor: h.cursor, borderRadius: 1 / view.zoom }}
+              />
+            ))}
+            <div className="absolute bg-[var(--ai-select)]" style={{ left: "50%", top: -(ROTATE_OFFSET_PX / view.zoom), width: lineW, height: ROTATE_OFFSET_PX / view.zoom, marginLeft: -lineW / 2 }} />
+            <div data-mhandle="rotate" className="pointer-events-auto absolute rounded-full border-[var(--ai-select)] bg-white" style={{ left: "50%", top: -(ROTATE_OFFSET_PX / view.zoom), width: hs, height: hs, marginLeft: -hs / 2, marginTop: -hs / 2, borderWidth: lineW * 1.5, borderStyle: "solid", cursor: "grab" }} />
+          </div>
+        )}
+
+        {/* Direct Selection: a path's anchors, and the curve handles of the picked ones. */}
+        {direct && (
+          <svg className="pointer-events-none absolute overflow-visible" style={{ left: 0, top: 0, width: 1, height: 1 }}>
+            <path d={pathD(directLocal.map((p) => ({ ...p, x: toW(p).x, y: toW(p).y, ...(p.inX !== undefined ? { inX: toW({ x: p.inX, y: p.inY! }).x, inY: toW({ x: p.inX, y: p.inY! }).y } : {}), ...(p.outX !== undefined ? { outX: toW({ x: p.outX, y: p.outY! }).x, outY: toW({ x: p.outX, y: p.outY! }).y } : {}) })), direct.closed, 1, 1)} fill="none" stroke="var(--ai-select)" strokeWidth={lineW * 1.5} />
+            {directLocal.map((p, i) => {
+              if (!anchors.includes(i) || !isSmooth(p)) return null;
+              const a = toW(p);
+              return (
+                <g key={`h${i}`}>
+                  {p.inX !== undefined && (
+                    <>
+                      <line x1={a.x} y1={a.y} x2={toW({ x: p.inX, y: p.inY! }).x} y2={toW({ x: p.inX, y: p.inY! }).y} stroke="var(--ai-select)" strokeWidth={lineW} />
+                      <circle data-hin={i} className="pointer-events-auto" cx={toW({ x: p.inX, y: p.inY! }).x} cy={toW({ x: p.inX, y: p.inY! }).y} r={hs * 0.5} fill="white" stroke="var(--ai-select)" strokeWidth={lineW * 1.5} style={{ cursor: "pointer" }} />
+                    </>
+                  )}
+                  {p.outX !== undefined && (
+                    <>
+                      <line x1={a.x} y1={a.y} x2={toW({ x: p.outX, y: p.outY! }).x} y2={toW({ x: p.outX, y: p.outY! }).y} stroke="var(--ai-select)" strokeWidth={lineW} />
+                      <circle data-hout={i} className="pointer-events-auto" cx={toW({ x: p.outX, y: p.outY! }).x} cy={toW({ x: p.outX, y: p.outY! }).y} r={hs * 0.5} fill="white" stroke="var(--ai-select)" strokeWidth={lineW * 1.5} style={{ cursor: "pointer" }} />
+                    </>
+                  )}
+                </g>
+              );
+            })}
+            {directLocal.map((p, i) => {
+              const a = toW(p);
+              const on = anchors.includes(i);
+              return <rect key={`a${i}`} data-anchor={i} className="pointer-events-auto" x={a.x - hs / 2} y={a.y - hs / 2} width={hs} height={hs} fill={on ? "var(--ai-select)" : "white"} stroke="var(--ai-select)" strokeWidth={lineW * 1.5} style={{ cursor: "pointer" }} />;
+            })}
+          </svg>
+        )}
+
+        {/* The Pen's path so far, the next segment following the pointer, and the first point to click to close it. */}
+        {pen.length > 0 && (
+          <svg className="pointer-events-none absolute overflow-visible" style={{ left: 0, top: 0, width: 1, height: 1 }}>
+            <path d={pathD(pen, false, 1, 1)} fill="none" stroke="var(--ai-select)" strokeWidth={lineW * 1.5} />
+            {penHover && tool === "pen" && (
+              <path d={pathD([pen[pen.length - 1], { x: penHover.x, y: penHover.y }], false, 1, 1)} fill="none" stroke="var(--ai-select)" strokeWidth={lineW} strokeDasharray={`${4 / view.zoom} ${3 / view.zoom}`} />
+            )}
+            {pen.map((p, i) => (
+              <g key={i}>
+                {p.outX !== undefined && (
+                  <>
+                    <line x1={p.inX} y1={p.inY} x2={p.outX} y2={p.outY} stroke="var(--ai-select)" strokeWidth={lineW} />
+                    <circle cx={p.outX} cy={p.outY} r={hs * 0.4} fill="white" stroke="var(--ai-select)" strokeWidth={lineW} />
+                    <circle cx={p.inX} cy={p.inY} r={hs * 0.4} fill="white" stroke="var(--ai-select)" strokeWidth={lineW} />
+                  </>
+                )}
+                <rect x={p.x - hs / 2} y={p.y - hs / 2} width={hs} height={hs} fill={i === 0 && pen.length >= 3 ? "white" : "var(--ai-select)"} stroke="var(--ai-select)" strokeWidth={lineW * 1.5} />
+              </g>
+            ))}
+          </svg>
+        )}
+        {brushLive && brushLive.length > 1 && (
+          <svg className="pointer-events-none absolute overflow-visible" style={{ left: 0, top: 0, width: 1, height: 1 }}>
+            <polyline points={brushLive.map((q) => `${q.x},${q.y}`).join(" ")} fill="none" stroke={prefs.brushColor} strokeOpacity={0.85} strokeWidth={prefs.brushSize} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        {lineGhost && (
+          <svg className="pointer-events-none absolute overflow-visible" style={{ left: 0, top: 0, width: 1, height: 1 }}>
+            <line x1={lineGhost.a.x} y1={lineGhost.a.y} x2={lineGhost.b.x} y2={lineGhost.b.y} stroke="var(--ai-select)" strokeWidth={lineW * 1.5} />
+          </svg>
         )}
 
         {/* Snap guides. */}
@@ -652,11 +1373,70 @@ export function Canvas({
           <div key={`gy${y}`} className="pointer-events-none absolute bg-pink-500" style={{ top: y, left: -2000, height: lineW, width: doc.artboard.w + 4000 }} />
         ))}
 
-        {ghost && <div className="pointer-events-none absolute border-sky-400 bg-sky-400/10" style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h, borderWidth: lineW, borderStyle: "solid" }} />}
-        {marquee && <div className="pointer-events-none absolute border-sky-400 bg-sky-400/10" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h, borderWidth: lineW, borderStyle: "solid" }} />}
+        {ghost && <div className="pointer-events-none absolute border-[var(--ai-select)] bg-[color-mix(in_oklch,var(--ai-select),transparent_90%)]" style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h, borderWidth: lineW, borderStyle: tool === "zoom" ? "dashed" : "solid" }} />}
+        {marquee && <div className="pointer-events-none absolute border-[var(--ai-select)] bg-[color-mix(in_oklch,var(--ai-select),transparent_90%)]" style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h, borderWidth: lineW, borderStyle: "solid" }} />}
       </div>
 
-      <div className="pointer-events-none absolute right-3 bottom-3 rounded-md bg-black/60 px-2 py-1 font-mono text-[11px] text-white/70">{Math.round(view.zoom * 100)}%</div>
+      {scope && (
+        <div className="pointer-events-none absolute z-10 flex items-center gap-1.5 rounded-[3px] bg-[var(--ai-select)] px-2 py-0.5 text-[11px] font-medium text-white shadow" style={{ left: inset + 8, top: inset + 8 }}>
+          Inside group <span className="opacity-80">· Esc to leave</span>
+        </div>
+      )}
+      {prefs.rulers && (
+        <>
+          <Ruler side="top" zoom={view.zoom} offset={view.x - RULER_SIZE} length={size.w - RULER_SIZE} markerRef={topMarker} />
+          <Ruler side="left" zoom={view.zoom} offset={view.y - RULER_SIZE} length={size.h - RULER_SIZE} markerRef={leftMarker} />
+          <RulerCorner />
+        </>
+      )}
+
+    </div>
+    </>
+  );
+}
+
+/**
+ * A ruler guide across the whole view. Drawn a pixel wide whatever the zoom; when it
+ * can be picked up, a few pixels either side of it take the pointer too.
+ */
+function GuideLine({
+  axis,
+  position,
+  data,
+  seen,
+  lineW,
+  grab,
+  selected,
+}: {
+  axis: GuideAxis;
+  position: number;
+  data?: string;
+  seen: { x0: number; y0: number; w: number; h: number };
+  lineW: number;
+  grab: number;
+  selected?: boolean;
+}) {
+  const vertical = axis === "x";
+  const half = grab > 0 ? grab : lineW / 2;
+  const thick = selected ? lineW * 1.5 : lineW;
+  const along = vertical ? { top: seen.y0 - 100, height: seen.h + 200 } : { left: seen.x0 - 100, width: seen.w + 200 };
+  return (
+    <div
+      data-guide={grab > 0 ? data : undefined}
+      className={cn("absolute", grab > 0 ? "pointer-events-auto" : "pointer-events-none")}
+      style={{
+        ...along,
+        ...(vertical ? { left: position - half, width: half * 2 } : { top: position - half, height: half * 2 }),
+        cursor: grab > 0 ? (vertical ? "col-resize" : "row-resize") : undefined,
+      }}
+    >
+      <div
+        className="pointer-events-none absolute"
+        style={{
+          background: selected ? "#22d3ee" : "rgba(34,211,238,0.7)",
+          ...(vertical ? { left: "50%", marginLeft: -thick / 2, top: 0, bottom: 0, width: thick } : { top: "50%", marginTop: -thick / 2, left: 0, right: 0, height: thick }),
+        }}
+      />
     </div>
   );
 }

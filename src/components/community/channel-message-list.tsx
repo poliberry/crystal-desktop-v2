@@ -1,12 +1,13 @@
 "use client";
 
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { Hash } from "lucide-react";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { DeleteMessageDialog } from "@/components/home/delete-message-dialog";
+import { MessageComponents, MessageEmbeds, type MessageButton, type MessageEmbed } from "@/components/community/message-embeds";
 import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { ReportDialog } from "@/components/reports/report-dialog";
@@ -101,8 +102,13 @@ interface MessageDoc {
     avatarDecoration?: string;
     /** Colour of the author's highest coloured role in this community. */
     roleColor?: string;
+    /** An automated account: shown with a BOT tag, as other apps do. */
+    isBot?: boolean;
   } | null;
   attachments: AttachmentSummary[];
+  /** Cards a bot attached. */
+  embeds?: MessageEmbed[];
+  components?: { buttons: MessageButton[] }[];
   reactions: ReactionSummary[];
   /** The message this one replies to — see convex/channelMessages.ts `list`. */
   replyTo?: OverlayReplyPreview | null;
@@ -144,6 +150,9 @@ const MessageRow = memo(function MessageRow({
   const updateMessage = useOutboxMutation("edit", "channel");
   const removeMessage = useOutboxMutation("delete", "channel");
   const toggleReaction = useOutboxMutation("react", "channel");
+  // A button press goes straight to the server, not through the outbox: it is a request to a
+  // live bot, and replaying it later (after a reconnect, say) would be a second press.
+  const pressComponent = useMutation(api.bots.pressButton);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text ?? "");
@@ -263,6 +272,9 @@ const MessageRow = memo(function MessageRow({
             >
               {message.author?.name ?? "Unknown"}
             </span>
+            {message.author?.isBot && (
+              <span className="rounded-[3px] bg-primary px-1 py-px text-[10px] font-semibold uppercase leading-none text-primary-foreground">Bot</span>
+            )}
             <span className="text-[11px] text-muted-foreground">
               {formatMessageTimestamp(message.createdAt)}
             </span>
@@ -297,6 +309,8 @@ const MessageRow = memo(function MessageRow({
                 edited={!!message.editedAt}
               />
             )}
+            <MessageEmbeds embeds={message.embeds} />
+            <MessageComponents rows={message.components} onPress={(customId) => pressComponent({ messageId: message.id, customId }).then(() => undefined)} />
             {message.attachments.map((attachment) => (
               <AttachmentView
                 key={attachment.id}

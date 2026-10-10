@@ -52,7 +52,7 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
   };
 }
 
-function dmKeyFor(a: Id<"users">, b: Id<"users">) {
+export function dmKeyFor(a: Id<"users">, b: Id<"users">) {
   return [a, b].sort().join(":");
 }
 

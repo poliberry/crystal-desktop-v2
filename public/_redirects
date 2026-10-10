@@ -1,0 +1,5 @@
+# Read by Cloudflare Pages. The app is a static export, so /invite/<code> has no page of its own:
+# serve the invite page, which reads the code from the address. A 200 is a rewrite (the address stays).
+# `:code` needs at least one character, so /invite/ itself isn't matched (no rewrite loop).
+/invite/:code  /invite/  200
+/invite/:code/  /invite/  200
