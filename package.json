@@ -29,8 +29,8 @@
     "icons": "bun scripts/make-icons.mjs",
     "test:studio": "bun scripts/make-icons.mjs --check && bun scripts/build-guides.mjs --check && bun scripts/build-reference.mjs --check && bun scripts/tests/run-all.mjs",
     "postinstall": "bun scripts/prepare-studio-assets.mjs",
-    "dist": "bun run build:native && bun run build && electron-builder -m --config scripts/electron-builder-config.cjs",
-    "dist:studio": "bun run build && cross-env CRYSTAL_APP=studio electron-builder -m --config scripts/electron-builder-config.cjs"
+    "dist": "bun run build:native && bun run build && bun scripts/stage-app.mjs && electron-builder -m --config scripts/electron-builder-config.cjs",
+    "dist:studio": "bun run build && bun scripts/stage-app.mjs && cross-env CRYSTAL_APP=studio electron-builder -m --config scripts/electron-builder-config.cjs"
   },
   "dependencies": {
     "@animateicons/react": "^0.4.3",

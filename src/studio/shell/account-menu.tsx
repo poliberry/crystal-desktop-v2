@@ -2,7 +2,7 @@
 
 import { SignOutButton, useUser } from "@clerk/react";
 import { useQuery } from "convex/react";
-import { ExternalLink, LogOut } from "lucide-react";
+import { ExternalLink, LogOut, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { UpdatesPanel } from "@/components/settings/tabs/updates-tab";
 import { openCrystal } from "@/studio/open-crystal";
 
 /**
@@ -28,6 +29,7 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
   const me = useQuery(api.users.getCurrentUser);
   const { user } = useUser();
   const [confirming, setConfirming] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
   const name = me?.name ?? user?.fullName ?? user?.username ?? "Your account";
   const email = user?.primaryEmailAddress?.emailAddress;
 
@@ -58,6 +60,11 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
             <ExternalLink />
             Open Crystal
           </DropdownMenuItem>
+          {/* The same updater the title bar's badge shows, for when you'd rather ask than wait for the badge. */}
+          <DropdownMenuItem onSelect={() => setUpdatesOpen(true)}>
+            <RefreshCw />
+            Check for updates…
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
@@ -81,6 +88,16 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
       <SignOutButton redirectUrl={STUDIO_HOME}>
         <button id="studio-sign-out" type="button" hidden aria-hidden tabIndex={-1} />
       </SignOutButton>
+
+      <Dialog open={updatesOpen} onOpenChange={setUpdatesOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Crystal Studio updates</DialogTitle>
+            <DialogDescription>Studio updates itself, separately from Crystal.</DialogDescription>
+          </DialogHeader>
+          <UpdatesPanel />
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent className="sm:max-w-sm">

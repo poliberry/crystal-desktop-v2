@@ -1,6 +1,8 @@
 import { CHANNELS, appIdentity } from "../../electron/channels";
 import { releasesUrl } from "../../electron/releases";
-import { COMPONENTS, componentDir, defaultBase, desktopEntry, digestMatches, formatBytes, launchTarget, metadataName, nsisArgs, parseMetadata, pickInstaller, productNameFor, safeFileName, unsupportedReason } from "../../electron/installer/core";
+import { AUR_TOOLS, COMPONENTS, appleScriptString, aurSnapshotUrl, chooseAur, componentDir, defaultBase, desktopEntry, digestMatches, formatBytes, installBundleScript, isArchLike, launchTarget, metadataName, needsAdmin, nsisArgs, parseMetadata, pickInstaller, productNameFor, removeBundleScript, safeFileName, shellQuote, unsupportedReason } from "../../electron/installer/core";
+import { debName, pkgbuild } from "../make-pkgbuild.mjs";
+import { spawnSync } from "node:child_process";
 
 let f = 0, p = 0;
 const ok = (n: string, c: boolean, d?: unknown) => { c ? p++ : (f++, console.log("FAIL", n, JSON.stringify(d))); };
@@ -114,6 +116,81 @@ proc.defaultApp = false;
 eq("defaultApp false is the same as shipped", releasesUrl(), GITHUB);
 if (savedUrl === undefined) delete process.env.CRYSTAL_RELEASES_URL; else process.env.CRYSTAL_RELEASES_URL = savedUrl;
 proc.defaultApp = savedDefault;
+
+// ---- Arch Linux: which machines install from the AUR ------------------------------------------------------------------
+const ARCH = 'NAME="Arch Linux"\nID=arch\nBUILD_ID=rolling\n';
+const MANJARO = 'NAME="Manjaro Linux"\nID=manjaro\nID_LIKE=arch\n';
+const CACHY = 'ID=cachyos\nID_LIKE="arch"\n';
+const UBUNTU = 'NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n';
+ok("Arch is Arch", isArchLike(ARCH));
+ok("Manjaro names arch in ID_LIKE", isArchLike(MANJARO));
+ok("a quoted ID_LIKE still counts", isArchLike(CACHY));
+ok("ID_LIKE can list several families", isArchLike("ID=foo\nID_LIKE=\"debian arch\"\n"));
+ok("Ubuntu is not Arch", !isArchLike(UBUNTU));
+ok("a distro merely named like it is not Arch", !isArchLike("ID=archaic\nNAME=\"Arch-ish\"\n"));
+ok("an empty file is not Arch", !isArchLike(""));
+ok("a NAME of Arch doesn't count without the ID", !isArchLike('NAME="Arch Linux"\nID=something\n'));
+
+const everything = () => true;
+const stable = CHANNELS.stable;
+const aurOk = { platform: "linux" as const, arch: "x64", osRelease: ARCH, channel: stable, have: everything };
+eq("Arch, Stable, tools present: AUR", chooseAur(aurOk), { use: true, missing: [] });
+eq("not Linux: no", chooseAur({ ...aurOk, platform: "darwin" }).use, false);
+eq("not Arch: no", chooseAur({ ...aurOk, osRelease: UBUNTU }).use, false);
+eq("Intel only: arm64 gets the AppImage path", chooseAur({ ...aurOk, arch: "arm64" }).use, false);
+eq("only Stable is in the AUR (Canary)", chooseAur({ ...aurOk, channel: CHANNELS.canary }).use, false);
+eq("only Stable is in the AUR (PTB)", chooseAur({ ...aurOk, channel: CHANNELS.ptb }).use, false);
+eq("forced to the AppImage", chooseAur({ ...aurOk, forced: "appimage" }).use, false);
+const noFakeroot = chooseAur({ ...aurOk, have: (c) => c !== "fakeroot" && c !== "pkexec" });
+eq("a missing tool falls back, and says which", [noFakeroot.use, noFakeroot.missing], [false, ["fakeroot", "pkexec"]]);
+ok("every tool it needs is checked", AUR_TOOLS.every((t) => chooseAur({ ...aurOk, have: (c) => c !== t }).missing.includes(t)));
+eq("the recipe comes from the AUR's snapshot", aurSnapshotUrl("crystal-desktop-bin"), "https://aur.archlinux.org/cgit/aur.git/snapshot/crystal-desktop-bin.tar.gz");
+eq("a package name can't alter the path", aurSnapshotUrl("a/../b"), "https://aur.archlinux.org/cgit/aur.git/snapshot/a%2F..%2Fb.tar.gz");
+
+// The names are the one thing the workflow, the installer and the app all have to agree on.
+const crystalId = appIdentity(stable, "crystal");
+const studioId = appIdentity(stable, "studio");
+eq("Crystal's AUR package", [crystalId.aurPackage, crystalId.aurBinary], ["crystal-desktop-bin", "crystal-desktop"]);
+eq("Studio's AUR package", [studioId.aurPackage, studioId.aurBinary], ["crystal-studio-bin", "crystal-studio"]);
+ok("no command is called `crystal` (Arch's own package owns /usr/bin/crystal)", ![crystalId, studioId].some((i) => i.aurBinary === "crystal"));
+ok("no side channel has an AUR package", (["ptb", "canary", "development"] as const).every((c) => appIdentity(CHANNELS[c], "crystal").aurPackage === null && appIdentity(CHANNELS[c], "studio").aurPackage === null));
+ok("side channels' commands can't clash with Stable's", (["ptb", "canary", "development"] as const).every((c) => ![appIdentity(CHANNELS[c], "crystal").aurBinary, appIdentity(CHANNELS[c], "studio").aurBinary].some((b) => b === crystalId.aurBinary || b === studioId.aurBinary)));
+
+// ---- The PKGBUILD the release workflow publishes -----------------------------------------------------------------------
+const SUM = "ab".repeat(32);
+const pc = pkgbuild({ app: "crystal", version: "1.2.3", sha256: SUM });
+const ps = pkgbuild({ app: "studio", version: "1.2.3", sha256: SUM });
+ok("Crystal's recipe is for its package", pc.includes("pkgname=crystal-desktop-bin\n") && pc.includes("pkgver=1.2.3\n"));
+ok("Studio's recipe is for its package", ps.includes("pkgname=crystal-studio-bin\n"));
+ok("the checksum is the one given", pc.includes(`sha256sums=('${SUM}')`));
+ok("it downloads the release's .deb by tag and name", pc.includes("/releases/download/v${pkgver}/Crystal-${pkgver}.deb") && ps.includes("/releases/download/v${pkgver}/Crystal-Studio-${pkgver}.deb"));
+ok("the file it fetches is the file the release names", debName("crystal", "1.2.3") === "Crystal-1.2.3.deb" && debName("studio", "1.2.3") === "Crystal-Studio-1.2.3.deb");
+ok("it links the command from the package's own names", pc.includes("/usr/bin/crystal-desktop") && ps.includes("/usr/bin/crystal-studio\""));
+ok("it never installs a command called crystal", !/usr\/bin\/crystal"/.test(pc) && !/usr\/bin\/crystal"/.test(ps));
+ok("no placeholder is left in it", !/@[A-Z0-9]+@/.test(pc + ps));
+for (const [name, text] of [["Crystal", pc], ["Studio", ps]] as const) {
+  const r = spawnSync("bash", ["-n"], { input: text, encoding: "utf8" });
+  ok(`${name}'s PKGBUILD is valid bash`, r.status === 0, r.stderr);
+}
+const throws = (fn: () => unknown) => { try { fn(); return false; } catch { return true; } };
+ok("not a release version", throws(() => pkgbuild({ app: "crystal", version: "1.2", sha256: SUM })));
+ok("a version can't carry shell", throws(() => pkgbuild({ app: "crystal", version: "1.2.3; rm -rf /", sha256: SUM })));
+ok("not a checksum", throws(() => pkgbuild({ app: "crystal", version: "1.2.3", sha256: "xyz" })));
+ok("a checksum can't carry shell", throws(() => pkgbuild({ app: "crystal", version: "1.2.3", sha256: "$(id)".padEnd(64, "a") })));
+ok("an unknown app", throws(() => pkgbuild({ app: "other", version: "1.2.3", sha256: SUM })));
+ok("a template asking for something unknown fails", throws(() => pkgbuild({ app: "crystal", version: "1.2.3", sha256: SUM, template: "x=@NOPE@" })));
+
+// ---- Running things as root on a Mac: what reaches `rm -rf` -----------------------------------------------------------
+eq("shell quoting survives a quote", shellQuote("it's"), `'it'\\''s'`);
+eq("AppleScript quoting escapes quotes and backslashes", appleScriptString('a"b\\c'), '"a\\"b\\\\c"');
+ok("EACCES needs an administrator", needsAdmin("EACCES: permission denied, rmdir '/Applications/Crystal.app'"));
+ok("the ENOTEMPTY from the bug report does too", needsAdmin("ENOTEMPTY: directory not empty, rmdir '/var/folders/x/crystal-installer-k/extract-crystal/Crystal.app/Contents/Resources'"));
+ok("running out of disk does not", !needsAdmin("ENOSPC: no space left on device"));
+ok("it will remove an installed app", removeBundleScript("/Applications/Crystal.app").includes("rm -rf '/Applications/Crystal.app'"));
+for (const bad of ["/", "/Applications", "Applications/Crystal.app", "/Applications/Crystal", "/Applications/../Crystal.app", "/Crystal.app", ""]) {
+  ok(`it refuses to run as root on "${bad}"`, throws(() => removeBundleScript(bad)));
+}
+ok("an install replaces, copies, then hands the app back to the person", (() => { const t = installBundleScript("/tmp/x/Crystal.app", "/Applications/Crystal.app", { uid: 501, gid: 20 }); return t.indexOf("rm -rf") < t.indexOf("ditto") && t.indexOf("ditto") < t.indexOf("chown -R 501:20"); })());
 
 console.log(f ? `${f} FAILED (${p} passed)` : `ALL PASSED (${p})`);
 process.exit(f ? 1 : 0);

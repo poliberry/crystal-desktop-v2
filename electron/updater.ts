@@ -1,5 +1,7 @@
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 import { newestRelease } from "./releases";
 import { appIdentity, REPO, resolveRunningApp, resolveRunningChannel, type AppIdentity, type ChannelDefinition, type ReleaseChannel } from "./channels";
@@ -125,6 +127,15 @@ class Updater {
     }
   }
 
+  /** True for an install a package manager owns. `installed-by` sits in resources/ and is written by the package, not the app. */
+  private installedByPackageManager(): boolean {
+    try {
+      return fs.existsSync(path.join(process.resourcesPath, "installed-by"));
+    } catch {
+      return false;
+    }
+  }
+
   private setState(patch: Partial<UpdaterState>): void {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) {
@@ -181,6 +192,16 @@ class Updater {
       this.setState({
         phase: "unsupported",
         error: "Auto-update only runs in packaged builds, not in development.",
+      });
+      return this.state;
+    }
+    // Installed by pacman (the AUR package writes this marker): the files belong to root, so this app can't replace them,
+    // and an update it offered would only fail. The package manager is the way to update it.
+    if (this.installedByPackageManager()) {
+      const pkg = this.identity.aurPackage ?? "the package";
+      this.setState({
+        phase: "unsupported",
+        error: `This copy was installed with pacman, so it updates through it: run "yay -Syu" (or your AUR helper's equivalent) to update ${pkg}.`,
       });
       return this.state;
     }

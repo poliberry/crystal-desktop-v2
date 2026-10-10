@@ -1,4 +1,3 @@
-import { mountLoginScene } from "../src/components/auth/login-scene-core";
 import { formatBytes } from "../electron/installer/format";
 import type { InstallerApi } from "../electron/installer/preload";
 import type { InstallState, ResolvedPlan } from "../electron/installer/engine";
@@ -49,7 +48,9 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const TICK = '<svg viewBox="0 0 16 16" fill="none" stroke="#04130c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 8.6l3 3 6.6-7"/></svg>';
 const ICON: Record<Id, string> = { crystal: "icon.png", studio: "icon-studio.png" };
 
-const stepIndex = () => STEPS.findIndex((s) => s.id === S.step);
+/** Through pacman there is no folder to choose, so the Location step isn't one of the steps. */
+const steps = () => (S.info?.aur ? STEPS.filter((s) => s.id !== "location") : STEPS);
+const stepIndex = () => steps().findIndex((s) => s.id === S.step);
 const available = () => (S.plan?.components ?? []).filter((c) => !c.unavailable);
 const chosenBytes = () => (S.plan?.components ?? []).filter((c) => S.selected.has(c.id)).reduce((n, c) => n + c.size, 0);
 const working = () => S.inst.phase === "working";
@@ -62,8 +63,7 @@ function go(step: Step): void {
 /* ---- Chrome ---------------------------------------------------------------------------------------------------- */
 
 function renderChrome(): void {
-  $("steps").innerHTML = STEPS.map((s, i) => `<span class="step ${i < stepIndex() ? "done" : i === stepIndex() ? "current" : ""}"><span class="dot"></span>${i === stepIndex() ? esc(s.label) : ""}</span>`).join("");
-  $("scene").classList.toggle("on", S.step === "welcome");
+  $("steps").innerHTML = steps().map((s, i) => `<span class="step ${i < stepIndex() ? "done" : i === stepIndex() ? "current" : ""}"><span class="dot"></span>${i === stepIndex() ? esc(s.label) : ""}</span>`).join("");
 }
 
 function renderControls(): void {
@@ -111,7 +111,7 @@ function renderComponents(): string {
     })
     .join("");
   const shortcut =
-    S.info && S.info.platform !== "darwin"
+    S.info && S.info.platform !== "darwin" && !S.info.aur
       ? `<label class="check ${S.shortcut ? "on" : ""}"><span class="box">${TICK}</span><input type="checkbox" id="shortcut" ${S.shortcut ? "checked" : ""} /><span>Add a shortcut to the desktop</span></label>`
       : "";
   const n = S.selected.size;
@@ -140,7 +140,7 @@ function renderLocation(): string {
     <header><h2>Where should it go?</h2><p>${mac ? "The apps are placed straight into this folder." : "Each app gets a folder of its own inside this one."}</p></header>
     <div class="body">
       <div class="field"><input class="input ${S.folderError ? "bad" : ""}" id="folder" spellcheck="false" value="${esc(S.base)}" aria-label="Install folder" /><button class="btn outline" id="browse" type="button">Browse…</button></div>
-      <p class="hint ${S.folderError ? "err" : ""}" id="folder-hint">${esc(S.folderError ?? (mac ? "/Applications is where Mac apps usually live." : "The default is private to your account, so no administrator password is needed."))}</p>
+      <p class="hint ${S.folderError ? "err" : ""}" id="folder-hint">${esc(S.folderError ?? (mac ? "/Applications is where Mac apps usually live." : S.info?.aurMissing.length ? `This looks like Arch Linux, but installing from the AUR needs ${S.info.aurMissing.join(", ")}, so the apps are placed in this folder instead.` : "The default is private to your account, so no administrator password is needed."))}</p>
       <div class="summary" id="paths">${pathLines()}</div>
     </div>
     <footer>
@@ -170,7 +170,7 @@ function renderInstall(): string {
     return `<section class="page wizard"><div class="card">
       <header><h2>Ready to install</h2><p>${esc(names)} — ${esc(formatBytes(chosenBytes()))} to download.</p></header>
       <div class="body"><div class="summary">${pathLines()}</div>
-      <p class="hint">${S.info?.platform === "win32" ? "Setup runs in the background for each app, then adds it to your Start menu." : S.info?.platform === "darwin" ? "Each download is checked before it is placed in the folder." : "Each download is checked before it is placed, and added to your applications menu."}</p></div>
+      <p class="hint">${S.info?.aur ? "Each app is built from its package in the Arch User Repository and installed with pacman, so pacman keeps it up to date. You'll be asked for your administrator password once." : S.info?.platform === "win32" ? "Setup runs in the background for each app, then adds it to your Start menu." : S.info?.platform === "darwin" ? "Each download is checked before it is placed in the folder." : "Each download is checked before it is placed, and added to your applications menu."}</p></div>
       <footer><button class="btn ghost" id="back" type="button">Back</button><button class="btn primary" id="install" type="button" style="margin-left:auto">Install</button></footer>
     </div></section>`;
   }
@@ -221,7 +221,7 @@ function render(): void {
   };
 
   on("retry", () => void loadPlan());
-  on("back", () => go(({ components: "welcome", location: "components", install: "location" } as Record<string, Step>)[S.step] ?? "welcome"));
+  on("back", () => go(({ components: "welcome", location: "components", install: S.info?.aur ? "components" : "location" } as Record<string, Step>)[S.step] ?? "welcome"));
   on("releases", () => void api.openReleases());
   on("cancel", () => void api.cancel());
   on("install", () => void startInstall());
@@ -231,7 +231,7 @@ function render(): void {
   });
   on("next", () => {
     if (S.step === "welcome") go("components");
-    else if (S.step === "components") go("location");
+    else if (S.step === "components") go(S.info?.aur ? "install" : "location");
     else if (S.step === "location") void leaveLocation();
   });
 
@@ -356,7 +356,6 @@ async function main(): Promise<void> {
   S.base = S.info.defaultBase;
   S.targets = await api.targets(S.base);
   renderControls();
-  mountLoginScene($("scene"));
   api.onState((s) => {
     const before = S.inst;
     S.inst = s;

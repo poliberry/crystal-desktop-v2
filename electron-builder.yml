@@ -25,9 +25,10 @@ publish:
 # the way Windows/macOS do.
 compression: maximum
 asar: true
-# Keep file sets minimal — `out/` already contains the static export; don't
-# bundle source maps or duplicate sounds. Use maximum compression (lzma for
-# nsis via electron-builder default) to cut the 1GB installer.
+# Keep file sets minimal. scripts/electron-builder-config.cjs points the packager at .app-stage/ (made by
+# scripts/stage-app.mjs), which holds only what the main process loads: the `files` below are relative to it. Without
+# that, every production dependency of the web app is bundled whatever `files` says (about 900 MB). Don't bundle source
+# maps or duplicate sounds. Use maximum compression (lzma for nsis via electron-builder default).
 extraResources:
   - from: build/icon.png
     to: icon.png

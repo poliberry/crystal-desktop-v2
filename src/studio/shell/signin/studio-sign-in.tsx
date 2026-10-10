@@ -2,32 +2,27 @@
 
 import { motion } from "framer-motion";
 import { Google_Sans_Flex } from "next/font/google";
-import dynamic from "next/dynamic";
 
 import AuthFlow from "@/components/auth/auth-flow";
 import { Card } from "@/components/ui/card";
 import { SignInBackdrop } from "@/components/auth/sign-in-backdrop";
+import { UpdateIndicator } from "@/components/update-indicator";
 import { WindowControls } from "@/components/window-controls";
 import { useTrafficLightsInset } from "@/hooks/use-window-controls";
 
 const googleSansFlex = Google_Sans_Flex({ subsets: ["latin"] });
 
-/** three.js is large and only this screen wants it, so it loads after the page, on the client. */
-const StudioScene = dynamic(() => import("./studio-scene"), { ssr: false });
-
 const WORDS = ["Create,", "Build,", "Earn"] as const;
 
 /**
  * What Studio shows before you sign in: a marketing page with the sign-in as a card on top of it, in the same style as
- * Crystal's. The headline sits top left, the 3D scene floats along the bottom, and the whole window is draggable
- * except the card and the window buttons.
+ * Crystal's. The headline sits top left, and the whole window is draggable except the card and the window buttons.
  */
 export function StudioSignIn() {
   const inset = useTrafficLightsInset();
   return (
     <main className="dark relative h-full w-full overflow-hidden bg-[#06080c] text-foreground">
       <SignInBackdrop />
-      <StudioScene className="pointer-events-none absolute inset-0 z-[1]" />
 
       <header
         style={{ WebkitAppRegion: "drag", paddingLeft: inset || undefined } as React.CSSProperties}
@@ -38,6 +33,8 @@ export function StudioSignIn() {
           <img src="/studio-icon.png" alt="" aria-hidden draggable={false} className="size-[18px] rounded-[5px]" />
           Crystal Studio
         </div>
+        {/* A signed-out window can still be out of date, and is where someone is most likely to be stuck on it. */}
+        <UpdateIndicator />
         <WindowControls className="border-none" />
       </header>
 

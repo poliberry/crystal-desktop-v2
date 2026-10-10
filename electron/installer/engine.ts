@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -12,11 +12,15 @@ import {
   COMPONENTS,
   type ComponentId,
   type Platform,
+  aurSnapshotUrl,
   componentDir,
   desktopEntry,
   digestMatches,
+  elevatedAppleScript,
+  installBundleScript,
   launchTarget,
   metadataName,
+  needsAdmin,
   nsisArgs,
   parseMetadata,
   pickInstaller,
@@ -90,6 +94,11 @@ export interface EngineOptions {
   /** Icons shipped with the installer, by app, for the Linux menu entries. */
   iconFor: (id: ComponentId) => string | null;
   fetchImpl?: typeof fetch;
+  /**
+   * Install through the Arch User Repository instead of placing an AppImage (see `chooseAur`): each app is built from its
+   * AUR package and installed with pacman, so it is owned by the package manager and updated by it.
+   */
+  aur?: boolean;
 }
 
 /**
@@ -102,8 +111,12 @@ export class Engine {
   private abort: AbortController | null = null;
   private state: InstallState = IDLE;
   private listeners = new Set<(s: InstallState) => void>();
+  /** Whether apps are installed from the AUR. Starts as asked for, and turns off if the AUR has no package yet. */
+  private viaAur: boolean;
 
-  constructor(private readonly o: EngineOptions) {}
+  constructor(private readonly o: EngineOptions) {
+    this.viaAur = !!o.aur;
+  }
 
   onState(cb: (s: InstallState) => void): () => void {
     this.listeners.add(cb);
@@ -168,7 +181,8 @@ export class Engine {
     const out = {} as Record<ComponentId, string>;
     for (const c of COMPONENTS) {
       const identity = appIdentity(this.o.channel, c.kind);
-      out[c.id] = launchTarget(this.o.platform, base, identity.productName, identity.fileName);
+      // From the AUR it goes where pacman puts it, whatever folder was chosen: the command it installs is the answer.
+      out[c.id] = this.viaAur ? `/usr/bin/${identity.aurBinary}` : launchTarget(this.o.platform, base, identity.productName, identity.fileName);
     }
     return out;
   }
@@ -192,6 +206,19 @@ export class Engine {
     this.tmp ??= await fs.promises.mkdtemp(path.join(os.tmpdir(), "crystal-installer-"));
 
     try {
+      if (this.viaAur) {
+        try {
+          await this.installFromAur(items.filter((i) => i.status !== "done"), signal);
+          this.set({ phase: "done", progress: 1 });
+          return;
+        } catch (e) {
+          // Only "there is no package": any other failure (a build that failed, a password that was refused) is shown, not
+          // papered over by installing something different from what was asked for.
+          if (!(e instanceof AurUnavailable)) throw e;
+          this.viaAur = false;
+          this.set({ items: this.state.items.map((i) => (i.status === "done" ? i : { ...i, status: "waiting", note: "Waiting", received: 0 })) });
+        }
+      }
       for (const item of items) {
         if (item.status === "done") continue;
         const comp = COMPONENTS.find((c) => c.id === item.id)!;
@@ -219,6 +246,71 @@ export class Engine {
     } finally {
       this.abort = null;
     }
+  }
+
+  /**
+   * Arch Linux: each app's package is fetched from the AUR and built here, as this person (`makepkg` refuses to run as
+   * root), and then every built package is installed in one `pacman -U` run as root through `pkexec`, so there is one
+   * password prompt however many apps were chosen. The packages are the ones the release workflow publishes
+   * (aur/PKGBUILD.in): they repackage the release's .deb, and `makepkg` checks it against the checksum in the recipe.
+   *
+   * Throws with a message fit to show; the apps that were built but not installed are marked failed with it.
+   */
+  private async installFromAur(items: ItemState[], signal: AbortSignal): Promise<void> {
+    const built: { id: ComponentId; file: string }[] = [];
+    let current: ComponentId[] = [];
+    try {
+      for (const item of items) {
+        current = [item.id];
+        const comp = COMPONENTS.find((c) => c.id === item.id)!;
+        const pkg = appIdentity(this.o.channel, comp.kind).aurPackage;
+        if (!pkg) throw new Error(`${item.title} isn't in the AUR for this channel.`);
+        this.setItem(item.id, { status: "installing", note: "Fetching the package from the AUR", received: 0 });
+        const dir = await this.fetchAurRecipe(pkg, item.id, signal);
+        this.setItem(item.id, { note: "Building the package" });
+        built.push({ id: item.id, file: await this.buildAurPackage(dir, item.id, signal) });
+        this.setItem(item.id, { note: "Ready to install" });
+        this.set({ progress: this.progressOf(this.state.items) });
+      }
+      current = built.map((b) => b.id);
+      for (const b of built) this.setItem(b.id, { note: "Waiting for your administrator password" });
+      await elevatedOnLinux("/usr/bin/pacman", ["-U", "--noconfirm", ...built.map((b) => b.file)], signal);
+      for (const b of built) {
+        const size = this.sources.get(b.id)?.size ?? 0;
+        this.setItem(b.id, { status: "done", note: "Installed", received: size });
+      }
+    } catch (e) {
+      if (!signal.aborted) for (const id of current) this.setItem(id, { status: "failed", note: message(e) });
+      throw e;
+    }
+  }
+
+  /** Downloads and unpacks the package's recipe (its PKGBUILD) from the AUR; returns the folder it is in. */
+  private async fetchAurRecipe(pkg: string, id: ComponentId, signal: AbortSignal): Promise<string> {
+    const res = await (this.o.fetchImpl ?? fetch)(aurSnapshotUrl(pkg), { signal, headers: { "User-Agent": "crystal-installer" } });
+    if (res.status === 404) throw new AurUnavailable(`${pkg} isn't in the AUR yet.`);
+    if (!res.ok || !res.body) throw new Error(`The AUR didn't answer (HTTP ${res.status}).`);
+    const archive = path.join(this.tmp!, `${pkg}.tar.gz`);
+    await pipeline(Readable.fromWeb(res.body as never), fs.createWriteStream(archive), { signal });
+    const dest = path.join(this.tmp!, `aur-${id}`);
+    await fs.promises.mkdir(dest, { recursive: true });
+    await run("tar", ["-xzf", archive, "-C", dest], signal);
+    const dir = path.join(dest, pkg);
+    if (!fs.existsSync(path.join(dir, "PKGBUILD"))) throw new Error(`The AUR's ${pkg} has no PKGBUILD.`);
+    return dir;
+  }
+
+  /** Builds the package with `makepkg`, keeping everything it makes inside the installer's temporary folder. */
+  private async buildAurPackage(dir: string, id: ComponentId, signal: AbortSignal): Promise<string> {
+    const out = path.join(this.tmp!, `pkg-${id}`);
+    await fs.promises.mkdir(out, { recursive: true });
+    await runCaptured("makepkg", ["--force", "--noconfirm", "--nocolor"], signal, {
+      cwd: dir,
+      env: { ...process.env, PKGDEST: out, SRCDEST: path.join(dir, "src-cache"), BUILDDIR: path.join(dir, "build"), LC_ALL: "C" },
+    });
+    const file = (await fs.promises.readdir(out)).find((n) => /\.pkg\.tar(\.[a-z0-9]+)?$/.test(n) && !n.includes("-debug-"));
+    if (!file) throw new Error("The package was built but its file couldn't be found.");
+    return path.join(out, file);
   }
 
   /** Weighted: the download is most of the wait, the install the rest. */
@@ -277,21 +369,34 @@ export class Engine {
       if (!sel.desktopShortcut && !had) await fs.promises.rm(shortcut, { force: true });
       return;
     }
-    await fs.promises.mkdir(sel.base, { recursive: true });
     if (platform === "darwin") {
-      const staging = path.join(this.tmp!, `extract-${id}`);
-      await fs.promises.rm(staging, { recursive: true, force: true });
+      // Always a folder of its own: a half-removed one from an earlier try can't get in the way of this one.
+      const staging = await fs.promises.mkdtemp(path.join(this.tmp!, `extract-${id}-`));
       await run("/usr/bin/ditto", ["-x", "-k", file, staging], signal);
       const app = (await fs.promises.readdir(staging)).find((n) => n.endsWith(".app"));
       if (!app) throw new Error("The download didn't contain an app.");
+      const source = path.join(staging, app);
       const target = launchTarget(platform, sel.base, productName, fileName);
-      await fs.promises.rm(target, { recursive: true, force: true });
-      await run("/usr/bin/ditto", [path.join(staging, app), target], signal);
-      // Fetched by this installer rather than a browser, so macOS hasn't flagged it; clear any flag all the same.
-      await run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target], signal).catch(() => {});
-      await fs.promises.rm(staging, { recursive: true, force: true });
+      try {
+        await fs.promises.mkdir(sel.base, { recursive: true });
+        await removeTree(target, signal);
+        await run("/usr/bin/ditto", [source, target], signal);
+        // Fetched by this installer rather than a browser, so macOS hasn't flagged it; clear any flag all the same.
+        await run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", target], signal).catch(() => {});
+      } catch (e) {
+        // The old copy, or the folder it is in, belongs to someone else or is held by the system: ask for an administrator's
+        // password and do the replacing as root, rather than failing.
+        if (signal.aborted || !needsAdmin(e instanceof Error ? e.message : String(e))) throw e;
+        this.setItem(id, { note: "Waiting for your administrator password" });
+        await elevatedOnMac(installBundleScript(source, target, { uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 }), signal);
+        this.setItem(id, { note: "Installing" });
+      }
+      // The copy in the temporary folder is only scratch space: if it can't be cleared now, quitting clears it, and a
+      // finished install is not worth failing over.
+      await removeTree(staging, signal).catch(() => {});
       return;
     }
+    await fs.promises.mkdir(sel.base, { recursive: true });
     const target = launchTarget(platform, sel.base, productName, fileName);
     await fs.promises.copyFile(file, target);
     await fs.promises.chmod(target, 0o755);
@@ -319,7 +424,8 @@ export class Engine {
       if (!comp) continue;
       const identity = appIdentity(channel, comp.kind);
       const target = launchTarget(platform, base, identity.productName, identity.fileName);
-      const child = platform === "darwin" ? spawn("/usr/bin/open", [target], { detached: true, stdio: "ignore" }) : spawn(target, [], { detached: true, stdio: "ignore" });
+      const command = this.viaAur ? `/usr/bin/${identity.aurBinary}` : target;
+      const child = platform === "darwin" ? spawn("/usr/bin/open", [target], { detached: true, stdio: "ignore" }) : spawn(command, [], { detached: true, stdio: "ignore" });
       child.on("error", () => {});
       child.unref();
     }
@@ -327,10 +433,94 @@ export class Engine {
 
   /** Synchronous so it finishes before the process does, when called as the app quits. */
   cleanup(): void {
-    if (this.tmp) fs.rmSync(this.tmp, { recursive: true, force: true });
+    const dir = this.tmp;
     this.tmp = null;
+    if (!dir) return;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // Something is still writing into it, or it is locked: the system's own tools are less particular. Quitting never fails over it.
+      spawnSync("/usr/bin/chflags", ["-R", "nouchg", dir], { stdio: "ignore" });
+      spawnSync("/bin/chmod", ["-R", "u+rwX", dir], { stdio: "ignore" });
+      spawnSync("/bin/rm", ["-rf", dir], { stdio: "ignore" });
+    }
   }
 }
+
+/**
+ * Removes a folder this person's account can reach, however stubborn: retried (macOS can still be indexing or scanning
+ * what was just extracted, which shows up as "directory not empty"), then with locks and read-only flags cleared and the
+ * system's own `rm`. Throws if it is still there, so a caller can decide whether to ask for an administrator.
+ */
+async function removeTree(dir: string, signal: AbortSignal): Promise<void> {
+  try {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return;
+  } catch (e) {
+    if (signal.aborted) throw e;
+  }
+  await run("/usr/bin/chflags", ["-R", "nouchg", dir], signal).catch(() => {});
+  await run("/bin/chmod", ["-R", "u+rwX", dir], signal).catch(() => {});
+  await run("/bin/rm", ["-rf", dir], signal).catch(() => {
+    // `rm` itself said no: report it in the terms the rest of the installer understands.
+    throw new Error(`EACCES: couldn't remove ${dir}`);
+  });
+}
+
+/**
+ * Runs a program and waits, keeping the end of what it said on stderr so a failure can be explained. `makepkg` and `pacman`
+ * say why they stopped there, and "makepkg stopped with code 1" alone tells nobody anything.
+ */
+function runCaptured(cmd: string, args: string[], signal: AbortSignal, opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], signal, ...opts });
+    let tail = "";
+    const keep = (d: Buffer) => (tail = (tail + d.toString()).slice(-1500));
+    child.stdout?.on("data", keep);
+    child.stderr?.on("data", keep);
+    child.on("error", (e) => reject(e));
+    child.on("close", (code) => {
+      if (code === 0) return resolve();
+      const last = tail.trim().split("\n").filter(Boolean).slice(-3).join(" ");
+      reject(new Error(`${path.basename(cmd)} stopped with code ${code}${last ? `: ${last}` : "."}`));
+    });
+  });
+}
+
+/**
+ * Runs a program as root on Linux through polkit (`pkexec`), which asks for an administrator's password in the desktop's
+ * own dialog: the installer has no terminal to ask in, and never sees the password.
+ */
+async function elevatedOnLinux(cmd: string, args: string[], signal: AbortSignal): Promise<void> {
+  try {
+    await runCaptured("pkexec", [cmd, ...args], signal);
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    // pkexec: 126 is a dismissed or refused prompt, 127 is no way to ask (no polkit agent running).
+    if (/code 126/.test(raw)) throw new Error("The administrator's password wasn't entered, so nothing was installed.");
+    if (/code 127/.test(raw)) throw new Error("No password prompt could be shown (is a polkit agent running?). Nothing was installed.");
+    throw e;
+  }
+}
+
+/** Runs a shell command as root, after macOS has asked for an administrator's password. */
+function elevatedOnMac(command: string, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("/usr/bin/osascript", ["-e", elevatedAppleScript(command)], { stdio: ["ignore", "ignore", "pipe"], signal });
+    let err = "";
+    child.stderr?.on("data", (d: Buffer) => (err += d.toString()));
+    child.on("error", (e) => reject(e));
+    child.on("close", (code) => {
+      if (code === 0) return resolve();
+      // -128 is "User canceled."
+      if (/-128|canceled/i.test(err)) return reject(new Error("Crystal needs an administrator's password to replace the copy that's already installed."));
+      reject(new Error(`The installer couldn't finish with administrator rights${err.trim() ? `: ${err.trim()}` : "."}`));
+    });
+  });
+}
+
+/** The AUR has no package for this app (yet): the one AUR failure the installer answers by installing the AppImage instead. */
+class AurUnavailable extends Error {}
 
 function message(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);

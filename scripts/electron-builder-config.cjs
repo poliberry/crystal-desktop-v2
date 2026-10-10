@@ -97,7 +97,12 @@ const appConfig = {
   icon: `build/${app.icon}`,
   // Studio's installers go in a folder of their own: both applications write `builder-debug.yml` and friends, and the
   // release workflow uploads each folder separately.
-  directories: { ...base.directories, output: studio ? "release-studio" : base.directories.output },
+  //
+  // Packaged from a small app folder of its own (scripts/stage-app.mjs), not from the repo: electron-builder bundles every
+  // production dependency in the nearest package.json, which here is the whole web app's (Next, Monaco, three.js, ...) —
+  // about 900 MB of packages the static export in out/ has already compiled in. Run `bun scripts/stage-app.mjs` after
+  // `bun run build` and before packaging.
+  directories: { ...base.directories, app: ".app-stage", output: studio ? "release-studio" : base.directories.output },
   // The same release carries both applications. Studio's update metadata is `studio.yml` / `studio-mac.yml` /
   // `studio-linux.yml`, so it can't overwrite Crystal's `latest*.yml` (nor be mistaken for it by Crystal's updater).
   publish: studio ? { ...base.publish, channel: app.feedChannel } : base.publish,
@@ -173,6 +178,15 @@ const installerConfig = {
   extraResources: installerResources,
   artifactName: `${installerFile}-\${version}.\${ext}`,
   mac: { ...macSigning, icon: `build/${appIdentity(channel, "crystal").macIcon}`, category: base.mac?.category, target: ["dmg"], extraResources: installerResources },
+  // The disk image holds the installer and nothing else: no shortcut to /Applications (the installer is what puts Crystal
+  // there; dragging it across would only install the installer), and a picture that says to open it. The window takes
+  // the picture's size. The picture is drawn by scripts/make-dmg-background.mjs, which also says where the icon sits.
+  dmg: {
+    background: "build/dmg-background.png",
+    iconSize: 112,
+    iconTextSize: 13,
+    contents: [{ x: 330, y: 250, type: "file" }],
+  },
   win: { target: ["portable"] },
   portable: { artifactName: `${installerFile}-\${version}.\${ext}` },
   linux: { target: ["AppImage"], category: base.linux?.category, maintainer: base.linux?.maintainer },
