@@ -67,7 +67,8 @@ function seeded(seed: number): () => number {
 }
 
 function build(THREE: Three, host: HTMLElement, x: Extras): () => void {
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // The sign-in scene is intentionally static: it renders one frame (no rAF loop, no pointer parallax).
+  const reduced = true;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
