@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { GLASS_BASE, GLASS_DARK, GLASS_SOFT } from "@/components/sidebar/glass";
+import { pickThemeVariant } from "../../../convex/lib/creationSpecs";
 import { SOUND_LABELS } from "@/studio/model/theme-pack";
 import type { ThemePackData } from "@/studio/model/types";
 import type { LoadedAsset } from "@/studio/storage/assets";
@@ -192,21 +193,32 @@ export function ThemePackPreview({
 
   const theme = data.theme;
   const pack = applied;
+  const hasVariants = !!theme?.alt && Object.keys(theme.alt.colors).length > 0;
+  // Which scheme to show a pack that has a palette for each. Where it has one, this is the app's own setting, which the
+  // creator can't see from here, so they choose.
+  const [wantDark, setWantDark] = useState(true);
 
-  // What the box wears. A pack that sets a theme decides light or dark and is drawn over that
-  // palette; one that only brings a font and icons is drawn over whatever the app looks like now.
+  // The palette on show: for a pack with both, the one matching the chosen scheme; for one palette, that palette.
+  const shown = useMemo(() => {
+    if (!theme) return null;
+    const effective = { ...theme, alt: hasVariants ? theme.alt : undefined };
+    return pickThemeVariant(effective as Parameters<typeof pickThemeVariant>[0], wantDark);
+  }, [theme, hasVariants, wantDark]);
+
+  // What the box wears. A pack that sets a theme is drawn over the matching default palette;
+  // one that only brings a font and icons is drawn over whatever the app looks like now.
   const style = useMemo(() => {
     const vars: Record<string, string> = {};
-    if (pack && theme) {
-      const base = theme.isDark ? DARK : LIGHT;
+    if (pack && shown) {
+      const base = shown.isDark ? DARK : LIGHT;
       for (const [k, v] of Object.entries(base)) vars[`--${k}`] = v;
-      for (const [token, value] of Object.entries(theme.colors)) {
-        if (SAFE_TOKEN(token) && SAFE_VALUE(value)) vars[`--${token}`] = value;
+      for (const [token, value] of Object.entries(shown.colors)) {
+        if (SAFE_TOKEN(token) && value && SAFE_VALUE(value)) vars[`--${token}`] = value;
       }
     }
     if (pack && hasFont) vars["--font-sans"] = `"${fontFamilyName}", "Blu Sans", system-ui, sans-serif`;
     return { ...vars, backgroundColor: "var(--background)", color: "var(--foreground)", fontFamily: "var(--font-sans)" } as React.CSSProperties;
-  }, [pack, theme, hasFont, fontFamilyName]);
+  }, [pack, shown, hasFont, fontFamilyName]);
 
   // Icon replacements, written the way the app's provider writes them, but only matching inside
   // this box and using the creator's local files.
@@ -226,7 +238,7 @@ export function ThemePackPreview({
 
   const extraIcons = Object.keys(data.icons).filter((n) => !MOCK_ICON_NAMES.has(n));
   const sounds = Object.entries(data.sounds).filter(([, id]) => assets.get(id));
-  const dark = pack && theme ? theme.isDark : false;
+  const dark = pack && shown ? shown.isDark : false;
 
   const play = (id: string) => {
     const a = assets.get(id);
@@ -246,10 +258,24 @@ export function ThemePackPreview({
           <h2 className="text-sm font-semibold">Preview</h2>
           <p className="text-xs text-muted-foreground">
             {theme
-              ? `Drawn over Crystal's ${theme.isDark ? "dark" : "light"} palette, as your pack sets it.`
+              ? hasVariants
+                ? `Your pack has a light and a dark look and follows the app's setting. Showing ${shown?.isDark ? "dark" : "light"}.`
+                : `Drawn over Crystal's ${theme.isDark ? "dark" : "light"} palette, as your pack sets it.`
               : "Your pack sets no colours, so this is drawn over whatever theme you're wearing."}
           </p>
         </div>
+        {hasVariants && (
+          <div className="inline-flex rounded-lg border border-border p-0.5 text-xs">
+            {[
+              [false, "Light"],
+              [true, "Dark"],
+            ].map(([v, label]) => (
+              <button key={String(v)} type="button" onClick={() => setWantDark(v as boolean)} className={cn("rounded-md px-3 py-1 font-medium", wantDark === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+                {label as string}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="inline-flex rounded-lg border border-border p-0.5 text-xs">
           {[
             [true, "With your pack"],

@@ -347,7 +347,14 @@ function sanitizeThemePack(raw: unknown): ThemePackData {
   const out: ThemePackData = { sounds: strings(raw.sounds), icons: strings(raw.icons) };
   if (isObj(raw.theme)) {
     const template = typeof raw.theme.template === "string" && /^[a-z0-9-]{1,64}$/.test(raw.theme.template) ? raw.theme.template : undefined;
-    out.theme = { isDark: bool(raw.theme.isDark, true), colors: strings(raw.theme.colors), ...(template ? { template } : {}) };
+    const altRaw = isObj(raw.theme.alt) ? raw.theme.alt : null;
+    const altTemplate = altRaw && typeof altRaw.template === "string" && /^[a-z0-9-]{1,64}$/.test(altRaw.template) ? altRaw.template : undefined;
+    out.theme = {
+      isDark: bool(raw.theme.isDark, true),
+      colors: strings(raw.theme.colors),
+      ...(template ? { template } : {}),
+      ...(altRaw ? { alt: { colors: strings(altRaw.colors), ...(altTemplate ? { template: altTemplate } : {}) } } : {}),
+    };
   }
   if (isObj(raw.font)) {
     const faces = Array.isArray(raw.font.faces)

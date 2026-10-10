@@ -57,7 +57,7 @@ function Swatch({ value, onPick, label }: { value: string; onPick: (hex: string)
 }
 
 /** Where the colours start: nothing, or one of the app's own themes. */
-function StartFrom({ current, customised, onScratch, onTemplate, onCancel }: { current?: string; customised: number; onScratch: () => void; onTemplate: (t: Theme) => void; onCancel?: () => void }) {
+function StartFrom({ current, customised, templates = TEMPLATES, onScratch, onTemplate, onCancel }: { current?: string; customised: number; /** The themes to offer: all of them, or only those of one scheme. */ templates?: Theme[]; onScratch: () => void; onTemplate: (t: Theme) => void; onCancel?: () => void }) {
   // Replacing colours someone has already set is asked about first.
   const [pending, setPending] = useState<{ kind: "scratch" } | { kind: "template"; theme: Theme } | null>(null);
   const choose = (next: NonNullable<typeof pending>) => {
@@ -111,7 +111,7 @@ function StartFrom({ current, customised, onScratch, onTemplate, onCancel }: { c
             <span className="block text-xs text-muted-foreground">Set only what you want to change</span>
           </span>
         </button>
-        {TEMPLATES.map((t) => (
+        {templates.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -136,18 +136,30 @@ function StartFrom({ current, customised, onScratch, onTemplate, onCancel }: { c
 function ThemeTab({ data, set }: { data: ThemePackData; set: (d: ThemePackData) => void }) {
   const theme = data.theme ?? { isDark: true, colors: {} };
   const tokens = [...TOKEN_ORDER, ...THEME_TOKENS.filter((t) => !TOKEN_ORDER.includes(t))];
-  const customised = Object.keys(theme.colors).length;
-  const template = theme.template ? TEMPLATES.find((t) => t.id === theme.template) : undefined;
+  const hasAlt = !!theme.alt;
+  // A pack can have a second palette for the other scheme. `which` is the one being edited; the second only exists once added.
+  const [which, setWhich] = useState<"main" | "alt">("main");
+  const editingAlt = which === "alt" && hasAlt;
+  const palette = editingAlt ? { isDark: !theme.isDark, colors: theme.alt!.colors, template: theme.alt!.template } : { isDark: theme.isDark, colors: theme.colors, template: theme.template };
+  const customised = Object.keys(palette.colors).length;
+  const template = palette.template ? TEMPLATES.find((t) => t.id === palette.template) : undefined;
+  // With two palettes each is for one scheme, so a starting point has to be of that scheme.
+  const offered = hasAlt ? TEMPLATES.filter((t) => t.isDark === palette.isDark) : TEMPLATES;
   // A new pack asks how to start; one that has colours (or has chosen) goes straight to them.
   const [choosing, setChoosing] = useState(!data.theme);
-  // Whether the pack has moved off its template, so "Reset" only appears when it would do something.
-  const drifted = !!template && (theme.isDark !== template.isDark || Object.entries(template.colors).some(([k, v]) => theme.colors[k] !== v) || customised !== Object.keys(template.colors).length);
+  // Whether the palette has moved off its template, so "Reset" only appears when it would do something.
+  const drifted = !!template && (palette.isDark !== template.isDark || Object.entries(template.colors).some(([k, v]) => palette.colors[k] !== v) || customised !== Object.keys(template.colors).length);
 
+  /** Writes the palette being edited, leaving the other one alone. */
+  const write = (next: { colors: Record<string, string>; template?: string; isDark?: boolean }) => {
+    if (editingAlt) set({ ...data, theme: { ...theme, alt: { colors: next.colors, ...(next.template ? { template: next.template } : {}) } } });
+    else set({ ...data, theme: { ...theme, isDark: next.isDark ?? theme.isDark, colors: next.colors, template: next.template, alt: theme.alt } });
+  };
   const setColour = (token: string, value: string) => {
-    const colors = { ...theme.colors };
+    const colors = { ...palette.colors };
     if (value.trim()) colors[token] = value;
     else delete colors[token];
-    set({ ...data, theme: { ...theme, colors } });
+    write({ colors, template: palette.template });
   };
   // Only the colours a theme can set: a template's own keys are checked against the same list the server uses.
   const fromTemplate = (t: Theme) => {
@@ -156,18 +168,66 @@ function ThemeTab({ data, set }: { data: ThemePackData; set: (d: ThemePackData) 
       const value = (t.colors as unknown as Record<string, string | undefined>)[token];
       if (value) colors[token] = value;
     }
-    set({ ...data, theme: { isDark: t.isDark, colors, template: t.id } });
+    write({ colors, template: t.id, isDark: t.isDark });
     setChoosing(false);
   };
   const fromScratch = () => {
-    set({ ...data, theme: { isDark: theme.isDark, colors: {} } });
+    write({ colors: {}, isDark: palette.isDark });
+    setChoosing(false);
+  };
+
+  const otherName = theme.isDark ? "light" : "dark";
+  const addVariant = () => {
+    set({ ...data, theme: { ...theme, alt: { colors: {} } } });
+    setWhich("alt");
+    setChoosing(true);
+  };
+  const removeVariant = () => {
+    const { alt: _removed, ...rest } = theme;
+    void _removed;
+    set({ ...data, theme: rest });
+    setWhich("main");
+    setChoosing(false);
+  };
+  const pick = (next: "main" | "alt") => {
+    setWhich(next);
     setChoosing(false);
   };
 
   return (
     <Section title="Colours" hint="Any CSS colour — hex, rgb(), hsl() or oklch(). Leave a colour empty to keep the app's own.">
+      {data.theme && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm">
+          {hasAlt ? (
+            <>
+              <div className="inline-flex rounded-lg border border-border p-0.5 text-xs">
+                {([
+                  ["main", theme.isDark ? "Dark" : "Light"],
+                  ["alt", theme.isDark ? "Light" : "Dark"],
+                ] as const).map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => pick(id)} className={cn("rounded-md px-3 py-1 font-medium", editingAlt === (id === "alt") ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="min-w-0 flex-1 text-xs text-muted-foreground">Follows the app&apos;s light/dark setting: each person sees the palette that matches it.</span>
+              <Button size="sm" variant="ghost" onClick={removeVariant}>
+                <Trash2 className="size-3.5" /> Remove the {otherName} look
+              </Button>
+            </>
+          ) : (
+            <>
+              <span className="min-w-0 flex-1 text-xs text-muted-foreground">One look: the pack switches the app to {theme.isDark ? "dark" : "light"}. Add a {otherName} look and it follows each person&apos;s own setting instead.</span>
+              <Button size="sm" variant="secondary" onClick={addVariant}>
+                <Plus className="size-3.5" /> Add a {otherName} look
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
       {choosing ? (
-        <StartFrom current={data.theme ? (theme.template ?? undefined) : undefined} customised={customised} onScratch={fromScratch} onTemplate={fromTemplate} onCancel={data.theme ? () => setChoosing(false) : undefined} />
+        <StartFrom current={data.theme || editingAlt ? (palette.template ?? undefined) : undefined} customised={customised} templates={offered} onScratch={fromScratch} onTemplate={fromTemplate} onCancel={data.theme ? () => setChoosing(false) : undefined} />
       ) : (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/40 p-3 text-sm">
           <span className="min-w-0 flex-1">
@@ -192,12 +252,15 @@ function ThemeTab({ data, set }: { data: ThemePackData; set: (d: ThemePackData) 
       )}
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm">
-        This is a dark theme
-        <Switch checked={theme.isDark} onCheckedChange={(isDark) => set({ ...data, theme: { ...theme, isDark } })} />
+        <span>
+          {hasAlt ? `This look is for ${palette.isDark ? "dark" : "light"} mode` : "This is a dark theme"}
+          {hasAlt && <span className="block text-xs text-muted-foreground">Remove the {otherName} look to change which scheme the pack is for.</span>}
+        </span>
+        <Switch checked={palette.isDark} disabled={hasAlt} onCheckedChange={(isDark) => write({ colors: palette.colors, template: palette.template, isDark })} />
       </label>
       <div className="grid gap-2 sm:grid-cols-2">
         {tokens.map((token) => {
-          const value = theme.colors[token] ?? "";
+          const value = palette.colors[token] ?? "";
           return (
             <div key={token} className="flex items-center gap-2">
               <Swatch value={value} label={token} onPick={(hex) => setColour(token, hex)} />
@@ -269,7 +332,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "preview", label: "Preview" },
-    { id: "theme", label: "Theme", count: Object.keys(data.theme?.colors ?? {}).length || undefined },
+    { id: "theme", label: "Theme", count: Object.keys(data.theme?.colors ?? {}).length + Object.keys(data.theme?.alt?.colors ?? {}).length || undefined },
     { id: "font", label: "Font", count: family?.faces.length || undefined },
     { id: "sounds", label: "Sounds", count: Object.keys(data.sounds).length || undefined },
     { id: "icons", label: "Icons", count: Object.keys(data.icons).length || undefined },

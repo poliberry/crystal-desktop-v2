@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { createPortal } from "react-dom";
 
 import { useStoredWidth, WidthHandle } from "@/components/sidebar/resizable-sidebar";
+import { useReservesWindowControls, WINDOW_CONTROLS_HEIGHT } from "@/components/window-controls-dock";
 import { cn } from "@/lib/utils";
 
 /**
@@ -61,6 +62,13 @@ export function RightSidebarProvider({ children }: { children: React.ReactNode }
   return <RightSidebarContext.Provider value={value}>{children}</RightSidebarContext.Provider>;
 }
 
+/** Whether the right sidebar is on screen right now: open, and the view in front has something in it. Not on screen
+ * means the top bar runs to the window's right edge, which is what the window buttons then need room beside. */
+export function useRightSidebarShown(): boolean {
+  const ctx = useContext(RightSidebarContext);
+  return !!ctx && ctx.available && ctx.open;
+}
+
 /** Whether the right sidebar is open, and how to open or close it — for the
  * button in a view's header. Always closed outside the provider (the pop-out
  * window has none). */
@@ -97,6 +105,9 @@ export function RightSidebarHost() {
     maxFraction: 0.4,
   });
   const [dragging, setDragging] = useState(false);
+  // On Windows and Linux the window's buttons are fixed to the corner above this column (see WindowControlsDock), so the
+  // card starts below them rather than under them.
+  const reserve = useReservesWindowControls();
   if (!ctx) return null;
 
   return (
@@ -112,7 +123,8 @@ export function RightSidebarHost() {
           // Straight to the pointer while it is being dragged; the spring is
           // for opening and closing.
           transition={dragging ? { duration: 0 } : SPRING}
-          className="flex h-full shrink-0 overflow-hidden py-2"
+          className="flex h-full shrink-0 overflow-hidden pb-2"
+          style={{ paddingTop: reserve ? WINDOW_CONTROLS_HEIGHT + 4 : 8 }}
         >
           <div
             className={cn(

@@ -11,6 +11,7 @@ import { TabsProvider } from "@/components/home/tabs-context";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TopNav } from "@/components/top-nav";
 import { WindowControls } from "@/components/window-controls";
+import { WindowControlsDock } from "@/components/window-controls-dock";
 import AuthFlow from "@/components/auth/auth-flow";
 import { SignInBackdrop } from "@/components/auth/sign-in-backdrop";
 import { Show } from "@clerk/react";
@@ -60,6 +61,8 @@ export default function HomePage() {
 
       <Show when="signed-in">
         <SessionBootstrap />
+        {/* Windows and Linux: the window's buttons, in the top-right corner whichever view is showing. */}
+        <WindowControlsDock />
         <CallProvider>
           <TabsProvider>
             <NavigationProvider>

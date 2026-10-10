@@ -83,7 +83,10 @@ export function themePackSpecInput(data: ThemePackData, name: string, assets: Ma
     input.font = { family: font.family, faces: faces.map((f) => ({ url: urlOf(f.assetId), weight: f.weight, weightMax: f.weightMax, style: f.style })) };
   }
   // Only what the server reads: the template note is Studio's own.
-  if (data.theme && Object.keys(data.theme.colors).length) input.theme = { isDark: data.theme.isDark, colors: data.theme.colors };
+  if (data.theme && Object.keys(data.theme.colors).length) {
+    const alt = data.theme.alt && Object.keys(data.theme.alt.colors).length ? { colors: data.theme.alt.colors } : undefined;
+    input.theme = { isDark: data.theme.isDark, colors: data.theme.colors, ...(alt ? { alt } : {}) };
+  }
   const sounds = Object.entries(data.sounds).filter(([, id]) => assets.get(id));
   if (sounds.length) input.sounds = Object.fromEntries(sounds.map(([k, id]) => [k, urlOf(id)]));
   const icons = Object.entries(data.icons).filter(([, id]) => assets.get(id));
