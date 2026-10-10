@@ -9,6 +9,7 @@ import { CommunityFinaleHost } from "@/components/community/community-finale-hos
 import { ChannelView } from "@/components/community/channel-view";
 import { CommunityMembersSection } from "@/components/community/community-members-section";
 import { ServerOverview } from "@/components/community/server-overview";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { ChatView } from "@/components/home/chat-view";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
 import { FriendsPanel } from "@/components/home/friends-panel";
@@ -276,7 +277,11 @@ export function HomeLayout() {
               onOpenChannel={(channelId) => selectChannel(channelId, "text")}
             />
           ) : target.type === "channel" ? (
-            <ChannelView channelId={target.channelId} />
+            // Keyed by tab: a place that can't load (an id that isn't one, a stale pinned tab) shows its error and a
+            // retry here, and picking another tab starts clean, rather than taking the whole window with it.
+            <ErrorBoundary key={activeTab.id} label="This channel">
+              <ChannelView channelId={target.channelId} />
+            </ErrorBoundary>
           ) : showCommunityPlaceholder && browsingCommunityId ? (
             // Where "Select a channel" used to be. A server's overview is
             // exactly what belongs in the moment somebody has opened it and
@@ -289,13 +294,15 @@ export function HomeLayout() {
               }
             />
           ) : target.type === "dm" ? (
-            <ChatView
-              conversationId={target.conversationId}
-              onStartCall={({ silent }) => {
-                dismissJoinError();
-                void joinDmCall(target.conversationId, { ring: !silent });
-              }}
-            />
+            <ErrorBoundary key={activeTab.id} label="This conversation">
+              <ChatView
+                conversationId={target.conversationId}
+                onStartCall={({ silent }) => {
+                  dismissJoinError();
+                  void joinDmCall(target.conversationId, { ring: !silent });
+                }}
+              />
+            </ErrorBoundary>
           ) : (
             <FriendsPanel search="" onMessageFriend={openConversation} />
           )}

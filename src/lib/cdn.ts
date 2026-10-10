@@ -12,8 +12,9 @@
  *  - Messages/presence/typing → Redis / realtime, never CDN
  */
 
-const CDN_BASE = process.env.NEXT_PUBLIC_CDN_URL ?? "";
-const R2_PUBLIC_BASE = process.env.NEXT_PUBLIC_R2_PUBLIC_URL ?? CDN_BASE;
+// `||`, not `??`: an empty string (an unset CI secret) means "not configured", same as missing.
+const CDN_BASE = process.env.NEXT_PUBLIC_CDN_URL || "";
+const R2_PUBLIC_BASE = process.env.NEXT_PUBLIC_R2_PUBLIC_URL || CDN_BASE;
 
 // True when CDN is configured — otherwise every helper returns undefined and
 // callers fall back to Convex storage URLs.

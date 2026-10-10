@@ -367,6 +367,12 @@ jobs:
             console.log('tag ' + expected + ' matches channels.ts');
           "
 
+      # Crystal and Crystal Studio are packaged from a small folder holding only what the main process loads (the window is
+      # the static export, which has Next, React and the rest compiled in), not from the repo with all of its dependencies.
+      # One folder serves both: same code, same version.
+      - name: Stage the app for packaging
+        run: bun scripts/stage-app.mjs
+
       - name: Package (${{ matrix.target }})
         run: bunx electron-builder --${{ matrix.target }} ${{ matrix.extra-args }} --config scripts/electron-builder-config.cjs --publish never
 
@@ -496,6 +502,8 @@ jobs:
             **Crystal** — `Crystal-Setup-${{ needs.check.outputs.current_version }}.exe` (Windows), `Crystal-${{ needs.check.outputs.current_version }}.dmg` (macOS), `Crystal-${{ needs.check.outputs.current_version }}.AppImage` or `.deb` (Linux)
             **Crystal Studio** — `Crystal-Studio-Setup-${{ needs.check.outputs.current_version }}.exe` (Windows), `Crystal-Studio-${{ needs.check.outputs.current_version }}.dmg` (macOS), `Crystal-Studio-${{ needs.check.outputs.current_version }}.AppImage` or `.deb` (Linux)
 
+            **Arch Linux** — the installer builds and installs the apps from the AUR for you, or do it yourself: `yay -S crystal-desktop-bin` (Crystal), `yay -S crystal-studio-bin` (Crystal Studio). Stable releases only.
+
             ### Opening the macOS build the first time
 
             This build is signed, but not with a paid Apple Developer ID, so
@@ -518,3 +526,88 @@ jobs:
           prerelease: ${{ needs.check.outputs.prerelease }}
           make_latest: ${{ needs.check.outputs.channel == 'stable' }}
           files: dist/**/*
+
+  # Publishes Crystal and Crystal Studio to the Arch User Repository, so `yay -S crystal-desktop-bin` and the installer
+  # (which builds from the AUR on Arch) both get the release that was just published. Stable only: the other channels are
+  # prereleases, and a package manager would offer them to everyone as upgrades.
+  #
+  # Each package repackages the release's .deb (aur/PKGBUILD.in), so this has to run after `release` has put the files on
+  # GitHub: the test build below downloads the .deb from there, which also proves the PKGBUILD against the real file
+  # before anything is pushed. Needs the AUR_SSH_PRIVATE_KEY secret (a key whose public half is on the AUR account that
+  # maintains the packages); without it the job says so and does nothing, rather than failing a release that is out.
+  aur:
+    needs: [check, release]
+    if: needs.check.outputs.channel == 'stable' && needs.check.outputs.needs_release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: crystal
+            pkgname: crystal-desktop-bin
+          - app: studio
+            pkgname: crystal-studio-bin
+    env:
+      VERSION: ${{ needs.check.outputs.current_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Is the AUR configured?
+        id: configured
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "::notice::AUR_SSH_PRIVATE_KEY isn't set, so ${{ matrix.pkgname }} was not published to the AUR."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Bun
+        if: steps.configured.outputs.configured == 'true'
+        uses: oven-sh/setup-bun@v2
+
+      # The same .deb the release carries: hashed here, so the PKGBUILD's checksum is the file Arch users will download.
+      - name: Download the Linux build
+        if: steps.configured.outputs.configured == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: dist
+
+      - name: Generate the PKGBUILD
+        if: steps.configured.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          case "${{ matrix.app }}" in
+            crystal) DEB_NAME="Crystal-${VERSION}.deb" ;;
+            studio)  DEB_NAME="Crystal-Studio-${VERSION}.deb" ;;
+          esac
+          DEB="$(find dist -name "$DEB_NAME" -print -quit)"
+          if [ -z "$DEB" ]; then
+            echo "::error::$DEB_NAME is not in the Linux build artifact."
+            exit 1
+          fi
+          mkdir -p aur-out
+          bun scripts/make-pkgbuild.mjs --app "${{ matrix.app }}" --version "$VERSION" --deb "$DEB" --out aur-out/PKGBUILD
+          cat aur-out/PKGBUILD
+
+      # Pinned to a commit: this action is handed the AUR's private key. (v4.2.0)
+      # `test` runs makepkg on the PKGBUILD in an Arch container, which downloads the published .deb, checks it against
+      # the checksum, and runs package(): so a recipe that doesn't work is caught here and never pushed.
+      - name: Publish ${{ matrix.pkgname }} to the AUR
+        if: steps.configured.outputs.configured == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050
+        with:
+          pkgname: ${{ matrix.pkgname }}
+          pkgbuild: aur-out/PKGBUILD
+          test: true
+          commit_username: ${{ secrets.AUR_USERNAME || 'crystal-release-bot' }}
+          commit_email: ${{ secrets.AUR_EMAIL || 'releases@usecrystal.app' }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ needs.check.outputs.current_version }}
+          ssh_keyscan_types: rsa,ecdsa,ed25519

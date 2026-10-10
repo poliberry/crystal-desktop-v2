@@ -3,6 +3,7 @@
 import { useQuery } from "convex/react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 
+import { ErrorBoundary } from "@/components/error-boundary";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
@@ -206,8 +207,22 @@ const STRUCTURE_COMMUNITY_BUDGET = 3;
 function PreloadEverything() {
   const listMine = useQuery(api.communities.listMine);
   const communities = listMine ?? [];
-  const conversations = useQuery(api.conversations.listMine) ?? [];
+  const listConversations = useQuery(api.conversations.listMine);
+  const conversations = listConversations ?? [];
   const recent = useRecentViews();
+
+  // Same guard as `memberIds`, for DMs: a recent view or pinned tab can hold an id that was never one of this
+  // account's conversations (a stale hint, a bad deep link), and subscribing to its messages throws a validation error
+  // from inside a render. `listMine` leaves out DMs closed since their last message, so this only stops those being
+  // warmed up in the background; opening one still works, and records it again.
+  const conversationIdSet = useMemo(
+    () => new Set(((listConversations ?? []) as any[]).map((c) => String(c.id))),
+    [listConversations],
+  );
+  useEffect(() => {
+    if (!listConversations) return;
+    pruneRecentViews((view) => view.type === "channel" || conversationIdSet.has(view.conversationId));
+  }, [listConversations, conversationIdSet]);
 
   // The ids the caller is actually a member of — the only ones worth warming.
   // Recent views and pinned tabs come from localStorage and the URL hash, so
@@ -277,7 +292,11 @@ function PreloadEverything() {
 
     // Recently opened first: that's the list most likely to be revisited, and
     // it's what survives a restart.
-    recent.forEach(add);
+    // Until the conversation list has arrived there is nothing to check a DM against, so none is warmed yet.
+    recent.forEach((view) => {
+      if (view.type === "dm" && !conversationIdSet.has(view.conversationId)) return;
+      add(view);
+    });
     conversationIds.forEach((conversationId: any) => add({ type: "dm", conversationId }));
     currentChannelIds.forEach((channelId: any) =>
       add({ type: "channel", communityId: currentCommunityId ?? "", channelId })
@@ -286,7 +305,7 @@ function PreloadEverything() {
     // Joined ids rather than the arrays, whose identities change every time
     // their query re-runs even when the contents are unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recent, conversationIds.join(","), currentChannelIds.join(",")]);
+  }, [recent, conversationIdSet, conversationIds.join(","), currentChannelIds.join(",")]);
 
   // DM structure is cheap vs community channels, but still bound: recent DMs
   // + 4 most recent conversations covers the working set without 50 subs.
@@ -302,28 +321,35 @@ function PreloadEverything() {
     return ordered.slice(0, 8) as Id<"conversations">[];
   }, [conversations, recent]);
 
+  // Each warm-up sits in its own silent boundary. They only ever draw nothing, and a `useQuery` that errors (a rejected
+  // argument, a function that isn't deployed yet, a bad cached page) throws while rendering: with this provider mounted
+  // above everything and nothing to catch it, that takes the whole app down at launch. Here it costs one preload.
   return (
     <>
-      <AccountPreloader />
+      <ErrorBoundary silent label="Account preload">
+        <AccountPreloader />
+      </ErrorBoundary>
 
       {communityIdsToPreload.map((id) => (
-        <CommunityPreloader key={id} communityId={id} />
+        <ErrorBoundary silent key={id} label="Community preload">
+          <CommunityPreloader communityId={id} />
+        </ErrorBoundary>
       ))}
       {conversationIdsToPreload.map((id) => (
-        <ConversationPreloader key={id} conversationId={id as Id<"conversations">} />
+        <ErrorBoundary silent key={id} label="Conversation preload">
+          <ConversationPreloader conversationId={id as Id<"conversations">} />
+        </ErrorBoundary>
       ))}
 
       {messageTargets.map((target) =>
         target.type === "dm" ? (
-          <ConversationMessagesPreloader
-            key={`dm:${target.conversationId}`}
-            conversationId={target.conversationId as Id<"conversations">}
-          />
+          <ErrorBoundary silent key={`dm:${target.conversationId}`} label="Message preload">
+            <ConversationMessagesPreloader conversationId={target.conversationId as Id<"conversations">} />
+          </ErrorBoundary>
         ) : (
-          <ChannelMessagesPreloader
-            key={`channel:${target.channelId}`}
-            channelId={target.channelId as Id<"channels">}
-          />
+          <ErrorBoundary silent key={`channel:${target.channelId}`} label="Message preload">
+            <ChannelMessagesPreloader channelId={target.channelId as Id<"channels">} />
+          </ErrorBoundary>
         )
       )}
     </>

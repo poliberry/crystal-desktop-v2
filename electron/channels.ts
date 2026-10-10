@@ -158,6 +158,17 @@ export interface AppIdentity {
    * and Crystal Studio publish to one GitHub release, so each needs a file of its own or they would overwrite one another.
    */
   feedChannel: string;
+  /**
+   * The Arch User Repository package that installs this app, or null where there isn't one. Only Stable is published
+   * to the AUR: the other channels are prereleases, and a package manager would offer them as upgrades to everyone.
+   * The `-bin` suffix is the AUR's convention for a package that repackages a published binary.
+   */
+  aurPackage: string | null;
+  /**
+   * The command the AUR package puts in /usr/bin. Not `crystal`: Arch's own `crystal` package (the programming language)
+   * owns /usr/bin/crystal, and two packages can't share a file.
+   */
+  aurBinary: string;
 }
 
 export function appIdentity(channel: ChannelDefinition, kind: AppKind): AppIdentity {
@@ -172,6 +183,8 @@ export function appIdentity(channel: ChannelDefinition, kind: AppKind): AppIdent
       macIcon: channel.icon === "icon.png" ? "icon-mac.png" : channel.icon,
       scheme: "crystal",
       feedChannel: "latest",
+      aurPackage: channel.id === "stable" ? "crystal-desktop-bin" : null,
+      aurBinary: channel.id === "stable" ? "crystal-desktop" : `crystal-desktop-${channel.id}`,
     };
   }
   const side = channel.id === "stable";
@@ -185,6 +198,8 @@ export function appIdentity(channel: ChannelDefinition, kind: AppKind): AppIdent
     macIcon: "icon-studio-mac.png",
     scheme: "crystal-studio",
     feedChannel: "studio",
+    aurPackage: side ? "crystal-studio-bin" : null,
+    aurBinary: side ? "crystal-studio" : `crystal-studio-${channel.id}`,
   };
 }
 

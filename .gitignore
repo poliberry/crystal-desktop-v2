@@ -10,6 +10,7 @@ release
 release-studio
 release-installer
 .installer-app
+.app-stage
 *.tsbuildinfo
 .DS_Store
 # SwiftPM's build tree for the macOS system-audio helper — ~100MB of module

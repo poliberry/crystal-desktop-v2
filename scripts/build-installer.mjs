@@ -27,7 +27,6 @@ await build({
   target: "chrome120",
   minify: true,
   legalComments: "none",
-  // three.js loads on demand in the page; as a single script it is simply part of the bundle.
   logLevel: "warning",
 });
 

@@ -22,6 +22,7 @@ import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
 import { AccountSuspendedGate } from "@/components/account-suspended-gate";
 import { AppLoadingGate } from "@/components/app-loading-gate";
 import { DataPreloader } from "@/components/data-preloader";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { FileDropGuard } from "@/components/home/composer-attachments";
 import { CustomCssProvider } from "@/components/custom-css-provider";
 import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog";
@@ -106,7 +107,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   {/* Over everything while the app is starting or offline. */}
                   <AppLoadingGate />
                   <AuthCallbackHandler />
-                  <DataPreloader />
+                  {/* Only warms caches and draws nothing, so if it fails the app carries on without it. */}
+                  <ErrorBoundary silent label="Data preloader">
+                    <DataPreloader />
+                  </ErrorBoundary>
                   <OutboxFlusher />
                   <OutboxStatus />
                   <FileDropGuard />

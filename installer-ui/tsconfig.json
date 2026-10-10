@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["./*.ts", "../src/components/auth/login-scene-core.ts"]
+  "include": ["./*.ts"]
 }

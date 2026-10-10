@@ -14,6 +14,8 @@ const api = {
     defaultBase: string;
     installed: Record<ComponentId, boolean>;
     appsInOwnFolder: boolean;
+    aur: boolean;
+    aurMissing: string[];
   }> => ipcRenderer.invoke("installer:info"),
   plan: (): Promise<ResolvedPlan> => ipcRenderer.invoke("installer:plan"),
   state: (): Promise<InstallState> => ipcRenderer.invoke("installer:state"),

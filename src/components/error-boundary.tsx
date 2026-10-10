@@ -8,6 +8,9 @@ interface Props {
   children: ReactNode;
   /** Shown above the error text, e.g. the name of the panel that failed. */
   label?: string;
+  /** For things that run in the background and draw nothing (preloaders): a failure is logged and the
+   * component simply stops, instead of showing an error panel in the middle of the app. */
+  silent?: boolean;
 }
 
 interface State {
@@ -29,12 +32,14 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error) {
-    console.error("[error-boundary]", this.props.label ?? "", error);
+    if (this.props.silent) console.warn("[error-boundary]", this.props.label ?? "", error.message);
+    else console.error("[error-boundary]", this.props.label ?? "", error);
   }
 
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    if (this.props.silent) return null;
 
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">

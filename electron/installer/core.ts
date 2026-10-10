@@ -143,6 +143,95 @@ export function digestMatches(expectedBase64: string, actualBase64: string): boo
   return diff === 0;
 }
 
+/**
+ * Whether /etc/os-release describes Arch Linux or something built on it (Manjaro, EndeavourOS, CachyOS and the rest name
+ * `arch` in ID_LIKE). The file is `KEY=value` lines, the value optionally quoted; ID_LIKE may list several families.
+ */
+export function isArchLike(osRelease: string): boolean {
+  const fields = new Map<string, string>();
+  for (const line of osRelease.split("\n")) {
+    const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+    if (m) fields.set(m[1], m[2].replace(/^(["'])(.*)\1$/, "$2").trim());
+  }
+  const ids = [fields.get("ID") ?? "", ...(fields.get("ID_LIKE") ?? "").split(/\s+/)].map((s) => s.toLowerCase());
+  return ids.includes("arch");
+}
+
+/** What building and installing an AUR package needs on the machine. `makepkg` refuses to run as root and `pacman -U` needs it, hence `pkexec`. */
+export const AUR_TOOLS = ["pacman", "makepkg", "fakeroot", "bsdtar", "pkexec"] as const;
+
+export interface AurChoice {
+  /** Install through the AUR. */
+  use: boolean;
+  /** Tools it needs that this computer lacks, so the wizard can say why it is using the AppImage instead. */
+  missing: string[];
+}
+
+/**
+ * Whether to install from the AUR rather than the AppImage: on an Arch-based Linux, for a channel that has AUR packages
+ * (Stable only), with the tools to build and install one. Anything less falls back to the AppImage, which works anywhere.
+ * `forced` is `CRYSTAL_INSTALL_METHOD`: "appimage" skips the AUR on purpose.
+ */
+export function chooseAur(input: { platform: Platform; arch: string; osRelease: string; channel: ChannelDefinition; have: (command: string) => boolean; forced?: string }): AurChoice {
+  const none: AurChoice = { use: false, missing: [] };
+  if (input.platform !== "linux" || input.arch !== "x64" || input.forced === "appimage") return none;
+  if (!isArchLike(input.osRelease)) return none;
+  if (!appIdentity(input.channel, "crystal").aurPackage) return none;
+  const missing = AUR_TOOLS.filter((t) => !input.have(t));
+  return { use: missing.length === 0, missing };
+}
+
+/** The AUR's tarball of a package's git repository (its PKGBUILD and anything beside it). Fetched over HTTPS, no git needed. */
+export const aurSnapshotUrl = (pkg: string): string => `https://aur.archlinux.org/cgit/aur.git/snapshot/${encodeURIComponent(pkg)}.tar.gz`;
+
+/**
+ * Whether a failure is the kind an administrator can get past: a folder that can't be emptied or written to, usually
+ * because something else owns it or is still holding a file in it.
+ */
+export const needsAdmin = (raw: string): boolean => /EACCES|EPERM|ENOTEMPTY|EBUSY|Permission denied|Operation not permitted|Directory not empty/i.test(raw);
+
+/** A string as one shell word, whatever is in it. */
+export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/** A string as an AppleScript literal, for `osascript -e`. */
+export const appleScriptString = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+/**
+ * Elevation runs as root, so it only ever acts on what the installer itself puts in place: an absolute path to an app
+ * bundle, never a folder that merely looks like one. Anything else is a bug, and must not reach `rm -rf`.
+ */
+function assertBundle(target: string): void {
+  if (!nodePath.posix.isAbsolute(target) || !target.endsWith(".app") || nodePath.posix.dirname(target) === "/" || target.split("/").includes("..")) {
+    throw new Error("Refusing to run with administrator rights on something that isn't an installed app.");
+  }
+}
+
+/** Clears whatever flags would stop a folder being emptied, then removes it. As root, for an app the person's account can't remove. */
+export function removeBundleScript(target: string): string {
+  assertBundle(target);
+  const t = shellQuote(target);
+  return `/usr/bin/chflags -R nouchg ${t} 2>/dev/null; /bin/rm -rf ${t}`;
+}
+
+/**
+ * Replaces the app at `target` with the one at `src`, as root, and hands it back to the person: an app left owned by root
+ * can't be updated by itself afterwards, which is the whole way Crystal and Studio stay current.
+ */
+export function installBundleScript(src: string, target: string, owner: { uid: number; gid: number }): string {
+  assertBundle(target);
+  const [s, t] = [shellQuote(src), shellQuote(target)];
+  return [
+    `/bin/mkdir -p ${shellQuote(nodePath.posix.dirname(target))}`,
+    removeBundleScript(target),
+    `/usr/bin/ditto ${s} ${t}`,
+    `/usr/sbin/chown -R ${Math.trunc(owner.uid)}:${Math.trunc(owner.gid)} ${t}`,
+    `/usr/bin/xattr -dr com.apple.quarantine ${t} 2>/dev/null; true`,
+  ].join(" && ");
+}
+
+/** The AppleScript that runs a shell command after macOS has asked for an administrator's password. */
+export const elevatedAppleScript = (command: string): string => `do shell script ${appleScriptString(command)} with administrator privileges`;
+
 export { formatBytes } from "./format";
 
 /** What an app is called on this channel (the installer is built per channel, like the apps). */

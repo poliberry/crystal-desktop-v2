@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { CHANNELS, resolveRunningChannel } from "../channels";
-import { type ComponentId, type Platform, defaultBase, isPlatform } from "./core";
+import { type ComponentId, type Platform, chooseAur, defaultBase, isPlatform } from "./core";
 import { Engine, type Selection } from "./engine";
 
 /**
@@ -53,12 +53,40 @@ function canWrite(dir: string): boolean {
   }
 }
 
+/** Whether a program is on the PATH. */
+function hasCommand(name: string): boolean {
+  return (process.env.PATH ?? "").split(path.delimiter).some((dir) => {
+    try {
+      fs.accessSync(path.join(dir, name), fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function readOsRelease(): string {
+  for (const file of ["/etc/os-release", "/usr/lib/os-release"]) {
+    try {
+      return fs.readFileSync(file, "utf8");
+    } catch {
+      /* try the next */
+    }
+  }
+  return "";
+}
+
+// On Arch Linux (and what is built on it) the apps come from the AUR and are installed with pacman, so the package manager
+// owns and updates them. Anywhere else, or if the tools for it are missing, the AppImage is placed as before.
+const aur = chooseAur({ platform, arch: process.arch, osRelease: readOsRelease(), channel: effectiveChannel, have: hasCommand, forced: process.env.CRYSTAL_INSTALL_METHOD });
+
 const engine = new Engine({
   platform,
   arch: process.arch,
   channel: effectiveChannel,
   desktopDir: app.getPath("desktop"),
   iconFor: iconPath,
+  aur: aur.use,
 });
 
 let win: BrowserWindow | null = null;
@@ -125,6 +153,10 @@ app.whenReady().then(() => {
       installed: Object.fromEntries(Object.entries(engine.targets(base)).map(([id, target]) => [id, fs.existsSync(target)])) as Record<ComponentId, boolean>,
       // A Mac's apps go straight into the folder; Windows and Linux put each in a folder of its own beneath it.
       appsInOwnFolder: platform === "win32",
+      // Installed through pacman: there is no folder to choose, and the wizard skips that step.
+      aur: aur.use,
+      // Arch, but missing what building an AUR package takes: said on the Location step, so the AppImage isn't a mystery.
+      aurMissing: aur.missing,
     };
   });
   ipcMain.handle("installer:plan", () => engine.resolve());
@@ -143,7 +175,13 @@ app.whenReady().then(() => {
     if (!path.isAbsolute(dir)) return { ok: false, reason: "Enter the full path of a folder." };
     try {
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.access(dir, fs.constants.W_OK);
+      try {
+        await fs.promises.access(dir, fs.constants.W_OK);
+      } catch (e) {
+        // A Mac asks for an administrator's password when it gets to putting the apps there, so a folder that is only
+        // writable by one is fine, as long as it is a folder.
+        if (platform !== "darwin" || !(await fs.promises.stat(dir)).isDirectory()) throw e;
+      }
       return { ok: true, reason: null };
     } catch {
       return { ok: false, reason: "This folder can't be written to. Choose another." };

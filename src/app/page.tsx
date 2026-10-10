@@ -13,7 +13,6 @@ import { TopNav } from "@/components/top-nav";
 import { WindowControls } from "@/components/window-controls";
 import AuthFlow from "@/components/auth/auth-flow";
 import { SignInBackdrop } from "@/components/auth/sign-in-backdrop";
-import dynamic from "next/dynamic";
 import { Show } from "@clerk/react";
 import { Google_Sans_Flex } from "next/font/google";
 import { BirthdayProvider } from "@/components/home/birthday-provider";
@@ -21,9 +20,6 @@ import { RightSidebarHost, RightSidebarProvider } from "@/components/sidebar/rig
 import { ResizableSidebarProvider } from "@/components/sidebar/resizable-sidebar";
 import { UnifiedSidebar } from "@/components/sidebar/unified-sidebar";
 import { Sidebar, SidebarInset } from "@/components/ui/sidebar";
-
-/** three.js is large and only the signed-out screen wants it. */
-const LoginScene = dynamic(() => import("@/components/auth/login-scene"), { ssr: false });
 
 const googleSansFlex = Google_Sans_Flex({
   subsets: ["latin"],
@@ -43,8 +39,6 @@ export default function HomePage() {
           <div className="flex flex-row w-full h-full">
             <div className="relative h-full w-full overflow-hidden bg-[#06080c]">
               <SignInBackdrop />
-              {/* Drawn once, with nothing moving, in the lower part of the panel under the headline. */}
-              <LoginScene className="pointer-events-none absolute bottom-0 left-0 h-[55%] w-full" />
               <div className="absolute top-9 left-2 z-10 flex w-[60%] flex-col gap-7 pl-6">
                 <img src="/logo.svg" alt="Crystal" className="w-24" />
                 <h1

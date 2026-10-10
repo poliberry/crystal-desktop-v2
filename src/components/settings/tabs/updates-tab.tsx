@@ -18,9 +18,63 @@ const PHASE_LABEL: Record<UpdaterPhase, string> = {
   error: "Something went wrong",
 };
 
-export function UpdatesTab() {
+/**
+ * The version, the channel, what the updater is doing and the buttons to steer it. Shared by Crystal's Settings and Crystal
+ * Studio's Updates dialog: both are the same updater (electron/updater.ts), in whichever app is running.
+ */
+export function UpdatesPanel() {
   const { state, supported, check, download, install, openReleases } = useUpdater();
 
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Current version</span>
+        <span className="font-medium">{state.currentVersion || "—"}</span>
+      </div>
+
+      {/* Only the main process knows the channel — in a plain browser the
+          label is empty and this row is left out rather than guessed at. */}
+      {state.channelLabel && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Channel</span>
+          <span className="font-medium">{state.channelLabel}</span>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Status</span>
+        <span className="font-medium">
+          {PHASE_LABEL[state.phase]}
+          {state.phase === "available" && state.availableVersion ? ` (v${state.availableVersion})` : ""}
+          {state.phase === "downloading" && state.progressPercent != null
+            ? ` (${state.progressPercent}%)`
+            : ""}
+        </span>
+      </div>
+
+      {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+
+      <div className="flex flex-wrap gap-2">
+        {state.phase === "available" && <Button onClick={() => void download()}>Download update</Button>}
+        {state.phase === "ready" && <Button onClick={() => install()}>Restart and install</Button>}
+        <Button
+          variant="outline"
+          onClick={() => void check()}
+          disabled={!supported || state.phase === "checking" || state.phase === "downloading"}
+        >
+          {state.phase === "checking" ? <Loader2 className="size-4 animate-spin" /> : "Check for updates"}
+        </Button>
+        {(state.phase === "unsupported" || state.phase === "error") && (
+          <Button variant="ghost" onClick={() => void openReleases()}>
+            View releases on GitHub
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function UpdatesTab() {
   return (
     <Card>
       <CardHeader>
@@ -28,53 +82,11 @@ export function UpdatesTab() {
         <CardDescription>
           Crystal checks GitHub releases for new versions. Each channel updates only from its
           own releases, so a Canary install never pulls a Stable build (or the other way
-          round).
+          round). Crystal Studio is a separate app and updates itself.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Current version</span>
-          <span className="font-medium">{state.currentVersion || "—"}</span>
-        </div>
-
-        {/* Only the main process knows the channel — in a plain browser the
-            label is empty and this row is left out rather than guessed at. */}
-        {state.channelLabel && (
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Channel</span>
-            <span className="font-medium">{state.channelLabel}</span>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Status</span>
-          <span className="font-medium">
-            {PHASE_LABEL[state.phase]}
-            {state.phase === "available" && state.availableVersion ? ` (v${state.availableVersion})` : ""}
-            {state.phase === "downloading" && state.progressPercent != null
-              ? ` (${state.progressPercent}%)`
-              : ""}
-          </span>
-        </div>
-
-        {state.error && <p className="text-sm text-destructive">{state.error}</p>}
-
-        <div className="flex flex-wrap gap-2">
-          {state.phase === "available" && <Button onClick={() => void download()}>Download update</Button>}
-          {state.phase === "ready" && <Button onClick={() => install()}>Restart and install</Button>}
-          <Button
-            variant="outline"
-            onClick={() => void check()}
-            disabled={!supported || state.phase === "checking" || state.phase === "downloading"}
-          >
-            {state.phase === "checking" ? <Loader2 className="size-4 animate-spin" /> : "Check for updates"}
-          </Button>
-          {(state.phase === "unsupported" || state.phase === "error") && (
-            <Button variant="ghost" onClick={() => void openReleases()}>
-              View releases on GitHub
-            </Button>
-          )}
-        </div>
+      <CardContent>
+        <UpdatesPanel />
       </CardContent>
     </Card>
   );

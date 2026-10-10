@@ -65,9 +65,23 @@ interface CacheConfig {
 
 const STORE = "blobs";
 
+/** Origins whose images couldn't be fetched as blobs this session (see `fetchAndCache`). Shared by both caches. */
+const refusedOrigins = new Set<string>();
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 function isCdnUrl(url: string): boolean {
-  const cdn = process.env.NEXT_PUBLIC_R2_PUBLIC_URL ?? process.env.NEXT_PUBLIC_CDN_URL ?? "";
-  if (cdn && url.startsWith(cdn.replace(/\/$/, ""))) return true;
+  // Both, and `||` rather than `??`: a build that sets one to an empty string (an unset CI secret does) must not hide the
+  // other, or CDN artwork gets fetched as a blob and is blocked by CORS.
+  for (const cdn of [process.env.NEXT_PUBLIC_R2_PUBLIC_URL, process.env.NEXT_PUBLIC_CDN_URL]) {
+    if (cdn && url.startsWith(cdn.replace(/\/$/, ""))) return true;
+  }
   if (url.includes("crystal-cdn.poliberry.com")) return true;
   if (url.includes(".r2.cloudflarestorage.com")) return true;
   if (url.includes("/migrated/")) return true;
@@ -165,6 +179,7 @@ function createBlobCache(config: CacheConfig) {
 
   async function fetchAndCache(url: string): Promise<Blob | undefined> {
     if (isCdnUrl(url)) return undefined; // CDN is the cache — <img src> loads directly, no CORS blob fetch
+    if (refusedOrigins.has(originOf(url))) return undefined;
     const existing = inflight.get(url);
     if (existing) return existing;
     const promise = (async () => {
@@ -175,6 +190,11 @@ function createBlobCache(config: CacheConfig) {
         void putEntry(url, blob);
         return blob;
       } catch {
+        // A `fetch` that throws (rather than answering with an error status) is the network, or a server that doesn't send
+        // CORS headers — which is what a CDN does to an app that doesn't know it is one (a build made without
+        // NEXT_PUBLIC_CDN_URL). Either way, asking that origin again for every other image only adds an error to the
+        // console each time. The plain <img src> still loads the picture; only this blob copy is given up on, for this session.
+        refusedOrigins.add(originOf(url));
         return undefined;
       } finally {
         inflight.delete(url);

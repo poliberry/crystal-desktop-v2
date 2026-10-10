@@ -66,10 +66,6 @@ img { display: block; }
   mask-image: linear-gradient(to top, black 10%, transparent 85%);
 }
 
-/* The 3D picture: welcome page only, along the bottom. */
-#scene { position: absolute; left: 34%; right: 0; bottom: 0; height: 58%; z-index: 1; pointer-events: none; opacity: 0; transition: opacity 0.5s ease; }
-#scene.on { opacity: 1; }
-
 /* ---- Title bar ---- */
 .bar { position: absolute; z-index: 20; top: 0; left: 0; right: 0; height: var(--bar); display: flex; align-items: center; gap: 16px; padding: 0 0 0 16px; -webkit-app-region: drag; }
 [data-platform="darwin"] .bar { padding-left: 88px; }
