@@ -122,10 +122,10 @@ const BLOOM = blurF("bloomB", 1.3);
 // --- Cat ears: flat anime style: a leaf-shaped cream ear with a scalloped pink inside, a pearl at the base, whiskers --------------
 
 /** The ear is a leaf: it grows from a pearl at the base, sweeps up the outside in one smooth curve and ends in a sharp point. */
-const EAR_OUT = "M9,33.5 C6.5,22 11,10.5 21.5,7 C26.5,5.4 31,6.6 35,10.6 C28,12.2 22.5,17.5 18.8,25 C16.2,29.2 12.8,32.4 9,33.5 Z";
-const EAR_IN = "M11.4,31.4 C9.6,22.4 13.4,12.8 22,9.9 C25.8,8.8 29.4,9.4 32.6,11.4 C26.6,13.4 22,18.4 18.8,24.6 C16.6,28.2 14,30.4 11.4,31.4 Z";
+const EAR_OUT = "M9,34 C8.4,26 8.6,17 10.4,11.6 C16,9.4 26,8.4 36,9.6 C30,15.4 18.4,25.8 9,34 Z";
+const EAR_IN = "M11.2,31.4 C10.8,25 11,18 12.4,13.6 C17.4,12 25,11 31.8,11.6 C26.4,16.2 18.2,23.8 11.2,31.4 Z";
 /** The deeper pink, with a scalloped edge along the inner side: the layered, bumpy look anime ears have. */
-const EAR_DEEP = "M12.6,29.6 C11.6,22.4 15.2,15 22.4,12.4 C25.4,11.5 28,11.7 30.2,12.8 Q29,14.2 27.2,14.8 Q26,16.4 24.4,17.2 Q23.4,19 21.8,20 Q20.6,21.8 19.2,23.2 Q18,25.2 16.6,26.6 Q15.2,28.2 12.6,29.6 Z";
+const EAR_DEEP = "M12.4,29.8 C11.9,25.6 12,21 12.9,17.2 Q15.2,17.4 15.7,19.2 Q18,19.2 18.3,21.2 Q20.4,21.6 20.2,23.6 Q22.1,24.2 21.5,26.1 Q18,29 12.4,29.8 Z";
 
 /** A whisker: a tapered stroke, thick where it leaves the face and fine at the tip. */
 function whisker(tipX: number, tipY: number, baseX: number, baseY: number, width: number): string {
@@ -140,14 +140,14 @@ function whisker(tipX: number, tipY: number, baseX: number, baseY: number, width
 
 const catEars: Draw = (a) => {
   const ear = (begin: number) =>
-    `<g>${a ? animateT("rotate", "0 9 33.5;-6 9 33.5;3 9 33.5;0 9 33.5;0 9 33.5", { dur: 5, begin, keyTimes: "0;.05;.1;.15;1" }) : ""}` +
+    `<g>${a ? animateT("rotate", "0 9 34;-6 9 34;3 9 34;0 9 34;0 9 34", { dur: 5, begin, keyTimes: "0;.05;.1;.15;1" }) : ""}` +
     `<path d="${EAR_OUT}" fill="#fff6f1"/>` +
     `<path d="${EAR_IN}" fill="#f9bcd8"/>` +
     `<path d="${EAR_DEEP}" fill="#e57fb6"/>` +
     `<path d="${EAR_OUT}" stroke="#8a5a66" stroke-width=".7" stroke-linejoin="round"/>` +
-    `<path d="M11.6,30.4 C10.4,23 13.6,14 21,10.8" stroke="#fff" stroke-width=".5" stroke-linecap="round" opacity=".7"/>` +
+    `<path d="M10.4,29 C9.8,23 10,17 11.6,12.6" stroke="#fff" stroke-width=".5" stroke-linecap="round" opacity=".7"/>` +
     // The pearl where the ear meets the head.
-    `<g transform="translate(9 33.6)"><circle r="1.75" fill="#fff" stroke="#b79aa6" stroke-width=".4"/><circle cx="-.5" cy="-.55" r=".5" fill="#fde7f1"/>${a ? glintOnly(begin) : ""}</g></g>`;
+    `<g transform="translate(9 34)"><circle r="1.75" fill="#fff" stroke="#b79aa6" stroke-width=".4"/><circle cx="-.5" cy="-.55" r=".5" fill="#fde7f1"/>${a ? glintOnly(begin) : ""}</g></g>`;
   const whiskers = (begin: number) =>
     `<g>${a ? animateT("rotate", "0 16 55;-2.6 16 55;1.4 16 55;0 16 55;0 16 55", { dur: 4.2, begin, keyTimes: "0;.07;.14;.2;1" }) : ""}` +
     whisker(2.6, 51.2, 15.4, 51.6, 1.7) + whisker(2, 55.8, 15.4, 56.4, 1.8) + whisker(3.6, 64, 14.6, 58.6, 1.7) + `</g>`;

@@ -181,7 +181,8 @@ export const seedDecorations = internalMutation({
       const grants = [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: item.url, anchor: "center", x: 50, y: 0, width: 126 }]), label: item.name }];
       const existing = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", item.key)).unique();
       if (existing) {
-        await ctx.db.patch(existing._id, { grants, updatedAt: now });
+        // The text is refreshed with the artwork, so a redrawn decoration is described as it now is. Price and status are not touched.
+        await ctx.db.patch(existing._id, { grants, name: item.name, description: item.description, updatedAt: now });
         // People who already own it get the new artwork, the way a creator's approved update reaches them.
         await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId: existing._id, after: null });
         repointed++;

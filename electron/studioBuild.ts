@@ -1,7 +1,40 @@
-import * as esbuild from "esbuild";
+import type * as esbuild from "esbuild";
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+/**
+ * esbuild, loaded on first use and pointed at its real binary.
+ *
+ * esbuild runs a native program, found with `require.resolve`. In the packaged app that resolves *inside* `app.asar` (Electron
+ * answers with the archive path even for a file that is unpacked beside it), and esbuild then `spawn`s that path, which fails
+ * with ENOTDIR: Electron redirects asar paths for `execFile`, not for `spawn`. The binary is shipped unpacked (see
+ * `asarUnpack` in electron-builder.yml), so the fix is to tell esbuild where it really is. It reads `ESBUILD_BINARY_PATH` when
+ * it is loaded, which is why this is a lazy `require` and not an `import` at the top of the file. (The literal
+ * `require("esbuild")` is also what scripts/stage-app.mjs looks for to ship the package.)
+ */
+let esbuildModule: typeof esbuild | null = null;
+function loadEsbuild(): typeof esbuild {
+  if (esbuildModule) return esbuildModule;
+  if (!process.env.ESBUILD_BINARY_PATH) {
+    try {
+      const pkgJson = require.resolve("esbuild/package.json");
+      if (pkgJson.includes("app.asar")) {
+        const nodeModules = path.dirname(path.dirname(pkgJson)).replace("app.asar", "app.asar.unpacked");
+        const platform = `${process.platform}-${process.arch}`;
+        const found = ["bin/esbuild", "esbuild.exe"]
+          .map((rel) => path.join(nodeModules, "@esbuild", platform, rel))
+          .find((candidate) => fs.existsSync(candidate));
+        if (found) process.env.ESBUILD_BINARY_PATH = found;
+      }
+    } catch {
+      /* leave it to esbuild, which will say what it couldn't find */
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  esbuildModule = require("esbuild") as typeof esbuild;
+  return esbuildModule;
+}
 
 /**
  * Turning an extension's TypeScript project into the one plain script the sandbox runs.
@@ -97,7 +130,7 @@ export async function buildExtension(projectDir: string): Promise<BuildResult> {
   };
 
   try {
-    const result = await esbuild.build({
+    const result = await loadEsbuild().build({
       entryPoints: [entry],
       bundle: true,
       write: false,
