@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatDateTime } from "@/lib/locale";
 
 /** The shape `convex/lib/embeds.ts` stores. Already validated on the server; still drawn defensively. */
 export interface MessageEmbed {
@@ -100,7 +101,7 @@ export function MessageEmbeds({ embeds }: { embeds?: MessageEmbed[] }) {
                   {e.footer?.iconUrl && <Picture src={e.footer.iconUrl} className="size-4 rounded-full object-cover" />}
                   {e.footer && <span className="break-words">{e.footer.text}</span>}
                   {e.footer && e.timestamp && <span>•</span>}
-                  {e.timestamp && <time dateTime={new Date(e.timestamp).toISOString()}>{new Date(e.timestamp).toLocaleString()}</time>}
+                  {e.timestamp && <time dateTime={new Date(e.timestamp).toISOString()}>{formatDateTime(e.timestamp)}</time>}
                 </div>
               )}
             </div>

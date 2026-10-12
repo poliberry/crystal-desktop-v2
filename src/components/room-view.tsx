@@ -32,9 +32,10 @@ interface RoomViewProps {
   roomName: string;
   controller: RoomController;
   onLeave: () => Promise<void>;
+  showSoundboardEmoji?: boolean;
 }
 
-export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
+export function RoomView({ roomName, controller, onLeave, showSoundboardEmoji = true }: RoomViewProps) {
   const { activeCall } = useCall();
   const {
     room,
@@ -238,6 +239,7 @@ export function RoomView({ roomName, controller, onLeave }: RoomViewProps) {
           tiles={tiles}
           pending={pending}
           moderation={moderation}
+          showSoundboardEmoji={showSoundboardEmoji}
           autoWatchIdentity={watchIntent}
           onAutoWatched={clearWatchIntent}
         />

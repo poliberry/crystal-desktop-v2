@@ -261,7 +261,7 @@ function GrantCard({
                 [
                   ["profileEffects", "Premium profile effects"],
                   ["earlyAccess", "Early access to new drops"],
-                  ["monthlyBadge", "Rotating monthly badge"],
+                  ["monthlyBadge", "Geode badge (grows with time subscribed)"],
                 ] as const
               ).map(([field, label]) => (
                 <label key={field} className="flex items-center justify-between gap-2 text-sm">

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 
-import { emptyMotion, type Clip, type MotionSpec } from "../../../convex/lib/motion";
+import { emptyMotion, introLength, type Clip, type MotionSpec } from "../../../convex/lib/motion";
 import { History } from "@/studio/model/history";
 import { syncLayers } from "@/studio/model/motion-doc";
 import type { Project } from "@/studio/model/types";
@@ -147,8 +147,11 @@ export function useMotionEditor(project: Project, onChange: (p: Project) => void
 
   // --- Playback -----------------------------------------------------------------------------------
   const end = scope.duration;
-  const playRef = useRef({ playing, rate, loop, range, end });
-  playRef.current = { playing, rate, loop, range, end };
+  // Where a repeat picks up: after the intro, as the app plays it — so the loop you hear and see while editing is the
+  // one that will go round on a profile. Only the design itself has an intro, not a compound clip inside it.
+  const resume = path.length === 0 ? introLength(spec) : 0;
+  const playRef = useRef({ playing, rate, loop, range, end, resume });
+  playRef.current = { playing, rate, loop, range, end, resume };
 
   useEffect(() => {
     if (!playing) return;
@@ -156,13 +159,15 @@ export function useMotionEditor(project: Project, onChange: (p: Project) => void
     let t0 = clock.value;
     let w0 = performance.now();
     const tick = (now: number) => {
-      const { rate: r, loop: lp, range: rg, end: e } = playRef.current;
+      const { rate: r, loop: lp, range: rg, end: e, resume: rs } = playRef.current;
       let t = t0 + ((now - w0) / 1000) * r;
       const lo = rg ? Math.min(rg.a, rg.b) : 0;
       const hi = rg ? Math.max(rg.a, rg.b) : e;
       if (t >= hi || t < lo) {
         if (lp) {
-          t = r >= 0 ? lo + ((t - lo) % Math.max(FRAME, hi - lo)) : hi - ((lo - t) % Math.max(FRAME, hi - lo));
+          // A marked range loops itself; otherwise going forwards past the end resumes after the intro.
+          const back = rg ? lo : Math.min(rs, hi - FRAME);
+          t = r >= 0 ? back + ((t - back) % Math.max(FRAME, hi - back)) : hi - ((lo - t) % Math.max(FRAME, hi - lo));
           t0 = t;
           w0 = now;
         } else {

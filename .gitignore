@@ -22,3 +22,4 @@ native/**/.build
 # Copied from node_modules by scripts/prepare-studio-assets.mjs
 public/monaco
 public/studio-sdk
+public/studio-library

@@ -39,7 +39,12 @@ export function CallStage() {
             communityId={activeCall.communityId}
           />
         ) : isConnected ? (
-          <RoomView roomName={roomName} controller={controller as RoomController} onLeave={leaveCall} />
+          <RoomView
+            roomName={roomName}
+            controller={controller as RoomController}
+            onLeave={leaveCall}
+            showSoundboardEmoji={activeCall.kind === "dm"}
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             {error ? (

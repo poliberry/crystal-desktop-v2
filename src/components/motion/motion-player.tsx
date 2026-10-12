@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { playbackTime, type MotionSpec } from "../../../convex/lib/motion";
+import { introLength, playbackTime, type MotionSpec } from "../../../convex/lib/motion";
 import { coverScale, drawCover, loadMotionImages, MotionRenderer } from "@/lib/motion-render";
 import { loadMotionSpec } from "@/lib/motion-load";
 import { motionImageUrls } from "../../../convex/lib/motion";
@@ -48,8 +48,14 @@ let playing = 0;
 
 const reducedMotion = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-/** The frame to show where nothing moves: a representative moment, not the first (which is often empty). */
-export const stillTime = (spec: Pick<MotionSpec, "duration">) => spec.duration * 0.45;
+/**
+ * The frame to show where nothing moves: a representative moment, not the first (which is often empty). With an intro
+ * it is taken from the idle — the intro is a flourish that has gone by, and what a profile looks like is the loop.
+ */
+export const stillTime = (spec: Pick<MotionSpec, "duration" | "loop">) => {
+  const from = introLength(spec);
+  return from + (spec.duration - from) * 0.45;
+};
 
 // --- The design --------------------------------------------------------------------------------
 

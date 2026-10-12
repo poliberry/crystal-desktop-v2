@@ -195,9 +195,26 @@ export type NavigateTarget =
   | { kind: "conversation"; conversationId: string }
   | { kind: "channel"; communityId: string; channelId: string };
 
+/** Whether hardware (GPU) acceleration is on — see electron/diagnostics.ts. */
+export interface GpuSettings {
+  /** Turned off in settings, for the next launch. */
+  saved: boolean;
+  /** Turned off by the `CRYSTAL_DISABLE_GPU` environment variable, which settings can't override. */
+  forcedByEnv: boolean;
+  /** This run is without it. Chromium reads the setting only at launch, so when this differs from `saved` a restart applies it. */
+  runningWithout: boolean;
+}
+
 export interface DesktopAPI {
   isElectron: boolean;
   platform: string;
+  /** Hardware acceleration. Optional: an older preload has none. */
+  gpu?: {
+    get(): Promise<GpuSettings>;
+    setDisabled(disabled: boolean): Promise<GpuSettings>;
+    /** Quits and starts the app again, which is what applies a change. */
+    relaunch(): Promise<boolean>;
+  };
   /** "studio" in the standalone Crystal Studio application, "crystal" everywhere else (Studio's window inside Crystal
    * included). Optional: an older preload has none. */
   appKind?: "crystal" | "studio";

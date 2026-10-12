@@ -13,6 +13,8 @@ import {
   MAX_BIRTHDAY_WINDOW_MS,
 } from "./lib/birthday";
 import { badgeByIdMap, badgeView } from "./badges";
+import { geodeBadge, geodeStanding } from "./lib/geode";
+import { intersectIds, MUTUALS_SCAN_LIMIT, MUTUALS_SHOWN } from "./lib/mutuals";
 import {
   dropProfileAsset,
   FRAME_MODES,
@@ -950,6 +952,7 @@ export const getProfile = query({
       createdAt: user._creationTime,
       name: serverProfile?.displayName ?? user.name,
       username: user.username,
+      isBot: !!user.isBot,
       imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
       bio: serverProfile?.bio ?? user.bio,
       bannerUrl: serverProfile?.bannerUrl ?? user.bannerUrl,
@@ -1139,14 +1142,128 @@ export const badgesOf = query({
       if (tier > (bestTier.get(badge.group) ?? -Infinity)) bestTier.set(badge.group, tier);
     }
 
-    return held
+    const granted = held
       .filter(({ badge }) => !badge.group || (badge.tier ?? 0) === bestTier.get(badge.group))
-      .sort(
-        (a, b) =>
-          (a.badge.position ?? 0) - (b.badge.position ?? 0) ||
-          a.row.grantedAt - b.row.grantedAt
-      )
       .map(({ row, badge }) => ({ ...badgeView(badge), grantedAt: row.grantedAt }));
+
+    // The Geode badge isn't a grant: it is whatever the plan entitlement says
+    // right now (see convex/lib/geode.ts), so it appears and moves up a gem
+    // with the subscription and goes when the subscription does.
+    const entitlements = await ctx.db
+      .query("entitlements")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const standing = geodeStanding(entitlements);
+    const all = standing ? [...granted, geodeBadge(standing)] : granted;
+
+    return all.sort(
+      (a, b) => (a.position ?? 0) - (b.position ?? 0) || a.grantedAt - b.grantedAt
+    );
+  },
+});
+
+/**
+ * The friends and the servers the caller has in common with someone, for their
+ * profile.
+ *
+ * Both lists come from the caller's side outward: their friendships and their
+ * memberships are scanned and each is checked against the other person, so the
+ * work is bounded by the caller's own circle rather than by how popular the
+ * profile being looked at is. Friendships are stored in both directions (see
+ * `friends.accept`), which is what makes "their friends" a plain index read.
+ */
+export const mutuals = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const empty = {
+      friends: [] as { id: Id<"users">; name: string; username: string; imageUrl?: string }[],
+      communities: [] as { id: Id<"communities">; name: string; imageUrl?: string }[],
+      friendCount: 0,
+      communityCount: 0,
+      truncated: false,
+    };
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me || me._id === userId) return empty;
+
+    const [myFriends, theirFriends, myCommunities, theirCommunities] = await Promise.all([
+      ctx.db
+        .query("friendships")
+        .withIndex("by_owner", (q) => q.eq("ownerId", me._id))
+        .order("desc")
+        .take(MUTUALS_SCAN_LIMIT),
+      ctx.db
+        .query("friendships")
+        .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+        .take(MUTUALS_SCAN_LIMIT),
+      ctx.db
+        .query("communityMembers")
+        .withIndex("by_user", (q) => q.eq("userId", me._id))
+        .take(MUTUALS_SCAN_LIMIT),
+      ctx.db
+        .query("communityMembers")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .take(MUTUALS_SCAN_LIMIT),
+    ]);
+
+    const friendIds = intersectIds(
+      myFriends.map((row) => row.friendId),
+      theirFriends.map((row) => row.friendId),
+    );
+    const communityIds = intersectIds(
+      myCommunities.map((row) => row.communityId),
+      theirCommunities.map((row) => row.communityId),
+    );
+
+    const [friendDocs, communityDocs] = await Promise.all([
+      Promise.all(friendIds.slice(0, MUTUALS_SHOWN).map((id) => ctx.db.get(id))),
+      Promise.all(communityIds.slice(0, MUTUALS_SHOWN).map((id) => ctx.db.get(id))),
+    ]);
+
+    return {
+      friends: friendDocs
+        .filter((doc): doc is Doc<"users"> => !!doc)
+        .map((doc) => ({
+          id: doc._id,
+          name: doc.name,
+          username: doc.username,
+          imageUrl: doc.imageUrl,
+        })),
+      communities: communityDocs
+        .filter((doc): doc is Doc<"communities"> => !!doc)
+        .map((doc) => ({ id: doc._id, name: doc.name, imageUrl: doc.imageUrl })),
+      friendCount: friendIds.length,
+      communityCount: communityIds.length,
+      truncated:
+        myFriends.length >= MUTUALS_SCAN_LIMIT ||
+        theirFriends.length >= MUTUALS_SCAN_LIMIT ||
+        myCommunities.length >= MUTUALS_SCAN_LIMIT ||
+        theirCommunities.length >= MUTUALS_SCAN_LIMIT,
+    };
+  },
+});
+
+/**
+ * The caller's own Geode standing, for the Subscriptions page: which gem they
+ * are, how long they've held it, and what is next. Null without a plan.
+ */
+export const myGeode = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const entitlements = await ctx.db
+      .query("entitlements")
+      .withIndex("by_user", (q) => q.eq("userId", me._id))
+      .collect();
+    const standing = geodeStanding(entitlements);
+    if (!standing) return null;
+    return {
+      tier: standing.tier,
+      months: standing.months,
+      since: standing.since,
+      next: standing.next,
+      nextAt: standing.nextAt,
+    };
   },
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { Hash, Pin, PinOff, Plus, Settings, UserPen, X } from "lucide-react";
+import { Hash, Pin, PinOff, Plus, Settings, ShoppingBag, UserPen, X } from "lucide-react";
 import { LogoMark } from "@/components/logo-mark";
 
 import { api } from "../../../convex/_generated/api";
@@ -115,6 +115,13 @@ function TabLabel({ tab }: { tab: Tab }) {
         <>
           <Plus className="size-3.5 shrink-0" />
           <span className="truncate">New community</span>
+        </>
+      );
+    case "marketplace":
+      return (
+        <>
+          <ShoppingBag className="size-3.5 shrink-0" />
+          <span className="truncate">Marketplace</span>
         </>
       );
     case "community-settings":

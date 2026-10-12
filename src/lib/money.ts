@@ -6,10 +6,12 @@
  * last moment. None of the currencies the store sells in (USD, AUD, EUR, GBP)
  * is a zero-decimal one, so dividing by a hundred is right for all of them.
  */
+
+import { activeLocale, formatDateTime } from "@/lib/locale";
 export function formatMoney(cents: number, currency: string, options: { free?: boolean } = {}): string {
   if (cents === 0 && options.free !== false) return "Free";
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(activeLocale(), {
       style: "currency",
       currency: currency.toUpperCase(),
       minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
@@ -19,9 +21,9 @@ export function formatMoney(cents: number, currency: string, options: { free?: b
   }
 }
 
-/** `Mar 4, 2026`. */
+/** `Mar 4, 2026` (`4 Mar 2026` in most of the English-speaking world outside the US). */
 export function formatDate(at: number | Date, withTime = false): string {
-  return new Date(at).toLocaleString(undefined, {
+  return formatDateTime(at, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -43,5 +45,5 @@ export function formatRelative(at: number): string {
   ];
   let unit = steps[0];
   for (const step of steps) if (abs >= step[0]) unit = step;
-  return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(Math.round(diff / unit[0]), unit[1]);
+  return new Intl.RelativeTimeFormat(activeLocale(), { numeric: "auto" }).format(Math.round(diff / unit[0]), unit[1]);
 }

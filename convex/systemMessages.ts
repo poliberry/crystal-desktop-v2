@@ -9,7 +9,8 @@ const SYSTEM_CLERK_ID = "system:crystal";
 const SYSTEM_AVATAR_URL = "https://usecrystal.app/crystal-official-avatar.svg";
 const SYSTEM_BANNER_URL = "https://usecrystal.app/crystal-official-banner.svg";
 
-async function systemUser(ctx: { db: any }): Promise<Doc<"users">> {
+/** Crystal's own account, made on first use: what "By Crystal" is attributed to. */
+export async function systemUser(ctx: { db: any }): Promise<Doc<"users">> {
   const existing = await ctx.db.query("users").withIndex("by_clerk_id", (q: any) => q.eq("clerkId", SYSTEM_CLERK_ID)).unique();
   if (existing) {
     if (existing.imageUrl !== SYSTEM_AVATAR_URL || existing.bannerUrl !== SYSTEM_BANNER_URL) {

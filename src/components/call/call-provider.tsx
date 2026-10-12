@@ -7,6 +7,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { IncomingCall } from "@/components/call/incoming-call";
+import { AudioAttentionController } from "@/components/call/audio-attention-controller";
+import { SwitchCallDialog } from "@/components/call/switch-call-dialog";
 import { ScreenSharePicker } from "@/components/screen-share-picker";
 import { usePipFrameStream } from "@/hooks/use-pip-frame-stream";
 import { usePipWindow } from "@/hooks/use-pip-window";
@@ -14,6 +16,7 @@ import { useMyPresence } from "@/hooks/use-presence";
 import { useRoom, type RoomController } from "@/hooks/use-room";
 import { useStreamThumbnail } from "@/hooks/use-stream-thumbnail";
 import type { SystemAudioChoice } from "@/lib/audio-prefs";
+import { needsSwitchConfirmation } from "@/lib/call-switch";
 import { isElectron } from "@/lib/desktop";
 
 export type ActiveCall =
@@ -374,7 +377,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     [connect, disconnect, joinDmAction, leaveActiveCall, leaveDmAction, playCue, ringConversation]
   );
 
-  const joinChannelCall = useCallback(
+  const joinChannelCallNow = useCallback(
     async (
       channelId: Id<"channels">,
       communityId: Id<"communities">,
@@ -414,6 +417,43 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [connect, disconnect, joinChannelAction, leaveActiveCall, leaveChannelAction, playCue]
+  );
+
+  // Joining a voice channel while in a call ends that call, so it is asked about first. A join of the call you are already in,
+  // and a join with no call to leave, go straight through. The promise settles once the question is answered (and, for a
+  // yes, once the join is done), so callers that wait on it keep working.
+  const [switchRequest, setSwitchRequest] = useState<{
+    channelId: Id<"channels">;
+    communityId: Id<"communities">;
+    options?: { watchIdentity?: string };
+    settle: () => void;
+  } | null>(null);
+
+  const joinChannelCall = useCallback(
+    (channelId: Id<"channels">, communityId: Id<"communities">, options?: { watchIdentity?: string }): Promise<void> => {
+      const current = activeCallRef.current;
+      if (!needsSwitchConfirmation(current, channelId)) return joinChannelCallNow(channelId, communityId, options);
+      return new Promise<void>((settle) => {
+        // A second ask while one is open replaces it: only the latest thing clicked is being asked about.
+        setSwitchRequest((previous) => {
+          previous?.settle();
+          return { channelId, communityId, options, settle };
+        });
+      });
+    },
+    [joinChannelCallNow],
+  );
+
+  const answerSwitch = useCallback(
+    (join: boolean) => {
+      const request = switchRequest;
+      setSwitchRequest(null);
+      if (!request) return;
+      // The leave sound, the leaving and the joining are all `joinChannelCallNow`: it leaves what is active first.
+      if (join) void joinChannelCallNow(request.channelId, request.communityId, request.options).finally(request.settle);
+      else request.settle();
+    },
+    [switchRequest, joinChannelCallNow],
   );
 
   const leaveCall = useCallback(async () => {
@@ -643,6 +683,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+      <AudioAttentionController room={controller.room} watchedShares={watchedShares} />
+      <SwitchCallDialog
+        target={switchRequest ? { channelId: switchRequest.channelId } : null}
+        current={activeCall ? (activeCall.kind === "dm" ? { kind: "dm" } : { kind: "channel", channelId: activeCall.channelId }) : null}
+        onAnswer={answerSwitch}
+      />
       <IncomingCall />
       <ScreenSharePicker
         open={sharePickerOpen}

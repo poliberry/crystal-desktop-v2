@@ -11,6 +11,10 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { LOUNGE_STICKERS } from "../../../convex/lib/loungeStickers";
 import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { ComposerEmojiPicker, EMOJI_TRIGGER_ATTRIBUTE } from "@/components/composer-emoji-picker";
+import { ComposerMediaPicker, MEDIA_TRIGGER_ATTRIBUTE } from "@/components/composer-media-picker";
+import { GifIcon } from "@/components/icons/gif-icon";
+import { shareKlipyItem } from "@/lib/klipy";
+import { klipyAttachment, type KlipyItem, type KlipyKind } from "../../../convex/lib/klipy";
 import { EmojiToken } from "@/components/lounge/lounge-effects";
 import { Sticker, StickerArt } from "@/components/lounge/sticker-art";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -27,6 +31,9 @@ export interface LoungeChatMessage {
   imageUrl?: string;
   createdAt: number;
 }
+
+/** What the lounge can show from KLIPY: pictures, not clips. */
+const LOUNGE_KLIPY_KINDS: readonly KlipyKind[] = ["gif", "sticker"];
 
 /** How long a message hangs in the floating list an audience member sees. */
 const FLOAT_MS = 8000;
@@ -92,6 +99,7 @@ export function LoungeChat({
   const [error, setError] = useState<string | null>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [stickersOpen, setStickersOpen] = useState(false);
+  const [gifsOpen, setGifsOpen] = useState(false);
   // The pointer is on the window itself — only possible while it is open, so
   // reading and scrolling it back never closes it from under the reader.
   const [overWindow, setOverWindow] = useState(false);
@@ -106,7 +114,7 @@ export function LoungeChat({
   const errorTimer = useRef<number | undefined>(undefined);
 
   // The window is there while the chat is in use, and gone otherwise.
-  const focused = inputFocused || emojiOpen || stickersOpen || overWindow;
+  const focused = inputFocused || emojiOpen || stickersOpen || gifsOpen || overWindow;
 
   const fail = useCallback((message: string) => {
     setError(message);
@@ -124,6 +132,16 @@ export function LoungeChat({
       }
     },
     [send, channelId, fail],
+  );
+
+  /** A GIF or sticker from KLIPY is a picture that points at KLIPY's own file, so it goes the way an uploaded picture does. */
+  const sendKlipy = useCallback(
+    async (item: KlipyItem, query: string) => {
+      setGifsOpen(false);
+      await deliver({ kind: "image", image: klipyAttachment(item) });
+      shareKlipyItem(item, query);
+    },
+    [deliver],
   );
 
   const stopTyping = useCallback(() => {
@@ -251,6 +269,8 @@ export function LoungeChat({
             void deliver({ kind: "emoji", emoji: custom ? formatCustomEmoji(custom) : value })
           }
         />
+        {/* No clips: the lounge draws its pictures as pictures, and a clip is a video. */}
+        <ComposerMediaPicker open={gifsOpen} onClose={() => setGifsOpen(false)} onSelect={(item, query) => void sendKlipy(item, query)} kinds={LOUNGE_KLIPY_KINDS} />
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -259,13 +279,16 @@ export function LoungeChat({
           className={cn(
             "flex items-center gap-1 rounded-full border border-white/12 bg-neutral-900/80 py-1 pr-1 pl-2 transition-colors",
             inputFocused && "border-white/25 bg-neutral-900/85",
-            emojiOpen && "rounded-t-none",
+            (emojiOpen || gifsOpen) && "rounded-t-none",
           )}
         >
           <button
             type="button"
             {...{ [EMOJI_TRIGGER_ATTRIBUTE]: "" }}
-            onClick={() => setEmojiOpen((o) => !o)}
+            onClick={() => {
+              setGifsOpen(false);
+              setEmojiOpen((o) => !o);
+            }}
             aria-label="Emoji"
             className="flex size-7 shrink-0 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white"
           >
@@ -321,6 +344,21 @@ export function LoungeChat({
               )}
             </PopoverContent>
           </Popover>
+
+          <button
+            type="button"
+            {...{ [MEDIA_TRIGGER_ATTRIBUTE]: "" }}
+            onClick={() => {
+              setEmojiOpen(false);
+              setStickersOpen(false);
+              setGifsOpen((o) => !o);
+            }}
+            aria-label="GIFs and stickers"
+            aria-expanded={gifsOpen}
+            className="flex size-7 shrink-0 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+          >
+            <GifIcon className="size-[18px]" />
+          </button>
 
           <button
             type="button"

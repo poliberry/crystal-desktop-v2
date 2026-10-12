@@ -11,6 +11,7 @@ import { SettingRow, SettingsGroup } from "@/components/settings/settings-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CREATOR_PLATFORM_LIST } from "@/lib/community-kinds";
+import { formatDateTime } from "@/lib/locale";
 
 const errorText = (e: unknown, fallback: string) =>
   e instanceof Error ? e.message.replace(/\[CONVEX [^\]]*\]\s*/g, "").replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0] || fallback : fallback;
@@ -107,7 +108,7 @@ export function CreatorSettings({ communityId }: { communityId: Id<"communities"
               overview.channel.lastSyncError
                 ? `Last update failed: ${overview.channel.lastSyncError}`
                 : overview.channel.lastSyncAt
-                  ? `Updated ${new Date(overview.channel.lastSyncAt).toLocaleString()}. It refreshes every ten minutes.`
+                  ? `Updated ${formatDateTime(overview.channel.lastSyncAt)}. It refreshes every ten minutes.`
                   : "Updating for the first time…"
             }
           >

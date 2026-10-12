@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { Id } from "../../../convex/_generated/dataModel";
 import { AnimatePresence, motion } from "framer-motion";
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { useAudioPreferences } from "@/components/audio-provider";
+import { attentionApplies, attentionOverrideVersion, setAttentionOverride, subscribeAttentionOverrides } from "@/lib/audio-attention";
 import { useCall, type CallVideoKind } from "@/components/call/call-provider";
 import { ParticipantModerationItems } from "@/components/call/participant-moderation-items";
 import { PendingParticipantTile } from "@/components/call/pending-participant-tile";
@@ -23,6 +24,7 @@ import { ParticipantTile } from "@/components/participant-tile";
 import { ScreenShareTile } from "@/components/screen-share-tile";
 import {
   ContextMenu,
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuLabel,
@@ -77,6 +79,7 @@ interface CallGridProps {
   /** Set only in a community voice channel — enables the per-participant
    * moderation items in the tile context menu. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
+  showSoundboardEmoji?: boolean;
   /** Whose share to open and focus as soon as it shows up — set when the user
    * arrived here by clicking a stream in the activity feed. Consumed once,
    * via `onAutoWatched`, so it doesn't fight them later. */
@@ -107,6 +110,7 @@ function TileWithContextMenu({
   onVolumeChange,
   onMuteToggle,
   moderation,
+  showSoundboardEmoji,
 }: {
   tile: CallTile;
   onClick: () => void;
@@ -117,12 +121,17 @@ function TileWithContextMenu({
   /** Set only in a community voice channel — a DM call has no roles to
    * moderate under. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
+  showSoundboardEmoji?: boolean;
 }) {
   const soundboardActive = useSoundboardActivity().has(
     tile.participant.identity,
   );
   const name = tile.name || tile.participant.name || tile.participant.identity;
   const displayName = tile.kind === "screen" ? `${name}'s screen` : name;
+  // Audio Attention for this stream: the setting, unless it has been switched here. See src/lib/audio-attention.ts.
+  const { audioAttention } = useAudioPreferences();
+  useSyncExternalStore(subscribeAttentionOverrides, attentionOverrideVersion, () => 0);
+  const attentionOn = attentionApplies(tile.participant.identity, audioAttention);
 
   const inner =
     tile.kind === "screen" ? (
@@ -155,6 +164,7 @@ function TileWithContextMenu({
         localVolume={settings.volume}
         localMuted={settings.muted}
         soundboardActive={soundboardActive}
+        showSoundboardEmoji={showSoundboardEmoji}
       />
     );
 
@@ -195,6 +205,18 @@ function TileWithContextMenu({
           />
         </div>
         <ContextMenuSeparator />
+        {tile.kind === "screen" && (
+          <ContextMenuCheckboxItem
+            checked={attentionOn}
+            onCheckedChange={(on) =>
+              // Back to following the setting when this just agrees with it, so the choice doesn't outlive a change of mind.
+              setAttentionOverride(tile.participant.identity, on === audioAttention ? undefined : on)
+            }
+            title="Turns this stream down while other people are talking, so you can hear them"
+          >
+            Audio Attention
+          </ContextMenuCheckboxItem>
+        )}
         <ContextMenuItem onClick={onMuteToggle}>
           {settings.muted ? (
             <>
@@ -279,6 +301,7 @@ function FocusedTileViewport({
   onVolumeChange,
   onMuteToggle,
   moderation,
+  showSoundboardEmoji,
 }: {
   tile: CallTile;
   displayName: string;
@@ -289,6 +312,7 @@ function FocusedTileViewport({
   onMuteToggle: () => void;
   /** Passed through to each tile's context menu; see `CallGridProps`. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
+  showSoundboardEmoji?: boolean;
 }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -427,6 +451,7 @@ function FocusedTileViewport({
       >
         <TileWithContextMenu
           moderation={moderation}
+          showSoundboardEmoji={showSoundboardEmoji}
           tile={tile}
           onClick={handleTileClick}
           watchState={watchState}
@@ -634,6 +659,7 @@ function TileStage({
   onVolumeChange,
   onMuteToggle,
   moderation,
+  showSoundboardEmoji,
 }: {
   /** The tile taking the stage, if any. */
   focusedKey: string | null;
@@ -647,6 +673,7 @@ function TileStage({
   onMuteToggle: (tile: CallTile) => void;
   /** Passed through to each tile's context menu; see `CallGridProps`. */
   moderation?: { communityId: Id<"communities">; channelId: Id<"channels"> };
+  showSoundboardEmoji: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
@@ -737,10 +764,12 @@ function TileStage({
                     onVolumeChange={(v) => onVolumeChange(cell.tile!, v)}
                     onMuteToggle={() => onMuteToggle(cell.tile!)}
                     moderation={moderation}
+                    showSoundboardEmoji={showSoundboardEmoji}
                   />
                 ) : (
                   <TileWithContextMenu
                     moderation={moderation}
+                    showSoundboardEmoji={showSoundboardEmoji}
                     tile={cell.tile!}
                     onClick={() => onFocus(cell.tile!.key)}
                     watchState={getWatchState(cell.tile!)}
@@ -762,6 +791,7 @@ export function CallGrid({
   tiles,
   pending = [],
   moderation,
+  showSoundboardEmoji = true,
   autoWatchIdentity,
   onAutoWatched,
 }: CallGridProps) {
@@ -867,6 +897,7 @@ export function CallGrid({
       onVolumeChange={updateVolume}
       onMuteToggle={toggleMute}
       moderation={moderation}
+      showSoundboardEmoji={showSoundboardEmoji}
     />
   );
 }

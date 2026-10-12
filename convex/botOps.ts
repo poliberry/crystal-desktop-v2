@@ -115,18 +115,20 @@ async function messageIn(ctx: MutationCtx, channel: Doc<"channels">, raw: string
 
 const botRank = (ctx: QueryCtx, a: Acting) => getHighestRolePosition(ctx, a.community._id, a.bot.userId);
 
-/** A person the bot acts on: a member, below the bot, never the owner, another bot or itself. */
-async function memberBelow(ctx: MutationCtx, acting: Acting, raw: string, opts: { allowNonMember?: boolean } = {}): Promise<Id<"users">> {
+/** A person the bot acts on: a member, normally below the bot, never the owner, another bot or itself. */
+async function memberBelow(ctx: MutationCtx, acting: Acting, raw: string, opts: { allowNonMember?: boolean; skipHierarchy?: boolean } = {}): Promise<Id<"users">> {
   const target = ident(ctx, "users", raw, "That person");
   const user = await ctx.db.get(target);
   if (!user) return fail(404, "That person wasn't found.");
   const member = await ctx.db.query("communityMembers").withIndex("by_community_user", (q) => q.eq("communityId", acting.community._id).eq("userId", target)).unique();
   if (!member && !opts.allowNonMember) return fail(404, "That person isn't in this community.");
   if (user.isBot) return fail(403, "Bots are removed from the community's Bots settings.");
-  try {
-    await requireAbove(ctx, acting.community, acting.bot.userId, target);
-  } catch (e) {
-    return fail(403, e instanceof Error ? e.message : "This bot can't do that to them.");
+  if (!opts.skipHierarchy) {
+    try {
+      await requireAbove(ctx, acting.community, acting.bot.userId, target);
+    } catch (e) {
+      return fail(403, e instanceof Error ? e.message : "This bot can't do that to them.");
+    }
   }
   return target;
 }
@@ -814,7 +816,7 @@ const ops: Record<string, Handler> = {
     if (!wantsMute && !wantsDeaf) return fail(400, "Send `serverMuted` and/or `serverDeafened`.");
     if (wantsMute) requirePermission(eff, PERMISSIONS.MUTE_MEMBERS, "mute members in voice");
     if (wantsDeaf) requirePermission(eff, PERMISSIONS.DEAFEN_MEMBERS, "deafen members in voice");
-    const target = await memberBelow(ctx, acting, req.params.userId);
+    const target = await memberBelow(ctx, acting, req.params.userId, { skipHierarchy: true });
     const row = await ctx.db.query("channelCallParticipants").withIndex("by_channel_user", (q) => q.eq("channelId", channel._id).eq("userId", target)).unique();
     if (!row) return fail(404, "That person isn't in this voice channel.");
     await ctx.db.patch(row._id, { ...(wantsMute ? { serverMuted: req.body.serverMuted === true } : {}), ...(wantsDeaf ? { serverDeafened: req.body.serverDeafened === true } : {}) });
@@ -824,7 +826,7 @@ const ops: Record<string, Handler> = {
   async "voice.member.disconnect"(ctx, req) {
     const { acting, channel } = await inChannel(ctx, req);
     requirePermission(communityPermissions(acting), PERMISSIONS.MOVE_MEMBERS, "disconnect members from voice");
-    const target = await memberBelow(ctx, acting, req.params.userId);
+    const target = await memberBelow(ctx, acting, req.params.userId, { skipHierarchy: true });
     const row = await ctx.db.query("channelCallParticipants").withIndex("by_channel_user", (q) => q.eq("channelId", channel._id).eq("userId", target)).unique();
     if (row) {
       await ctx.db.delete(row._id);

@@ -960,6 +960,8 @@ export default defineSchema({
     imageUrl: v.optional(v.string()),
     /** `private`: only its author can add it. `public`: anyone with Manage Integrations can. */
     visibility: v.union(v.literal("private"), v.literal("public")),
+    /** Published by staff as Crystal itself, without review (see `staffPublishListing`): its public listing says Crystal, not its owner. */
+    byCrystal: v.optional(v.boolean()),
     tokenPrefix: v.string(),
     tokenHash: v.string(),
     tokenRotatedAt: v.number(),
@@ -1002,8 +1004,7 @@ export default defineSchema({
    * A bot added to a community, and what it was given.
    *
    * `permissions` is what the installer granted, and is also the bot's managed role. `authorisedBy`
-   * is whose authority it is: the bot can only ever do what that member can still do (see
-   * `effectivePermissions`), so it loses what they lose.
+   * records who approved the original install for audit/history; it is not a live permission source.
    */
   botInstalls: defineTable({
     botId: v.id("bots"),
@@ -1058,6 +1059,8 @@ export default defineSchema({
     name: v.string(),
     description: v.string(),
     kind: v.union(v.literal("plugin"), v.literal("component")),
+    /** Published by staff as Crystal itself (see `staffPublishVersion`): shown as published by Crystal. */
+    byCrystal: v.optional(v.boolean()),
     /** Stopping one stops it everywhere, for everyone, whatever version they have. */
     suspendedAt: v.optional(v.number()),
     suspendedReason: v.optional(v.string()),
@@ -1961,6 +1964,22 @@ export default defineSchema({
   }).index("by_user", ["userId"]),
 
   /**
+   * A person's favourite KLIPY GIFs, clips and stickers, for the picker next to the emoji button.
+   *
+   * Only the kind and KLIPY's slug are kept — never the media or its address. KLIPY's integration rules don't allow
+   * copies, and the picker looks each slug up again on the person's own client (the items endpoint), so a GIF KLIPY has
+   * removed simply stops appearing. Newest first is the row's creation order.
+   */
+  klipyFavourites: defineTable({
+    userId: v.id("users"),
+    kind: v.union(v.literal("gif"), v.literal("clip"), v.literal("sticker")),
+    slug: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_item", ["userId", "kind", "slug"]),
+
+  /**
    * The pictures a person has recently worn as their avatar, banner or
    * nameplate — at most `RECENT_LIMIT` per kind per profile, newest first by
    * `lastUsedAt`.
@@ -2306,6 +2325,9 @@ export default defineSchema({
     /** User-created listings are moderated before becoming active. */
     creatorId: v.optional(v.id("users")),
     creatorShareBps: v.optional(v.number()),
+    /** Published by staff as Crystal itself, without going through review (see `staffPublishCreation`): shown as "By Crystal",
+     * with no creator and so no payout. Absent on everything else; a listing with no creator that isn't this is just Crystal's own. */
+    byCrystal: v.optional(v.boolean()),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),

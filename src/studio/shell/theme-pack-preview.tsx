@@ -132,7 +132,7 @@ const MOCK_ICON_NAMES = new Set([
 function Message({ initials, name, time, tint, children }: { initials: string; name: string; time: string; tint: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-3">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white" style={{ background: tint }}>
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-white" style={{ background: tint }}>
         {initials}
       </div>
       <div className="min-w-0 flex-1 space-y-1">
@@ -236,6 +236,14 @@ export function ThemePackPreview({
     return rules.join("\n");
   }, [pack, data.icons, assets, scope]);
 
+  // The app-wide picture, drawn as the app does: a layer behind the panels, which are let through it. Only a local file
+  // the creator imported is ever used here.
+  const bg = data.background;
+  const bgUrl = pack && bg ? assets.get(bg.assetId)?.url : undefined;
+  const bgOn = !!bgUrl && bgUrl.startsWith("blob:");
+  const panel = (colour: "background" | "sidebar"): React.CSSProperties | undefined =>
+    bgOn && bg ? { backgroundColor: `color-mix(in oklab, var(--${colour}) ${bg.panels}%, transparent)` } : undefined;
+
   const extraIcons = Object.keys(data.icons).filter((n) => !MOCK_ICON_NAMES.has(n));
   const sounds = Object.entries(data.sounds).filter(([, id]) => assets.get(id));
   const dark = pack && shown ? shown.isDark : false;
@@ -291,12 +299,26 @@ export function ThemePackPreview({
       <div className="overflow-x-auto rounded-xl border border-border">
         {iconCss && <style>{iconCss}</style>}
         <div
-          className={cn(scope, "flex h-[500px] min-w-[780px] select-none overflow-hidden", dark && "dark")}
+          className={cn(scope, "relative flex h-[500px] min-w-[780px] select-none overflow-hidden", dark && "dark")}
           style={style}
           aria-label="Preview of Crystal with your theme pack"
         >
+          {bgOn && bg && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute"
+              style={{
+                inset: -bg.blur * 2,
+                backgroundImage: `linear-gradient(color-mix(in oklab, var(--background) ${bg.dim}%, transparent), color-mix(in oklab, var(--background) ${bg.dim}%, transparent)), url("${bgUrl!.replace(/["\\]/g, "")}")`,
+                backgroundSize: "auto, cover",
+                backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
+                filter: bg.blur ? `blur(${bg.blur}px)` : undefined,
+              }}
+            />
+          )}
           {/* Server rail */}
-          <div className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-3">
+          <div className="relative flex w-14 shrink-0 flex-col items-center gap-2 border-r border-sidebar-border bg-sidebar py-3" style={panel("sidebar")}>
             <div className="flex size-10 items-center justify-center rounded-xl bg-sidebar-primary text-sm font-bold text-sidebar-primary-foreground">C</div>
             <div className="h-px w-6 bg-sidebar-border" />
             {["HQ", "Dn", "Gm"].map((s, i) => (
@@ -310,7 +332,7 @@ export function ThemePackPreview({
           </div>
 
           {/* Channel list + user card */}
-          <div className="flex w-52 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+          <div className="relative flex w-52 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground" style={panel("sidebar")}>
             <div className="flex h-12 items-center justify-between border-b border-sidebar-border px-3">
               <span className="truncate text-sm font-semibold">Crystal HQ</span>
               <Settings className="size-4 text-muted-foreground" />
@@ -344,7 +366,7 @@ export function ThemePackPreview({
           </div>
 
           {/* Conversation */}
-          <div className="flex min-w-0 flex-1 flex-col bg-background">
+          <div className="relative flex min-w-0 flex-1 flex-col bg-background" style={panel("background")}>
             <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
               <Hash className="size-4 text-muted-foreground" />
               <span className="text-sm font-semibold">general</span>
@@ -413,7 +435,7 @@ export function ThemePackPreview({
           </div>
 
           {/* Controls: the tokens the screens above don't happen to use */}
-          <div className="hidden w-56 shrink-0 flex-col gap-3 border-l border-border bg-card p-3 text-card-foreground lg:flex">
+          <div className="relative hidden w-56 shrink-0 flex-col gap-3 border-l border-border bg-card p-3 text-card-foreground lg:flex">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Controls</p>
             <div className="flex flex-wrap gap-1.5">
               <Button size="sm">Primary</Button>

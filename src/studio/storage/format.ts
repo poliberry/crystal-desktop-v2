@@ -370,6 +370,15 @@ function sanitizeThemePack(raw: unknown): ThemePackData {
       : undefined;
     out.font = { family: str(raw.font.family).slice(0, 80), ...(faces ? { faces } : {}), ...(typeof raw.font.assetId === "string" ? { assetId: raw.font.assetId } : {}) };
   }
+  if (isObj(raw.background) && typeof raw.background.assetId === "string") {
+    const within = (v: unknown, min: number, max: number, fallback: number) => Math.round(Math.min(max, Math.max(min, num(v, fallback))));
+    out.background = {
+      assetId: raw.background.assetId,
+      dim: within(raw.background.dim, 0, 90, 35),
+      blur: within(raw.background.blur, 0, 24, 0),
+      panels: within(raw.background.panels, 30, 100, 70),
+    };
+  }
   return out;
 }
 

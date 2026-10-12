@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PLATFORM_META } from "../../../../convex/lib/communityKinds";
 import { cn } from "@/lib/utils";
+import { formatDateOnly, formatNumber } from "@/lib/locale";
 
 const duration = (s?: number) => {
   if (!s) return null;
@@ -26,10 +27,10 @@ const ago = (ms: number) => {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
-  return d < 30 ? `${d}d ago` : new Date(ms).toLocaleDateString();
+  return d < 30 ? `${d}d ago` : formatDateOnly(ms);
 };
 
-const compact = (n?: number) => (n === undefined ? null : Intl.NumberFormat(undefined, { notation: "compact" }).format(n));
+const compact = (n?: number) => (n === undefined ? null : formatNumber(n, { notation: "compact" }));
 
 const KIND_LABEL = { live: "Live", vod: "Stream", upload: "Video", short: "Short" } as const;
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { Check, Gem, Loader2, Package, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,8 +20,7 @@ const WEARABLE: string[] = ["avatarDecoration", "profileSticker", "profileEffect
 export function CollectionView() {
   const { entitlements, loading } = useShop();
   const equip = useMutation(api.marketplace.equip);
-  const unequipPack = useMutation(api.marketplace.unequipThemePack);
-  const activePack = useQuery(api.marketplace.activeThemePack);
+  const unequip = useMutation(api.marketplace.unequip);
   const openSettings = useOpenSettings();
   const [busy, setBusy] = useState<Id<"entitlements"> | null>(null);
 
@@ -32,6 +31,18 @@ export function CollectionView() {
       toast.success("Equipped.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Couldn't equip that.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (id: Id<"entitlements">) => {
+    setBusy(id);
+    try {
+      await unequip({ entitlementId: id });
+      toast.success("Removed.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Couldn't remove that.");
     } finally {
       setBusy(null);
     }
@@ -77,9 +88,9 @@ export function CollectionView() {
                     {item.expiresAt ? `Until ${formatDate(item.expiresAt)}` : formatDate(item.createdAt)}
                   </p>
                   <div className="mt-2">
-                    {item.kind === "themePack" && activePack?.entitlementId === item.id ? (
-                      <Button size="sm" variant="outline" className="w-full" onClick={() => void unequipPack({})}>
-                        <Check /> Applied — remove
+                    {item.equipped ? (
+                      <Button size="sm" variant="outline" className="w-full" disabled={busy === item.id} onClick={() => void remove(item.id)}>
+                        {busy === item.id ? <Loader2 className="animate-spin" /> : <Check />} Equipped — remove
                       </Button>
                     ) : canWear ? (
                       <Button size="sm" className="w-full" disabled={busy === item.id} onClick={() => void wear(item.id)}>

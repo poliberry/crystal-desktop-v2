@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { applyAppIdentity } from "./appIdentity";
+import { applyGpuPreference, getGpuSettings, recoverFromRendererLoss, setGpuDisabled, startDiagnostics } from "./diagnostics";
 import * as backgroundNotifier from "./backgroundNotifier";
 import { appIdentity, CHANNELS, REPO, resolveRunningApp, resolveRunningChannel, type AppKind } from "./channels";
 import { isAppLink, parseDeepLink, parseStudioLink, STUDIO_PROTOCOL, type DeepLink } from "./deeplink";
@@ -71,6 +72,10 @@ const iconIdentity = !app.isPackaged && appKind === "crystal" ? appIdentity(CHAN
 // any of the three is read. See electron/appIdentity.ts for why a channel that
 // skips it can't start at all while Stable is running.
 applyAppIdentity(channel, identity);
+
+// After the data directory is settled and before the app is ready, so a person whose graphics stack freezes the window can
+// switch hardware acceleration off. See electron/diagnostics.ts.
+applyGpuPreference();
 
 const PRELOAD = path.join(__dirname, "preload.js");
 
@@ -439,6 +444,9 @@ function createWindow(): void {
     }
     return { action: "deny" };
   });
+
+  // A renderer that dies (out of memory, a crash, a GPU failure) leaves a blank window. Bring the page back.
+  win.webContents.on("render-process-gone", (_event, details) => recoverFromRendererLoss(win, details.reason));
 
   // Keep the app window on crystal.localhost. When Clerk initiates an OAuth
   // flow it navigates to an external provider — intercept that and open the
@@ -1180,20 +1188,26 @@ app.whenReady().then(async () => {
   // Custom titlebar controls — frameless windows have no native ones. Each
   // handler acts on whichever window actually sent the request, so the main
   // window and the Settings window each control themselves independently.
+  const senderWindow = (event: Electron.IpcMainInvokeEvent): BrowserWindow | null => {
+    // `getOwnerBrowserWindow` is not in every Electron's API (it is not in 43's), so it is only called where it exists;
+    // calling it blind would throw on every click of a window button.
+    const owner = (event.sender as unknown as { getOwnerBrowserWindow?: () => BrowserWindow | null }).getOwnerBrowserWindow?.();
+    return owner ?? BrowserWindow.fromWebContents(event.sender);
+  };
   ipcMain.handle("window:minimize", (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.minimize();
+    senderWindow(event)?.minimize();
   });
   ipcMain.handle("window:toggle-maximize", (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
+    const win = senderWindow(event);
     if (!win) return;
     if (win.isMaximized()) win.unmaximize();
     else win.maximize();
   });
   ipcMain.handle("window:close", (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close();
+    senderWindow(event)?.close();
   });
   ipcMain.handle("window:is-maximized", (event) => {
-    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+    return senderWindow(event)?.isMaximized() ?? false;
   });
   // The system accent colour, for the app's dynamic colour mode. macOS and
   // Windows only — Electron has no way to ask for it anywhere else, and
@@ -1511,6 +1525,20 @@ app.whenReady().then(async () => {
     return true;
   });
 
+  // Settings → Performance → Hardware acceleration. The choice is saved at once but only Chromium's next start can apply it
+  // (see electron/diagnostics.ts), so turning it off or on is followed by a restart the person chooses when to take.
+  ipcMain.handle("gpu:get", () => getGpuSettings());
+  ipcMain.handle("gpu:set-disabled", (_event, disabled: unknown) => setGpuDisabled(disabled === true));
+  ipcMain.handle("gpu:relaunch", () => {
+    isQuitting = true; // the main window otherwise hides instead of closing
+    // An AppImage is re-run through the file it came from; its own path is a temporary mount that is gone once it exits.
+    const appImage = process.env.APPIMAGE;
+    if (appImage) app.relaunch({ execPath: appImage, args: process.argv.slice(1) });
+    else app.relaunch();
+    app.quit();
+    return true;
+  });
+
   // Memory pressure hint from renderer (e.g. after large image flood)
   // `global.gc` exists because --expose-gc is set above. Also drop unused
   // icon handles that accumulate in the main-process notification cache.
@@ -1530,6 +1558,8 @@ app.whenReady().then(async () => {
     const idle = !BrowserWindow.getAllWindows().some((w) => w.isFocused());
     if (idle && global.gc) try { global.gc(); } catch { /* ignore */ }
   }, 90_000).unref();
+
+  startDiagnostics();
 
   if (isStudioApp) {
     createOrFocusStudioWindow();

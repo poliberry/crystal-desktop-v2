@@ -1,3 +1,6 @@
+"use client";
+
+import { useLocale } from "@/hooks/use-locale";
 import { formatDaySeparator } from "@/lib/message-time";
 
 /**
@@ -5,6 +8,8 @@ import { formatDaySeparator } from "@/lib/message-time";
  * a hairline running out to each edge. Shared by the channel and DM lists.
  */
 export function MessageDayDivider({ ts }: { ts: number }) {
+  // Worded by the reader's region (`31 August 2026` or `August 31, 2026`): redrawn when it changes.
+  useLocale();
   return (
     <div
       data-slot="message-day-divider"

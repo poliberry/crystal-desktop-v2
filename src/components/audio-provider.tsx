@@ -12,6 +12,7 @@ import {
   type SystemAudioChoice,
 } from "@/lib/audio-prefs";
 import { isNoiseSuppressionSupported } from "@/lib/noise-filter";
+import { clampStrength } from "@/lib/audio-attention";
 import { playUiSound, type UiSound } from "@/lib/ui-sounds";
 
 export interface AudioDeviceOption {
@@ -45,6 +46,8 @@ interface AudioPreferencesContextValue extends AudioPreferences {
   setSoundboardVolume: (volume: number) => void;
   setUiSoundVolume: (volume: number) => void;
   setCallParticipantSounds: (enabled: boolean) => void;
+  setAudioAttention: (enabled: boolean) => void;
+  setAudioAttentionStrength: (strength: number) => void;
   setRichPresenceEnabled: (enabled: boolean) => void;
   /** Re-enumerate devices, prompting for microphone access first so labels
    * are populated. Called when a device dropdown is opened. */
@@ -206,6 +209,8 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       setSoundboardVolume: (soundboardVolume) => update({ soundboardVolume }),
       setUiSoundVolume: (uiSoundVolume) => update({ uiSoundVolume }),
       setCallParticipantSounds: (callParticipantSounds) => update({ callParticipantSounds }),
+      setAudioAttention: (audioAttention) => update({ audioAttention }),
+      setAudioAttentionStrength: (strength) => update({ audioAttentionStrength: clampStrength(strength) }),
       setRichPresenceEnabled: (richPresenceEnabled) => update({ richPresenceEnabled }),
       refreshDevices,
       playCue: cue,

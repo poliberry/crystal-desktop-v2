@@ -879,6 +879,7 @@ export const listMembers = query({
             : undefined;
         return {
           userId: member.userId,
+          isBot: !!user?.isBot,
           name: serverProfile?.displayName ?? user?.name ?? "Unknown",
           username: user?.username ?? "unknown",
           imageUrl: serverProfile?.imageUrl ?? user?.imageUrl,

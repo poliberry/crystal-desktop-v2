@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Gem, PackageOpen, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, PackageOpen, Sparkles } from "lucide-react";
 
 import { PriceTag, SkuCard } from "@/components/marketplace/sku-card";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/components/marketplace/sku-kinds";
 import { SkuPreview } from "@/components/marketplace/sku-preview";
 import { planPerks } from "@/components/marketplace/sku-dialog";
+import { GeodeLadder, GeodeMark } from "@/components/geode";
 import { priceFor } from "@/components/marketplace/use-shop";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -152,13 +153,16 @@ function PlansBanner({ skus, ownedIds, onOpen, onSeeAll }: ViewProps & { onSeeAl
   if (skus.length === 0) return null;
   return (
     <section className="relative overflow-hidden rounded-3xl border border-fuchsia-400/20 bg-gradient-to-br from-violet-500/20 via-fuchsia-500/10 to-sky-400/10 p-6">
-      <div className="flex items-center gap-2 text-fuchsia-400">
-        <Gem className="size-5" />
-        <h3 className="text-lg font-semibold tracking-tight text-foreground">Crystal</h3>
+      <div className="flex items-center gap-3">
+        <GeodeMark className="size-12" />
+        <div>
+          <h3 className="text-lg font-semibold tracking-tight text-foreground">Crystal Geode</h3>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            Better streaming, a share off everything in the shop, and early access to new drops — and a badge that grows from
+            Quartz to Opal the longer you stay.
+          </p>
+        </div>
       </div>
-      <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-        Better streaming, a share off everything in the shop, and early access to new drops.
-      </p>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {skus.slice(0, 2).map((sku) => (
           <button
@@ -180,6 +184,7 @@ function PlansBanner({ skus, ownedIds, onOpen, onSeeAll }: ViewProps & { onSeeAl
           </button>
         ))}
       </div>
+      <GeodeLadder compact className="mt-5 rounded-2xl border border-foreground/10 bg-background/40 p-3" />
       <Button variant="ghost" size="sm" className="mt-3" onClick={onSeeAll}>
         Compare plans <ChevronRight />
       </Button>
@@ -320,6 +325,7 @@ export function SearchResults({ query, skus, ownedIds, discountBps, onOpen }: Vi
           s.name.toLowerCase().includes(needle) ||
           (s.description ?? "").toLowerCase().includes(needle) ||
           (s.creator?.username ?? "").toLowerCase().includes(needle) ||
+          (s.byCrystal === true && "by crystal".includes(needle)) ||
           GRANT_KIND_META[primaryKind(s)].label.toLowerCase().includes(needle),
       ),
     [skus, needle],

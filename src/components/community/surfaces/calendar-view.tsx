@@ -16,6 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { firstDayOfWeek, formatDateOnly, formatDateTime, formatTimeOnly } from "@/lib/locale";
+import { useLocale } from "@/hooks/use-locale";
 
 type Kind = "event" | "scrim" | "stream";
 
@@ -27,7 +29,7 @@ const KIND_META: Record<Kind, { label: string; icon: typeof Star; tone: string }
 
 const DAY = 24 * 60 * 60 * 1000;
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const time = (ms: number) => formatTimeOnly(ms);
 /** `datetime-local` wants local time without a zone. */
 const toInput = (ms: number) => {
   const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000);
@@ -204,7 +206,7 @@ function EventDialog({
             {event.cancelled && <Badge variant="destructive">Cancelled</Badge>}
           </DialogTitle>
           <DialogDescription>
-            {new Date(event.startsAt).toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}
+            {formatDateTime(event.startsAt, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}
             {event.endsAt && ` – ${time(event.endsAt)}`}
           </DialogDescription>
         </DialogHeader>
@@ -294,12 +296,16 @@ export function CalendarView({
   const kinds: Kind[] = community?.kind === "clan" ? ["scrim", "event"] : ["stream", "event"];
   const canManage = hasPermission(typeof myPerms === "number" ? myPerms : 0, PERMISSIONS.MANAGE_EVENTS);
 
+  // Reading the setting through the hook redraws the grid when the region changes; the week's first day is the region's.
+  useLocale();
+  const weekStart = firstDayOfWeek();
+
   const cells = useMemo(() => {
     const first = new Date(month);
-    const lead = first.getDay();
+    const lead = (first.getDay() - weekStart + 7) % 7;
     const days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
     return Array.from({ length: Math.ceil((lead + days) / 7) * 7 }, (_, i) => new Date(month.getFullYear(), month.getMonth(), i - lead + 1));
-  }, [month]);
+  }, [month, weekStart]);
 
   const forDay = (d: Date) => (events ?? []).filter((e) => sameDay(new Date(e.startsAt), d));
   const opened = events?.find((e) => e.id === openId) ?? null;
@@ -322,7 +328,7 @@ export function CalendarView({
       <div className="mx-auto grid max-w-6xl gap-4 p-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <section className="rounded-xl border border-foreground/10">
           <header className="flex items-center gap-2 border-b border-foreground/10 px-3 py-2">
-            <h2 className="text-sm font-semibold">{month.toLocaleDateString([], { month: "long", year: "numeric" })}</h2>
+            <h2 className="text-sm font-semibold">{formatDateOnly(month, { month: "long", year: "numeric" })}</h2>
             <div className="ml-auto flex gap-1">
               <Button size="icon" variant="ghost" className="size-7" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} aria-label="Previous month">
                 <ChevronLeft className="size-4" />
@@ -336,9 +342,9 @@ export function CalendarView({
             </div>
           </header>
           <div className="grid grid-cols-7 border-b border-foreground/10 text-center text-[11px] text-muted-foreground">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => (i + weekStart) % 7).map((d) => (
               <div key={d} className="py-1.5">
-                {d}
+                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}
               </div>
             ))}
           </div>
@@ -374,7 +380,7 @@ export function CalendarView({
 
         <aside className="space-y-2">
           <h2 className="px-1 text-sm font-semibold">
-            {selected.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
+            {formatDateOnly(selected, { weekday: "long", month: "long", day: "numeric" })}
           </h2>
           {events === undefined ? (
             <Loader2 className="mx-auto my-8 size-5 animate-spin text-muted-foreground" />

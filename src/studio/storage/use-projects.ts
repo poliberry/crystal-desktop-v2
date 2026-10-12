@@ -52,6 +52,11 @@ export function useProjects() {
   const [loadErrors, setLoadErrors] = useState<LoadError[]>([]);
   const [dirty, setDirty] = useState<ReadonlySet<string>>(new Set());
   const pending = useRef(new Map<string, { project: Project; timer: number }>());
+  /** Bumped for a project whose files were changed from outside (an AI agent, git, another editor) and re-read, so its editor
+   * starts again from them rather than keeping an undo history that leads back to what it replaced. */
+  const [revisions, setRevisions] = useState<ReadonlyMap<string, number>>(new Map());
+  const dirtyRef = useRef<ReadonlySet<string>>(new Set());
+  const refreshing = useRef(false);
   /** The latest list, readable straight after an update (state isn't, until the next render). */
   const live = useRef<Project[] | null>(null);
   /** What is on disk for each project: what `revert` goes back to. */
@@ -70,6 +75,10 @@ export function useProjects() {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
 
   useEffect(() => {
     let alive = true;
@@ -113,6 +122,63 @@ export function useProjects() {
       void flush();
     };
   }, [flush]);
+
+  /**
+   * Look at the folder again and pick up what changed there since it was read: a project edited by something else is replaced
+   * with what is on disk, a new folder is added. A project with unsaved changes in Studio, or one waiting to be written, is
+   * never touched: what is on screen is the person's work, and their next save will replace the outside change.
+   */
+  const refresh = useCallback(async () => {
+    if (refreshing.current || !live.current) return;
+    refreshing.current = true;
+    try {
+      const fresh = await listProjects();
+      const current = live.current;
+      if (!current) return;
+      const content = (p: Project) => JSON.stringify({ ...p, updatedAt: 0 });
+      const changed: string[] = [];
+      const next = current.map((p) => {
+        if (dirtyRef.current.has(p.id) || pending.current.has(p.id)) return p;
+        const disk = fresh.find((x) => x.id === p.id);
+        if (!disk || content(disk) === content(p)) return p;
+        changed.push(p.id);
+        onDisk.current.set(p.id, disk);
+        return disk;
+      });
+      const known = new Set(current.map((p) => p.id));
+      const added = fresh.filter((p) => !known.has(p.id));
+      for (const p of added) onDisk.current.set(p.id, p);
+      if (!changed.length && !added.length) return;
+      setProjects([...added, ...next]);
+      if (changed.length) {
+        setRevisions((prev) => {
+          const r = new Map(prev);
+          for (const id of changed) r.set(id, (r.get(id) ?? 0) + 1);
+          return r;
+        });
+      }
+      setLoadErrors(storageLoadErrors());
+    } catch {
+      /* the next focus tries again */
+    } finally {
+      refreshing.current = false;
+    }
+  }, [setProjects]);
+
+  useEffect(() => {
+    let last = 0;
+    const look = () => {
+      if (document.visibilityState === "hidden" || Date.now() - last < 1000) return;
+      last = Date.now();
+      void refresh();
+    };
+    window.addEventListener("focus", look);
+    document.addEventListener("visibilitychange", look);
+    return () => {
+      window.removeEventListener("focus", look);
+      document.removeEventListener("visibilitychange", look);
+    };
+  }, [refresh]);
 
   const update = useCallback(
     (id: string, change: (p: Project) => Project) => {
@@ -209,5 +275,5 @@ export function useProjects() {
     setProjects((live.current ?? []).filter((p) => p.id !== id));
   }, [markDirty, setProjects]);
 
-  return { projects, loadErrors, dirty, update, save, revert, create, duplicate, remove, flush };
+  return { projects, loadErrors, dirty, revisions, refresh, update, save, revert, create, duplicate, remove, flush };
 }

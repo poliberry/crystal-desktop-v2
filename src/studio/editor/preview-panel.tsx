@@ -40,18 +40,20 @@ function Initials({ name }: { name: string }) {
 }
 
 function DecorationPreview({ layers, avatarUrl, name }: { layers: CosmeticLayer[]; avatarUrl?: string; name: string }) {
+  // Rounded as the app rounds each of these: a profile card's avatar is `rounded-xl`, a message, member row or call
+  // tile's is `rounded-md`. (Decorations are drawn for that rounded square — a circle puts the ring in the wrong place.)
   const sizes = [
-    { px: 128, label: "Profile" },
-    { px: 64, label: "Message" },
-    { px: 40, label: "Member list" },
-    { px: 28, label: "Call" },
+    { px: 128, label: "Profile", rounded: "rounded-xl" },
+    { px: 64, label: "Message", rounded: "rounded-md" },
+    { px: 40, label: "Member list", rounded: "rounded-md" },
+    { px: 28, label: "Call", rounded: "rounded-md" },
   ];
   return (
     <div className="space-y-4 p-4">
-      {sizes.map(({ px, label }) => (
+      {sizes.map(({ px, label, rounded }) => (
         <div key={label} className="flex items-center gap-4">
           <div className="relative shrink-0" style={{ width: px, height: px }}>
-            <div className="size-full overflow-hidden rounded-full" style={{ fontSize: px }}>
+            <div className={cn("size-full overflow-hidden", rounded)} style={{ fontSize: px }}>
               {avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={avatarUrl} alt="" className="size-full object-cover" />
@@ -86,7 +88,7 @@ function StickerPreview({ layers, avatarUrl, name, doc }: { layers: CosmeticLaye
       </div>
       <div className="relative mx-auto overflow-visible rounded-2xl bg-neutral-800" style={{ width: w, height: h }}>
         <div className="h-[28%] overflow-hidden rounded-t-2xl bg-gradient-to-br from-violet-500/50 to-sky-500/40" />
-        <div className="absolute overflow-hidden rounded-full border-4 border-neutral-800 bg-neutral-600" style={{ left: 18, top: h * 0.28 - 34, width: 68, height: 68 }}>
+        <div className="absolute overflow-hidden rounded-xl border-4 border-neutral-800 bg-neutral-600" style={{ left: 18, top: h * 0.28 - 34, width: 68, height: 68 }}>
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={avatarUrl} alt="" className="size-full object-cover" />
@@ -197,7 +199,7 @@ function WornPreview({ doc, avatarUrl, name }: { doc: Doc; avatarUrl?: string; n
         {[name, "A friend", "Someone else"].map((n, i) => (
           <div key={i} className="relative flex h-11 items-center gap-2.5 overflow-hidden rounded-lg bg-card px-3">
             {url && /* eslint-disable-next-line @next/next/no-img-element */ <img src={url} alt="" aria-hidden className="fade-mask-l pointer-events-none absolute inset-0 size-full object-cover opacity-20" />}
-            <span className="relative flex size-7 items-center justify-center overflow-hidden rounded-full bg-neutral-600 text-[10px] font-semibold text-white">
+            <span className="relative flex size-7 items-center justify-center overflow-hidden rounded-md bg-neutral-600 text-[10px] font-semibold text-white">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               {avatarUrl ? <img src={avatarUrl} alt="" className="size-full object-cover" /> : n.slice(0, 2).toUpperCase()}
             </span>
@@ -211,7 +213,7 @@ function WornPreview({ doc, avatarUrl, name }: { doc: Doc; avatarUrl?: string; n
     <div className="p-4">
       <div className="relative mx-auto h-64 w-72 overflow-hidden rounded-2xl bg-neutral-800">
         <div className="h-[28%] bg-gradient-to-br from-violet-500/50 to-sky-500/40" />
-        <span className="absolute top-[18%] left-4 flex size-16 items-center justify-center overflow-hidden rounded-full border-4 border-neutral-800 bg-neutral-600 text-sm font-semibold text-white">
+        <span className="absolute top-[18%] left-4 flex size-16 items-center justify-center overflow-hidden rounded-xl border-4 border-neutral-800 bg-neutral-600 text-sm font-semibold text-white">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {avatarUrl ? <img src={avatarUrl} alt="" className="size-full object-cover" /> : name.slice(0, 2).toUpperCase()}
         </span>

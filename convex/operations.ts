@@ -6,6 +6,8 @@ import { grantEntitlements, isActive, ownsSku } from "./lib/entitlements";
 import { activeSuspension, INDEFINITE } from "./lib/moderation";
 import { audit, getStaff, requireStaff } from "./lib/staff";
 import { can } from "./lib/staffPermissions";
+import { badgeByIdMap, badgeView } from "./badges";
+import { grantBadge, revokeBadge } from "./users";
 
 /**
  * Platform operations for the staff console: finding and acting on accounts and
@@ -126,12 +128,22 @@ export const userDetail = query({
     };
 
     const suspension = activeSuspension(user);
+    const [badgeRows, badgeDefinitions] = await Promise.all([
+      ctx.db.query("userBadges").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
+      badgeByIdMap(ctx),
+    ]);
     return {
       user: { ...userRow(user), bio: user.bio, customStatus: user.customStatus },
       suspension: suspension
         ? { until: suspension.indefinite ? null : suspension.until, reason: suspension.reason ?? null }
         : null,
       isStaff: !!staffRow && staffRow.revokedAt === undefined,
+      badges: badgeRows
+        .map((row) => {
+          const badge = badgeDefinitions.get(row.badgeId);
+          return badge ? { ...badgeView(badge), grantedAt: row.grantedAt } : null;
+        })
+        .filter((badge): badge is NonNullable<typeof badge> => badge !== null),
       moderationLog: await Promise.all(
         log.map(async (entry) => ({
           id: entry._id,
@@ -173,6 +185,22 @@ export const userDetail = query({
         : null,
       creator: seesFinance && creator ? { payoutsEnabled: creator.payoutsEnabled } : null,
     };
+  },
+});
+
+/** Give or remove a catalogue badge from an account through the staff console. */
+export const setUserBadge = mutation({
+  args: { userId: v.id("users"), badgeId: v.string(), granted: v.boolean(), reason: v.string() },
+  handler: async (ctx, { userId, badgeId, granted, reason }) => {
+    const staff = await requireStaff(ctx, "users.moderate");
+    const user = await ctx.db.get(userId);
+    const badge = await ctx.db.query("badges").withIndex("by_badge_id", (q) => q.eq("badgeId", badgeId)).unique();
+    if (!user || !badge) throw new Error("User or badge not found.");
+    const why = reason.trim().slice(0, 300);
+    if (why.length < 3) throw new Error("Say why this badge is being changed.");
+    if (granted) await grantBadge(ctx, userId, badgeId);
+    else await revokeBadge(ctx, userId, badgeId);
+    await audit(ctx, staff.user._id, granted ? "users.badge.grant" : "users.badge.revoke", { type: "user", id: userId }, `${badge.label} for @${user.username} — ${why}`);
   },
 });
 

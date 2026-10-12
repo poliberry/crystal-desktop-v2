@@ -64,7 +64,7 @@ export function PageHost({ page }: { page: AppPage }) {
   }, [closePage]);
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t bg-background">
+    <div data-pack-panel="clear" className="flex min-h-0 min-w-0 flex-1 flex-col border-t bg-background">
       {/* The page's own box: whatever is inside is clipped to it, or scrolls
           (the profile editor, which has fixed-width panes), and never spills
           into the rest of the window. */}

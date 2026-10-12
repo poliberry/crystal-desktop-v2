@@ -92,6 +92,10 @@ export function VoiceVideoTab() {
     uiSoundVolume,
     setUiSoundVolume,
     callParticipantSounds,
+    audioAttention,
+    setAudioAttention,
+    audioAttentionStrength,
+    setAudioAttentionStrength,
     setCallParticipantSounds,
     richPresenceEnabled,
     setRichPresenceEnabled,
@@ -497,6 +501,35 @@ export function VoiceVideoTab() {
               checked={callParticipantSounds}
               onCheckedChange={setCallParticipantSounds}
             />
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <Label htmlFor="audio-attention" className="text-sm font-normal">
+                  Audio Attention
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  While you&apos;re watching a stream and other people are talking, the stream gets quieter so you can hear them,
+                  then comes back up when they stop. Your own voice doesn&apos;t count. You can also switch it for one stream by
+                  right-clicking it.
+                </p>
+              </div>
+              <Switch id="audio-attention" checked={audioAttention} onCheckedChange={setAudioAttention} />
+            </div>
+            {audioAttention && (
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="w-24 shrink-0">Turn it down by</span>
+                <Slider
+                  value={[Math.round(audioAttentionStrength * 100)]}
+                  onValueChange={([v]) => setAudioAttentionStrength((v ?? 60) / 100)}
+                  min={20}
+                  max={90}
+                  step={5}
+                  aria-label="How much quieter the stream gets"
+                />
+                <span className="w-10 text-right tabular-nums">{Math.round(audioAttentionStrength * 100)}%</span>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

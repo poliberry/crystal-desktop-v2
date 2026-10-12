@@ -6,6 +6,7 @@ import {
   Bell,
   ChevronDown,
   Code2,
+  Cpu,
   CreditCard,
   Download,
   Gem,
@@ -37,6 +38,7 @@ import { ExtensionsTab } from "@/components/settings/tabs/extensions-tab";
 import { SubscriptionsTab } from "@/components/settings/tabs/subscriptions-tab";
 import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
 import { NotificationsTab } from "@/components/settings/tabs/notifications-tab";
+import { PerformanceTab } from "@/components/settings/tabs/performance-tab";
 import { ServerProfilesTab } from "@/components/settings/tabs/server-profiles-tab";
 import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
@@ -118,6 +120,7 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
     children: [
       { value: "voice", label: "Voice & Video", icon: Mic },
       { value: "notifications", label: "Notifications", icon: Bell },
+      { value: "performance", label: "Performance", icon: Cpu },
     ],
   },
 ];
@@ -139,6 +142,7 @@ const SECTION_META: Record<string, { title: string; description: string }> = {
   servers: { title: "Server profiles", description: "How you appear in each community." },
   voice: { title: "Voice & video", description: "Devices, processing and call behaviour." },
   notifications: { title: "Notifications", description: "What gets your attention, and how." },
+  performance: { title: "Performance", description: "How the app uses your computer's graphics." },
   about: { title: "About", description: "Version and runtime information." },
 };
 
@@ -363,6 +367,7 @@ export function SettingsShell({
               {section === "extensions" && <ExtensionsTab />}
               {section === "voice" && <VoiceVideoTab />}
               {section === "notifications" && <NotificationsTab />}
+              {section === "performance" && <PerformanceTab />}
               {section === "updates" && <UpdatesTab />}
               {section === "about" && <AboutTab />}
             </SettingsPageLayout>

@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import { AlertTriangle, Armchair, Check, MicOff, Pencil, Users, X } from "lucide-react";
 import { ParticipantEvent, RoomEvent, Track, type Participant } from "livekit-client";
+import type { Room } from "livekit-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -27,7 +28,73 @@ import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import type { RoomController } from "@/hooks/use-room";
 import { resolveScene } from "@/lib/lounge-scenes";
+import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
+
+/**
+ * Lounge replaces the normal call grid with the room scene, so there is no
+ * ParticipantTile around to attach remote microphone tracks. Keep the audio
+ * plumbing independent of the visual stage: voices must continue to play
+ * while someone is in the audience, off-screen, or behind the TV UI.
+ */
+function LoungeAudio({ room }: { room: Room }) {
+  const host = useRef<HTMLDivElement>(null);
+  const { participantVolume, deafened } = useAudioPreferences();
+  const volumeRef = useRef(participantVolume);
+  const deafenedRef = useRef(deafened);
+  volumeRef.current = participantVolume;
+  deafenedRef.current = deafened;
+
+  useEffect(() => {
+    const attached = new Map<Track, HTMLMediaElement>();
+    const clear = () => {
+      for (const [track, element] of attached) track.detach(element);
+      attached.clear();
+      host.current?.replaceChildren();
+    };
+    const refresh = () => {
+      clear();
+      if (deafenedRef.current || !host.current) return;
+      for (const participant of room.remoteParticipants.values()) {
+        const publication = participant.getTrackPublication(Track.Source.Microphone);
+        const track = publication?.track;
+        if (!track || track.kind !== Track.Kind.Audio || publication?.isMuted) continue;
+        const element = track.attach();
+        element.autoplay = true;
+        element.volume = volumeRef.current;
+        element.style.display = "none";
+        host.current.appendChild(element);
+        attached.set(track, element);
+        void routeElementToPlayback(element);
+      }
+    };
+
+    refresh();
+    room.on(RoomEvent.ParticipantConnected, refresh as never);
+    room.on(RoomEvent.ParticipantDisconnected, refresh as never);
+    room.on(RoomEvent.TrackSubscribed, refresh as never);
+    room.on(RoomEvent.TrackUnsubscribed, refresh as never);
+    room.on(RoomEvent.TrackMuted, refresh as never);
+    room.on(RoomEvent.TrackUnmuted, refresh as never);
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, refresh as never);
+      room.off(RoomEvent.ParticipantDisconnected, refresh as never);
+      room.off(RoomEvent.TrackSubscribed, refresh as never);
+      room.off(RoomEvent.TrackUnsubscribed, refresh as never);
+      room.off(RoomEvent.TrackMuted, refresh as never);
+      room.off(RoomEvent.TrackUnmuted, refresh as never);
+      clear();
+    };
+  }, [room]);
+
+  useEffect(() => {
+    host.current?.querySelectorAll("audio").forEach((element) => {
+      (element as HTMLAudioElement).volume = deafened ? 0 : participantVolume;
+    });
+  }, [participantVolume, deafened]);
+
+  return <div ref={host} aria-hidden className="hidden" />;
+}
 
 /** How many people are drawn in the room; everyone past this is the audience. */
 const MAX_ON_STAGE = 6;
@@ -453,6 +520,7 @@ export function LoungeStage({ roomName, controller, onLeave, channelId, communit
   return (
     // The room is the whole page; everything else is laid over it.
     <div className="relative h-full min-h-0 w-full overflow-hidden bg-neutral-950 text-white">
+      <LoungeAudio room={room} />
       {/* Whatever the window's shape, the room reaches its edges: the same picture,
           blurred, behind the 16:9 scene. */}
       <div aria-hidden className="absolute inset-0 scale-110 opacity-70 blur-2xl">

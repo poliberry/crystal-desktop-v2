@@ -127,6 +127,7 @@ export function RightSidebarHost() {
           style={{ paddingTop: reserve ? WINDOW_CONTROLS_HEIGHT + 4 : 8 }}
         >
           <div
+            data-pack-panel="sidebar"
             className={cn(
               "relative mx-2 flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm",
             )}

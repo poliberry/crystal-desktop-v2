@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { IconType } from "react-icons";
 
+import { GEODE_ICON_PREFIX } from "../../convex/lib/geode";
+import { GeodeGem } from "@/components/geode";
 import { useCachedImageSrc } from "@/lib/image-cache";
 import { cachedReactIcon, loadReactIcon } from "@/lib/react-icons";
 import { cn } from "@/lib/utils";
@@ -30,13 +32,15 @@ export function BadgeIcon({
   label: string;
   className?: string;
 }) {
+  // Geode badges are drawn from code, not looked up as an icon: `geode:<gem>` (see convex/lib/geode.ts).
+  const geode = icon?.startsWith(GEODE_ICON_PREFIX) ? icon.slice(GEODE_ICON_PREFIX.length) : null;
   const [Glyph, setGlyph] = useState<IconType | null>(() =>
-    icon ? (cachedReactIcon(icon) ?? null) : null
+    icon && !geode ? (cachedReactIcon(icon) ?? null) : null
   );
   const cachedImageUrl = useCachedImageSrc(imageUrl);
 
   useEffect(() => {
-    if (!icon || imageUrl) return;
+    if (!icon || imageUrl || geode) return;
     let live = true;
     void loadReactIcon(icon).then((resolved) => {
       if (live) setGlyph(() => resolved);
@@ -44,7 +48,9 @@ export function BadgeIcon({
     return () => {
       live = false;
     };
-  }, [icon, imageUrl]);
+  }, [icon, imageUrl, geode]);
+
+  if (geode && !imageUrl) return <GeodeGem tier={geode} label={label} className={className} />;
 
   if (imageUrl) {
     return (

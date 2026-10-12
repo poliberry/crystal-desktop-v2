@@ -35,6 +35,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMyPresence } from "@/hooks/use-presence";
 import { useProfileScope } from "@/hooks/use-profile-scope";
+import { useTabs } from "@/components/home/tabs-context";
 import { displayNameStyleClass } from "@/lib/profile-cosmetics";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -211,7 +212,11 @@ function ProfileSaveBar({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 24 }}
           transition={{ type: "spring", stiffness: 420, damping: 34 }}
-          className="absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-popover/95 py-2 pr-2 pl-4 shadow-xl backdrop-blur-xl"
+          className={cn(
+            "absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full border bg-popover/95 py-2 pr-2 pl-4 shadow-xl backdrop-blur-xl",
+            changes > 0 && "animate-pulse border-red-500/80 shadow-red-500/25",
+            changes === 0 ? "border-border" : "border-red-500/80",
+          )}
         >
           {changes === 0 ? (
             <span className="flex items-center gap-1.5 pr-2 text-sm">
@@ -259,6 +264,7 @@ export function ProfileEditor({
   className?: string;
 }) {
   const me = useQuery(api.users.getCurrentUser);
+  const { registerCloseGuard } = useTabs();
   const { status, activities } = useMyPresence();
 
   const [scopeId, setScopeId] = useState<Id<"communities"> | undefined>(undefined);
@@ -291,8 +297,30 @@ export function ProfileEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [exitAttempted, setExitAttempted] = useState(false);
+  const dirtyRef = useRef(false);
   const savedTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(savedTimer.current), []);
+
+  useEffect(() => {
+    const guard = () => {
+      if (!dirtyRef.current) return true;
+      setExitAttempted(false);
+      window.requestAnimationFrame(() => setExitAttempted(true));
+      return false;
+    };
+    return registerCloseGuard("profile-editor", guard);
+  }, [registerCloseGuard]);
+
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   if (!me || !values) {
     return (
@@ -312,6 +340,8 @@ export function ProfileEditor({
   const changed = (["name", "bio", "customStatus"] as const).filter(
     (key) => edits[key] !== undefined && edits[key] !== values[key],
   );
+  dirtyRef.current = changed.length > 0;
+
 
   const edit = (key: keyof TextDraft, value: string) => {
     setSaveError(null);
@@ -324,6 +354,7 @@ export function ProfileEditor({
     try {
       await scope.saveText(text);
       setEdits({});
+      setExitAttempted(false);
       setSaved(true);
       window.clearTimeout(savedTimer.current);
       savedTimer.current = window.setTimeout(() => setSaved(false), SAVED_FLASH_MS);
@@ -345,7 +376,11 @@ export function ProfileEditor({
   };
 
   return (
-    <div className={cn("relative flex h-full min-h-0 overflow-hidden bg-background", className)}>
+    <motion.div
+      animate={exitAttempted ? { x: [0, -3, 3, -2, 2, 0] } : { x: 0 }}
+      transition={{ duration: 0.28, ease: "easeInOut" }}
+      className={cn("relative flex h-full min-h-0 overflow-hidden bg-background", className)}
+    >
       {/* ---------------------------------------------------------------- */}
       {/* Left rail — drawn in the unified sidebar, see `PageSidebar`        */}
       {/* ---------------------------------------------------------------- */}
@@ -670,9 +705,10 @@ export function ProfileEditor({
         onDiscard={() => {
           setEdits({});
           setSaveError(null);
+          setExitAttempted(false);
         }}
         onSave={() => void saveProfile()}
       />
-    </div>
+    </motion.div>
   );
 }

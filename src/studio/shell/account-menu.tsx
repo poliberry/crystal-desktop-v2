@@ -44,9 +44,9 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             className="flex w-10 shrink-0 items-center justify-center outline-none hover:bg-white/5 focus-visible:bg-white/10 data-[state=open]:bg-white/10"
           >
-            <Avatar className="size-5">
-              <AvatarImage src={me?.imageUrl ?? user?.imageUrl} alt="" />
-              <AvatarFallback className="text-[10px]">{name.slice(0, 1).toUpperCase()}</AvatarFallback>
+            <Avatar className="size-5 rounded-md">
+              <AvatarImage src={me?.imageUrl ?? user?.imageUrl} alt="" className="rounded-md" />
+              <AvatarFallback className="rounded-md text-[10px]">{name.slice(0, 1).toUpperCase()}</AvatarFallback>
             </Avatar>
           </button>
         </DropdownMenuTrigger>

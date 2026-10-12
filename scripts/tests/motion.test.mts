@@ -1,6 +1,6 @@
 import {
   BLEND_MODES, EASE_PRESETS, MOTION_LIMITS, MOTION_STAGES, TRANSITION_KINDS, allClips, applyTransition, contentEnd, cubicBezier, defaultParticles, defaultTransform, ease,
-  emptyMotion, evalColor, parseRgba, evalProp, motionImageUrls, newClip, normalizeMotionSpec, particlesAt, playbackTime, sampleClip, sampleClips, sourceElapsed, sourceTime, textChars, transitionState,
+  emptyMotion, evalColor, introLength, parseRgba, evalProp, motionImageUrls, newClip, normalizeMotionSpec, particlesAt, playbackTime, sampleClip, sampleClips, sourceElapsed, sourceTime, textChars, transitionState,
   type Clip, type Source,
 } from "../../convex/lib/motion";
 
@@ -109,6 +109,27 @@ for (const tr of TRANSITION_KINDS) {
   ok("a play-once design holds its last frame during the rest", playbackTime(once, 5) < 4 && playbackTime(once, 5) > 3.99 && near(playbackTime(once, 6.5), 0.5));
   ok("a time before the start (a clock that ran backwards) is the start", playbackTime(loop, -3) === 0 && playbackTime(once, -3) === 0);
   ok("an empty design doesn't divide by zero", Number.isFinite(playbackTime({ duration: 0, loop: { mode: "loop", rest: 0 } }, 3)));
+
+  // An intro: the first pass is the whole design, every repeat is only what follows the intro.
+  const intro = { duration: 6, loop: { mode: "loop" as const, rest: 0, from: 2 } };
+  ok("the first pass plays the intro and the idle", near(playbackTime(intro, 0), 0) && near(playbackTime(intro, 1), 1) && near(playbackTime(intro, 2.5), 2.5) && near(playbackTime(intro, 5.9), 5.9));
+  ok("after the end it goes back to the loop point, not to the start", near(playbackTime(intro, 6), 2) && near(playbackTime(intro, 7), 3));
+  ok("and the intro never plays again", [6, 6.4, 9.9, 10, 13, 50, 123.4].every((t) => playbackTime(intro, t) >= 2 && playbackTime(intro, t) < 6));
+  ok("the idle repeats with the idle's length", near(playbackTime(intro, 7), playbackTime(intro, 7 + 4)) && near(playbackTime(intro, 8.5), playbackTime(intro, 8.5 + 8)));
+  ok("a loop point of 0 or none is the old behaviour exactly", [0, 1, 3.9, 4, 9.1].every((t) => playbackTime({ duration: 4, loop: { mode: "loop", rest: 0, from: 0 } }, t) === playbackTime(loop, t)));
+  ok("a loop point past the end still leaves something to loop", (() => { const x = { duration: 4, loop: { mode: "loop" as const, rest: 0, from: 99 } }; return [4, 5, 40].every((t) => { const v = playbackTime(x, t); return v >= 0 && v < 4 && v > 3.7; }) && introLength(x) === 3.75; })());
+  ok("a time before the start is still the start", playbackTime(intro, -3) === 0);
+  ok("play-once designs have no intro", introLength({ duration: 6, loop: { mode: "once", rest: 2, from: 2 } }) === 0 && playbackTime({ duration: 6, loop: { mode: "once", rest: 2, from: 2 } }, 7) < 6);
+  ok("introLength is 0 for none, junk and negatives", [undefined, 0, -1, NaN].every((from) => introLength({ duration: 6, loop: { mode: "loop", rest: 0, from: from as number | undefined } }) === 0));
+
+  // The validator keeps it, bounds it, and leaves it out when there is none (so an old design hashes the same as it did).
+  const stored = (loopIn: unknown) => normalizeMotionSpec({ ...emptyMotion("effect"), duration: 6, loop: loopIn, clips: [] }, cdn).loop;
+  ok("an intro survives validation", JSON.stringify(stored({ mode: "loop", rest: 0, from: 1.5 })) === JSON.stringify({ mode: "loop", rest: 0, from: 1.5 }));
+  ok("no intro leaves the field out entirely", !("from" in stored({ mode: "loop", rest: 0 })) && !("from" in stored({ mode: "loop", rest: 0, from: 0 })));
+  ok("an intro is cut to leave an idle", stored({ mode: "loop", rest: 0, from: 99 }).from === 5.75);
+  ok("a negative or junk intro is none", !("from" in stored({ mode: "loop", rest: 0, from: -3 })) && !("from" in stored({ mode: "loop", rest: 0, from: "soon" })));
+  ok("a play-once design drops the intro", !("from" in stored({ mode: "once", rest: 2, from: 2 })));
+  ok("an old design is stored byte for byte as before", JSON.stringify(stored({ mode: "loop", rest: 2 })) === JSON.stringify({ mode: "loop", rest: 2 }));
 }
 
 // --- particles ---------------------------------------------------------------------------------------------------------

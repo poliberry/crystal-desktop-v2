@@ -6,6 +6,7 @@ import { Loader2, Server } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { SettingRow, SettingsGroup } from "@/components/settings/settings-ui";
+import { formatDateTime } from "@/lib/locale";
 
 const LABEL: Record<string, string> = {
   "power.start": "started",
@@ -44,7 +45,7 @@ export function ServersSettings({ communityId }: { communityId: Id<"communities"
             <SettingRow
               key={row.id}
               title={`${row.who} ${LABEL[row.action] ?? row.action} ${row.server}`}
-              description={`${new Date(row.at).toLocaleString()}${row.detail ? ` · ${row.detail}` : ""}`}
+              description={`${formatDateTime(row.at)}${row.detail ? ` · ${row.detail}` : ""}`}
             />
           ))
         )}

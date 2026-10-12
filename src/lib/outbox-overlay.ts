@@ -130,7 +130,8 @@ function syntheticRow(entry: OutboxEntry, me: OverlayMe): OverlayMessage {
           // A rebuilt object URL from the stashed bytes wins: `previewUrl` is
           // only alive for the session that created it, so after a reload it's
           // a dead `blob:` string and the stashed-blob URL is the real one.
-          url: blobUrlFor(attachment.blobKey) ?? attachment.previewUrl ?? null,
+          // A GIF from KLIPY has no bytes of ours at all, just its address: that is what to draw.
+          url: blobUrlFor(attachment.blobKey) ?? attachment.previewUrl ?? attachment.cdnUrl ?? null,
         }))
       : [];
   const replyPreview = args.kind === "send" ? args.replyToPreview : undefined;

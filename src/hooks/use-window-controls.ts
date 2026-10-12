@@ -9,7 +9,14 @@ import { getDesktopAPI, getPlatform, isElectron } from "@/lib/desktop";
  * `BrowserWindow.fromWebContents` resolution). */
 export function useWindowControls({ forceCustom = false }: { forceCustom?: boolean } = {}) {
   const [maximized, setMaximized] = useState(false);
-  const api = getDesktopAPI()?.window;
+  // Keep this reactive in case a renderer hydrates before the preload bridge
+  // has been attached (seen during Windows/Linux restores).
+  const [api, setApi] = useState(() => getDesktopAPI()?.window);
+
+  useEffect(() => {
+    const current = getDesktopAPI()?.window;
+    if (current && current !== api) setApi(current);
+  }, [api]);
 
   useEffect(() => {
     if (!api) return;

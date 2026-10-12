@@ -10,6 +10,8 @@ import { CachedBackground } from "@/components/cached-background";
 import { FriendActionButton } from "@/components/friend-action-button";
 import { StatusDialog } from "@/components/status-dialog";
 import { useOpenProfile } from "@/components/profile/profile-page";
+import { useNavigation } from "@/components/home/navigation-context";
+import { MutualsStrip, useMutuals } from "@/components/profile/profile-mutuals";
 import { useOpenProfileEditor, useOpenSettings } from "@/components/pages/page-context";
 import { RichPresenceCards } from "@/components/rich-presence-card";
 import type { RichPresenceActivity } from "@/types/desktop-api";
@@ -50,9 +52,11 @@ import {
 } from "@/components/profile/status-bubble";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
+import { BotTag } from "@/components/bot-tag";
 import { useUserActivities } from "@/hooks/use-rich-presence";
 import { ScrollArea } from "../ui/scroll-area";
 import { InlineText } from "@/components/profile/inline-text";
+import { formatDateOnly } from "@/lib/locale";
 
 /** The draft behind a card that is being edited in place. */
 export interface InlineProfileEdit {
@@ -73,6 +77,7 @@ export interface MemberProfileMember {
   userId: Id<"users">;
   name: string;
   username: string;
+  isBot?: boolean;
   imageUrl?: string;
   bio?: string;
   customStatus?: string;
@@ -149,6 +154,8 @@ function ProfileBadges({ badges }: { badges: ProfileBadge[] }) {
           </TooltipTrigger>
           <TooltipContent side="top">
             <p className="font-medium">{badge.label}</p>
+            {/* The reason, under the name: for a Geode gem it says how long they've been a member. */}
+            {badge.description && <p className="max-w-56 text-xs opacity-80">{badge.description}</p>}
           </TooltipContent>
         </Tooltip>
       ))}
@@ -202,7 +209,13 @@ export function MemberProfileCard({
     userId: member.userId,
     communityId,
   });
+  const isBot = profile?.isBot ?? member.isBot;
   const isSelf = !!me && me._id === member.userId;
+  // The card lives inside the navigation and the profile page doesn't, so it is the card that hands the page a way to
+  // open a server (see `ProfileTarget.onOpenCommunity`).
+  const navigation = useNavigation();
+  // What you have in common with them. Skipped for yourself, and for a card that is only previewing a design.
+  const mutuals = useMutuals(member.userId, !me || isSelf || !!inlineEdit);
   const badges = (useQuery(api.users.badgesOf, { userId: member.userId }) ??
     []) as ProfileBadge[];
   const [statusOpen, setStatusOpen] = useState(false);
@@ -250,7 +263,7 @@ export function MemberProfileCard({
       data-slot="profile-card"
       {...profileCssAttributes(profileCss, member.userId)}
       className={cn(
-        "relative flex min-h-full flex-col rounded-2xl p-1",
+        "group/profile-card relative flex min-h-full flex-col rounded-2xl p-1",
         className,
       )}
       style={
@@ -281,7 +294,7 @@ export function MemberProfileCard({
         data-slot="profile-card-inner"
         className={cn(
           "min-h-full",
-          expanded ? "h-[130%]" : "h-full",
+          "h-full",
           // No side padding here, expanded or not: the banner runs edge to edge
           // and every block under it pads itself. Padding the box as well
           // insets the banner into a floating strip and doubles the gutter of
@@ -338,7 +351,7 @@ export function MemberProfileCard({
                   alt={member.name}
                   className="rounded-xl"
                 />
-                <AvatarFallback className="text-lg">
+                <AvatarFallback className="text-lg rounded-xl">
                   {member.name.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
                 {/* The one place a decoration plays on its own: this card
@@ -409,6 +422,7 @@ export function MemberProfileCard({
 
           <div data-slot="profile-identity" className={cn("ml-4 pt-1")}>
             <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 items-center gap-2">
               <p
                 data-slot="profile-name"
                 className={cn(
@@ -438,6 +452,8 @@ export function MemberProfileCard({
                   member.name
                 )}
               </p>
+              {isBot && <BotTag />}
+              </div>
             </div>
             <p
               data-slot="profile-username"
@@ -462,6 +478,7 @@ export function MemberProfileCard({
             <FriendActionButton
               userId={member.userId}
               username={member.username}
+              isBot={isBot}
               hideMessage={hideMessageAction}
               className="w-full"
             />
@@ -488,6 +505,18 @@ export function MemberProfileCard({
           {/* In the dialog the activity list owns its own column, so showing
               it here too would just be the same card twice. */}
           {showActivity && <RichPresenceCards activities={activities} />}
+          {/* A few faces and a count. On a card that can open the full profile this is where each one leads; the full
+              page has the lists themselves in tabs, so it doesn't repeat them here. */}
+          {!isSelf && !inlineEdit && !expanded && (
+            <MutualsStrip
+              mutuals={mutuals}
+              onOpen={
+                expandable
+                  ? (tab) => openProfile({ member, communityId, communityName, tab, onOpenCommunity: (id) => navigation.openCommunity(id) })
+                  : undefined
+              }
+            />
+          )}
           {member.roles && member.roles.length > 0 && (
             <div data-slot="profile-roles" className="flex flex-wrap gap-1">
               {member.roles.map((role) => (
@@ -514,7 +543,7 @@ export function MemberProfileCard({
                 Member since
               </p>
               <p className="text-sm">
-                {new Date(profile.createdAt).toLocaleDateString(undefined, {
+                {formatDateOnly(profile.createdAt, {
                   year: "numeric",
                   month: "short",
                   day: "numeric",
@@ -535,7 +564,7 @@ export function MemberProfileCard({
                 title="Open profile"
                 className="w-full"
                 onClick={() =>
-                  openProfile({ member, communityId, communityName })
+                  openProfile({ member, communityId, communityName, onOpenCommunity: (id) => navigation.openCommunity(id) })
                 }
               >
                 <Maximize2 className="size-4" />
@@ -568,7 +597,17 @@ export function MemberProfileCard({
       {/* Drawn outside the clipping box, so a wrapping frame keeps the part
           that hangs past the card's edges. */}
       <ProfileCssLayer css={profileCss} scopeId={member.userId} />
-      <ProfileEffectLayer src={profileEffect} rounded="rounded-md" />
+      {/* The same box as the clipped card inside it: inset by the outer `p-1` and
+          rounded like its `rounded-xl`, so the effect is cut off at the card's
+          edge instead of spilling over the border ring and squaring its corners. */}
+      {/* Half strength while anything on the profile is hovered, so what's under the effect can be read and clicked
+          without it moving over the top. Only the card itself counts, not the page around it on the full profile. */}
+      <ProfileEffectLayer
+        src={profileEffect}
+        inset="inset-1"
+        rounded="rounded-xl"
+        className="group-hover/profile-card:opacity-50"
+      />
       {!frameHandledByHost &&
         (frameLayers.length > 0 ? (
           <ProfileFrameLayers
@@ -600,12 +639,14 @@ export function UserProfileContent({
   name,
   username,
   imageUrl,
+  isBot,
 }: {
   userId: Id<"users">;
   communityId?: Id<"communities">;
   name: string;
   username: string;
   imageUrl?: string;
+  isBot?: boolean;
 }) {
   const profile = useQuery(api.users.getProfile, { userId, communityId });
 
@@ -619,6 +660,7 @@ export function UserProfileContent({
         userId,
         name: profile?.name ?? name,
         username: profile?.username ?? username,
+        isBot: profile?.isBot ?? isBot,
         imageUrl: profile?.imageUrl ?? imageUrl,
         roles: profile?.roles,
         isOwner: profile?.isOwner,

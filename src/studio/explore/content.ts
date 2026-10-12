@@ -444,6 +444,7 @@ export const TOPICS: Topic[] = [
         "Draw anything it needs in the Canvas tab, or build it entirely from generators in the Animate tab: sparkles, snow, hearts, light rays, shimmer.",
         "Make it move in the Animate tab. It can loop, or play once and then rest on its last frame before it plays again.",
         "Make the first and last frames match if it loops, so it doesn't jump. Preview with the “As worn” view in the viewer.",
+        "Give it an intro: select nothing, and set Intro in the inspector. The first seconds play once when the profile is opened, then only what follows loops while it stays open. Build the opening there (a flash, rings, a burst) and fade the rest up underneath it.",
       ] },
       { t: "p", text: "The effect is drawn over the whole card and never takes clicks, so the card's buttons still work under it." },
       { t: "try", kind: "effect", label: "Start a practice effect" },

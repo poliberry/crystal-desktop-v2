@@ -9,11 +9,9 @@ import {
   BOT_LIMITS,
   BOT_PERMISSIONS,
   computeGrant,
-  effectivePermissions,
   generateSigningSecret,
   generateToken,
   holds,
-  lostFromAuthoriser,
   validateBotName,
   validateCommands,
   validateRequest,
@@ -66,7 +64,7 @@ function endpoint(url: string): string {
 async function freshUsername(ctx: MutationCtx, name: string): Promise<string> {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 20) || "bot";
   for (let i = 0; i < 20; i++) {
-    const candidate = `${slug}-bot${i === 0 ? "" : `-${Math.floor(Math.random() * 9000 + 1000)}`}`;
+    const candidate = `${slug}${i === 0 ? "" : `-${Math.floor(Math.random() * 9000 + 1000)}`}`;
     const taken = await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", candidate)).unique();
     if (!taken) return candidate;
   }
@@ -347,7 +345,7 @@ export const installInfo = query({
       description: bot.description,
       imageUrl: bot.imageUrl ?? null,
       visibility: bot.visibility,
-      owner: owner ? { name: owner.name, username: owner.username } : null,
+      owner: bot.byCrystal ? CRYSTAL_OWNER : owner ? { name: owner.name, username: owner.username } : null,
       permissions: bot.permissions,
       scopes: bot.scopes,
       commands: bot.commands,
@@ -386,7 +384,7 @@ export async function loadAuthorizeInfo(ctx: QueryCtx, me: Doc<"users">, clientI
       name: bot.name,
       description: bot.description,
       imageUrl: bot.imageUrl ?? null,
-      owner: owner ? { name: owner.name, username: owner.username } : null,
+      owner: bot.byCrystal ? CRYSTAL_OWNER : owner ? { name: owner.name, username: owner.username } : null,
       permissions: bot.permissions,
       scopes: bot.scopes,
       canReceiveEvents: hearsEvents(bot),
@@ -417,7 +415,7 @@ export const directory = query({
         name: b.name,
         description: b.description,
         imageUrl: b.imageUrl ?? null,
-        owner: (await ctx.db.get(b.ownerId))?.username ?? null,
+        owner: b.byCrystal ? CRYSTAL_OWNER.username : (await ctx.db.get(b.ownerId))?.username ?? null,
         permissions: b.permissions,
         scopes: b.scopes,
         commandCount: b.commands.length,
@@ -482,12 +480,10 @@ export const install = mutation({
 });
 
 /**
- * Change what an installed bot may do, or take the authorisation over.
+ * Change what an installed bot may do.
  *
- * Giving it *less* (or the same) is always allowed to a manager and leaves the authorisation where
- * it was. Giving it *more* needs you to hold all of it, and makes the authorisation yours — the
- * bot's authority is always that of one specific person. `takeOver` does that without changing
- * anything else, which is how a bot whose authoriser has left is brought back.
+ * Giving it more still requires the manager changing it to hold those permissions at the moment
+ * of the change. Once granted, the bot's permissions are independent of that manager.
  */
 export const updateInstall = mutation({
   args: { installId: v.id("botInstalls"), permissions: v.number(), scopes: v.array(v.string()), takeOver: v.optional(v.boolean()) },
@@ -502,16 +498,15 @@ export const updateInstall = mutation({
 
     const adds = (permissions & ~install.permissions) !== 0 || scopes.some((s) => !install.scopes.includes(s));
     let grant: { permissions: number; scopes: string[] };
-    let authorisedBy = install.authorisedBy;
+    const authorisedBy = install.authorisedBy;
     if (adds || takeOver) {
       grant = computeGrant({ requested: bot.permissions, wanted: permissions, authoriserBase: base, requestedScopes: bot.scopes, wantedScopes: scopes });
-      authorisedBy = me._id;
     } else {
       // Only taking things away: nothing to hold, but nothing may be invented either.
       if ((permissions & ~install.permissions) !== 0) throw new Error("Those permissions aren't valid.");
       grant = { permissions, scopes: [...new Set(scopes)] };
     }
-    await ctx.db.patch(install._id, { permissions: grant.permissions, scopes: grant.scopes, authorisedBy, ...(authorisedBy !== install.authorisedBy ? { authorisedAt: Date.now() } : {}) });
+    await ctx.db.patch(install._id, { permissions: grant.permissions, scopes: grant.scopes });
     await ctx.db.patch(install.roleId, { permissions: grant.permissions });
     await audit(ctx, { botId: bot._id, communityId: install.communityId, actorId: me._id, action: takeOver ? "reauthorised" : "permissions.changed", ok: true, detail: `${grant.permissions} / ${grant.scopes.join(",")}` });
   },
@@ -553,8 +548,6 @@ export const installsFor = query({
           ctx.db.get(i.authorisedBy),
           ctx.db.query("communityMembers").withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", i.authorisedBy)).unique(),
         ]);
-        const authBase = present ? await getBasePermissions(ctx, community, i.authorisedBy) : 0;
-        const lost = present ? lostFromAuthoriser(i.permissions, authBase) : i.permissions;
         return {
           installId: i._id,
           bot: { id: bot._id, name: bot.name, description: bot.description, imageUrl: bot.imageUrl ?? null, owner: owner?.username ?? null, visibility: bot.visibility, suspended: !!bot.suspendedAt },
@@ -563,9 +556,9 @@ export const installsFor = query({
           scopes: i.scopes,
           requested: bot.permissions,
           requestedScopes: bot.scopes,
-          effective: present ? effectivePermissions(i.permissions, authBase) : 0,
-          lost,
-          needsReauthorisation: !present || lost !== 0,
+          effective: i.permissions,
+          lost: 0,
+          needsReauthorisation: false,
           events: { configured: !!bot.endpointUrl, disabled: !!bot.eventsDisabledAt, last: bot.lastDelivery ?? null },
           installedAt: i.installedAt,
         };
@@ -612,6 +605,25 @@ export const commandsFor = query({
       for (const c of bot.commands) out.push({ botId: bot._id, botName: bot.name, name: c.name, description: c.description });
     }
     return out;
+  },
+});
+
+/** Public-facing bot details for a full profile, scoped to the community being viewed. */
+export const profileForUser = query({
+  args: { userId: v.id("users"), communityId: v.optional(v.id("communities")) },
+  handler: async (ctx, { userId, communityId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user?.isBot) return null;
+    const bot = await ctx.db.query("bots").withIndex("by_user", (q) => q.eq("userId", userId)).unique();
+    if (!bot) return null;
+    const install = communityId
+      ? await ctx.db.query("botInstalls").withIndex("by_community_bot", (q) => q.eq("communityId", communityId).eq("botId", bot._id)).unique()
+      : null;
+    return {
+      isBot: true,
+      permissions: install?.permissions ?? 0,
+      commands: install ? bot.commands : [],
+    };
   },
 });
 
@@ -727,6 +739,38 @@ export const pressButton = mutation({
 });
 
 // --- Review of a bot's public listing -----------------------------------------------------------------
+
+/** What a listing says about its owner when staff published it as Crystal. */
+const CRYSTAL_OWNER = { name: "Crystal", username: "crystal" } as const;
+
+/**
+ * Staff publishing their own bot's public listing as Crystal: approved at once, and shown as Crystal's.
+ *
+ * Needs `system.manage`, checked here, and only for a bot the caller owns: the bot runs on their servers with their token,
+ * and this changes how it is listed, not who runs it. What is skipped is the wait for a reviewer. The listing text and picture
+ * go through the same `approvePending` as a reviewed one. Written to the audit log.
+ */
+export const staffPublishListing = mutation({
+  args: { botId: v.id("bots") },
+  handler: async (ctx, { botId }) => {
+    const staff = await requireStaff(ctx, "system.manage");
+    const bot = await ctx.db.get(botId);
+    if (!bot || bot.ownerId !== staff.user._id) throw new Error("That isn't your bot. Only the staff member who runs a bot can list it as Crystal's.");
+    if (bot.suspendedAt) throw new Error("This bot has been suspended.");
+    const now = Date.now();
+    if (bot.pending) {
+      const next = await approvePending(ctx, await ctx.db.get(bot.userId), bot.pending);
+      await ctx.db.patch(botId, { name: next.name, description: next.description, imageUrl: next.imageUrl, visibility: "public", byCrystal: true, pending: undefined, lastReview: { ok: true, note: "Published by Crystal staff without review.", at: now }, updatedAt: now });
+      const installs = await ctx.db.query("botInstalls").withIndex("by_bot", (q) => q.eq("botId", botId)).collect();
+      for (const i of installs) await ctx.db.patch(i.roleId, { name: next.name });
+    } else if (bot.visibility === "public") {
+      await ctx.db.patch(botId, { byCrystal: true, updatedAt: now });
+    } else {
+      throw new Error("Set “Who can add it” to public and save, then publish it.");
+    }
+    await staffAudit(ctx, staff.user._id, "bot.listing.publish_as_crystal", { type: "bot", id: botId }, `${bot.name} · listed without review`);
+  },
+});
 
 /** Bots whose public listing — or request to be listed — is waiting to be read. */
 export const adminPendingListings = query({

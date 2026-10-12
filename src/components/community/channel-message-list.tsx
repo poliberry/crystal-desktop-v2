@@ -30,6 +30,7 @@ import {
 } from "@/lib/message-cache";
 import { discard, retryNow } from "@/lib/outbox";
 import { mentionsUserDirectly } from "@/lib/mentions";
+import { useLocale } from "@/hooks/use-locale";
 import { formatMessageTimestamp, isSameDay } from "@/lib/message-time";
 import { MessageDayDivider } from "@/components/home/message-day-divider";
 import { useOutboxOverlay, type OverlayReplyPreview } from "@/lib/outbox-overlay";
@@ -145,6 +146,8 @@ const MessageRow = memo(function MessageRow({
   onReply: (draft: ReplyDraft) => void;
   onJumpTo: (messageId: string) => void;
 }) {
+  // The time under the name is worded by the reader's region; a row is memoised, so it has to listen for a change itself.
+  useLocale();
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
   const updateMessage = useOutboxMutation("edit", "channel");

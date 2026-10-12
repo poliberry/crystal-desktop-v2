@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
+import { BotTag } from "@/components/bot-tag";
 
 interface MemberListProps {
   communityId: Id<"communities">;
@@ -46,6 +47,7 @@ interface Member {
   userId: Id<"users">;
   name: string;
   username: string;
+  isBot?: boolean;
   imageUrl?: string;
   bio?: string;
   customStatus?: string;
@@ -191,7 +193,7 @@ export function MemberList({ communityId }: MemberListProps) {
                           >
                             <Avatar size="default">
                               <AvatarImage src={member.imageUrl} alt={member.name} className="rounded-md" />
-                              <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                              <AvatarFallback className="rounded-md">{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                               <AvatarDecoration value={member.avatarDecoration} />
                               <PresenceBadge
                                 status={member.status}
@@ -205,7 +207,7 @@ export function MemberList({ communityId }: MemberListProps) {
                                 className="truncate text-sm leading-tight flex flex-row items-center gap-1"
                                 style={colorRole?.color ? { color: colorRole.color } : undefined}
                               >
-                                  {member.name} {member.isOwner ? <Crown size={12} className="text-yellow-400" /> : ""}
+                                  {member.name} {member.isBot && <BotTag />} {member.isOwner ? <Crown size={12} className="text-yellow-400" /> : ""}
                               </p>
                               {/* What they are doing and what they say they
                                   are doing, on one line — see

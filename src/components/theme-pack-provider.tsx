@@ -9,6 +9,8 @@ import { setSoundOverrides } from "@/lib/ui-sounds";
 import { pickThemeVariant } from "../../convex/lib/creationSpecs";
 
 const STYLE_ID = "crystal-theme-pack";
+/** On <html> while the pack has a background picture on: what globals.css keys the picture layer and see-through panels on. */
+const BG_ATTR = "data-pack-bg";
 
 /** An address that is safe to put in a stylesheet: https, parsed, and written back
  * from the parser so nothing in it can end the string it's quoted in. */
@@ -24,8 +26,8 @@ function safeUrl(raw: string): string | null {
 const FORMAT: Record<string, string> = { woff2: "woff2", woff: "woff", truetype: "truetype", opentype: "opentype", ttf: "truetype", otf: "opentype" };
 
 /**
- * Wears the theme pack the signed-in person has chosen: its font, colours, sounds
- * and icons.
+ * Wears the theme pack the signed-in person has chosen: its font, colours, sounds,
+ * icons and app-wide background.
  *
  * A pack is data, and everything in it has been through the same checks twice —
  * when it was submitted and again when the server read it back for this query —
@@ -49,6 +51,7 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
       style?.remove();
       setSoundOverrides({});
       document.documentElement.removeAttribute(PACK_SCHEME_ATTR);
+      document.documentElement.removeAttribute(BG_ATTR);
       return;
     }
     if (!style) {
@@ -91,6 +94,18 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
     for (const [token, value] of Object.entries(variant?.colors ?? {})) {
       if (/^[a-z-]+$/.test(token) && !/[;{}\\"]|url\(/i.test(value)) root.push(`--${token}:${value};`);
     }
+    // The app-wide picture. Only numbers and an address that has been re-parsed reach the stylesheet; the layout rules
+    // that use these variables live in globals.css, behind `html[data-pack-bg]`, which is set (and removed) below.
+    const bgHref = spec.background ? safeUrl(spec.background.url) : null;
+    if (spec.background && bgHref) {
+      const pct = (n: number, min: number, max: number, fallback: number) => (Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback);
+      root.push(
+        `--pack-bg-image:url("${bgHref}");`,
+        `--pack-bg-dim:${pct(spec.background.dim, 0, 90, 35)}%;`,
+        `--pack-bg-blur:${pct(spec.background.blur, 0, 24, 0)}px;`,
+        `--pack-bg-panels:${pct(spec.background.panels, 30, 100, 70)}%;`,
+      );
+    }
     if (root.length) rules.push(`:root,.dark{${root.join("")}}`);
 
     for (const [name, raw] of Object.entries(spec.icons ?? {})) {
@@ -106,6 +121,8 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
     style.textContent = rules.join("\n");
 
     setSoundOverrides(spec.sounds ?? {});
+    if (bgHref) document.documentElement.setAttribute(BG_ATTR, "");
+    else document.documentElement.removeAttribute(BG_ATTR);
     // A pack that says it is light or dark decides which, for as long as it is on. It is also written where
     // ThemeProvider can see it: picking another theme underneath would otherwise set the class straight back.
     const html = document.documentElement;
@@ -122,6 +139,7 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
       document.getElementById(STYLE_ID)?.remove();
       setSoundOverrides({});
       html.removeAttribute(PACK_SCHEME_ATTR);
+      html.removeAttribute(BG_ATTR);
       html.classList.toggle("dark", isDarkBase);
     };
   }, [pack, isDarkBase]);

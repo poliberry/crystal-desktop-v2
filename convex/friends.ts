@@ -20,6 +20,7 @@ function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
     id: user._id,
     name: user.name,
     username: user.username,
+    isBot: !!user.isBot,
     imageUrl: user.imageUrl,
     /** Cosmetics and activity, so a friend row can say what they're up to
      * rather than only whether they're reachable. */
@@ -58,7 +59,7 @@ export const listFriends = query({
       rows.map(async (row) => {
         const friend = await ctx.db.get(row.friendId);
         if (!friend) return null;
-        return summarize(friend, await presenceFor(ctx, row.friendId));
+        return friend.isBot ? null : summarize(friend, await presenceFor(ctx, row.friendId));
       })
     );
     return friends.filter((f): f is NonNullable<typeof f> => f !== null);
@@ -78,7 +79,7 @@ export const listIncomingRequests = query({
       rows.map(async (row) => {
         const requester = await ctx.db.get(row.requesterId);
         if (!requester) return null;
-        return { requestId: row._id, createdAt: row.createdAt, user: summarize(requester, null) };
+        return requester.isBot ? null : { requestId: row._id, createdAt: row.createdAt, user: summarize(requester, null) };
       })
     );
     return requests.filter((r): r is NonNullable<typeof r> => r !== null);
@@ -98,7 +99,7 @@ export const listOutgoingRequests = query({
       rows.map(async (row) => {
         const recipient = await ctx.db.get(row.recipientId);
         if (!recipient) return null;
-        return { requestId: row._id, createdAt: row.createdAt, user: summarize(recipient, null) };
+        return recipient.isBot ? null : { requestId: row._id, createdAt: row.createdAt, user: summarize(recipient, null) };
       })
     );
     return requests.filter((r): r is NonNullable<typeof r> => r !== null);
@@ -152,6 +153,7 @@ export const sendFriendRequest = mutation({
       .unique();
     if (!target) throw new Error("No user found with that username.");
     if (target.clerkId === "system:crystal") throw new Error("The Crystal account cannot receive friend requests.");
+    if (target.isBot) throw new Error("Bots can't be added as friends. You can message them directly instead.");
     if (target._id === me._id) throw new Error("You can't add yourself.");
 
     const alreadyFriends = await ctx.db
@@ -207,7 +209,7 @@ export const acceptFriendRequest = mutation({
     const request = await ctx.db.get(requestId);
     if (!request || request.recipientId !== me._id) throw new Error("Request not found.");
     const requester = await ctx.db.get(request.requesterId);
-    if (requester?.clerkId === "system:crystal") throw new Error("The Crystal account cannot be added as a friend.");
+    if (requester?.clerkId === "system:crystal" || requester?.isBot) throw new Error("Bots can't be added as friends.");
 
     await ctx.db.delete(request._id);
     const now = Date.now();

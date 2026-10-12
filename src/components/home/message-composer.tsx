@@ -11,6 +11,10 @@ import {
   ComposerDropOverlay,
 } from "@/components/home/composer-attachments";
 import { ComposerEmojiPicker, EMOJI_TRIGGER_ATTRIBUTE } from "@/components/composer-emoji-picker";
+import { ComposerMediaPicker, MEDIA_TRIGGER_ATTRIBUTE } from "@/components/composer-media-picker";
+import { GifIcon } from "@/components/icons/gif-icon";
+import { shareKlipyItem } from "@/lib/klipy";
+import { klipyAttachment, type KlipyItem } from "../../../convex/lib/klipy";
 import { Button } from "@/components/ui/button";
 import {
   EmojiTextInput,
@@ -236,9 +240,31 @@ export function MessageComposer({
   };
 
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // The GIF picker and the emoji picker both grow out of the same corner, so only one is open at a time.
+  const [mediaOpen, setMediaOpen] = useState(false);
 
   const insertEmoji = (emoji: string) => {
     setText((prev) => prev + emoji);
+    textareaRef.current?.focus();
+  };
+
+  /**
+   * A GIF, clip or sticker is its own message: an attachment that points at KLIPY's file, sent at once. Whatever is
+   * typed in the box stays there, to be sent on its own.
+   */
+  const sendKlipy = async (item: KlipyItem, query: string) => {
+    setMediaOpen(false);
+    await sendMessage({
+      conversationId,
+      attachments: [klipyAttachment(item)],
+      replyToId: replyingTo?.id,
+      pingReply: replyingTo ? pingReply : undefined,
+      replyToPreview: replyingTo
+        ? { authorName: replyingTo.authorName, authorImageUrl: replyingTo.authorImageUrl, text: replyingTo.text, hasAttachment: replyingTo.hasAttachment }
+        : undefined,
+    });
+    shareKlipyItem(item, query);
+    onCancelReply?.();
     textareaRef.current?.focus();
   };
 
@@ -360,12 +386,13 @@ export function MessageComposer({
           onClose={() => setEmojiOpen(false)}
           onSelect={insertEmoji}
         />
+        <ComposerMediaPicker open={mediaOpen} onClose={() => setMediaOpen(false)} onSelect={(item, query) => void sendKlipy(item, query)} />
         <div
           className={cn(
             GLASS_BASE,
             GLASS_DARK,
             GLASS_SOFT,
-            emojiOpen && "rounded-tr-none",
+            (emojiOpen || mediaOpen) && "rounded-tr-none",
             "flex h-[58px] items-center gap-1 px-2 py-1 transition-[border-color,box-shadow,border-radius] duration-200 focus-within:border-ring/70 focus-within:ring-ring/40",
           )}
         >
@@ -406,7 +433,10 @@ export function MessageComposer({
             className="relative size-8 shrink-0 overflow-hidden"
             aria-expanded={emojiOpen}
             {...{ [EMOJI_TRIGGER_ATTRIBUTE]: "" }}
-            onClick={() => setEmojiOpen((open) => !open)}
+            onClick={() => {
+              setMediaOpen(false);
+              setEmojiOpen((open) => !open);
+            }}
             onMouseEnter={() => setHoverEmoji(randomSmiley())}
             onMouseLeave={() => setHoverEmoji(null)}
           >
@@ -422,6 +452,23 @@ export function MessageComposer({
                 {hoverEmoji}
               </span>
             )}
+          </Button>
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="GIFs, clips and stickers"
+            title="GIFs, clips and stickers"
+            aria-expanded={mediaOpen}
+            {...{ [MEDIA_TRIGGER_ATTRIBUTE]: "" }}
+            onClick={() => {
+              setEmojiOpen(false);
+              setMediaOpen((open) => !open);
+            }}
+          >
+            <GifIcon className="size-5" />
           </Button>
 
           <Button

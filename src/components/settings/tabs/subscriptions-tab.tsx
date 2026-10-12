@@ -5,6 +5,9 @@ import { useAction, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { CalendarClock, Check, Gem, Loader2, RotateCcw } from "lucide-react";
 
+import { geodeTenureLabel } from "../../../../convex/lib/geode";
+import { GeodeGem, GeodeLadder, GeodeMark } from "@/components/geode";
+
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { cardSummary } from "@/components/payments/card-brand";
@@ -46,9 +49,7 @@ function SubscriptionCard({
     <SettingsCard className="space-y-4 p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="flex size-11 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 via-fuchsia-500 to-sky-400 text-white">
-            <Gem className="size-5" />
-          </div>
+          <GeodeMark className="size-12" />
           <div>
             <p className="font-semibold">{sub.name}</p>
             <p className="text-sm text-muted-foreground">
@@ -98,6 +99,7 @@ export function SubscriptionsTab() {
   const cancel = useAction(api.payments.cancelSubscription);
   const resume = useAction(api.payments.resumeSubscription);
   const plan = useQuery(api.marketplace.myPlan);
+  const geode = useQuery(api.users.myGeode);
   const catalog = useQuery(api.catalog.list, {}) as ShopSku[] | undefined;
   const openShop = useOpenMarketplace();
 
@@ -160,6 +162,34 @@ export function SubscriptionsTab() {
           ))
         )}
       </SettingsGroup>
+
+      {geode && (
+        <SettingsGroup title="Your Geode badge">
+          <SettingsCard className="space-y-4 p-5">
+            <div className="flex items-center gap-4">
+              <span className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-foreground/[0.06]">
+                <GeodeGem tier={geode.tier.key} className="size-12" />
+              </span>
+              <div className="min-w-0">
+                <p className="font-semibold">{geode.tier.name}</p>
+                <p className="text-sm text-muted-foreground">
+                  Member for {geodeTenureLabel(Math.max(1, geode.months))}
+                  {geode.months < 1 ? " so far" : ""}, since {formatDate(geode.since)}.
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {geode.next && geode.nextAt
+                    ? `${geode.next.name} arrives on ${formatDate(geode.nextAt)} (${geode.next.after}).`
+                    : "That's the top gem. Thank you for staying."}
+                </p>
+              </div>
+            </div>
+            <GeodeLadder current={geode.tier.key} />
+            <p className="text-xs text-muted-foreground">
+              Shown on your profile. It steps up on its own as you keep Geode; a break of more than a week starts it again from Quartz.
+            </p>
+          </SettingsCard>
+        </SettingsGroup>
+      )}
 
       {perks.length > 0 && (
         <SettingsGroup title="What your plan gives you">

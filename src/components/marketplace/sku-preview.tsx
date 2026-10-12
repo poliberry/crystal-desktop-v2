@@ -4,10 +4,11 @@ import type { SceneOverlay } from "../../../convex/lib/creationSpecs";
 import { SceneOverlayArt } from "@/components/lounge/scene-overlay";
 import { useMemo } from "react";
 import { useQuery } from "convex/react";
-import { Gem, Music4, Palette, Rocket, Type } from "lucide-react";
+import { Music4, Palette, Rocket, Type } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import { SceneBackground } from "@/components/lounge/scene-background";
+import { GeodeMark } from "@/components/geode";
 import { Nameplate } from "@/components/profile/nameplate";
 import { ProfileEffectLayer, ProfileFrameLayers } from "@/components/profile/profile-card-cosmetics";
 import { Avatar, AvatarDecoration, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -71,11 +72,27 @@ function parseTheme(payload: string | undefined): { start: string; end: string }
   }
 }
 
-function ViewerAvatar({ viewer, className, decoration }: { viewer: Viewer; className?: string; decoration?: string }) {
+/**
+ * Rounded the way the app rounds an avatar — `rounded-md` in a list or a message,
+ * `rounded-xl` on a profile card — rather than the component's default of a full
+ * circle, which nothing in the app actually shows. It has to be set on the root,
+ * the picture and the fallback separately: each defaults to `rounded-full`.
+ */
+function ViewerAvatar({
+  viewer,
+  className,
+  decoration,
+  rounded = "rounded-xl",
+}: {
+  viewer: Viewer;
+  className?: string;
+  decoration?: string;
+  rounded?: "rounded-md" | "rounded-xl";
+}) {
   return (
-    <Avatar className={cn("overflow-visible", className)}>
-      <AvatarImage src={viewer.imageUrl} alt="" />
-      <AvatarFallback>{viewer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+    <Avatar className={cn("overflow-visible", rounded, className)}>
+      <AvatarImage src={viewer.imageUrl} alt="" className={rounded} />
+      <AvatarFallback className={rounded}>{viewer.name.slice(0, 2).toUpperCase()}</AvatarFallback>
       {decoration && <AvatarDecoration value={decoration} animate />}
     </Avatar>
   );
@@ -151,7 +168,7 @@ function GrantPreview({ grant, viewer, size }: { grant: PreviewGrant; viewer: Vi
           )}
         >
           <Nameplate url={grant.payload} className="opacity-100" />
-          <ViewerAvatar viewer={viewer} className="relative size-9 shrink-0" />
+          <ViewerAvatar viewer={viewer} rounded="rounded-md" className="relative size-9 shrink-0" />
           <div className="relative min-w-0">
             <div className="truncate text-sm font-semibold">{viewer.name}</div>
             <div className="truncate text-xs text-muted-foreground">@{viewer.username}</div>
@@ -227,14 +244,10 @@ function GrantPreview({ grant, viewer, size }: { grant: PreviewGrant; viewer: Vi
     }
 
     case "plan":
+      // The standard Geode picture — the membership itself, not anybody's rank in it.
       return (
-        <div
-          className={cn(
-            "flex items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 via-fuchsia-500 to-sky-400 text-white shadow-xl shadow-fuchsia-500/20",
-            size === "sm" ? "size-14" : size === "md" ? "size-24" : "size-32",
-          )}
-        >
-          <Gem className={size === "sm" ? "size-7" : size === "md" ? "size-12" : "size-16"} />
+        <div className={cn("relative flex items-center justify-center", size === "sm" ? "size-14" : size === "md" ? "size-24" : "size-32")}>
+          <GeodeMark className="relative size-full" />
         </div>
       );
 

@@ -218,6 +218,11 @@ const api = {
   app: {
     gc: () => ipcRenderer.invoke("app:gc"),
   },
+  gpu: {
+    get: () => ipcRenderer.invoke("gpu:get"),
+    setDisabled: (disabled: boolean) => ipcRenderer.invoke("gpu:set-disabled", disabled),
+    relaunch: () => ipcRenderer.invoke("gpu:relaunch"),
+  },
 };
 
 type NavigateTarget =

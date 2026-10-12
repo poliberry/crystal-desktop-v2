@@ -45,6 +45,7 @@ import type { RichPresenceActivity } from "@/types/desktop-api";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { BotTag } from "@/components/bot-tag";
 
 const NOW_MS = () => Date.now();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,6 +55,7 @@ interface DmFriend {
   id: Id<"users">;
   name: string;
   username: string;
+  isBot?: boolean;
   imageUrl?: string;
   status: FriendStatus;
 }
@@ -308,7 +310,7 @@ export function DmConversationRow({
             }
           }}
           className={cn(
-            "group relative flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left outline-none hover:bg-accent/60 focus-visible:bg-accent/60",
+            "group/dm relative flex cursor-pointer items-center gap-2.5 overflow-hidden rounded-md px-2 py-2 text-left outline-none hover:bg-accent/60 focus-visible:bg-accent/60",
             active && "bg-accent",
             isOffline && !active && "opacity-60 hover:opacity-90",
           )}
@@ -316,6 +318,7 @@ export function DmConversationRow({
           {/* Same left-edge pill as the community rail: a stub for
         unread, full row height for the DM you're reading. */}
           <SelectionPill
+            groupName="dm"
             state={
               active
                 ? "active"
@@ -376,6 +379,7 @@ export function DmConversationRow({
                 <Pin className="size-3 shrink-0 -rotate-45 text-muted-foreground" />
               )}
               <span className="truncate">{title}</span>
+              {otherMember?.isBot && <BotTag />}
               {otherMember?.username === "crystal" && <span className="shrink-0 rounded-full border border-sky-400/40 bg-sky-400/10 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-sky-400">OFFICIAL</span>}
             </p>
             <p className="flex w-full items-center gap-1 truncate text-xs text-muted-foreground">
@@ -396,7 +400,7 @@ export function DmConversationRow({
           <button
             type="button"
             aria-label={`Close ${title}`}
-            className="absolute top-1/2 right-1.5 z-10 -translate-y-1/2 rounded bg-accent/80 p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+            className="absolute top-1/2 right-1.5 z-10 -translate-y-1/2 rounded bg-accent/80 p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover/dm:opacity-100 group-focus-within/dm:opacity-100"
             onClick={(e) => {
               e.stopPropagation();
               void setClosed({ conversationId: conversation.id });

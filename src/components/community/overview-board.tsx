@@ -25,6 +25,7 @@ import {
   resolve,
 } from "@/lib/overview-layout";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/locale";
 
 /** What the board needs of a card: the stored row, as the editor gets it. */
 export interface BoardRow {
@@ -118,7 +119,7 @@ function CardPreview({
     case "countdown":
       return (
         <p className="text-xs text-muted-foreground">
-          {new Date(config.target as number).toLocaleString()}
+          {formatDateTime(config.target as number)}
         </p>
       );
     case "calendar": {

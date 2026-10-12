@@ -16,6 +16,7 @@ import { markChannelRead } from "./channels";
 import { describeMessage, dispatchMessageCreated, fireCommunityEvent } from "./lib/botEvents";
 import type { ActionRow } from "./lib/components";
 import type { Embed } from "./lib/embeds";
+import { isAcceptableAttachmentSource } from "./lib/klipy";
 import { effectiveFileType } from "./lib/mediaType";
 
 function r2UrlForKey(key: string): string | null {
@@ -348,6 +349,8 @@ export async function sendChannelMessage(
     } else if (!attachment.cdnKey && !attachment.cdnUrl) {
       throw new Error("Attachment missing storageId/cdnKey");
     }
+    // An address with nothing uploaded behind it is only ever a KLIPY GIF, clip or sticker.
+    if (!isAcceptableAttachmentSource(attachment)) throw new Error("That attachment isn't from somewhere Crystal can show.");
   }
 
   const replyTarget = replyToId ? await ctx.db.get(replyToId) : null;

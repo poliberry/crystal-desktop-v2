@@ -8,6 +8,7 @@ import { ShieldOff } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import { LogoMark } from "@/components/logo-mark";
 import { Button } from "@/components/ui/button";
+import { formatDateTime } from "@/lib/locale";
 
 /** Mirrors `INDEFINITE` in convex/lib/moderation.ts. */
 const INDEFINITE = 8_640_000_000_000_000;
@@ -48,7 +49,7 @@ export function AccountSuspendedGate({ children }: { children: React.ReactNode }
         <p className="text-sm text-muted-foreground">
           {until >= INDEFINITE
             ? "It stays suspended until Crystal staff lift it."
-            : `It will be restored on ${new Date(until).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" })}.`}
+            : `It will be restored on ${formatDateTime(until, { dateStyle: "long", timeStyle: "short" })}.`}
         </p>
         {me?.platformSuspensionReason && (
           <p className="rounded-lg bg-foreground/5 p-3 text-sm">{me.platformSuspensionReason}</p>

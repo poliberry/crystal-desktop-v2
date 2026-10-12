@@ -3,7 +3,7 @@
 import { Copy, Diamond, Eye, EyeOff, Group, Magnet, Maximize2, Redo2, Scissors, Trash2, Undo2, Ungroup, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { Clip } from "../../../convex/lib/motion";
+import { introLength, type Clip } from "../../../convex/lib/motion";
 import { CLIP_COLOUR } from "@/studio/motion/library";
 import {
   FRAME, animatedProps, canBreakApart, endOf, fitDuration, moveClips, parseTimecode, setDuration, setLane, snapFrame, snapPoints, snapTime, splitAt, timecode, trimEnd, trimStart,
@@ -43,6 +43,8 @@ export function Timeline({ editor, doc }: { editor: MotionEditor; doc: Doc }) {
 
   const clips = scope.clips;
   const duration = scope.duration;
+  // The design's intro, drawn on the top-level timeline only: a compound clip has none of its own.
+  const introEnd = path.length === 0 ? introLength(spec) : 0;
   const maxTrack = clips.reduce((m, c) => Math.max(m, c.track), 0);
   const lanes = Math.min(32, Math.max(4, maxTrack + 2));
   const width = Math.max(640, duration * zoom + 120);
@@ -280,6 +282,11 @@ export function Timeline({ editor, doc }: { editor: MotionEditor; doc: Doc }) {
               {ticks.map((x) => (
                 <div key={x} className="absolute top-0 h-full border-l border-white/15 pl-1 font-mono text-[9px] text-[var(--ai-dim)]" style={{ left: x * zoom }}>{timecode(x)}</div>
               ))}
+              {introEnd > 0 && (
+                <div className="pointer-events-none absolute top-0 h-full border-r border-violet-300/70 bg-violet-400/20 pl-1 font-mono text-[9px] leading-[18px] text-violet-200" style={{ left: 0, width: introEnd * zoom }} title={`Intro — plays once. The loop starts at ${timecode(introEnd)}.`}>
+                  Intro
+                </div>
+              )}
               <div className="absolute top-0 h-full border-l border-white/40" style={{ left: duration * zoom }} title="End of the design" />
               {range && <div className="pointer-events-none absolute top-0 h-full bg-sky-400/25" style={{ left: Math.min(range.a, range.b) * zoom, width: Math.abs(range.b - range.a) * zoom }} />}
             </div>
@@ -306,6 +313,8 @@ export function Timeline({ editor, doc }: { editor: MotionEditor; doc: Doc }) {
             {Array.from({ length: lanes }, (_, i) => (
               <div key={i} className={cn("absolute inset-x-0 border-b border-white/[0.06]", i % 2 ? "bg-white/[0.015]" : "")} style={{ top: i * LANE_H, height: LANE_H }} />
             ))}
+            {/* The intro: what plays once, before the idle loop that follows it. */}
+            {introEnd > 0 && <div className="pointer-events-none absolute top-0 bottom-0 border-r border-dashed border-violet-300/60 bg-violet-400/[0.07]" style={{ left: 0, width: introEnd * zoom }} />}
             {/* Beyond the end of the design */}
             <div className="pointer-events-none absolute top-0 bottom-0 bg-black/35" style={{ left: duration * zoom, right: 0 }} />
             {range && <div className="pointer-events-none absolute top-0 bottom-0 bg-sky-400/10" style={{ left: Math.min(range.a, range.b) * zoom, width: Math.abs(range.b - range.a) * zoom }} />}

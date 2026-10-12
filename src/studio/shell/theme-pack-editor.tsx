@@ -3,10 +3,11 @@
 import { Check, Loader2, Paintbrush, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 
-import { MAX_FONT_FACES, PACK_SOUNDS, THEME_TOKENS } from "../../../convex/lib/creationSpecs";
+import { MAX_FONT_FACES, PACK_BACKGROUND_DEFAULTS, PACK_BACKGROUND_EXTENSIONS, PACK_SOUNDS, THEME_TOKENS } from "../../../convex/lib/creationSpecs";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { SubmitPanel } from "@/studio/shell/submit-panel";
 import { ThemePackPreview } from "@/studio/shell/theme-pack-preview";
@@ -17,9 +18,10 @@ import { cssToHex } from "@/lib/css-color";
 import { themeEntries, type Theme } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 
-type Tab = "preview" | "theme" | "font" | "sounds" | "icons";
+type Tab = "preview" | "theme" | "background" | "font" | "sounds" | "icons";
 
 const FONT_EXTS = ["woff2", "woff", "ttf", "otf"];
+const BACKGROUND_EXTS: string[] = [...PACK_BACKGROUND_EXTENSIONS];
 const SOUND_EXTS = ["wav", "mp3", "ogg", "m4a"];
 const extOf = (n: string) => (n.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
 
@@ -317,6 +319,12 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
   const pickFont = useFilePicker(FONT_EXTS, ASSET_LIMITS.font, add, setError);
   const pickSound = useFilePicker(SOUND_EXTS, ASSET_LIMITS.sound, add, setError);
   const pickIcon = useFilePicker(["svg"], ASSET_LIMITS.icon, add, setError);
+  const pickBackground = useFilePicker(BACKGROUND_EXTS, ASSET_LIMITS.image, add, setError);
+  const background = data.background;
+  const backgroundAsset = background ? assets.get(background.assetId) : undefined;
+  const setBackground = (patch: Partial<NonNullable<ThemePackData["background"]>>) => {
+    if (background) set({ ...data, background: { ...background, ...patch } });
+  };
 
   // The family is loaded here too, so the specimen is really set in it — every face
   // under one name, each with its own weight and style, as the app will have it.
@@ -333,6 +341,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "preview", label: "Preview" },
     { id: "theme", label: "Theme", count: Object.keys(data.theme?.colors ?? {}).length + Object.keys(data.theme?.alt?.colors ?? {}).length || undefined },
+    { id: "background", label: "Background", count: background ? 1 : undefined },
     { id: "font", label: "Font", count: family?.faces.length || undefined },
     { id: "sounds", label: "Sounds", count: Object.keys(data.sounds).length || undefined },
     { id: "icons", label: "Icons", count: Object.keys(data.icons).length || undefined },
@@ -372,6 +381,78 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
           />
         )}
         {tab === "theme" && <ThemeTab data={data} set={set} />}
+
+        {tab === "background" && (
+          <Section title="Background" hint={`A picture behind the whole app. The app's panels are let through it, so pick something that stays readable under text. ${PACK_BACKGROUND_EXTENSIONS.map((e) => e.toUpperCase()).join(", ")}, up to ${ASSET_LIMITS.image / 1024 / 1024} MB — a JPEG or WebP around 1920×1080 is ideal. Make sure you have the right to distribute it.`}>
+            <div className="space-y-4 rounded-xl border border-border p-4">
+              {background ? (
+                <>
+                  <div className="relative aspect-video w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted">
+                    {backgroundAsset ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={backgroundAsset.url} alt="" className="size-full object-cover" />
+                    ) : (
+                      <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">Missing file</span>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {backgroundAsset?.name ?? "Missing file"}
+                    {backgroundAsset?.width && backgroundAsset?.height ? ` · ${backgroundAsset.width}×${backgroundAsset.height}` : ""}
+                  </p>
+
+                  {(
+                    [
+                      ["dim", "Dim", "How much of the theme's background colour is laid over the picture. More dimming makes text easier to read.", 0, 90, "%"],
+                      ["panels", "Panel opacity", "How solid the sidebars, top bar and conversation are over the picture. At 100% the picture is hidden behind them.", 30, 100, "%"],
+                      ["blur", "Blur", "Softens the picture so it doesn't compete with the app.", 0, 24, "px"],
+                    ] as const
+                  ).map(([key, label, help, min, max, unit]) => (
+                    <div key={key} className="space-y-1.5">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="text-sm font-medium">{label}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{background[key]}{unit}</span>
+                      </div>
+                      <Slider min={min} max={max} step={1} value={[background[key]]} onValueChange={([v]) => setBackground({ [key]: v })} aria-label={label} />
+                      <p className="text-[11px] text-muted-foreground">{help}</p>
+                    </div>
+                  ))}
+
+                  <div className="flex flex-wrap gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">
+                      <Upload className="size-3.5" /> Choose another picture
+                      <input type="file" accept=".png,.jpg,.jpeg,.webp,.gif" hidden onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        setBusy(true);
+                        const a = await pickBackground(f);
+                        setBusy(false);
+                        if (!a) return;
+                        const old = background.assetId;
+                        set({ ...data, background: { ...background, assetId: a.id } });
+                        await remove(old);
+                      }} />
+                    </label>
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => { void remove(background.assetId); const { background: _removed, ...rest } = data; void _removed; set(rest); }}>
+                      <Trash2 className="size-3.5" /> Remove the background
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border p-6 text-sm text-muted-foreground hover:border-foreground/40 hover:text-foreground">
+                  <Upload className="size-4" /> Choose a background picture
+                  <input type="file" accept=".png,.jpg,.jpeg,.webp,.gif" hidden onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    setBusy(true);
+                    const a = await pickBackground(f);
+                    setBusy(false);
+                    if (a) set({ ...data, background: { assetId: a.id, ...PACK_BACKGROUND_DEFAULTS } });
+                  }} />
+                </label>
+              )}
+            </div>
+          </Section>
+        )}
 
         {tab === "font" && (
           <Section title="Font family" hint={`A family is one or more files — regular, bold, italic and so on — that the app picks between by weight and style. WOFF2 is smallest; WOFF, TTF and OTF work too. Up to ${ASSET_LIMITS.font / 1024 / 1024} MB a file and ${MAX_FONT_FACES} files. Make sure you have the right to distribute them.`}>

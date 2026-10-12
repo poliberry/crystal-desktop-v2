@@ -70,5 +70,41 @@ eq("Studio's template note is not sent with the second palette", input({ isDark:
 ok("what Studio sends is accepted by the server's own validator", checkThemePack({ sounds: {}, icons: {}, theme: { isDark: true, colors: DARK, alt: { colors: LIGHT } } }, "Pack", assets).length === 0);
 ok("and a bad second palette is reported before it is sent", checkThemePack({ sounds: {}, icons: {}, theme: { isDark: true, colors: DARK, alt: { colors: { background: "javascript:1" } } } }, "Pack", assets).length > 0);
 
+// ---- Background -------------------------------------------------------------------------------------------------------------
+const bgOnly = normalizeThemePackSpec({ name: "Bg only", background: { url: "https://cdn.test/a.webp", dim: 20, blur: 4, panels: 60 } }, same);
+eq("a background alone makes a pack", bgOnly.background, { url: "https://cdn.test/a.webp", dim: 20, blur: 4, panels: 60 });
+eq("an old pack has no background key", "background" in old, false);
+eq("missing numbers take their defaults", normalizeThemePackSpec({ name: "Defaults", background: { url: "https://cdn.test/a.png" } }, same).background, { url: "https://cdn.test/a.png", dim: 35, blur: 0, panels: 70 });
+eq("numbers are clamped", normalizeThemePackSpec({ name: "Clamp", background: { url: "https://cdn.test/a.jpg", dim: 500, blur: -3, panels: 1 } }, same).background, { url: "https://cdn.test/a.jpg", dim: 90, blur: 0, panels: 30 });
+eq("junk numbers fall back to defaults", normalizeThemePackSpec({ name: "Junk", background: { url: "https://cdn.test/a.gif", dim: "lots", blur: NaN, panels: null } }, same).background, { url: "https://cdn.test/a.gif", dim: 35, blur: 0, panels: 70 });
+ok("a clip can't be a background", throws(() => normalizeThemePackSpec({ name: "Clip", background: { url: "https://cdn.test/a.mp4" } }, same)));
+ok("an SVG can't be a background", throws(() => normalizeThemePackSpec({ name: "Svg", background: { url: "https://cdn.test/a.svg" } }, same)));
+ok("a background with no address is refused", throws(() => normalizeThemePackSpec({ name: "None", background: {} }, same)));
+ok("the address is checked by the caller's rule", throws(() => normalizeThemePackSpec({ name: "Elsewhere", background: { url: "https://evil.test/a.png" } }, (u) => { if (!u.startsWith("https://cdn.test/")) throw new Error("no"); return u; })));
+ok("an unknown key beside the background is not carried", !("extra" in (normalizeThemePackSpec({ name: "Xx", background: { url: "https://cdn.test/a.png", extra: 1 } }, same).background ?? {})));
+const withBg = normalizeThemePackSpec({ name: "Both", theme: { isDark: true, colors: DARK }, background: { url: "https://cdn.test/a.png" } }, same);
+eq("a background sits beside the theme without changing it", withBg.theme, { isDark: true, colors: DARK });
+
+const bgData = { sounds: {}, icons: {}, background: { assetId: "a1", dim: 40, blur: 2, panels: 65 } };
+const bgAssets = new Map([["a1", { id: "a1", projectId: "p", name: "sky.jpg", type: "image/jpeg", size: 400_000, width: 1920, height: 1080, createdAt: 0 }]]);
+const bgUrlOf = (id: string) => `https://cdn.test/${id}.jpg`;
+eq("Studio sends the background as an address", (themePackSpecInput(bgData as never, "Pack", bgAssets, bgUrlOf) as { background?: unknown }).background, { url: "https://cdn.test/a1.jpg", dim: 40, blur: 2, panels: 65 });
+eq("a background whose file is gone is not sent", (themePackSpecInput(bgData as never, "Pack", new Map(), bgUrlOf) as { background?: unknown }).background, undefined);
+eq("a good background has no problems", checkThemePack(bgData as never, "Pack", bgAssets), []);
+ok("a small picture is warned about", checkThemePack(bgData as never, "Pack", new Map([["a1", { ...bgAssets.get("a1")!, width: 400, height: 300 }]])).some((x) => x.severity === "warning" && /soft/.test(x.message)));
+ok("a huge file is warned about", checkThemePack(bgData as never, "Pack", new Map([["a1", { ...bgAssets.get("a1")!, size: 6 * 1024 * 1024 }]])).some((x) => x.severity === "warning" && /MB/.test(x.message)));
+ok("a video file is refused before it is sent", checkThemePack(bgData as never, "Pack", new Map([["a1", { ...bgAssets.get("a1")!, name: "loop.mp4" }]])).some((x) => x.severity === "error"));
+ok("a missing file is an error", checkThemePack(bgData as never, "Pack", new Map()).some((x) => x.severity === "error"));
+
+const roundBg = (background: unknown) => {
+  const now = Date.now();
+  const project = { id: "abcd1234", kind: "themePack" as const, name: "Pack", createdAt: now, updatedAt: now, listing: { name: "Pack", description: "", free: true, priceUsd: "0" }, themePack: { sounds: {}, icons: {}, background } };
+  const enc = encodeProject(project as never, "Pack", []);
+  return decodeDocument(decodeProjectFile(enc.proj).project, enc.doc!).themePack?.background;
+};
+eq("a background survives a save and a reload", roundBg({ assetId: "a1", dim: 40, blur: 2, panels: 65 }), { assetId: "a1", dim: 40, blur: 2, panels: 65 });
+eq("a reloaded background's numbers are clamped", roundBg({ assetId: "a1", dim: 999, blur: -5, panels: 0 }), { assetId: "a1", dim: 90, blur: 0, panels: 30 });
+eq("a background with no file is dropped on reload", roundBg({ dim: 10 }), undefined);
+
 console.log(f ? `${f} FAILED (${p} passed)` : `ALL PASSED (${p})`);
 process.exit(f ? 1 : 0);

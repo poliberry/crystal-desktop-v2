@@ -383,6 +383,8 @@ export interface ThemePackData {
   };
   sounds: Record<string, string>;
   icons: Record<string, string>;
+  /** A picture behind the whole app. `assetId` is an imported image; the rest are the spec's own numbers (see `PackBackground`). */
+  background?: { assetId: string; dim: number; blur: number; panels: number };
 }
 
 export const emptyThemePack = (): ThemePackData => ({ sounds: {}, icons: {} });

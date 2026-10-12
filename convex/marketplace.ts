@@ -20,7 +20,8 @@ import { CURRENCIES } from "./catalog";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { audit, requireStaff } from "./lib/staff";
-import { listingPatch, refreshedGrant, updateBlocker } from "./lib/listingUpdate";
+import { COMMUNITY_CREATION_KINDS, MAX_CREATION_CENTS, MAX_PACK_ITEMS, MIN_PAID_CENTS, checkCreationShape, slugFromName, uniqueSlug } from "./lib/creationRules";
+import { listingPatch, refreshedGrant, sameKinds, updateBlocker } from "./lib/listingUpdate";
 
 /**
  * What a buyer sees and does with what they own.
@@ -45,6 +46,46 @@ export const myEntitlements = query({
       active.map(async (e) => {
         const sku = await ctx.db.get(e.skuId);
         const community = e.communityId ? await ctx.db.get(e.communityId) : null;
+        let equipped = false;
+        switch (e.kind) {
+          case "avatarDecoration":
+            try {
+              const layers = normalizeDecorationLayers(parseLayers(e.payload, e.skuId));
+              equipped = me.avatarDecoration === `layers:${JSON.stringify(layers)}`;
+            } catch {
+              equipped = false;
+            }
+            break;
+          case "profileSticker":
+            try {
+              equipped = JSON.stringify(me.profileFrameLayers ?? []) === JSON.stringify(normalizeStickerLayers(parseLayers(e.payload, e.skuId)));
+            } catch {
+              equipped = false;
+            }
+            break;
+          case "profileEffect":
+            equipped = me.profileEffect === e.payload;
+            break;
+          case "nameplate":
+            equipped = me.nameplateUrl === e.payload;
+            break;
+          case "themePack":
+            equipped = me.themePackEntitlementId === e._id;
+            break;
+          case "communityTheme":
+            equipped = Boolean(
+              community &&
+                (() => {
+                  try {
+                    const colours = JSON.parse(e.payload ?? "") as { start?: string; end?: string };
+                    return community.themeStart === colours.start?.toLowerCase() && community.themeEnd === colours.end?.toLowerCase();
+                  } catch {
+                    return false;
+                  }
+                })(),
+            );
+            break;
+        }
         return {
           id: e._id,
           skuId: e.skuId,
@@ -58,6 +99,7 @@ export const myEntitlements = query({
           communityName: community?.name,
           expiresAt: e.expiresAt,
           createdAt: e.createdAt,
+          equipped,
         };
       })
     );
@@ -145,14 +187,8 @@ const CREATION_KINDS = [
   "loungeScene",
   "themePack",
 ] as const;
-/** What is bought by a community rather than a person: never sold in a pack. */
-const COMMUNITY_CREATION_KINDS = ["communityTheme", "loungeScene"];
-/** The most things one pack can hold. */
-const MAX_PACK_ITEMS = 8;
 type CreationKind = (typeof CREATION_KINDS)[number];
 
-const MIN_PAID_CENTS = 50;
-const MAX_CREATION_CENTS = 50_000;
 const MAX_OPEN_SUBMISSIONS = 10;
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -360,32 +396,13 @@ export const submitCreation = mutation({
   },
   handler: async (ctx, args) => {
     const me = await getCurrentUserOrThrow(ctx);
-    const name = args.name.trim();
-    if (name.length < 2 || name.length > 60) throw new Error("A name is 2–60 characters.");
-    const description = args.description?.trim() ?? "";
-    if (description.length > 400) throw new Error("A description is up to 400 characters.");
-    if (
-      !Number.isInteger(args.priceCents) ||
-      args.priceCents < 0 ||
-      args.priceCents > MAX_CREATION_CENTS ||
-      (args.priceCents > 0 && args.priceCents < MIN_PAID_CENTS)
-    ) {
-      throw new Error("Price must be free, or between 0.50 and 500.00.");
-    }
-    if (!(CURRENCIES as readonly string[]).includes(args.currency)) throw new Error("Unsupported currency.");
-    if (args.items.length < 1 || args.items.length > MAX_PACK_ITEMS) {
-      throw new Error(`A submission holds between 1 and ${MAX_PACK_ITEMS} things.`);
-    }
-    // A scene is bought by a community and a cosmetic by a person; a single item
-    // can't be both, so a community kind is only ever sold on its own.
-    if (args.items.length > 1 && args.items.some((i) => COMMUNITY_CREATION_KINDS.includes(i.kind))) {
-      throw new Error("Scenes and community themes are sold on their own, not in a pack.");
-    }
-    // Two of one kind in a pack would fight over the same slot on a profile.
-    const personalKinds = args.items.map((i) => i.kind);
-    if (new Set(personalKinds).size !== personalKinds.length) {
-      throw new Error("A pack can hold one of each kind of thing.");
-    }
+    const { name, description } = checkCreationShape({
+      name: args.name,
+      description: args.description,
+      priceCents: args.priceCents,
+      currencyOk: (CURRENCIES as readonly string[]).includes(args.currency),
+      kinds: args.items.map((i) => i.kind),
+    });
 
     // Sending a change to something still waiting takes its place, so a creator who spots a mistake while
     // it is in the queue doesn't have to withdraw it by hand or queue two copies.
@@ -439,6 +456,112 @@ export const submitCreation = mutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+/**
+ * Staff publishing something straight to the Marketplace as Crystal: no queue, no review, listed under "By Crystal".
+ *
+ * Only for staff who may write the catalogue (`catalog.write`), checked here and not in the app: the Submit panel only shows
+ * the option to people who have it, which is a convenience and not the control. What "no review" means is that nobody reads
+ * it first. It does not mean it isn't checked: the artwork and specs go through the same validators as a creator's, so a
+ * listing that would break the app can't be published this way either. Every use is written to the staff audit log.
+ *
+ * The listing has no creator, so no payout is owed: the sale is Crystal's.
+ */
+export const staffPublishCreation = mutation({
+  args: {
+    name: v.string(),
+    description: v.optional(v.string()),
+    items: v.array(creationItemValidator),
+    previewUrl: v.optional(v.string()),
+    priceCents: v.number(),
+    currency: v.string(),
+    categoryId: v.id("skuCategories"),
+    featured: v.optional(v.boolean()),
+    /** One of Crystal's own listings to replace in place (same address, same owners) instead of making a new one. */
+    updatesSkuId: v.optional(v.id("skus")),
+  },
+  handler: async (ctx, args) => {
+    const staff = await requireStaff(ctx, "catalog.write");
+    const { name, description } = checkCreationShape({
+      name: args.name,
+      description: args.description,
+      priceCents: args.priceCents,
+      currencyOk: (CURRENCIES as readonly string[]).includes(args.currency),
+      kinds: args.items.map((i) => i.kind),
+    });
+    const category = await ctx.db.get(args.categoryId);
+    if (!category) throw new Error("Choose a category for the listing.");
+
+    // The artwork has to be in the publishing staff member's own folder, like a creator's: nothing in the arguments is taken on trust.
+    const grants = args.items.map((item) => buildCreationItem(item, name, staff.user.clerkId));
+    const previewUrl = args.previewUrl ? creationArtworkUrl(args.previewUrl, staff.user.clerkId) : undefined;
+    const single = grants.length === 1 ? grants[0] : null;
+    if (!previewUrl && !(single && previewOf(single))) throw new Error("Add a store picture so people can see what they are buying.");
+
+    if (args.updatesSkuId) {
+      const live = await ctx.db.get(args.updatesSkuId);
+      if (!live || live.creatorId) throw new Error("That isn't one of Crystal's own listings, so it can't be changed this way.");
+      if (live.status !== "active") throw new Error("That listing is no longer on sale. Publish it as a new one.");
+      if (!sameKinds(live.grants.map((g) => g.kind), grants.map((g) => g.kind))) {
+        throw new Error("An update has to be the same kind of thing as the listing it replaces. Publish it as a new one instead.");
+      }
+      const now = Date.now();
+      const { priceChanged: _changed, ...patch } = listingPatch(live, { name, description: description || undefined, grants, previewUrl, fallbackImage: single ? previewOf(single) : undefined }, args.priceCents, now);
+      void _changed;
+      await ctx.db.patch(live._id, { ...patch, categoryId: args.categoryId, byCrystal: true, ...(args.featured !== undefined ? { featured: args.featured } : {}) });
+      await audit(ctx, staff.user._id, "catalog.sku.update_as_crystal", { type: "sku", id: live._id }, `${live.slug} · updated without review${args.priceCents !== live.priceCents ? ` · price ${live.priceCents} → ${args.priceCents}` : ""}`);
+      // People who already own it get the new artwork, as with a creator's approved update.
+      await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId: live._id, after: null });
+      if (args.priceCents > 0 || live.priceCents > 0) await ctx.scheduler.runAfter(0, internal.payments.syncSku, { skuId: live._id });
+      return { skuId: live._id, slug: live.slug };
+    }
+
+    const slug = await uniqueSlug(slugFromName(name), async (candidate) => !!(await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", candidate)).unique()));
+    const now = Date.now();
+    const skuId = await ctx.db.insert("skus", {
+      slug,
+      name,
+      description: description || undefined,
+      categoryId: args.categoryId,
+      type: single ? (COMMUNITY_CREATION_KINDS.includes(single.kind) ? "community" : "cosmetic") : "bundle",
+      priceCents: args.priceCents,
+      currency: args.currency,
+      grants,
+      imageUrl: previewUrl ?? (single ? previewOf(single) : undefined),
+      status: "active",
+      featured: args.featured ?? false,
+      position: now,
+      byCrystal: true,
+      createdBy: staff.user._id,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await audit(ctx, staff.user._id, "catalog.sku.publish_as_crystal", { type: "sku", id: skuId }, `${slug} · ${args.priceCents === 0 ? "free" : `${args.priceCents} ${args.currency}`} · published without review`);
+    if (args.priceCents > 0) await ctx.scheduler.runAfter(0, internal.payments.syncSku, { skuId });
+    return { skuId, slug };
+  },
+});
+
+/**
+ * Crystal's own listings that can be updated in place: what is on sale, has no creator, and so is the staff's to change. For
+ * the staff-only part of Studio's Submit panel; anyone else gets an empty list.
+ */
+export const staffCrystalListings = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      await requireStaff(ctx, "catalog.write");
+    } catch {
+      return [];
+    }
+    const rows = await ctx.db.query("skus").withIndex("by_status", (q) => q.eq("status", "active")).collect();
+    return rows
+      .filter((s) => !s.creatorId && s.type !== "subscription")
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 200)
+      .map((s) => ({ skuId: s._id, name: s.name, priceCents: s.priceCents, categoryId: s.categoryId, kinds: s.grants.map((g) => g.kind), featured: s.featured }));
   },
 });
 
@@ -864,6 +987,54 @@ export const equip = mutation({
       // is nothing to switch on.
       default:
         return { applied: false };
+    }
+  },
+});
+
+/** Remove one owned cosmetic from the profile. The entitlement id makes this
+ * safe when the same item has been purchased more than once. */
+export const unequip = mutation({
+  args: { entitlementId: v.id("entitlements") },
+  handler: async (ctx, { entitlementId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const entitlement = await ctx.db.get(entitlementId);
+    if (!entitlement || entitlement.userId !== me._id) throw new Error("That isn't yours.");
+
+    switch (entitlement.kind) {
+      case "avatarDecoration":
+        try {
+          const layers = normalizeDecorationLayers(parseLayers(entitlement.payload, entitlement.skuId));
+          if (me.avatarDecoration === `layers:${JSON.stringify(layers)}`)
+            await ctx.db.patch(me._id, { avatarDecoration: undefined, avatarDecorationLayers: undefined, avatarDecorationStorageId: undefined });
+        } catch {}
+        break;
+      case "profileSticker":
+        try {
+          if (JSON.stringify(me.profileFrameLayers ?? []) === JSON.stringify(normalizeStickerLayers(parseLayers(entitlement.payload, entitlement.skuId))))
+            await ctx.db.patch(me._id, { profileFrameLayers: undefined });
+        } catch {}
+        break;
+      case "profileEffect":
+        if (me.profileEffect === entitlement.payload) await ctx.db.patch(me._id, { profileEffect: undefined, profileEffectStorageId: undefined });
+        break;
+      case "nameplate":
+        if (me.nameplateUrl === entitlement.payload) await ctx.db.patch(me._id, { nameplateUrl: undefined, nameplateStorageId: undefined });
+        break;
+      case "themePack":
+        if (me.themePackEntitlementId === entitlement._id) await ctx.db.patch(me._id, { themePackEntitlementId: undefined });
+        break;
+      case "communityTheme": {
+        if (!entitlement.communityId) break;
+        const community = await requireCommunity(ctx, entitlement.communityId);
+        await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
+        let matches = false;
+        try {
+          const colours = JSON.parse(entitlement.payload ?? "") as { start?: string; end?: string };
+          matches = community.themeStart === colours.start?.toLowerCase() && community.themeEnd === colours.end?.toLowerCase();
+        } catch {}
+        if (matches) await ctx.db.patch(community._id, { themeStart: undefined, themeEnd: undefined });
+        break;
+      }
     }
   },
 });

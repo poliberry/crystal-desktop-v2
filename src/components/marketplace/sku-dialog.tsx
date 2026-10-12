@@ -10,6 +10,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { CheckoutForm, type PendingPayment } from "@/components/payments/checkout-form";
 import { GRANT_KIND_META, primaryKind, type GrantKind, type ShopSku } from "@/components/marketplace/sku-kinds";
 import { PriceTag } from "@/components/marketplace/sku-card";
+import { GeodeLadder, GeodeMark } from "@/components/geode";
 import { SkuPreview } from "@/components/marketplace/sku-preview";
 import { priceFor, useShop } from "@/components/marketplace/use-shop";
 import { useOpenSettings } from "@/components/pages/page-context";
@@ -123,16 +124,34 @@ function Body({ sku, onClose }: { sku: ShopSku; onClose: () => void }) {
               {sku.type === "bundle" ? "Bundle" : GRANT_KIND_META[kind].label}
             </p>
             <DialogTitle className="mt-1 text-2xl leading-tight">{sku.name}</DialogTitle>
-            {sku.creator && (
+            {sku.byCrystal ? (
               <p className="mt-1 text-sm text-muted-foreground">
-                Created by <span className="font-medium text-foreground">@{sku.creator.username}</span>
+                By <span className="font-medium text-foreground">Crystal</span>
               </p>
+            ) : (
+              sku.creator && (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Created by <span className="font-medium text-foreground">@{sku.creator.username}</span>
+                </p>
+              )
             )}
             <DialogDescription className="mt-3">
               {sku.description ?? GRANT_KIND_META[kind].blurb}
             </DialogDescription>
 
             {sku.grants.length > 1 || kind === "plan" ? <Includes sku={sku} /> : null}
+            {kind === "plan" && sku.grants.some((g) => g.kind === "plan" && planPerks(g.payload).some((p) => /badge/i.test(p))) && (
+              <div className="mt-5 rounded-2xl border border-foreground/10 bg-foreground/[0.03] p-4">
+                <div className="mb-3 flex items-center gap-3">
+                  <GeodeMark className="size-10" />
+                  <div>
+                    <p className="text-sm font-semibold">A badge that grows with you</p>
+                    <p className="text-xs text-muted-foreground">Shown on your profile. It steps up on its own the longer you keep Geode.</p>
+                  </div>
+                </div>
+                <GeodeLadder compact />
+              </div>
+            )}
 
             {isCommunity && (
               <div className="mt-5 space-y-1.5">
@@ -289,7 +308,7 @@ export function planPerks(payload: string | undefined): string[] {
       p.streamResolution ? `Stream up to ${p.streamResolution}${p.streamFrameRate ? ` at ${p.streamFrameRate}fps` : ""}` : null,
       p.profileEffects ? "Premium profile effects" : null,
       p.earlyAccess ? "Early access to new drops" : null,
-      p.monthlyBadge ? "A rotating monthly badge" : null,
+      p.monthlyBadge ? "A Geode badge that grows from Quartz to Opal" : null,
     ].filter((line): line is string => !!line);
   } catch {
     return [];
