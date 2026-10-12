@@ -3,14 +3,13 @@ import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { PERMISSIONS, getBasePermissions, getChannelPermissions } from "../permissions";
+import { PERMISSIONS, getChannelPermissions } from "../permissions";
 import { BOT_RATE, effectivePermissions, holds } from "./botAuth";
 
 /**
  * What a bot may do right now, worked out from the database. Everything the Bot API does starts
- * here: `loadActing` establishes that the bot is really in the community and still carries the
- * authority of the member who gave it, and `permissionsIn` says what that authority allows in a
- * particular channel.
+ * here: `loadActing` establishes that the bot is really installed and in the community, and
+ * `permissionsIn` says what the bot's own managed role allows in a particular channel.
  */
 
 /** An error with an HTTP status, so the Bot API can answer properly. People never see these text-for-text. */
@@ -29,21 +28,10 @@ export interface Acting {
   botUser: Doc<"users">;
   install: Doc<"botInstalls">;
   community: Doc<"communities">;
-  /** The authorising member's own permissions, right now. */
-  authoriserBase: number;
-}
-
-async function isMember(ctx: QueryCtx, communityId: Id<"communities">, userId: Id<"users">) {
-  return !!(await ctx.db
-    .query("communityMembers")
-    .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId))
-    .unique());
 }
 
 /**
- * The bot, the community it is acting in, and the authority it is acting with — or an error saying
- * why it has none. A bot with no install, one that was removed, one that is suspended, and one
- * whose authorising member has gone are all refused; the last says what to do about it.
+ * The bot and the community it is acting in — or an error saying why it has none.
  */
 export async function loadActing(ctx: QueryCtx, botId: Id<"bots">, communityId: Id<"communities">): Promise<Acting> {
   const bot = await ctx.db.get(botId);
@@ -58,35 +46,30 @@ export async function loadActing(ctx: QueryCtx, botId: Id<"bots">, communityId: 
   if (!install) return fail(403, "This bot hasn't been added to that community.");
   const botUser = await ctx.db.get(bot.userId);
   if (!botUser) return fail(401, "Unknown bot.");
-  if (!(await isMember(ctx, communityId, bot.userId))) return fail(403, "This bot was removed from that community.");
+  const member = await ctx.db
+    .query("communityMembers")
+    .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", bot.userId))
+    .unique();
+  if (!member) return fail(403, "This bot was removed from that community.");
 
-  const authorised = await isMember(ctx, communityId, install.authorisedBy);
-  const banned = !!(await ctx.db
-    .query("communityBans")
-    .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", install.authorisedBy))
-    .unique());
-  if (!authorised || banned) {
-    return fail(403, "The member who authorised this bot is no longer in the community. A manager has to authorise it again in the community's Bots settings.");
-  }
-  const authoriserBase = await getBasePermissions(ctx, community, install.authorisedBy);
-  return { bot, botUser, install, community, authoriserBase };
+  return { bot, botUser, install, community };
 }
 
 /**
  * What the bot can do in one channel: the channel's own rules for its account, cut down to what
  * it was explicitly granted (so a default `@everyone` permission doesn't quietly become a bot's),
- * and then to what the member who authorised it can still do.
+ * and never to another member's permissions.
  */
 export async function permissionsIn(ctx: QueryCtx, acting: Acting, channelId: Id<"channels">): Promise<number> {
   const channel = await ctx.db.get(channelId);
   if (!channel || channel.communityId !== acting.community._id) return fail(404, "That channel doesn't exist in this community.");
   const here = await getChannelPermissions(ctx, acting.community, channelId, acting.bot.userId);
-  return effectivePermissions(here & acting.install.permissions, acting.authoriserBase);
+  return effectivePermissions(here & acting.install.permissions);
 }
 
-/** Community-wide: the grant, cut down to what the authorising member can still do. */
+/** Community-wide: the grant on the bot's managed role. */
 export function communityPermissions(acting: Acting): number {
-  return effectivePermissions(acting.install.permissions, acting.authoriserBase);
+  return effectivePermissions(acting.install.permissions);
 }
 
 export function requirePermission(perms: number, bit: number, what: string): void {

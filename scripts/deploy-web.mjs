@@ -44,7 +44,7 @@ const run = (cmd, argv, env = {}) => {
 const fromEnvFile = {};
 if (existsSync(join(root, ".env.local"))) {
   for (const line of readFileSync(join(root, ".env.local"), "utf8").split("\n")) {
-    const m = /^(NEXT_PUBLIC_(?:CONVEX_URL|CLERK_PUBLISHABLE_KEY))=(.*)$/.exec(line.trim());
+    const m = /^(NEXT_PUBLIC_(?:CONVEX_URL|CLERK_PUBLISHABLE_KEY|KLIPY_API_KEY))=(.*)$/.exec(line.trim());
     if (m) fromEnvFile[m[1]] = m[2].replace(/^"|"$/g, "");
   }
 }
@@ -52,7 +52,11 @@ const convex = process.env.NEXT_PUBLIC_CONVEX_URL ?? fromEnvFile.NEXT_PUBLIC_CON
 const clerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? fromEnvFile.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "(not set)";
 console.log(`Target:  ${production ? "PRODUCTION https://usecrystal.app" : "preview (branch preview)"}`);
 console.log(`Convex:  ${convex}`);
-console.log(`Clerk:   ${clerk.slice(0, 8)}… (${clerk.startsWith("pk_live") ? "live" : "test"} instance)\n`);
+console.log(`Clerk:   ${clerk.slice(0, 8)}… (${clerk.startsWith("pk_live") ? "live" : "test"} instance)`);
+// Baked into the bundle at build time like the two above, so it has to be here when `next build` runs: setting it on the Pages
+// project afterwards changes nothing. Without it the GIF button opens to a "not set up" notice.
+const klipy = process.env.NEXT_PUBLIC_KLIPY_API_KEY ?? fromEnvFile.NEXT_PUBLIC_KLIPY_API_KEY ?? "";
+console.log(`Klipy:   ${klipy ? "key set (GIFs on)" : "(not set — the GIF picker will say it isn't set up)"}\n`);
 if (production && (convex === "(not set)" || clerk === "(not set)")) {
   console.error("Refusing to publish a production build without NEXT_PUBLIC_CONVEX_URL and NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.");
   process.exit(1);

@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { PERMISSION_LABELS, PERMISSIONS, hasPermission, type PermissionKey } from "@/lib/permissions";
+import { formatDateOnly } from "@/lib/locale";
 
 type Member = {
   userId: Id<"users">;
@@ -28,7 +29,7 @@ type Member = {
 };
 
 function formatDate(timestamp?: number): string {
-  return timestamp ? new Date(timestamp).toLocaleDateString() : "—";
+  return timestamp ? formatDateOnly(timestamp) : "—";
 }
 
 function MemberModerationDialog({

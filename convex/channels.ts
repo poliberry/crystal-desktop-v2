@@ -16,7 +16,6 @@ import {
   PERMISSIONS,
   can,
   getChannelPermissions,
-  requireAbove,
   requireCommunityPermission,
 } from "./permissions";
 import { visibleActivities } from "./lib/activities";
@@ -462,8 +461,6 @@ export const setMemberVoiceState = mutation({
     if (serverDeafened !== undefined) {
       await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.DEAFEN_MEMBERS);
     }
-    await requireAbove(ctx, community, me._id, userId);
-
     const row = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
@@ -490,8 +487,6 @@ export const disconnectMember = mutation({
     if (!channel) throw new Error("Channel not found.");
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MOVE_MEMBERS);
-    await requireAbove(ctx, community, me._id, userId);
-
     const row = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))

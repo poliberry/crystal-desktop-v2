@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/locale";
 
 const RISK_STYLE = { low: "text-muted-foreground", medium: "text-amber-500", high: "text-destructive" } as const;
 const messageOf = (e: unknown) => (e instanceof Error ? e.message.replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0] : "That didn't work.");
@@ -91,7 +92,7 @@ export function ConsentDialog({
         <div className="space-y-4">
           <p className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
             <ShieldCheck className="mr-1.5 inline size-3.5 -translate-y-px" />
-            The bot acts with <span className="font-medium text-foreground">your</span> authority: it can only do what you can still do. If you leave, or lose a permission, it loses it too. You can only give it permissions you have.
+            You choose the bot&apos;s server permissions when it is added. The bot keeps that grant independently of the member who approved it; later changes are made here. You can only grant permissions you have.
           </p>
 
           {asked.length === 0 && askedScopes.length === 0 ? (
@@ -221,7 +222,7 @@ function myPermissionsMask(mine: number, requested: number): number {
 
 const permissionLabels = (bits: number) => BOT_PERMISSIONS.filter((p) => (bits & p.bit) !== 0).map((p) => p.label);
 
-/** The bots in this community, what each may do, and whose authority it is acting with. */
+/** The bots in this community and the permissions each one has been granted. */
 export function BotsSettings({ communityId }: { communityId: Id<"communities"> }) {
   const installs = useQuery(api.bots.installsFor, { communityId });
   const activity = useQuery(api.bots.activityFor, { communityId, limit: 25 });
@@ -244,7 +245,7 @@ export function BotsSettings({ communityId }: { communityId: Id<"communities"> }
   return (
     <div className="space-y-8">
       <SettingsGroup title="Bots">
-        <SettingRow icon={Bot} title={`${installs.length} bot${installs.length === 1 ? "" : "s"} in this community`} description="Bots are apps that run on their author's servers. Each acts with the authority of the person who added it.">
+        <SettingRow icon={Bot} title={`${installs.length} bot${installs.length === 1 ? "" : "s"} in this community`} description="Bots are apps that run on their author's servers. Each has its own server permission grant.">
           <Button size="sm" onClick={() => setAdding(true)}>
             <Plus className="size-4" /> Add a bot
           </Button>
@@ -330,7 +331,7 @@ export function BotsSettings({ communityId }: { communityId: Id<"communities"> }
           <SettingRow
             key={r.id}
             title={`${r.bot}: ${r.action}${r.ok ? "" : " — refused"}`}
-            description={`${new Date(r.at).toLocaleString()}${r.actor ? ` · @${r.actor}` : ""}${r.detail ? ` · ${r.detail}` : ""}`}
+            description={`${formatDateTime(r.at)}${r.actor ? ` · @${r.actor}` : ""}${r.detail ? ` · ${r.detail}` : ""}`}
           />
         ))}
       </SettingsGroup>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Ban, Gift, Loader2, ShieldCheck, ShieldOff, UserRound } from "lucide-react";
+import { Award, Ban, Gift, Loader2, ShieldCheck, ShieldOff, UserRound } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -173,6 +173,7 @@ function Overview({ detail }: { detail: Detail }) {
           ]}
         />
       </Panel>
+      <Badges detail={detail} userId={detail.user.id as Id<"users">} />
       <Panel title="Communities they own" flush>
         {detail.communities.owned.length === 0 ? (
           <EmptyState title="None" />
@@ -187,6 +188,41 @@ function Overview({ detail }: { detail: Detail }) {
         )}
       </Panel>
     </div>
+  );
+}
+
+function Badges({ detail, userId }: { detail: Detail; userId: Id<"users"> }) {
+  const staff = useStaff();
+  const setBadge = useMutation(api.operations.setUserBadge);
+  const badges = useQuery(api.badges.list) ?? [];
+  const [giving, setGiving] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [badgeId, setBadgeId] = useState("");
+  const held = new Set(detail.badges.map((badge) => badge.badgeId));
+  const choices = badges.filter((badge) => !held.has(badge.badgeId));
+  const canManage = staff.can("users.moderate");
+
+  return (
+    <Panel
+      title="Badges"
+      flush
+      actions={canManage ? <Button size="sm" variant="outline" onClick={() => { setBadgeId(choices[0]?.badgeId ?? ""); setGiving(true); }} disabled={choices.length === 0}><Award /> Give badge</Button> : undefined}
+    >
+      {detail.badges.length === 0 ? <EmptyState title="No badges" /> : (
+        <div className="divide-y divide-foreground/10">
+          {detail.badges.map((badge) => (
+            <ListRow key={badge.badgeId}>
+              <div className="min-w-0 flex-1"><p className="font-medium">{badge.label}</p><p className="text-xs text-muted-foreground">{badge.description}</p></div>
+              {canManage && <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setRevoking(badge.badgeId)}>Remove</Button>}
+            </ListRow>
+          ))}
+        </div>
+      )}
+      <ReasonDialog open={giving} onOpenChange={setGiving} title="Give a badge" description="This is recorded in the staff audit log." confirmLabel="Give badge" placeholder="Why this badge is being given" onConfirm={(reason) => setBadge({ userId, badgeId, granted: true, reason })}>
+        <Select value={badgeId} onValueChange={setBadgeId}><SelectTrigger className="w-full"><SelectValue placeholder="Choose a badge" /></SelectTrigger><SelectContent>{choices.map((badge) => <SelectItem key={badge.badgeId} value={badge.badgeId}>{badge.label}</SelectItem>)}</SelectContent></Select>
+      </ReasonDialog>
+      <ReasonDialog open={!!revoking} onOpenChange={(open) => !open && setRevoking(null)} title="Remove this badge?" description="The change is recorded in the staff audit log." confirmLabel="Remove badge" destructive placeholder="Why this badge is being removed" onConfirm={(reason) => setBadge({ userId, badgeId: revoking!, granted: false, reason })} />
+    </Panel>
   );
 }
 

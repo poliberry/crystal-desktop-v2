@@ -1,21 +1,25 @@
 "use client";
 
-import { ImagePlus, Layers, Plus, Sparkles, Type, Wand2, Waves } from "lucide-react";
-import { useMemo, useState } from "react";
+import { CloudDownload, Check, ImagePlus, Layers, Loader2, Plus, Sparkles, Type, Wand2, Waves } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-import { MOTION_LIMITS, allClips, newClip, type Clip } from "../../../convex/lib/motion";
+import { MOTION_LIMITS, allClips, introLength, newClip, type Clip } from "../../../convex/lib/motion";
 import { artworkNodes, isLayerClip, layerBox } from "@/studio/model/motion-doc";
 import type { Doc } from "@/studio/model/types";
 import type { LoadedAsset } from "@/studio/storage/assets";
 import { EFFECTS, EFFECT_GROUPS, GENERATORS, GENERATOR_GROUPS, TITLES, TRANSITIONS, clipFromGenerator, clipFromTitle, newTransition } from "@/studio/motion/library";
 import { addClip, setTransition, snapFrame } from "@/studio/motion/ops";
+import { LIBRARY_FOLDER, type EffectCatalogEntry } from "../../../convex/lib/effectLibrary";
+import { cdnBaseUrl } from "@/lib/cdn";
+import { LibraryError, downloadEffect, downloadedIds, fetchCatalog, fetchEffectClips, libraryBase, removeDownload, withDownloads } from "@/studio/motion/effect-library-client";
 import type { MotionEditor } from "@/studio/motion/use-motion-editor";
 import { cn } from "@/lib/utils";
 
-type Tab = "generators" | "titles" | "effects" | "transitions" | "layers" | "pictures";
+type Tab = "generators" | "library" | "titles" | "effects" | "transitions" | "layers" | "pictures";
 
 const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "generators", label: "Generators", icon: Sparkles },
+  { id: "library", label: "Library", icon: CloudDownload },
   { id: "titles", label: "Titles", icon: Type },
   { id: "effects", label: "Effects", icon: Wand2 },
   { id: "transitions", label: "Transitions", icon: Waves },
@@ -32,7 +36,34 @@ const tile = "flex h-8 items-center justify-between gap-1 rounded-[3px] border b
  */
 export function Browser({ editor, doc, assets, say }: { editor: MotionEditor; doc: Doc; assets: Map<string, LoadedAsset>; say: (m: string) => void }) {
   const [tab, setTab] = useState<Tab>("generators");
-  const { spec, scope, selection, commitClips, clock, setSelection } = editor;
+
+  // The effect library: published to the CDN, with the same files served by the app itself as a fallback (see
+  // scripts/prepare-studio-assets.mjs), so it works offline and before it is published.
+  type Lib = { status: "idle" | "loading" | "ready" | "error"; catalog?: EffectCatalogEntry[]; base?: string; error?: string };
+  const [lib, setLib] = useState<Lib>({ status: "idle" });
+  const [have, setHave] = useState<Set<string>>(() => downloadedIds());
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [group, setGroup] = useState<string>("All");
+  const loadLibrary = async () => {
+    setLib({ status: "loading" });
+    const bases = [libraryBase(cdnBaseUrl()), `/${LIBRARY_FOLDER}`].filter((b): b is string => !!b);
+    let last: unknown = null;
+    for (const base of bases) {
+      try {
+        const catalog = await fetchCatalog(base);
+        setLib({ status: "ready", catalog: catalog.effects, base });
+        return;
+      } catch (e) {
+        last = e;
+      }
+    }
+    setLib({ status: "error", error: last instanceof LibraryError ? last.message : "Couldn't load the library." });
+  };
+  useEffect(() => {
+    if (tab === "library" && lib.status === "idle") void loadLibrary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, lib.status]);
+  const { spec, scope, selection, commit, commitClips, clock, setSelection, path } = editor;
   const stage = spec.stage;
   const total = allClips(spec.clips).length;
   const full = total >= MOTION_LIMITS.clips;
@@ -86,6 +117,97 @@ export function Browser({ editor, doc, assets, say }: { editor: MotionEditor; do
               </div>
             </div>
           ))}
+
+        {tab === "library" && (
+          <>
+            {lib.status === "loading" && <p className="flex items-center gap-1.5 text-[11px] text-[var(--ai-dim)]"><Loader2 className="size-3 animate-spin" /> Loading the library…</p>}
+            {lib.status === "error" && (
+              <div className="space-y-1.5 text-[11px]">
+                <p className="text-[var(--ai-dim)]">{lib.error}</p>
+                <button type="button" className={tile} onClick={() => void loadLibrary()}>Try again</button>
+              </div>
+            )}
+            {lib.status === "ready" && lib.catalog && lib.base && (() => {
+              const base = lib.base;
+              const forThis = lib.catalog.filter((e) => e.kinds.includes(spec.kind));
+              const groups = ["All", ...new Set(forThis.map((e) => e.group))];
+              const shown = forThis.filter((e) => group === "All" || e.group === group);
+              const fetcher = withDownloads(fetch);
+              const addEffect = async (e: EffectCatalogEntry) => {
+                if (full) return say(`A design has at most ${MOTION_LIMITS.clips} clips.`);
+                setBusyId(e.id);
+                try {
+                  const got = await fetchEffectClips(base, e.id, spec.kind, MOTION_LIMITS.clips - total, fetcher);
+                  // Into an empty design the effect brings its own shape: its length, and an intro that plays once before
+                  // the loop. Into one that already has things in it, it goes where the playhead is and the design's own
+                  // length and loop are left alone.
+                  const fresh = spec.clips.length === 0 && path.length === 0;
+                  const length = fresh ? got.duration : scope.duration;
+                  const p = fresh ? { start: 0, duration: got.duration } : place(MOTION_LIMITS.duration);
+                  const lane = spec.clips.length ? Math.min(31, Math.max(...spec.clips.map((x) => x.track)) + 1) : 0;
+                  // Clips start part-way through the intro some of the time, so the effect's own timing is kept.
+                  const made = got.clips.map((c, i) => {
+                    const start = Math.round((p.start + c.start) * 1000) / 1000;
+                    return { ...c, start, duration: Math.max(0.1, Math.min(c.duration, length - start)), track: Math.min(31, lane + i) };
+                  });
+                  const key = `library-${e.id}`;
+                  if (fresh) commit((s) => ({ ...s, duration: got.duration, loop: { mode: "loop", rest: s.loop.rest, ...(got.intro > 0 ? { from: got.intro } : {}) } }), key);
+                  commitClips((clips) => made.reduce((acc, c) => addClip(acc, c), clips), key);
+                  setSelection(made.map((c) => c.id));
+                  const wants = !fresh && got.intro > 0 && introLength(spec) === 0;
+                  say(wants ? `Added ${e.name}. Set the design's Intro to ${got.intro} s (nothing selected, in the inspector) so its opening plays once instead of every loop.` : `Added ${e.name}.`);
+                } catch (err) {
+                  say(err instanceof LibraryError ? err.message : `Couldn't add ${e.name}.`);
+                } finally {
+                  setBusyId(null);
+                }
+              };
+              const keep = async (e: EffectCatalogEntry) => {
+                setBusyId(e.id);
+                try {
+                  await downloadEffect(base, e);
+                  setHave(downloadedIds());
+                  say(`${e.name} is on this device now.`);
+                } catch (err) {
+                  say(err instanceof LibraryError ? err.message : `Couldn't download ${e.name}.`);
+                } finally {
+                  setBusyId(null);
+                }
+              };
+              return (
+                <>
+                  <p className="text-[10px] text-[var(--ai-dim)]">{forThis.length} ready-made effects for a {spec.kind === "effect" ? "profile effect" : "nameplate"}. Add one to put it on the timeline, or download it to keep it for offline use.</p>
+                  <div className="flex flex-wrap gap-1">
+                    {groups.map((g) => (
+                      <button key={g} type="button" aria-pressed={group === g} onClick={() => setGroup(g)} className={cn("rounded-full border px-2 py-0.5 text-[10px]", group === g ? "border-white/40 bg-white/15 text-foreground" : "border-white/10 text-[var(--ai-dim)] hover:text-foreground")}>{g}</button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-1 gap-1">
+                    {shown.map((e) => (
+                      <div key={e.id} className="flex items-center gap-1 rounded-[3px] border border-white/10 bg-white/[0.04] px-2 py-1.5">
+                        <span className="flex size-4 shrink-0 items-center" aria-hidden>
+                          {e.colors.slice(0, 3).map((c, i) => <span key={i} className="-ml-1 size-3 rounded-full border border-black/30 first:ml-0" style={{ background: c }} />)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[11px] text-[var(--ai-text)]">{e.name}</span>
+                          <span className="block truncate text-[10px] text-[var(--ai-dim)]" title={e.description}>{e.description}</span>
+                        </span>
+                        {have.has(e.id) ? (
+                          <button type="button" title="On this device. Click to remove the download." className="text-emerald-400 hover:text-emerald-300" onClick={() => { removeDownload(e.id); setHave(downloadedIds()); }}><Check className="size-3.5" /></button>
+                        ) : (
+                          <button type="button" title="Download to this device" disabled={busyId === e.id} className="text-[var(--ai-dim)] hover:text-foreground disabled:opacity-40" onClick={() => void keep(e)}><CloudDownload className="size-3.5" /></button>
+                        )}
+                        <button type="button" disabled={full || busyId === e.id} title={`Add ${e.name} at the playhead`} className="flex h-6 items-center rounded-[3px] border border-white/10 px-1.5 text-[10px] hover:bg-white/10 disabled:opacity-40" onClick={() => void addEffect(e)}>
+                          {busyId === e.id ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
+          </>
+        )}
 
         {tab === "titles" && (
           <div className="grid grid-cols-2 gap-1">

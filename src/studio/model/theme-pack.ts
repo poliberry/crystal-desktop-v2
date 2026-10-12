@@ -91,6 +91,10 @@ export function themePackSpecInput(data: ThemePackData, name: string, assets: Ma
   if (sounds.length) input.sounds = Object.fromEntries(sounds.map(([k, id]) => [k, urlOf(id)]));
   const icons = Object.entries(data.icons).filter(([, id]) => assets.get(id));
   if (icons.length) input.icons = Object.fromEntries(icons.map(([k, id]) => [k, urlOf(id)]));
+  if (data.background && assets.get(data.background.assetId)) {
+    const { assetId, dim, blur, panels } = data.background;
+    input.background = { url: urlOf(assetId), dim, blur, panels };
+  }
   return input;
 }
 
@@ -132,6 +136,16 @@ export function checkThemePack(data: ThemePackData, name: string, assets: Map<st
   for (const [key, id] of Object.entries(data.icons)) {
     const a = assets.get(id);
     if (a && a.size > 64 * 1024) problems.push({ severity: "warning", message: `The “${key}” icon is ${(a.size / 1024).toFixed(0)} KB — icons should be small SVGs.` });
+  }
+  if (data.background) {
+    const a = assets.get(data.background.assetId);
+    if (!a) problems.push({ severity: "error", message: "The background picture is missing. Choose it again." });
+    else if (a.size > 3 * 1024 * 1024) {
+      problems.push({ severity: "warning", message: `The background is ${(a.size / 1024 / 1024).toFixed(1)} MB — everyone who applies the pack downloads it. A JPEG or WebP under 1 MB loads much faster.` });
+    }
+    if (a && a.width && a.height && (a.width < 1280 || a.height < 720)) {
+      problems.push({ severity: "warning", message: `The background is only ${a.width}×${a.height}, so it will look soft stretched across a large window. 1920×1080 or more is best.` });
+    }
   }
   if (data.theme && !data.theme.colors.background) problems.push({ severity: "warning", message: "No background colour is set, so the app's own is used under your other colours." });
   return problems;

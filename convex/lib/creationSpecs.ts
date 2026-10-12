@@ -260,6 +260,25 @@ export const PACK_LIMITS = {
   family: 40,
 } as const;
 
+/** What a pack's app-wide background can be: a still or animated picture. Never a clip — it is drawn behind everything, all the time. */
+export const PACK_BACKGROUND_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"] as const;
+
+/**
+ * A pack's app-wide background: a picture laid behind the whole app, with the app's own panels let
+ * through it. Every number is a percent or pixels and is clamped, so none can carry anything but a number.
+ */
+export interface PackBackground {
+  url: string;
+  /** 0–90. How much of the theme's background colour is laid over the picture, so text stays readable on it. */
+  dim: number;
+  /** 0–24 px. How far the picture is blurred. */
+  blur: number;
+  /** 30–100. How solid the app's panels (sidebars, the top bar, the conversation) are over the picture. 100 hides it. */
+  panels: number;
+}
+
+export const PACK_BACKGROUND_DEFAULTS = { dim: 35, blur: 0, panels: 70 } as const;
+
 export const FONT_FORMATS = { woff2: "woff2", woff: "woff", ttf: "truetype", otf: "opentype" } as const;
 export type FontFormat = keyof typeof FONT_FORMATS;
 
@@ -290,6 +309,8 @@ export interface ThemePackSpec {
   theme?: { isDark: boolean; colors: Partial<Record<ThemeToken, string>>; alt?: { colors: Partial<Record<ThemeToken, string>> } };
   sounds?: Partial<Record<PackSound, string>>;
   icons?: Record<string, string>;
+  /** A picture behind the whole app. Absent on packs made before it existed. */
+  background?: PackBackground;
 }
 
 /**
@@ -402,6 +423,22 @@ export function normalizeThemePackSpec(input: unknown, assertUrl: UrlCheck): The
     if (Object.keys(icons).length) out.icons = icons;
   }
 
-  if (!out.font && !out.theme && !out.sounds && !out.icons) throw new Error("A theme pack needs at least a font, theme, sounds or icons.");
+  if (raw.background) {
+    const b = raw.background as Record<string, unknown>;
+    const url = assertUrl(String(b.url ?? ""), "background");
+    if (!(PACK_BACKGROUND_EXTENSIONS as readonly string[]).includes(extensionOf(url))) {
+      throw new Error("A background has to be a PNG, JPEG, WebP or GIF picture.");
+    }
+    out.background = {
+      url,
+      dim: Math.round(num(b.dim, 0, 90, PACK_BACKGROUND_DEFAULTS.dim)),
+      blur: Math.round(num(b.blur, 0, 24, PACK_BACKGROUND_DEFAULTS.blur)),
+      panels: Math.round(num(b.panels, 30, 100, PACK_BACKGROUND_DEFAULTS.panels)),
+    };
+  }
+
+  if (!out.font && !out.theme && !out.sounds && !out.icons && !out.background) {
+    throw new Error("A theme pack needs at least a font, theme, background, sounds or icons.");
+  }
   return out;
 }

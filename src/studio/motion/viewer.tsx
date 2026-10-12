@@ -203,13 +203,13 @@ export function Viewer({ editor, images, version, kind, name }: { editor: Motion
             {worn && kind === "effect" && (
               <>
                 <div className="absolute inset-x-0 top-0 h-[28%] bg-gradient-to-br from-violet-500/50 to-sky-500/40" />
-                <div className="absolute top-[18%] left-[6%] size-[22%] rounded-full border-4 border-card bg-muted" />
+                <div className="absolute top-[18%] left-[6%] size-[22%] rounded-[22%] border-4 border-card bg-muted" />
                 <div className="absolute top-[55%] left-[6%] text-[3.4cqw] font-semibold" style={{ fontSize: Math.max(10, sw * 0.045) }}>{name || "Your name"}</div>
               </>
             )}
             {worn && kind === "nameplate" && (
               <div className="absolute inset-y-0 left-0 flex items-center gap-[2%] pl-[2.5%]">
-                <div className="rounded-full bg-muted" style={{ width: sh * 0.62, height: sh * 0.62 }} />
+                <div className="rounded-[20%] bg-muted" style={{ width: sh * 0.62, height: sh * 0.62 }} />
                 <span className="font-medium" style={{ fontSize: sh * 0.26 }}>{name || "Your name"}</span>
               </div>
             )}

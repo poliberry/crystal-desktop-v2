@@ -157,6 +157,7 @@ interface TabsContextValue {
    * open. For navigation that has to show something *in* a place rather than
    * beside the page. */
   leavePage: () => void;
+  registerCloseGuard: (id: string, guard: () => boolean) => () => void;
 }
 
 const TabsContext = createContext<TabsContextValue | null>(null);
@@ -177,6 +178,16 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   // The last tab that was a place, not a page: where closing a page goes back
   // to, rather than to whichever tab happens to sit next to it in the strip.
   const returnTabId = useRef("home");
+  const closeGuards = useRef(new Map<string, () => boolean>());
+
+  const registerCloseGuard = useCallback((id: string, guard: () => boolean) => {
+    closeGuards.current.set(id, guard);
+    return () => {
+      if (closeGuards.current.get(id) === guard) closeGuards.current.delete(id);
+    };
+  }, []);
+
+  const mayLeave = useCallback((id: string) => closeGuards.current.get(id)?.() ?? true, []);
 
   // Restore the active tab from the current URL hash on first mount (reload / deep link).
   useEffect(() => {
@@ -223,13 +234,15 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
 
   const openTab = useCallback((target: TabTarget) => {
     const id = tabId(target);
+    if (id !== activeTabId && !mayLeave(activeTabId)) return;
     setTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { id, target, pinned: false }]));
     setActiveTabId(id);
-  }, []);
+  }, [activeTabId, mayLeave]);
 
   const closeTab = useCallback(
     (id: string) => {
       if (id === "home") return;
+      if (!mayLeave(id)) return;
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx === -1) return;
       const next = tabs.filter((t) => t.id !== id);
@@ -246,12 +259,13 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [tabs, activeTabId]
+    [tabs, activeTabId, mayLeave]
   );
 
   const activateTab = useCallback((id: string) => {
+    if (id !== activeTabId && !mayLeave(activeTabId)) return;
     setActiveTabId(id);
-  }, []);
+  }, [activeTabId, mayLeave]);
 
   const togglePinTab = useCallback(
     (id: string) => {
@@ -265,9 +279,10 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   );
 
   const leavePage = useCallback(() => {
+    if (!mayLeave(activeTabId)) return;
     const back = tabs.find((t) => t.id === returnTabId.current);
     setActiveTabId(back ? back.id : "home");
-  }, [tabs]);
+  }, [tabs, activeTabId, mayLeave]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? HOME_TAB;
   const ordered = useMemo(() => orderTabs(tabs), [tabs]);
@@ -282,8 +297,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       activateTab,
       togglePinTab,
       leavePage,
+      registerCloseGuard,
     }),
-    [ordered, activeTabId, activeTab, openTab, closeTab, activateTab, togglePinTab, leavePage]
+    [ordered, activeTabId, activeTab, openTab, closeTab, activateTab, togglePinTab, leavePage, registerCloseGuard]
   );
 
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;

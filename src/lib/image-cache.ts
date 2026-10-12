@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { isKlipyMediaUrl } from "../../convex/lib/klipy";
+
 /**
  * IndexedDB caches of remote artwork — as actual bytes rather than a warmed
  * HTTP cache entry.
@@ -77,6 +79,9 @@ function originOf(url: string): string {
 }
 
 function isCdnUrl(url: string): boolean {
+  // KLIPY's GIFs, clips and stickers are loaded straight from KLIPY and never copied into a cache of ours: its integration
+  // rules forbid keeping copies of its media (the browser's own HTTP cache is the cache).
+  if (isKlipyMediaUrl(url)) return true;
   // Both, and `||` rather than `??`: a build that sets one to an empty string (an unset CI secret does) must not hide the
   // other, or CDN artwork gets fetched as a blob and is blocked by CORS.
   for (const cdn of [process.env.NEXT_PUBLIC_R2_PUBLIC_URL, process.env.NEXT_PUBLIC_CDN_URL]) {

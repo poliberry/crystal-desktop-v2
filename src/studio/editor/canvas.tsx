@@ -180,7 +180,7 @@ function NodeView({ node, assets, doc, outline, lineW, zoom }: { node: Node; ass
       );
     case "seat":
       return (
-        <div {...common} style={box} className="flex items-center justify-center rounded-full border-2 border-dashed border-emerald-300 bg-emerald-400/15 text-emerald-200">
+        <div {...common} style={box} className="flex items-center justify-center rounded-[24%] border-2 border-dashed border-emerald-300 bg-emerald-400/15 text-emerald-200">
           <Armchair style={{ width: node.w * 0.55, height: node.w * 0.55 }} />
         </div>
       );
@@ -219,7 +219,9 @@ function Backdrop({ doc, avatarUrl }: { doc: Doc; avatarUrl?: string }) {
     return (
       <>
         <div className="absolute rounded-[28px] bg-[conic-gradient(#2a2a30_25%,#222228_0_50%,#2a2a30_0_75%,#222228_0)] [background-size:40px_40px]" style={{ left: -m, top: -m, width: w + m * 2, height: h + m * 2 }} />
-        <div className="absolute rounded-full bg-neutral-700 shadow-2xl" style={{ left: 0, top: 0, width: w, height: h, overflow: "hidden" }}>
+        {/* A rounded square, not a circle: the app's avatars are, at about a fifth of the width (see SQUIRCLE_R in
+            src/lib/avatar-decorations.ts), and a decoration is drawn for that shape. */}
+        <div className="absolute bg-neutral-700 shadow-2xl" style={{ left: 0, top: 0, width: w, height: h, overflow: "hidden", borderRadius: w * 0.2 }}>
           {avatarUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={avatarUrl} alt="" draggable={false} className="size-full object-cover" />
@@ -233,7 +235,7 @@ function Backdrop({ doc, avatarUrl }: { doc: Doc; avatarUrl?: string }) {
     return (
       <div className="absolute overflow-hidden rounded-2xl bg-neutral-800 shadow-2xl" style={{ width: w, height: h }}>
         <div className="h-[28%] bg-gradient-to-br from-violet-500/50 to-sky-500/40" />
-        <div className="absolute rounded-full border-4 border-neutral-800 bg-neutral-600" style={{ left: 20, top: h * 0.28 - 36, width: 72, height: 72, overflow: "hidden" }}>
+        <div className="absolute rounded-xl border-4 border-neutral-800 bg-neutral-600" style={{ left: 20, top: h * 0.28 - 36, width: 72, height: 72, overflow: "hidden" }}>
           {avatarUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={avatarUrl} alt="" draggable={false} className="size-full object-cover" />

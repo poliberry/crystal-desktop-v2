@@ -42,6 +42,7 @@ env:
   NEXT_PUBLIC_LIVEKIT_URL: ${{ secrets.NEXT_PUBLIC_LIVEKIT_URL }}
   NEXT_PUBLIC_CDN_URL: ${{ secrets.NEXT_PUBLIC_CDN_URL }}
   NEXT_PUBLIC_R2_PUBLIC_URL: ${{ secrets.NEXT_PUBLIC_R2_PUBLIC_URL }}
+  NEXT_PUBLIC_KLIPY_API_KEY: ${{ secrets.NEXT_PUBLIC_KLIPY_API_KEY }}
   # Stripe's publishable key is meant to be public; without it the shop still
   # loads but can't take payment.
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
@@ -126,10 +127,65 @@ jobs:
     if: needs.check.outputs.needs_release == 'false'
     runs-on: ubuntu-latest
     steps:
+      # The step that opens the PR fails with nothing more than "git failed with exit code 128" when the token is bad,
+      # which says nothing about why. So the token is tried here first, against the API, and a dead one is named. A
+      # fine-grained PAT expires (30 or 90 days, as it was made): when this step fails, make a new one and update the
+      # RELEASE_PAT secret.
+      - name: Check the release token
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_PAT" ]; then
+            echo "::error title=RELEASE_PAT is not set::Add a fine-grained token (this repo; Contents and Pull requests: read and write) as the RELEASE_PAT secret."
+            exit 1
+          fi
+          CODE="$(curl -sS -o repo.json -w '%{http_code}' \
+            -H "Authorization: Bearer $RELEASE_PAT" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY")"
+          case "$CODE" in
+            200) ;;
+            401) echo "::error title=RELEASE_PAT has expired or was revoked::GitHub rejected it (HTTP 401). Create a new fine-grained token and update the RELEASE_PAT secret."; exit 1 ;;
+            *)   echo "::error title=RELEASE_PAT can't use this repository::GitHub answered HTTP $CODE. The token needs access to $GITHUB_REPOSITORY."; exit 1 ;;
+          esac
+          if [ "$(node -p "!!(require('./repo.json').permissions||{}).push")" != "true" ]; then
+            echo "::error title=RELEASE_PAT can't write::The token can read $GITHUB_REPOSITORY but not push to it (it needs Contents: read and write)."
+            exit 1
+          fi
+          rm -f repo.json
+          echo "RELEASE_PAT is valid and can write."
+
+      # The full history, with the same token the PR step pushes with: the PR action compares its branch with the base and
+      # with what is already on the remote, which a one-commit shallow clone can't do.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      # A bump branch is left behind when its PR is merged. One that is no longer ahead of the base, with no open PR, is
+      # only an old copy of the base to push over, so it is removed and the PR step starts clean. One with an open PR is a
+      # proposal still waiting, and is left for the PR step to update.
+      - name: Clear a bump branch that has been merged
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          BRANCH: chore/bump-${{ needs.check.outputs.channel }}-version
+          BASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          if [ "$(api -o /dev/null -w '%{http_code}' "https://api.github.com/repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH")" != "200" ]; then
+            echo "No $BRANCH on the remote; nothing to clear."
+            exit 0
+          fi
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          OPEN="$(api "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls?state=open&head=$OWNER:$BRANCH" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).length")"
+          AHEAD="$(api "https://api.github.com/repos/$GITHUB_REPOSITORY/compare/$BASE...$BRANCH" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).ahead_by")"
+          echo "$BRANCH: $AHEAD commit(s) ahead of $BASE, $OPEN open PR(s)."
+          if [ "$OPEN" = "0" ] && [ "$AHEAD" = "0" ]; then
+            api -X DELETE -o /dev/null -w 'deleted (HTTP %{http_code})\n' "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
+          fi
 
       - name: Bump patch version
         id: bump

@@ -49,6 +49,7 @@ interface ParticipantTileProps {
   /** Highlights the tile while this participant is playing a soundboard clip
    * — the speaking ring's sibling, in a different colour. */
   soundboardActive?: boolean;
+  showSoundboardEmoji?: boolean;
 }
 
 /**
@@ -71,6 +72,7 @@ export function ParticipantTile({
   localVolume,
   localMuted,
   soundboardActive = false,
+  showSoundboardEmoji = true,
 }: ParticipantTileProps) {
   const displayName = name || participant.name || participant.identity;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -129,15 +131,40 @@ export function ParticipantTile({
       }
     };
 
-    const attachAudio = (pub: TrackPublication | undefined) => {
-      const track = pub?.track;
-      if (!track || track.kind !== Track.Kind.Audio) return;
-      if (isLocal) return;
+    // The one <audio> playing this person's microphone, and the track it plays.
+    //
+    // `refresh` runs on every mute, unmute, camera toggle and (re)subscribe, so
+    // attaching must be idempotent: `track.attach()` with no element makes a *new*
+    // <audio> each call, and two elements playing the same stream add together
+    // (+6 dB for two, +9.5 dB for three) while the volume slider, which sets the
+    // same fraction on all of them, still reads the same. That was the "someone
+    // suddenly got loud" bug. So there is at most one element, it is only replaced
+    // when the track itself is, and the one it replaces is detached, not just dropped.
+    let attachedAudio: { track: Track; el: HTMLAudioElement } | null = null;
 
-      const el = track.attach();
+    const detachAudio = () => {
+      if (!attachedAudio) return;
+      attachedAudio.track.detach(attachedAudio.el);
+      attachedAudio.el.remove();
+      attachedAudio = null;
+    };
+
+    const attachAudio = (pub: TrackPublication | undefined) => {
+      if (isLocal) return;
+      const track = pub?.track;
+      if (!track || track.kind !== Track.Kind.Audio) {
+        // Unsubscribed (or never subscribed): nothing should be playing.
+        detachAudio();
+        return;
+      }
+      if (attachedAudio?.track === track) return;
+
+      detachAudio();
+      const el = track.attach() as HTMLAudioElement;
       el.style.display = "none";
       el.volume = localMutedRef.current ? 0 : localVolumeRef.current;
       audioRef.current?.appendChild(el);
+      attachedAudio = { track, el };
       void routeElementToPlayback(el);
     };
 
@@ -194,6 +221,7 @@ export function ParticipantTile({
       if (videoElement && videoPub?.track) {
         videoPub.track.detach(videoElement);
       }
+      detachAudio();
       audioRef.current?.replaceChildren();
     };
   }, [participant, isLocal]);
@@ -291,7 +319,7 @@ export function ParticipantTile({
 
       {/* Every soundboard press, as its emoji falling across the presser's
           tile — for everyone, since each client draws it from the same packet. */}
-      <SoundboardBurst identity={participant.identity} />
+      {showSoundboardEmoji && <SoundboardBurst identity={participant.identity} />}
 
       <div className="absolute inset-x-0 bottom-0 z-20 m-2 flex w-fit items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 backdrop-blur-md">
         {deafened ||

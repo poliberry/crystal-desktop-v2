@@ -93,31 +93,46 @@ export function ProfileEffectLayer({
   /** Matches the radius of the box it's drawn over, so a full-bleed effect
    * doesn't square off the card's corners. */
   rounded = "rounded-[5px]",
+  /** Where the box starts, inside whatever it is positioned against. A card
+   * pads its clipped content box (the card's own border colour shows in that
+   * padding), so the effect has to start where the content does — `inset-1` for
+   * the profile card's `p-1` — or it paints over the border ring as well. */
+  inset = "inset-0",
+  className,
 }: {
   src?: string;
   animate?: boolean;
   rounded?: string;
+  inset?: string;
+  /** For the caller to say when it should fade — see the profile card, where hovering anything on it dims the effect. */
+  className?: string;
 }) {
   const motion = isMotionUrl(src);
   // A picture effect plays once and holds; a motion design says for itself how it loops (see its `loop`).
   const playback = useLoopedPlayback(motion ? undefined : src, animate);
 
   if (!src) return null;
-  if (motion) return <MotionPlayer url={src} animate={animate} className={cn("z-20", rounded)} />;
+
+  // The artwork is drawn into a box that clips it, rather than being given the radius itself. A `border-radius` on the
+  // picture clips the picture, but an effect is drawn `object-cover` over a box of a different shape than the one it
+  // was authored on, and a motion design is a canvas it sizes to its *parent* — so the parent has to be the exact
+  // shape of the card for the effect to be fitted to the card and cut off at its edge.
   return (
-    <img
-      // A new element per play: an `<img>` cannot be rewound, but a fresh one
-      // starts its animation from the beginning even on a cached file.
-      key={playback.cycle}
-      src={playback.src}
-      alt=""
-      aria-hidden
-      draggable={false}
-      className={cn(
-        "pointer-events-none absolute inset-0 z-20 h-full w-full select-none object-cover",
-        rounded,
+    <div aria-hidden data-slot="profile-effect" className={cn("pointer-events-none absolute z-20 overflow-hidden transition-opacity duration-200", inset, rounded, className)}>
+      {motion ? (
+        <MotionPlayer url={src} animate={animate} />
+      ) : (
+        <img
+          // A new element per play: an `<img>` cannot be rewound, but a fresh one
+          // starts its animation from the beginning even on a cached file.
+          key={playback.cycle}
+          src={playback.src}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover"
+        />
       )}
-    />
+    </div>
   );
 }
 

@@ -3,7 +3,9 @@ import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { isActive } from "./lib/entitlements";
+import { deleteBlocker } from "./lib/skuDelete";
 import { audit, requireStaff } from "./lib/staff";
 import { getCurrentUserOrNull } from "./users";
 
@@ -207,6 +209,7 @@ async function publicSku(ctx: QueryCtx, sku: Doc<"skus">) {
     featured: sku.featured,
     createdAt: sku.createdAt,
     creator: creator ? { username: creator.username, name: creator.name, imageUrl: creator.imageUrl } : null,
+    byCrystal: sku.byCrystal === true,
     grants: sku.grants.map((g) => ({ kind: g.kind, payload: g.payload, label: g.label })),
   };
 }
@@ -552,12 +555,12 @@ export const seedStarterCatalog = mutation({
     }
 
     const starter = [
-      { slug: "aurora-ring", name: "Aurora Ring", description: "A quiet northern glow around your avatar.", category: "avatar-decorations", priceCents: 199, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:aurora", anchor: "center", x: 50, y: 0, width: 100 }]), label: "Aurora Ring" }] },
-      { slug: "starlight-sparkles", name: "Starlight Sparkles", description: "Six little stars that catch the light.", category: "avatar-decorations", priceCents: 199, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:sparkles", anchor: "center", x: 50, y: 0, width: 100 }]), label: "Starlight Sparkles" }] },
-      { slug: "rose-heart", name: "Rose Heart", description: "A soft pink constellation of hearts.", category: "avatar-decorations", priceCents: 199, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:hearts", anchor: "center", x: 50, y: 0, width: 100 }]), label: "Rose Heart" }] },
-      { slug: "royal-crown", name: "Royal Crown", description: "A tiny crown with a lot of confidence.", category: "avatar-decorations", priceCents: 299, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:crown", anchor: "center", x: 50, y: 0, width: 100 }]), label: "Royal Crown" }] },
-      { slug: "constellation-set", name: "Constellation Set", description: "Aurora, sparkles and rose hearts together.", category: "avatar-decorations", priceCents: 499, type: "bundle" as const, grants: ["builtin:aurora", "builtin:sparkles", "builtin:hearts"].map((url, index) => ({ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url, anchor: "center", x: 50, y: 0, width: 100 }]), label: ["Aurora Ring", "Starlight Sparkles", "Rose Heart"][index] })) },
-      { slug: "crystal-geode-basic", name: "Crystal Geode Basic", description: "10% off cosmetics, 1080p30 streaming and a rotating monthly Geode badge.", category: "crystal-geode", priceCents: 499, type: "subscription" as const, interval: "month" as const, grants: [{ kind: "plan" as const, payload: JSON.stringify({ plan: "crystal-geode-basic", cosmeticDiscountBps: 1000, streamResolution: "1080p", streamFrameRate: 30, monthlyBadge: true }), label: "Crystal Geode Basic" }] },
+      { slug: "aurora-ring", name: "Aurora Ring", description: "A quiet northern glow around your avatar.", category: "avatar-decorations", priceCents: 199, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:aurora", anchor: "center", x: 50, y: 0, width: 126 }]), label: "Aurora Ring" }] },
+      { slug: "starlight-sparkles", name: "Starlight Sparkles", description: "Six little stars that catch the light.", category: "avatar-decorations", priceCents: 199, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:sparkles", anchor: "center", x: 50, y: 0, width: 126 }]), label: "Starlight Sparkles" }] },
+      { slug: "rose-heart", name: "Rose Heart", description: "A soft pink constellation of hearts.", category: "avatar-decorations", priceCents: 199, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:hearts", anchor: "center", x: 50, y: 0, width: 126 }]), label: "Rose Heart" }] },
+      { slug: "royal-crown", name: "Royal Crown", description: "A tiny crown with a lot of confidence.", category: "avatar-decorations", priceCents: 299, type: "cosmetic" as const, grants: [{ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url: "builtin:crown", anchor: "center", x: 50, y: 0, width: 126 }]), label: "Royal Crown" }] },
+      { slug: "constellation-set", name: "Constellation Set", description: "Aurora, sparkles and rose hearts together.", category: "avatar-decorations", priceCents: 499, type: "bundle" as const, grants: ["builtin:aurora", "builtin:sparkles", "builtin:hearts"].map((url, index) => ({ kind: "avatarDecoration" as const, payload: JSON.stringify([{ kind: "image", url, anchor: "center", x: 50, y: 0, width: 126 }]), label: ["Aurora Ring", "Starlight Sparkles", "Rose Heart"][index] })) },
+      { slug: "crystal-geode-basic", name: "Crystal Geode Basic", description: "10% off cosmetics, 1080p30 streaming and a Geode badge that grows from Quartz to Opal.", category: "crystal-geode", priceCents: 499, type: "subscription" as const, interval: "month" as const, grants: [{ kind: "plan" as const, payload: JSON.stringify({ plan: "crystal-geode-basic", cosmeticDiscountBps: 1000, streamResolution: "1080p", streamFrameRate: 30, monthlyBadge: true }), label: "Crystal Geode Basic" }] },
       { slug: "crystal-geode", name: "Crystal Geode", description: "25% off cosmetics, 1440p60 streaming, premium profile effects and early access to drops.", category: "crystal-geode", priceCents: 999, type: "subscription" as const, interval: "month" as const, grants: [{ kind: "plan" as const, payload: JSON.stringify({ plan: "crystal-geode", cosmeticDiscountBps: 2500, streamResolution: "1440p", streamFrameRate: 60, profileEffects: true, earlyAccess: true, monthlyBadge: true }), label: "Crystal Geode" }] },
     ];
     const created: Id<"skus">[] = [];
@@ -589,5 +592,49 @@ export const seedStarterCatalog = mutation({
     }
     await audit(ctx, staff.user._id, "catalog.seed", undefined, `starter catalogue: ${created.length} SKUs`);
     return { categories: categories.size, skus: created.length };
+  },
+});
+
+// --- Staff: deleting an item ------------------------------------------------------
+
+/**
+ * What deleting an item would touch, for the confirmation: who owns it, how it has sold, and what Stripe holds for it.
+ * Counts are capped (the cap is shown as "N+") so a very popular item can't make this read the whole table.
+ */
+export const adminDeletePreview = query({
+  args: { skuId: v.id("skus") },
+  handler: async (ctx, { skuId }) => {
+    await requireStaff(ctx, "catalog.read");
+    const sku = await ctx.db.get(skuId);
+    if (!sku) return null;
+    const CAP = 5000;
+    const entitlements = await ctx.db.query("entitlements").withIndex("by_sku", (q) => q.eq("skuId", skuId)).take(CAP);
+    const orders = await ctx.db.query("orders").withIndex("by_sku", (q) => q.eq("skuId", skuId)).take(CAP);
+    return {
+      blocker: deleteBlocker(sku),
+      owners: entitlements.filter((e) => isActive(e)).length,
+      ordersPaid: orders.filter((o) => o.status === "paid").length,
+      capped: entitlements.length >= CAP || orders.length >= CAP,
+      /** Someone is part-way through buying it. Deleting now could take their payment for something that no longer exists. */
+      pendingRecent: orders.some((o) => o.status === "pending" && Date.now() - o.createdAt < 24 * 60 * 60 * 1000),
+      onStripe: !!(sku.stripeProductId || sku.stripePriceId),
+    };
+  },
+});
+
+/**
+ * The delete itself, after Stripe has been dealt with. It checks nothing about the item's address, slug, picture or
+ * grants — an item whose data has gone bad is exactly the kind that can't pass `adminUpsertSku`'s validation, so this
+ * must not depend on it. Orders and creator earnings are left alone: they are the financial record, and everything that
+ * reads them already copes with an item that has been removed.
+ */
+export const deleteSkuRecord = internalMutation({
+  args: { skuId: v.id("skus"), actorId: v.id("users"), summary: v.string() },
+  handler: async (ctx, { skuId, actorId, summary }) => {
+    const sku = await ctx.db.get(skuId);
+    if (!sku) return { deleted: false };
+    await ctx.db.delete(skuId);
+    await audit(ctx, actorId, "catalog.sku.delete", { type: "sku", id: skuId }, `Deleted "${sku.name}" (${sku.slug}) · ${summary}`);
+    return { deleted: true };
   },
 });

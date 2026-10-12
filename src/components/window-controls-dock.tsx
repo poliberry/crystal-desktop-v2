@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+
 import { WindowControls } from "@/components/window-controls";
 import { useWindowControls } from "@/hooks/use-window-controls";
 
@@ -19,14 +22,21 @@ export const WINDOW_CONTROLS_HEIGHT = 32;
  */
 export function WindowControlsDock() {
   const { supported } = useWindowControls();
-  if (!supported) return null;
-  return (
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!supported || !mounted) return null;
+  // Portalled to <body>, which puts it after everything else in the document. That matters in Electron: where a drag
+  // region (the top bar) and a no-drag region (these buttons) overlap, the one later in the document wins whatever the
+  // z-index, so a dock earlier in the tree than the bar has its clicks swallowed by the bar's drag area. The container is
+  // no-drag as well, so the whole corner is clickable and none of it can start a window drag.
+  return createPortal(
     <div
       className="pointer-events-none fixed top-0 right-0 z-[1000] flex items-start justify-end"
-      style={{ width: WINDOW_CONTROLS_WIDTH, height: WINDOW_CONTROLS_HEIGHT }}
+      style={{ width: WINDOW_CONTROLS_WIDTH, height: WINDOW_CONTROLS_HEIGHT, WebkitAppRegion: "no-drag" } as React.CSSProperties}
     >
       <WindowControls className="pointer-events-auto border-none" />
-    </div>
+    </div>,
+    document.body,
   );
 }
 

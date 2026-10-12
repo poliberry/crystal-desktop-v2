@@ -21,6 +21,7 @@ import { useProjectAssets } from "@/studio/storage/assets";
 import { getAssetBlob } from "@/studio/storage/db";
 import type { BotData, Project } from "@/studio/model/types";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/locale";
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message.replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0] : "That didn't work.");
 
@@ -134,7 +135,7 @@ function PictureSlot({ label, hint, url, shape, onPick, onRemove, busy }: { labe
     <div className="space-y-1">
       <span className="text-xs font-medium">{label}</span>
       <div className="flex items-center gap-3">
-        <label className={cn("relative flex shrink-0 cursor-pointer items-center justify-center overflow-hidden border border-dashed border-border bg-card/40 text-muted-foreground hover:border-foreground/40 hover:text-foreground", shape === "avatar" ? "size-16 rounded-full" : "h-16 w-40 rounded-lg")}>
+        <label className={cn("relative flex shrink-0 cursor-pointer items-center justify-center overflow-hidden border border-dashed border-border bg-card/40 text-muted-foreground hover:border-foreground/40 hover:text-foreground", shape === "avatar" ? "size-16 rounded-xl" : "h-16 w-40 rounded-lg")}>
           {url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={url} alt="" className="size-full object-cover" />
@@ -201,6 +202,10 @@ export function BotEditor({ project, onChange }: { project: Project; onChange: (
   const enableEvents = useMutation(api.bots.enableEvents);
   const remove = useMutation(api.bots.remove);
   const sendTest = useAction(api.bots.sendTest);
+  // Staff who may review listings can publish their own bot's as Crystal's, skipping the queue. The server checks it again.
+  const staff = useQuery(api.staff.me, {});
+  const canPublishAsCrystal = !!staff?.permissions.includes("system.manage");
+  const publishListing = useMutation(api.bots.staffPublishListing);
 
   const wb = useCodeWorkbench(project);
   const [busy, setBusy] = useState<string | null>(null);
@@ -318,7 +323,7 @@ export function BotEditor({ project, onChange }: { project: Project; onChange: (
               <Button size="sm" variant="secondary" className="h-6 text-xs" onClick={() => void act("enable", async () => { await enableEvents({ botId: linked.id }); })}>Turn back on</Button>
             </p>
           )}
-          {linked.lastDelivery && <p className="text-xs text-muted-foreground">Last delivery {new Date(linked.lastDelivery.at).toLocaleString()}: {linked.lastDelivery.ok ? "delivered" : `failed — ${linked.lastDelivery.error ?? linked.lastDelivery.status}`}.</p>}
+          {linked.lastDelivery && <p className="text-xs text-muted-foreground">Last delivery {formatDateTime(linked.lastDelivery.at)}: {linked.lastDelivery.ok ? "delivered" : `failed — ${linked.lastDelivery.error ?? linked.lastDelivery.status}`}.</p>}
           <div className="flex flex-wrap gap-2 pt-1">
             <CopyButton text={linked.id} label="Copy ID" />
             <Button size="sm" variant="secondary" disabled={!!busy || !linked.endpointUrl} title={linked.endpointUrl ? undefined : "Only for a bot with an endpoint"} onClick={() => void test()}>{busy === "test" ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />} Send a test event</Button>
@@ -334,6 +339,29 @@ export function BotEditor({ project, onChange }: { project: Project; onChange: (
       )}
 
       {linked && <ListingNotice linked={linked} wantsPublic={bot.visibility === "public"} name={project.name} description={bot.description} />}
+
+      {linked && canPublishAsCrystal && (linked.pending || linked.visibility === "public") && (
+        <div className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+          <p className="font-medium">Publish as Crystal</p>
+          <p className="text-xs text-muted-foreground">Staff only. Puts this bot&apos;s public listing live now, without review, and shows it as Crystal&apos;s instead of yours. The bot still runs on your servers with your token.</p>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy !== null}
+            onClick={() => {
+              if (!window.confirm("List this bot publicly as Crystal, without review?")) return;
+              setBusy("Publishing…");
+              setError(null);
+              publishListing({ botId: linked.id as never })
+                .then(() => setNotice("Listed publicly as Crystal."))
+                .catch((e) => setError(messageOf(e)))
+                .finally(() => setBusy(null));
+            }}
+          >
+            Publish as Crystal (no review)
+          </Button>
+        </div>
+      )}
 
       <div className="space-y-4 rounded-xl border border-border p-4">
         <p className="text-sm font-medium">Profile</p>

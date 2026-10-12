@@ -151,7 +151,8 @@ export function OutboxFlusher() {
               storageId = await uploadToStorage(uploadUrl, stored.blob.type ? stored.blob : new Blob([stored.blob], { type: attachment.fileType }));
             }
           }
-          if (!storageId && !cdnKey) throw new Error("Attachment never uploaded.");
+          // A KLIPY GIF is an address and nothing uploaded; the server only accepts that for KLIPY's own hosts.
+          if (!storageId && !cdnKey && !cdnUrl) throw new Error("Attachment never uploaded.");
           attachments.push({
             ...(storageId ? { storageId: storageId as Id<"_storage"> } : {}),
             ...(cdnKey ? { cdnKey } : {}),

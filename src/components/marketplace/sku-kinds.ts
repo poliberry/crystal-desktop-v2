@@ -67,7 +67,7 @@ export const GRANT_KIND_META: Record<GrantKind, { label: string; plural: string;
     label: "Theme pack",
     plural: "Theme packs",
     icon: Shapes,
-    blurb: "A font, colours, sounds and icons for your whole client.",
+    blurb: "A font, colours, background, sounds and icons for your whole client.",
   },
   plan: {
     label: "Crystal plan",
@@ -91,6 +91,8 @@ export interface ShopSku {
   featured: boolean;
   createdAt: number;
   creator: { username: string; name: string; imageUrl?: string } | null;
+  /** Published by staff as Crystal itself, so it is "By Crystal" and has no creator. */
+  byCrystal?: boolean;
   grants: { kind: GrantKind; payload?: string; label?: string }[];
 }
 

@@ -2,7 +2,7 @@
 
 import { useStudioChrome } from "@/studio/shell/chrome";
 import { useConvex, useQuery } from "convex/react";
-import { AlertTriangle, CheckCircle2, Loader2, Send, XCircle } from "lucide-react";
+import { AlertTriangle, BadgeCheck, CheckCircle2, Loader2, Send, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { Problem } from "@/studio/model/compile";
 import type { Listing, Project } from "@/studio/model/types";
-import { checkProject, grantKindsOf, submitProject } from "@/studio/submit";
+import { checkProject, grantKindsOf, publishAsCrystal, submitProject } from "@/studio/submit";
 import { listingState, sameKinds } from "../../../convex/lib/listingUpdate";
 import { api } from "../../../convex/_generated/api";
 import { listAssets } from "@/studio/storage/db";
@@ -85,6 +85,46 @@ export function SubmitPanel({ project, onChange, extraProblems = [] }: { project
   const waiting = latest && latest.status === "pending" ? latest : null;
   const cents = listing.free ? 0 : Math.round(Number(listing.priceUsd) * 100);
 
+  // --- Staff only: publish as Crystal ---------------------------------------------------------------------------
+  // Shown to people who may write the catalogue. The server checks that again on every call; this only decides what to draw.
+  const staff = useQuery(api.staff.me, {});
+  const isStaff = !!staff?.permissions.includes("catalog.write");
+  const categories = useQuery(api.catalog.adminCategories, isStaff ? {} : "skip");
+  const crystalListings = useQuery(api.marketplace.staffCrystalListings, isStaff ? {} : "skip");
+  const [asCrystal, setAsCrystal] = useState(false);
+  const [categoryId, setCategoryId] = useState("");
+  const [featured, setFeatured] = useState(false);
+  /** Which of Crystal's listings to replace: "new" for a new listing. */
+  const [crystalTarget, setCrystalTarget] = useState<string>("new");
+  const [published, setPublished] = useState<string | null>(null);
+  const crystalCandidates = useMemo(() => (crystalListings ?? []).filter((l) => sameKinds(l.kinds, kinds)), [crystalListings, kinds]);
+  // A project already published as Crystal updates that listing by default: publishing again shouldn't make a second one.
+  const lastCrystal = project.store?.skuId;
+  useEffect(() => {
+    if (crystalTarget === "new" && lastCrystal && crystalCandidates.some((l) => l.skuId === lastCrystal)) setCrystalTarget(lastCrystal);
+    // Only when the list arrives or the project changes: a person who picks "a new listing" keeps it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastCrystal, crystalCandidates.length]);
+  const activeCategories = (categories ?? []).filter((c) => c.active);
+  const category = categoryId || activeCategories[0]?.id || "";
+
+  const publish = async () => {
+    setBusy("Starting…");
+    setError(null);
+    setPublished(null);
+    try {
+      const target = crystalTarget === "new" ? undefined : crystalTarget;
+      const r = await publishAsCrystal(convex, project, setBusy, { categoryId: category, featured, updatesSkuId: target });
+      onChange({ ...project, store: { submissionId: r.skuId, skuId: r.skuId } });
+      await chrome.saveSettings?.(project.id).catch(() => undefined);
+      setPublished(target ? `Updated “${listing.name}” in the store. Everyone who owns it gets the new version.` : `“${listing.name}” is live in the store as By Crystal, at /${r.slug}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message.replace(/\[CONVEX [^\]]*\]\s*/g, "").replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0] : "That didn't publish.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const send = async () => {
     setBusy("Starting…");
     setError(null);
@@ -148,9 +188,60 @@ export function SubmitPanel({ project, onChange, extraProblems = [] }: { project
           </ul>
         )}
         <StoreStatus state={state} note={"note" in state ? state.note : undefined} chosen={chosen} waiting={!!waiting} candidates={candidates} target={target} setTarget={setTarget} cents={cents} />
-        <Button disabled={errors.length > 0 || busy !== null} onClick={() => void send()}>
-          {busy ? <Loader2 className="animate-spin" /> : <Send />} {busy ?? (chosen ? (waiting ? "Replace the update waiting for review" : "Send update for review") : waiting ? "Replace what is waiting for review" : "Submit for review")}
-        </Button>
+        {isStaff && (
+          <div className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+            <label className="flex items-start justify-between gap-3">
+              <span>
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <BadgeCheck className="size-4 text-amber-500" /> Publish as Crystal
+                </span>
+                <span className="block text-xs text-muted-foreground">Staff only. Skips review and goes live straight away, under “By Crystal”. The artwork is still checked like anyone&apos;s; nothing is paid out.</span>
+              </span>
+              <Switch checked={asCrystal} onCheckedChange={setAsCrystal} aria-label="Publish as Crystal" />
+            </label>
+            {asCrystal && (
+              <div className="space-y-2">
+                <label className="block space-y-1 text-xs text-muted-foreground">
+                  Category
+                  <select aria-label="Category" value={category} onChange={(e) => setCategoryId(e.target.value)} className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground">
+                    {activeCategories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {crystalCandidates.length > 0 && (
+                  <label className="block space-y-1 text-xs text-muted-foreground">
+                    Publish as
+                    <select aria-label="Which Crystal listing" value={crystalTarget} onChange={(e) => setCrystalTarget(e.target.value)} className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground">
+                      <option value="new">A new listing</option>
+                      {crystalCandidates.map((l) => (
+                        <option key={l.skuId} value={l.skuId}>
+                          An update to “{l.name}”
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="flex items-center justify-between gap-3 text-sm">
+                  Feature it in the store
+                  <Switch checked={featured} onCheckedChange={setFeatured} aria-label="Feature it in the store" />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+        {isStaff && asCrystal ? (
+          <Button disabled={errors.length > 0 || busy !== null || !category} onClick={() => void publish()}>
+            {busy ? <Loader2 className="animate-spin" /> : <BadgeCheck />} {busy ?? (crystalTarget === "new" ? "Publish now as Crystal" : "Update the Crystal listing now")}
+          </Button>
+        ) : (
+          <Button disabled={errors.length > 0 || busy !== null} onClick={() => void send()}>
+            {busy ? <Loader2 className="animate-spin" /> : <Send />} {busy ?? (chosen ? (waiting ? "Replace the update waiting for review" : "Send update for review") : waiting ? "Replace what is waiting for review" : "Submit for review")}
+          </Button>
+        )}
+        {published && <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">{published}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
         {done && (
           <p className={cn("rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm")}>

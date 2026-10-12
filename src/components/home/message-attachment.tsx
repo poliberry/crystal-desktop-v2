@@ -17,6 +17,7 @@ import { copyImageToClipboard } from "@/lib/clipboard-image";
 import { downloadFile, formatBytes } from "@/lib/download";
 import { useCachedAttachmentSrc } from "@/lib/image-cache";
 import { attachmentKind } from "@/lib/media-type";
+import { isKlipyStickerAttachment } from "../../../convex/lib/klipy";
 
 /** One row of `messageAttachments`, as the message queries return it. Shared
  * by DM and channel messages — the two tables store attachments identically. */
@@ -46,6 +47,8 @@ function ImageAttachment({
   // download once the real message row replaces the optimistic one.
   const cachedSrc = useCachedAttachmentSrc(attachment.url ?? undefined);
   if (!attachment.url) return null;
+  // A KLIPY sticker is drawn on its own, small, with no frame, the way a sticker is.
+  const sticker = isKlipyStickerAttachment(attachment.fileName, attachment.url);
 
   const handleCopy = async () => {
     if (!attachment.url) return;
@@ -81,13 +84,17 @@ function ImageAttachment({
             type="button"
             onClick={() => setOpen(true)}
             onContextMenu={(e) => e.stopPropagation()}
-            className="mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
+            className={
+              sticker
+                ? "mt-1 block cursor-zoom-in transition-opacity hover:opacity-90"
+                : "mt-1 block cursor-zoom-in overflow-hidden rounded-md border transition-opacity hover:opacity-90"
+            }
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={cachedSrc ?? attachment.url}
               alt={attachment.fileName}
-              className="max-h-80 max-w-full"
+              className={sticker ? "max-h-40 max-w-40" : "max-h-80 max-w-full"}
               loading="lazy"
               decoding="async"
             />

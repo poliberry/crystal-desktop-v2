@@ -83,3 +83,24 @@ try {
   if (e && e.code === "MODULE_NOT_FOUND") console.log("[studio] kept the committed SDK reference (typescript5 isn't installed)");
   else throw e;
 }
+
+// --- The agent kit ----------------------------------------------------------------------------------
+// The MCP server and what it reads, for AI agents working in a project folder (see scripts/build-agent-kit.mjs). Built
+// from the guides and the SDK reference above, so it comes after them.
+const { buildAgentKit } = await import("./build-agent-kit.mjs");
+const kit = await buildAgentKit();
+console.log(`[studio] built the agent kit ${kit.version}`);
+
+// --- The effect library, as a fallback -------------------------------------------------------------------------------
+// The same files `effectLibraryPublish:publish` puts on the CDN, served from the app itself, so Studio's Library tab works when
+// the CDN can't be reached from the app (offline, or a CDN that doesn't allow the app's origin) and before the library is
+// published. Built from the source of the effects, never written by hand.
+{
+  const { EFFECT_LIBRARY, LIBRARY_FOLDER, catalogOf, publishedEffect } = await import("../convex/lib/effectLibrary.ts");
+  const dir = join(root, "public", LIBRARY_FOLDER);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  for (const def of EFFECT_LIBRARY) writeFileSync(join(dir, `${def.id}.json`), JSON.stringify(publishedEffect(def)));
+  writeFileSync(join(dir, "index.json"), JSON.stringify(catalogOf()));
+  console.log(`[studio] wrote the effect library (${EFFECT_LIBRARY.length} effects) to public/${LIBRARY_FOLDER}`);
+}

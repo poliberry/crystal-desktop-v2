@@ -81,7 +81,7 @@ function EditorFor({ project, all, onChange, onOpen }: { project: Project; all: 
 
 function Workspace() {
   const trafficLights = useTrafficLightsInset();
-  const { projects, loadErrors, dirty, update, save, revert, create, duplicate, remove } = useProjects();
+  const { projects, loadErrors, dirty, revisions, update, save, revert, create, duplicate, remove } = useProjects();
   // A code project's unsaved *files* are inside its editor; it reports them here (see StudioChrome).
   const unsavedFiles = useRef(new Map<string, { dirty: boolean; save: () => Promise<void> }>());
   const [, bumpUnsaved] = useState(0);
@@ -398,7 +398,7 @@ function Workspace() {
                     {mounted.map((p) => (
                       <div key={p.id} className={p.id === active.id ? "h-full" : "hidden"} aria-hidden={p.id !== active.id}>
                         <EditorActiveContext.Provider value={activity === "projects" && p.id === active.id}>
-                          <EditorFor project={p} all={all} onChange={(next) => update(p.id, () => next)} onOpen={open} />
+                          <EditorFor key={`${p.id}:${revisions.get(p.id) ?? 0}`} project={p} all={all} onChange={(next) => update(p.id, () => next)} onOpen={open} />
                         </EditorActiveContext.Provider>
                       </div>
                     ))}

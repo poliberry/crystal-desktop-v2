@@ -26,11 +26,13 @@ import { cn } from "@/lib/utils";
 export function FriendActionButton({
   userId,
   username,
+  isBot = false,
   hideMessage = false,
   className,
 }: {
   userId: Id<"users">;
   username: string;
+  isBot?: boolean;
   /** Drop the **Message** case, for a card shown inside the very DM that
    * button opens. The other three still mean something there, so only that
    * one goes. */
@@ -51,7 +53,7 @@ export function FriendActionButton({
 
   // Undefined while the query is in flight — showing "Add Friend" then
   // flipping it to "Message" a beat later would be worse than a placeholder.
-  if (!relationship || relationship.kind === "self") return null;
+  if (!isBot && (!relationship || relationship.kind === "self")) return null;
   if (username.toLowerCase() === "crystal") return null;
 
   const run = async (action: () => Promise<unknown>) => {
@@ -71,6 +73,20 @@ export function FriendActionButton({
       const conversationId = await getOrCreateDirect({ friendId: userId });
       navigation.openConversation(conversationId as Id<"conversations">);
     });
+
+  if (isBot) {
+    return (
+      <div className={cn("space-y-1", className)}>
+        <Button type="button" variant="outline" disabled={busy} onClick={() => void openDm()} className="w-full">
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageSquare className="size-4" />}
+          Message
+        </Button>
+        {error && <p className="text-[11px] text-destructive">{error}</p>}
+      </div>
+    );
+  }
+
+  if (!relationship) return null;
 
   const config = {
     friends: {

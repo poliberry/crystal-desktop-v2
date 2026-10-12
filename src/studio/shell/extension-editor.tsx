@@ -1,7 +1,7 @@
 "use client";
 
 import { useConvex, useQuery } from "convex/react";
-import { CheckCircle2, Hammer, Info, Loader2, Play, Send, Square, AlertTriangle } from "lucide-react";
+import { AlertTriangle, BadgeCheck, CheckCircle2, Hammer, Info, Loader2, Play, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -151,7 +151,12 @@ export function ExtensionEditor({ project, onChange }: { project: Project; onCha
   const blocker = existing ? versionBlocker(versions.filter((v) => v.status !== "pending").map((v) => v.version), ext.version) : null;
   const suggested = nextVersion(versions.map((v) => v.version));
 
-  const publish = async () => {
+  // Staff who may review extensions can also publish one as Crystal, skipping the queue. The server checks that on every call.
+  const staff = useQuery(api.staff.me, {});
+  const canPublishAsCrystal = !!staff?.permissions.includes("system.manage");
+
+  const publish = async (asCrystal = false) => {
+    if (asCrystal && !window.confirm(`Publish ${ext.slug} ${ext.version} as Crystal?\n\nIt goes live for everyone straight away, with no review. The code is still scanned, and a blocking finding still stops it.`)) return;
     setBusy(true);
     setError(null);
     setPublished(null);
@@ -164,6 +169,11 @@ export function ExtensionEditor({ project, onChange }: { project: Project; onCha
       if (blocker) throw new Error(blocker);
       const verdict = checkExtension(project.name, ext, built.code);
       if (!verdict.ok) throw new Error(verdict.findings.find((f) => f.level === "error")?.message ?? "It didn't pass the checks.");
+      if (asCrystal) {
+        await convex.mutation(api.extensions.staffPublishVersion, { slug: ext.slug, manifest: manifestOf(project.name, ext), source: built.code });
+        setPublished(`Version ${ext.version} is live as By Crystal. It was not reviewed.`);
+        return;
+      }
       await convex.mutation(api.extensions.submitVersion, { slug: ext.slug, manifest: manifestOf(project.name, ext), source: built.code, replacePending: !!waiting });
       setPublished(live ? `Version ${ext.version} was sent for review. v${live.version} stays live until it is approved; then people who have it are offered the update.` : `Version ${ext.version} was sent for review.`);
     } catch (e) {
@@ -306,6 +316,7 @@ export function ExtensionEditor({ project, onChange }: { project: Project; onCha
         { label: "Build", run: () => void build(), disabled: !wb.ready || wb.build.status === "building" },
         { label: running || logs.length > 0 || tree ? "Run again" : "Run", run: () => void run(), disabled: !wb.ready || !check.manifest },
         { label: live ? "Send update for review" : "Send for review", run: () => void publish(), disabled: busy || !wb.ready || !publishing?.allowed },
+        ...(canPublishAsCrystal ? [{ label: "Publish as Crystal (no review)", run: () => void publish(true), disabled: busy || !wb.ready }] : []),
       ]}
       toolbar={
         <>
@@ -318,6 +329,11 @@ export function ExtensionEditor({ project, onChange }: { project: Project; onCha
           <button type="button" className={flat} disabled={busy || !wb.ready || !publishing?.allowed} onClick={() => void publish()}>
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />} {live ? "Send update for review" : "Send for review"}
           </button>
+          {canPublishAsCrystal && (
+            <button type="button" className={flat} disabled={busy || !wb.ready} onClick={() => void publish(true)} title="Staff only: goes live now, as By Crystal, with no review">
+              <BadgeCheck className="size-3.5" /> Publish as Crystal
+            </button>
+          )}
         </>
       }
     />

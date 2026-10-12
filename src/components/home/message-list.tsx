@@ -36,12 +36,14 @@ import {
 } from "@/lib/message-cache";
 import { discard, retryNow } from "@/lib/outbox";
 import { mentionsUserDirectly } from "@/lib/mentions";
+import { useLocale } from "@/hooks/use-locale";
 import { formatMessageTimestamp, isSameDay } from "@/lib/message-time";
 import { MessageDayDivider } from "@/components/home/message-day-divider";
 import { useOutboxOverlay, type OverlayReplyPreview } from "@/lib/outbox-overlay";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import type { ReplyDraft } from "@/lib/reply";
 import { cn } from "@/lib/utils";
+import { BotTag } from "@/components/bot-tag";
 
 interface MessageListProps {
   conversationId: Id<"conversations">;
@@ -69,6 +71,7 @@ interface MessageDoc {
     id: Id<"users">;
     name: string;
     username: string;
+    isBot?: boolean;
     imageUrl?: string;
     /** The frame around their avatar, as stored — see `decorationLayers`. */
     avatarDecoration?: string;
@@ -107,6 +110,8 @@ const MessageRow = memo(function MessageRow({
   onReply: (draft: ReplyDraft) => void;
   onJumpTo: (messageId: string) => void;
 }) {
+  // The time under the name is worded by the reader's region; a row is memoised, so it has to listen for a change itself.
+  useLocale();
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
   const updateMessage = useOutboxMutation("edit", "dm");
@@ -223,6 +228,7 @@ const MessageRow = memo(function MessageRow({
         {startsGroup && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold">{message.author?.name ?? "Unknown"}</span>
+            {message.author?.isBot && <BotTag />}
             <span className="text-[11px] text-muted-foreground">
               {formatMessageTimestamp(message.createdAt)}
             </span>

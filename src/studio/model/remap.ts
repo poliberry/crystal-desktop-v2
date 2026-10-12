@@ -30,5 +30,6 @@ export function remapAssetIds(project: Project, remap: (id: string) => string): 
     if (tp.font?.faces) tp.font.faces = tp.font.faces.map((f) => ({ ...f, assetId: remap(f.assetId) }));
     for (const k of Object.keys(tp.sounds)) tp.sounds[k] = remap(tp.sounds[k]);
     for (const k of Object.keys(tp.icons)) tp.icons[k] = remap(tp.icons[k]);
+    if (tp.background) tp.background.assetId = remap(tp.background.assetId);
   }
 }

@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { downloadFile } from "@/lib/download";
 import { useCachedAttachmentSrc } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/locale";
 
 /**
  * Opening zoom, as a fraction of the image's true pixel size.
@@ -245,7 +246,7 @@ export function ImageLightbox({
               </p>
               {createdAt !== undefined && (
                 <p className="truncate text-[11px] text-white/70">
-                  {new Date(createdAt).toLocaleString()}
+                  {formatDateTime(createdAt)}
                 </p>
               )}
             </div>

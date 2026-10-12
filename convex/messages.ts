@@ -9,6 +9,7 @@ import { allowsReply, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { getCurrentUserOrThrow } from "./users";
+import { isAcceptableAttachmentSource } from "./lib/klipy";
 import { effectiveFileType } from "./lib/mediaType";
 
 function r2UrlForKey(key: string): string | null {
@@ -180,6 +181,7 @@ export const list = query({
           author: author
             ? {
                 id: author._id,
+                isBot: !!author.isBot,
                 name: author.name,
                 username: author.username,
                 imageUrl: author.imageUrl,
@@ -265,6 +267,8 @@ export const send = mutation({
       } else if (!attachment.cdnKey && !attachment.cdnUrl) {
         throw new Error("Attachment missing storageId/cdnKey");
       }
+      // An address with nothing uploaded behind it is only ever a KLIPY GIF, clip or sticker.
+      if (!isAcceptableAttachmentSource(attachment)) throw new Error("That attachment isn't from somewhere Crystal can show.");
     }
 
     const otherMembers = (
@@ -528,6 +532,7 @@ export const listPinned = query({
           author: author
             ? {
                 id: author._id,
+                isBot: !!author.isBot,
                 name: author.name,
                 username: author.username,
                 imageUrl: author.imageUrl,

@@ -83,9 +83,9 @@ export function PictureEditor({ project, onChange }: { project: Project; onChang
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={asset.url} alt="" aria-hidden className="fade-mask-l pointer-events-none absolute inset-0 size-full object-cover opacity-20" />
                     )}
-                    <Avatar className="relative size-7">
-                      <AvatarImage src={me?.imageUrl} alt="" />
-                      <AvatarFallback className="text-[10px]">{name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                    <Avatar className="relative size-7 rounded-md">
+                      <AvatarImage src={me?.imageUrl} alt="" className="rounded-md" />
+                      <AvatarFallback className="rounded-md text-[10px]">{name.slice(0, 2).toUpperCase()}</AvatarFallback>
                     </Avatar>
                     <span className="relative text-sm font-medium">{i === 0 ? name : i === 1 ? "A friend" : "Someone else"}</span>
                   </div>
@@ -94,9 +94,9 @@ export function PictureEditor({ project, onChange }: { project: Project; onChang
             ) : (
               <div className="relative mx-auto h-64 w-72 overflow-hidden rounded-2xl bg-neutral-800">
                 <div className="h-[28%] bg-gradient-to-br from-violet-500/50 to-sky-500/40" />
-                <Avatar className="absolute top-[18%] left-4 size-16 border-4 border-neutral-800">
-                  <AvatarImage src={me?.imageUrl} alt="" />
-                  <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                <Avatar className="absolute top-[18%] left-4 size-16 rounded-xl border-4 border-neutral-800">
+                  <AvatarImage src={me?.imageUrl} alt="" className="rounded-lg" />
+                  <AvatarFallback className="rounded-lg">{name.slice(0, 2).toUpperCase()}</AvatarFallback>
                 </Avatar>
                 <p className="absolute top-[56%] left-4 text-sm font-semibold text-white">{name}</p>
                 {isVideo ? <video src={asset.url} autoPlay loop muted playsInline className="pointer-events-none absolute inset-0 size-full object-cover" /> : <ProfileEffectLayer src={asset.url} rounded="rounded-2xl" />}

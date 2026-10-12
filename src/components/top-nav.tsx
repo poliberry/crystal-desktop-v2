@@ -30,6 +30,7 @@ import { Menu01Icon } from "@animateicons/react/huge";
 import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { cn } from "@/lib/utils";
 import { hasNativeWindowControls, useTrafficLightsInset } from "@/hooks/use-window-controls";
+import { useProfilePageOpen } from "@/components/profile/profile-page";
 
 /**
  * Replays the birthday celebration.
@@ -171,12 +172,17 @@ export function TopNav() {
   const nativeControls = hasNativeWindowControls();
   const sidebarShown = useRightSidebarShown();
   const reserveCorner = useReservesWindowControls() && !sidebarShown;
+  // Out of sight while a full-page profile is open, but still taking up its row: `invisible` rather than not rendering, so
+  // what is behind the profile doesn't reflow or remount, and nothing in the bar can be clicked through it.
+  const profileOpen = useProfilePageOpen();
 
   return (
     <header
+      data-pack-panel="clear"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       className={cn(
         "relative flex shrink-0 items-center justify-between gap-2 bg-background z-[99]",
+        profileOpen && "invisible",
         trafficLights ? "h-12" : "h-8",
         nativeControls && "pr-4",
       )}
@@ -226,7 +232,19 @@ export function TopNav() {
 
       {/* The window's buttons are fixed to the corner (WindowControlsDock). When the details sidebar is open that corner is
           the top of its column; otherwise it is this bar's end, and this keeps the bar's contents clear of it. */}
-      {reserveCorner && <div aria-hidden className="shrink-0" style={{ width: WINDOW_CONTROLS_WIDTH }} />}
+      {/* It is also a no-drag region, inside the bar's own drag one. The bar is draggable end to end, and on Windows and Linux
+          a drag region is the operating system's title bar: it swallows every click before the page sees it. Electron settles
+          a drag region overlapping a no-drag one by document order, so the dock being no-drag itself is not enough to hold
+          the corner. A child of the bar always comes after it, so this carves the corner out of it for certain. (With the
+          details sidebar showing, the corner is over that column instead, which has no drag region, hence only DMs and
+          channels worked.) */}
+      {reserveCorner && (
+        <div
+          aria-hidden
+          className="shrink-0 self-stretch"
+          style={{ width: WINDOW_CONTROLS_WIDTH, WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        />
+      )}
     </header>
   );
 }

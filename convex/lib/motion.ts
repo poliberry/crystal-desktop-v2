@@ -205,8 +205,17 @@ export interface MotionSpec {
   name: string;
   stage: { w: number; h: number };
   duration: number;
-  /** `loop` plays again at once; `once` plays through and then rests `rest` seconds on the last frame before playing again. */
-  loop: { mode: "loop" | "once"; rest: number };
+  /**
+   * `loop` plays again at once; `once` plays through and then rests `rest` seconds on the last frame before playing again.
+   *
+   * `from` makes the opening an **intro**: in `loop` mode the first pass plays from 0 to the end, and every repeat after it
+   * picks up at `from` rather than at 0 — so what is before `from` plays once, when the design is first shown, and what is
+   * after it is the **idle** that goes round for as long as the design is on screen. Absent (or 0) is the whole design
+   * repeating, which is what every design made before this existed does; it is left out of the stored form when 0, so
+   * those designs keep their content addresses. An app that predates it plays the intro on every repeat, which is a
+   * degraded design and not a broken one.
+   */
+  loop: { mode: "loop" | "once"; rest: number; from?: number };
   clips: Clip[];
 }
 
@@ -582,13 +591,36 @@ export function sampleClips(clips: Clip[], t: number, stage: { w: number; h: num
     .filter((r): r is Resolved => r !== null);
 }
 
+/** The shortest idle a design with an intro may have: less is a flicker, not a loop. */
+export const MIN_IDLE = 0.25;
+
+/**
+ * Seconds of intro: what plays once, before the loop (`loop.from`). 0 for a design with none, and for one that plays
+ * once and rests, where the idea doesn't apply.
+ */
+export function introLength(spec: Pick<MotionSpec, "duration" | "loop">): number {
+  if (spec.loop.mode !== "loop") return 0;
+  const from = spec.loop.from;
+  if (typeof from !== "number" || !Number.isFinite(from) || from <= 0) return 0;
+  return Math.min(from, Math.max(0, spec.duration - MIN_IDLE));
+}
+
 /**
  * The time to sample a design at, for wall-clock time `elapsed` since it started playing: loops, or plays once and
- * rests on the last frame for `rest` seconds before playing again.
+ * rests on the last frame for `rest` seconds before playing again. With an intro (see `MotionSpec.loop.from`) the
+ * first pass is the whole design and each repeat is only the part after the intro.
  */
 export function playbackTime(spec: Pick<MotionSpec, "duration" | "loop">, elapsed: number): number {
   const d = Math.max(0.001, spec.duration);
-  if (spec.loop.mode === "loop") return elapsed < 0 ? 0 : elapsed % d;
+  if (spec.loop.mode === "loop") {
+    if (elapsed < 0) return 0;
+    // The intro is whatever is before `from`: played once, on the first pass, and skipped by every repeat. Kept clear of
+    // the end by a quarter of a second so there is always an idle left to go round, whatever the file says.
+    const from = introLength(spec);
+    if (from === 0 || elapsed < d) return elapsed % d;
+    const idle = d - from;
+    return from + ((elapsed - from) % idle);
+  }
   const cycle = d + Math.max(0, spec.loop.rest);
   const x = elapsed < 0 ? 0 : elapsed % cycle;
   // Held on the last frame, which is just before the end so that clips ending there are still drawn.
@@ -1051,13 +1083,17 @@ export function normalizeMotionSpec(input: unknown, assertUrl: UrlCheck, opts: {
   const ctx: Ctx = { studio: opts.studio === true, assertUrl, clips: 0, images: new Set(), ids: new Set() };
   const clips = clipsOf(input.clips, ctx, 0, duration);
   const loop = isObj(input.loop) ? input.loop : {};
+  const mode = oneOf(loop.mode, ["loop", "once"] as const, "loop");
+  // The intro is only meaningful for a looping design, and always leaves an idle to loop. Left out when 0 so a design
+  // without one is stored exactly as it always was (its content address is a hash of what is stored).
+  const from = mode === "loop" ? round3(num(loop.from, 0, Math.max(0, duration - MIN_IDLE), 0)) : 0;
   return {
     v: 1,
     kind,
     name,
     stage,
     duration,
-    loop: { mode: oneOf(loop.mode, ["loop", "once"] as const, "loop"), rest: round3(num(loop.rest, 0, 30, 2)) },
+    loop: { mode, rest: round3(num(loop.rest, 0, 30, 2)), ...(from > 0 ? { from } : {}) },
     clips,
   };
 }

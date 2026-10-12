@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   RoomEvent,
   Track,
@@ -9,6 +9,8 @@ import {
 } from "livekit-client";
 import { Eye, EyeOff, MonitorUp, Plus } from "lucide-react";
 
+import { useAudioPreferences } from "@/components/audio-provider";
+import { subscribeAttentionGain, subscribeAttentionOverrides, streamVolume } from "@/lib/audio-attention";
 import { useWindowFocus } from "@/hooks/use-window-focus";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
@@ -89,6 +91,27 @@ export function ScreenShareTile({
   localVolumeRef.current = localVolume ?? 1;
   localMutedRef.current = !!localMuted;
 
+  // Audio Attention may turn this stream down while others talk. The level is applied to the audio elements directly, as it
+  // changes many times a second during a fade: see src/lib/audio-attention.ts.
+  const { audioAttention } = useAudioPreferences();
+  const attentionRef = useRef(audioAttention);
+  attentionRef.current = audioAttention;
+  const identity = participant.identity;
+  const applyVolume = useCallback(() => {
+    const vol = streamVolume(localVolumeRef.current, localMutedRef.current, identity, attentionRef.current);
+    audioRef.current?.querySelectorAll("audio").forEach((el) => {
+      (el as HTMLAudioElement).volume = vol;
+    });
+  }, [identity]);
+  useEffect(() => {
+    const offGain = subscribeAttentionGain(applyVolume);
+    const offChoice = subscribeAttentionOverrides(applyVolume);
+    return () => {
+      offGain();
+      offChoice();
+    };
+  }, [applyVolume]);
+
   // --- Video effect (re-runs when the watch gate changes, in addition to
   // participant changes, so a tile only downloads/decodes video once
   // watched) ---
@@ -159,7 +182,7 @@ export function ScreenShareTile({
       if (isLocal || !audioEnabled) return;
       const el = track.attach();
       el.style.display = "none";
-      el.volume = localMutedRef.current ? 0 : localVolumeRef.current;
+      el.volume = streamVolume(localVolumeRef.current, localMutedRef.current, identity, attentionRef.current);
       container?.appendChild(el);
       void routeElementToPlayback(el);
     };
@@ -185,15 +208,12 @@ export function ScreenShareTile({
         .off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
       clear();
     };
-  }, [participant, isLocal, audioEnabled]);
+  }, [participant, isLocal, audioEnabled, identity]);
 
   // --- Volume / mute updates applied live to existing audio elements ---
   useEffect(() => {
-    const vol = localMuted ? 0 : (localVolume ?? 1);
-    audioRef.current?.querySelectorAll("audio").forEach((el) => {
-      (el as HTMLAudioElement).volume = vol;
-    });
-  }, [localVolume, localMuted]);
+    applyVolume();
+  }, [localVolume, localMuted, audioAttention, applyVolume]);
 
   const name = resolvedName || participant.name || participant.identity;
 

@@ -66,6 +66,9 @@ export const DEFAULT_PLAN: PlanPerks = {
 let counter = 0;
 export const newKey = () => `g${Date.now().toString(36)}${counter++}`;
 
+/** Kinds whose payload is edited as raw JSON rather than through controls. */
+const RAW_KINDS: readonly GrantKind[] = ["loungeScene", "themePack"];
+
 export function blankGrant(kind: GrantKind): GrantDraft {
   return {
     key: newKey(),
@@ -76,7 +79,7 @@ export function blankGrant(kind: GrantKind): GrantDraft {
     start: "#6366f1",
     end: "#ec4899",
     plan: { ...DEFAULT_PLAN },
-    raw: null,
+    raw: RAW_KINDS.includes(kind) ? "" : null,
   };
 }
 
@@ -134,6 +137,12 @@ export function grantToDraft(grant: { kind: GrantKind; payload?: string; label?:
     case "profileEffect":
     case "nameplate":
       return { ...draft, artwork: payload };
+    case "loungeScene":
+    case "themePack":
+      // Details too rich for a few controls (a scene's props and seats, a pack's colours, fonts and sounds). They are made in
+      // Studio, so the form keeps them exactly as stored and offers them as raw text. Without this the payload was dropped on
+      // load, and every save of a scene or theme pack failed with "needs its details as JSON".
+      return { ...draft, raw: payload };
     case "communityTheme":
       try {
         const colours = JSON.parse(payload) as { start?: string; end?: string };

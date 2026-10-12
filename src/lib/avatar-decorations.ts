@@ -25,6 +25,7 @@
  * there.
  */
 
+import { COLLECTION_PRESETS } from "@/lib/avatar-decoration-collection";
 import {
   defaultDecorationLayer,
   normalizeLayers,
@@ -239,7 +240,14 @@ export const DECORATION_PRESETS: DecorationPreset[] = [
   { key: "crown", name: "Crown", value: "builtin:crown", src: crown() },
 ];
 
-const PRESET_BY_KEY = new Map(DECORATION_PRESETS.map((p) => [p.key, p]));
+/**
+ * Everything `builtin:<key>` can resolve to: the free presets the editor offers, and the Archive collection's, which are
+ * for sale and so are drawn when someone owns one but are not in the picker (see `avatar-decoration-collection.ts`).
+ */
+const PRESET_BY_KEY = new Map<string, { src: string }>([
+  ...COLLECTION_PRESETS.map((p) => [p.key, p] as const),
+  ...DECORATION_PRESETS.map((p) => [p.key, p] as const),
+]);
 
 /**
  * The image a stored decoration value should render as, or `undefined` for no
@@ -310,15 +318,28 @@ export function decorationLayers(value: string | null | undefined): CosmeticLaye
       return [];
     }
     if (!Array.isArray(parsed)) return [];
-    return normalizeLayers(parsed.filter(isLayerish)).filter(
-      // A layer whose artwork this build can't resolve is dropped rather than
-      // drawn as a broken picture, for the same reason an unknown preset key
-      // leaves an avatar plain.
-      (layer) => !!decorationSrc(layer.url),
-    );
+    return normalizeLayers(parsed.filter(isLayerish))
+      .filter(
+        // A layer whose artwork this build can't resolve is dropped rather than
+        // drawn as a broken picture, for the same reason an unknown preset key
+        // leaves an avatar plain.
+        (layer) => !!decorationSrc(layer.url),
+      )
+      .map(presetAtItsOwnSize);
   }
 
   return decorationSrc(value) ? [defaultDecorationLayer(value)] : [];
+}
+
+/**
+ * The built-in presets are drawn on a canvas where the avatar is the middle 76%, so they only wrap an avatar when they are
+ * laid over a box 126% as wide as it (`defaultDecorationLayer`). The starter catalogue was first seeded with a width of 100,
+ * which puts every ring, crown and sparkle *inside* the picture. A preset at exactly 100 is that mistake — nobody chooses it,
+ * since the editor places presets at 126 — so it is drawn at the size the artwork was made for. Anything else is left alone.
+ */
+const PRESET_WIDTH = 126;
+function presetAtItsOwnSize(layer: CosmeticLayer): CosmeticLayer {
+  return layer.url.startsWith("builtin:") && layer.width === 100 ? { ...layer, width: PRESET_WIDTH } : layer;
 }
 
 /** Enough of a shape to be worth normalising. Anything missing its geometry is

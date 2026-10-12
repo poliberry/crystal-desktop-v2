@@ -24,6 +24,7 @@ import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { RightSidebarHeader } from "@/components/sidebar/right-sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type FriendStatus } from "@/lib/presence";
+import { BotTag } from "@/components/bot-tag";
 
 interface DmMemberListProps {
   conversationId: Id<"conversations">;
@@ -33,6 +34,7 @@ interface DmMember {
   userId: Id<"users">;
   name: string;
   username: string;
+  isBot?: boolean;
   imageUrl?: string;
   bio?: string;
   customStatus?: string;
@@ -94,7 +96,7 @@ function DmMemberGroup({ label, members }: { label: string; members: DmMember[] 
                   />
                 </Avatar>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{member.name}</p>
+                  <p className="flex items-center gap-1 truncate text-sm"><span className="truncate">{member.name}</span>{member.isBot && <BotTag />}</p>
                   {/* Both halves on one line — see `presenceHeadline` — and
                       neither for someone offline, since both are claims about
                       right now. */}

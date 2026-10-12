@@ -261,17 +261,23 @@ and looping always show the same picture.
 ### Theme pack spec (`ThemePackSpec`, v1)
 
 ```
-{ v: 1, font?: {family, url, format}, theme?: {isDark, colors: {token: colour}},
+{ v: 1, font?: {family, faces: [{url, format, weight, style}]}, theme?: {isDark, colors: {token: colour}, alt?},
+  background?: {url, dim, blur, panels},
   sounds?: {callJoin: url, message: url, …}, icons?: {video: svgUrl, …} }
 ```
 
-- **Font** — a `woff2`/`woff`/`ttf` on our CDN; applied with `@font-face` and `--font-sans`.
+- **Font** — a `woff2`/`woff`/`ttf`/`otf` family on our CDN; applied with `@font-face` and `--font-sans`.
 - **Theme** — only whitelisted design tokens, only plain colours (no `url()`, no `;`).
+- **Background** — a PNG/JPEG/WebP/GIF on our CDN behind the whole app. `dim` (0–90 %) is the theme's background
+  colour laid over the picture, `blur` (0–24 px) softens it, `panels` (30–100 %) is how opaque the app's big
+  panels are over it. The provider writes the address and numbers as CSS variables and sets `data-pack-bg` on
+  `<html>`; the layer and the see-through panels (`[data-pack-panel]`) are in `globals.css`. Dialogs and menus stay
+  solid. It is a separate field, not a colour token, because colours may never contain `url()`.
 - **Sounds** — keyed by the app's `UiSound` names; short clips.
 - **Icons** — keyed by lucide icon name; an SVG used as a CSS mask on `svg.lucide-<name>`,
   so it inherits `currentColor` and the app's own sizes. No component changes.
 
-Applied by a `ThemePackProvider` from the user's equipped pack (`users.themePackId`
+Applied by a `ThemePackProvider` from the user's equipped pack (`users.themePackEntitlementId`
 → entitlement), so it follows the person across devices.
 
 ### Cosmetic pack

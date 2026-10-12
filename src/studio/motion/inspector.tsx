@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Diamond, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
-  BLEND_MODES, DIRS, MOTION_LIMITS, PARTICLE_SHAPES, SHAPE_KINDS, TEXT_ANIMS, TRANSITION_KINDS, evalProp,
+  BLEND_MODES, DIRS, MIN_IDLE, MOTION_LIMITS, PARTICLE_SHAPES, SHAPE_KINDS, TEXT_ANIMS, TRANSITION_KINDS, evalProp, introLength,
   type BlendMode, type Clip, type ClipFx, type Source, type Transition,
 } from "../../../convex/lib/motion";
 import { ColourField, NumberField, Row, Section, SliderField } from "@/studio/editor/fields";
@@ -105,8 +105,25 @@ function DesignSettings({ editor }: { editor: MotionEditor }) {
           </select>
         </Row>
         {spec.loop.mode === "once" && <Row label="Rest"><SliderField value={spec.loop.rest} min={0} max={30} step={0.5} suffix=" s" onChange={(rest) => commit((s) => ({ ...s, loop: { ...s.loop, rest } }), "rest")} /></Row>}
+        {spec.loop.mode === "loop" && (
+          <Row label="Intro">
+            <SliderField
+              value={introLength(spec)}
+              min={0}
+              max={Math.max(0, Math.round((spec.duration - MIN_IDLE) * 10) / 10)}
+              step={0.1}
+              suffix=" s"
+              onChange={(from) => commit((s) => ({ ...s, loop: { mode: s.loop.mode, rest: s.loop.rest, ...(from > 0 ? { from } : {}) } }), "intro")}
+            />
+          </Row>
+        )}
         <p className="text-[11px] text-[var(--ai-dim)]">
-          {spec.loop.mode === "loop" ? "Plays again as soon as it ends. Make the end match the start so it doesn't jump." : "Plays through, holds the last frame for the rest, and plays again."} Stage {spec.stage.w}×{spec.stage.h}; up to {MOTION_LIMITS.duration} s and {MOTION_LIMITS.clips} clips.
+          {spec.loop.mode === "loop"
+            ? introLength(spec) > 0
+              ? `The first ${introLength(spec).toFixed(1)} s is an intro: it plays once when the profile is opened, then everything after it loops for as long as it stays open. Make the end match where the loop starts so it doesn't jump.`
+              : "Plays again as soon as it ends. Make the end match the start so it doesn't jump. Set an Intro to play the opening once and loop only what follows."
+            : "Plays through, holds the last frame for the rest, and plays again."}{" "}
+          Stage {spec.stage.w}×{spec.stage.h}; up to {MOTION_LIMITS.duration} s and {MOTION_LIMITS.clips} clips.
         </p>
       </Section>
       <p className="p-3 text-[11px] text-[var(--ai-dim)]">Select a clip on the timeline or in the viewer to change it.</p>

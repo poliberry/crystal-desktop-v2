@@ -76,6 +76,7 @@ const PAGE_TITLES: Partial<Record<TabTarget["type"], string>> = {
   settings: "Settings",
   "profile-editor": "Edit profile",
   "create-community": "New community",
+  marketplace: "Marketplace",
   "community-settings": "Community settings",
 };
 

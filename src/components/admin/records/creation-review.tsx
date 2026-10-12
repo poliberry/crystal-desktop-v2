@@ -208,6 +208,7 @@ function PackReview({ grant, name, id }: { grant: Grant; name: string; id: strin
   }
   if (spec.theme && !colours.background) findings.push({ level: "warn", text: "No background colour is set, so this theme mixes with whichever the person already has." });
   if (spec.theme && !colours.foreground) findings.push({ level: "warn", text: "No text colour is set." });
+  if (spec.background) findings.push({ level: "warn", text: "Puts a picture behind the whole app — check it is appropriate and that text stays readable over it." });
   if (spec.icons) findings.push({ level: "warn", text: `Replaces ${Object.keys(spec.icons).length} icon(s) — check each is recognisable and means what the original does.` });
   if (spec.sounds) findings.push({ level: "warn", text: `Replaces ${Object.keys(spec.sounds).length} sound(s) — listen to each for volume and content.` });
   if (spec.font) {
@@ -266,6 +267,20 @@ function PackReview({ grant, name, id }: { grant: Grant; name: string; id: strin
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {spec.background && (
+        <div className="space-y-2 rounded-xl border border-border p-3">
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <span>App-wide background</span>
+            <FileLink url={spec.background.url} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Dim {spec.background.dim}% · blur {spec.background.blur}px · panels {spec.background.panels}% opaque
+          </p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={spec.background.url} alt="The pack's background" className="max-h-56 rounded-lg border border-border object-cover" />
         </div>
       )}
 

@@ -289,6 +289,51 @@ body {
   height: 100%;
 }
 
+/*
+ * A theme pack's app-wide background. ThemePackProvider sets `data-pack-bg` on <html> and, in its own
+ * stylesheet, --pack-bg-image / --pack-bg-dim / --pack-bg-blur / --pack-bg-panels; with the attribute
+ * absent none of this matches. The picture is a fixed layer behind everything (so it never scrolls and
+ * is never clipped by a panel), and the app's big panels are let through it by `data-pack-panel`:
+ *   "background" / "sidebar"  a panel that paints the theme's colour of that name, now partly see-through
+ *   "clear"                   a panel nested in one of those, which has nothing to add
+ * Dialogs, menus and popovers are left solid on purpose, so text on them never depends on the picture.
+ * No backdrop-filter here: it would make every panel a containing block for fixed-position children.
+ */
+html[data-pack-bg] {
+  background-color: var(--background);
+}
+html[data-pack-bg] body {
+  background-color: transparent;
+}
+html[data-pack-bg]::before {
+  content: "";
+  position: fixed;
+  /* Blur fades a picture's edges to the page colour; reaching past the window keeps them out of sight. */
+  inset: calc(var(--pack-bg-blur, 0px) * -2);
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(
+      color-mix(in oklab, var(--background) var(--pack-bg-dim, 0%), transparent),
+      color-mix(in oklab, var(--background) var(--pack-bg-dim, 0%), transparent)
+    ),
+    var(--pack-bg-image);
+  background-size: auto, cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(var(--pack-bg-blur, 0px));
+}
+html[data-pack-bg] [data-pack-panel="background"],
+html[data-pack-bg] .settings-surface {
+  background-color: color-mix(in oklab, var(--background) var(--pack-bg-panels, 70%), transparent);
+}
+html[data-pack-bg] [data-pack-panel="sidebar"] {
+  background-color: color-mix(in oklab, var(--sidebar) var(--pack-bg-panels, 70%), transparent);
+}
+html[data-pack-bg] [data-pack-panel="clear"] {
+  background-color: transparent;
+}
+
 /* Applied to the emoji picker viewport so all emoji glyphs use the consistent
  * cross-platform Noto Color Emoji font when available. Cascade falls back to
  * OS emoji fonts (Apple Color Emoji, Segoe UI Emoji) if not loaded. */

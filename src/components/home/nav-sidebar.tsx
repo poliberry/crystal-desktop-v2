@@ -52,7 +52,7 @@ export function NavSidebar({
   const compact = communityNavStyle !== "rail";
 
   return (
-    <div className={cn(compact ? "w-80" : "w-64","flex shrink-0 flex-col border-x border-t rounded-tl-xl bg-background shadow-md")}>
+    <div data-pack-panel="clear" className={cn(compact ? "w-80" : "w-64","flex shrink-0 flex-col border-x border-t rounded-tl-xl bg-background shadow-md")}>
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
         <div className="relative">
           <SearchIcon className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />

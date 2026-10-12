@@ -6,10 +6,9 @@ import { PERMISSIONS } from "../permissions";
  *
  * The model, in one paragraph: a bot is an account that a *person with Manage Integrations* adds
  * to a community. That person chooses which of the bot's requested permissions to grant, and can
- * only grant ones they hold themselves. The grant is a role on the bot. And the bot's authority
- * stays tied to the person who gave it: whenever the bot acts, what it can do is the intersection
- * of its role and what its authorising member can still do. If they leave, are banned, or are
- * demoted, the bot loses exactly what they lost — straight away, with nothing to clean up.
+ * only grant ones they hold themselves. The grant is a role on the bot. After that approval, the
+ * bot's authority is independent of the person who added it; changing the bot's managed role is
+ * how its server permissions change.
  */
 
 // --- What a bot may ever hold ----------------------------------------------------------------
@@ -33,7 +32,7 @@ export interface BotPermissionInfo {
  *    community's own settings and deletion), Manage Integrations (a bot installing bots would be a
  *    ladder), Manage Game Servers (it holds panel credentials) and Manage Events.
  *  - **Everything on the list is delegated, not owned.** A bot's powers are the intersection of its
- *    grant and what the member who authorised it can still do, and the powers that make things —
+ *    grant and the powers that make things —
  *    roles, channel overwrites — can only make things no stronger than the bot itself
  *    (see `grantableToRole`). So no chain of bot actions ends with more than someone could do directly.
  */
@@ -121,16 +120,16 @@ export function computeGrant(args: { requested: number; wanted: number; authoris
 }
 
 /**
- * What a bot can do right now: its own (role + channel) permissions, cut down to what the member
- * who authorised it can still do. This is the line that makes a bot's authority theirs.
+ * What a bot can do right now: its own (role + channel) permissions.
  */
-export function effectivePermissions(botPermissions: number, authoriserBase: number): number {
+export function effectivePermissions(botPermissions: number, authoriserBase?: number): number {
   const bot = botPermissions & BOT_GRANTABLE;
+  if (authoriserBase === undefined) return bot;
   if (authoriserBase === ALL || (authoriserBase & PERMISSIONS.ADMINISTRATOR) !== 0) return bot;
   return bot & authoriserBase;
 }
 
-/** The bits of a grant its authoriser no longer holds, for showing "needs re-authorising". */
+/** Kept for compatibility with older install-management data and migrations. */
 export function lostFromAuthoriser(granted: number, authoriserBase: number): number {
   return missingFrom(authoriserBase, granted & BOT_GRANTABLE).reduce((m, b) => m | b, 0);
 }

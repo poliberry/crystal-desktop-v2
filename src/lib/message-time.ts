@@ -2,10 +2,12 @@
  * How message timestamps and day dividers are worded, shared by the channel
  * and DM message lists.
  *
- * All locale-aware: the reader's own `Intl` formatting decides whether "older"
+ * All locale-aware: the reader's region (src/lib/locale.ts) decides whether "older"
  * dates read as `29/08/2026` or `08/29/2026` and whether a divider says
  * `31 August 2026` or `August 31, 2026`.
  */
+
+import { formatDateOnly, formatTimeOnly } from "@/lib/locale";
 
 /** Whether two instants fall on the same calendar day in local time. */
 export function isSameDay(a: number, b: number): boolean {
@@ -29,10 +31,7 @@ function calendarDaysAgo(then: number, now: number): number {
 }
 
 function timeOfDay(ts: number): string {
-  return new Date(ts).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return formatTimeOnly(ts);
 }
 
 /**
@@ -46,7 +45,7 @@ export function formatMessageTimestamp(ts: number, now: number = Date.now()): st
   const days = calendarDaysAgo(ts, now);
   if (days <= 0) return timeOfDay(ts);
   if (days === 1) return `Yesterday at ${timeOfDay(ts)}`;
-  const date = new Date(ts).toLocaleDateString(undefined, {
+  const date = formatDateOnly(ts, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -56,7 +55,7 @@ export function formatMessageTimestamp(ts: number, now: number = Date.now()): st
 
 /** The label on the divider between two days of messages — e.g. `31 August 2026`. */
 export function formatDaySeparator(ts: number): string {
-  return new Date(ts).toLocaleDateString(undefined, {
+  return formatDateOnly(ts, {
     day: "numeric",
     month: "long",
     year: "numeric",

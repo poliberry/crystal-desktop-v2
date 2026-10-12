@@ -6,6 +6,7 @@ import { internalMutation, mutation, query, type QueryCtx } from "./_generated/s
 import { requireCommunity, requireMember } from "./communities";
 import { isActive } from "./lib/entitlements";
 import { normalizeSceneSpec } from "./lib/creationSpecs";
+import { isKlipyMediaUrl } from "./lib/klipy";
 import { isLoungeStickerId } from "./lib/loungeStickers";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
 import { MAX_ATTACHMENT_BYTES } from "./uploadLimits";
@@ -183,8 +184,11 @@ export const send = mutation({
     }
     if (image.fileSize > MAX_ATTACHMENT_BYTES) throw new Error("That picture is too big.");
     if (!image.storageId && !image.cdnUrl) throw new Error("The upload didn't finish.");
+    // A KLIPY GIF or sticker is an address with nothing uploaded behind it, on KLIPY's own hosts. Anything else that is only
+    // an address has to be on Crystal's CDN.
+    const fromKlipy = !image.storageId && !image.cdnKey && !!image.cdnUrl && isKlipyMediaUrl(image.cdnUrl);
     const cdnBase = (process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "").replace(/\/$/, "");
-    if (image.cdnUrl && (!cdnBase || !image.cdnUrl.startsWith(`${cdnBase}/`))) {
+    if (image.cdnUrl && !fromKlipy && (!cdnBase || !image.cdnUrl.startsWith(`${cdnBase}/`))) {
       throw new Error("That picture isn't hosted by Crystal.");
     }
     return ctx.db.insert("loungeMessages", { ...base, image });

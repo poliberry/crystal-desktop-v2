@@ -8,6 +8,8 @@
  * `AudioPreferencesProvider`).
  */
 
+import { clampStrength } from "@/lib/audio-attention";
+
 /** What audio to share alongside a screen share. */
 export type SystemAudioChoice =
   | { mode: "off" }
@@ -70,6 +72,11 @@ export interface AudioPreferences {
   /** Play the join / leave chime when *other* people join or leave the call
    * you're in (your own join/leave always chimes). */
   callParticipantSounds: boolean;
+  /** Audio Attention: turn a stream you are watching down while other people talk (src/lib/audio-attention.ts). Off until
+   * chosen, since it changes volume without being asked. A stream's right-click menu can override it for that stream. */
+  audioAttention: boolean;
+  /** How much quieter the stream gets, as a fraction taken off. */
+  audioAttentionStrength: number;
   richPresenceEnabled: boolean;
 }
 
@@ -87,6 +94,8 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   soundboardVolume: 0.7,
   uiSoundVolume: 0.5,
   callParticipantSounds: true,
+  audioAttention: false,
+  audioAttentionStrength: 0.6,
   richPresenceEnabled: true,
 };
 
@@ -164,6 +173,8 @@ export function readAudioPreferences(): AudioPreferences {
     soundboardVolume: clampVolume(stored.soundboardVolume, DEFAULT_AUDIO_PREFERENCES.soundboardVolume),
     uiSoundVolume: clampVolume(stored.uiSoundVolume, DEFAULT_AUDIO_PREFERENCES.uiSoundVolume),
     callParticipantSounds: stored.callParticipantSounds !== false,
+    audioAttention: stored.audioAttention === true,
+    audioAttentionStrength: clampStrength(stored.audioAttentionStrength),
     richPresenceEnabled: stored.richPresenceEnabled !== false,
   };
 }

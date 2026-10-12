@@ -257,6 +257,25 @@ function useShortcuts() {
   }, [activate, closeTab, closeSession]);
 }
 
+/**
+ * What the console window shows before there is a console (loading, or not staff): a drag strip with the window's own
+ * buttons, over the message. The window is frameless, so without this it could be neither moved nor closed.
+ */
+export function PlainWindow({ children }: { children: React.ReactNode }) {
+  const trafficLights = useTrafficLightsInset();
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <header
+        style={{ WebkitAppRegion: "drag", paddingLeft: trafficLights ? trafficLights : undefined } as React.CSSProperties}
+        className="flex h-11 shrink-0 items-center justify-end"
+      >
+        <WindowControls className="h-full self-stretch border-none [&>button]:h-full" />
+      </header>
+      <div className="flex min-h-0 flex-1 items-center justify-center">{children}</div>
+    </div>
+  );
+}
+
 function Shell() {
   const trafficLights = useTrafficLightsInset();
   const staff = useStaff();
@@ -266,7 +285,10 @@ function Shell() {
     <div className="settings-surface flex h-full flex-col text-foreground">
       <header
         style={{ WebkitAppRegion: "drag", paddingLeft: trafficLights ? trafficLights : undefined } as React.CSSProperties}
-        className="grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 border-b border-foreground/10 bg-background/60 pr-3 pl-3 backdrop-blur-xl"
+        // Four columns: title, search, the staff badge, and the window's own buttons. The buttons used to be a fourth child of
+        // a three-column grid, so they wrapped onto a second row of a fixed-height header and were clipped away. They sit
+        // flush against the right edge, so the header has no right padding of its own (the badge column carries it).
+        className="grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-4 border-b border-foreground/10 bg-background/60 pl-3 backdrop-blur-xl"
       >
         <div className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           <ShieldCheck className="size-4 shrink-0 text-primary" />
@@ -286,7 +308,9 @@ function Shell() {
             <AvatarFallback className="text-[10px]">{staff.name.slice(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
         </div>
-        <WindowControls />
+        {/* Windows and Linux only: draws nothing on macOS, which has the system's traffic lights at the left. A no-drag
+            region inside the header's drag one, so clicks reach the buttons. */}
+        <WindowControls className="h-full self-stretch border-none [&>button]:h-full" />
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -302,17 +326,21 @@ export function AdminConsole() {
   const value = useMemo(() => (staff ? { ...staff, userId: String(staff.userId) } : null), [staff]);
 
   if (staff === undefined) {
-    return <div className="flex h-full items-center justify-center bg-background text-muted-foreground">Checking staff access…</div>;
+    return (
+      <PlainWindow>
+        <p className="text-muted-foreground">Checking staff access…</p>
+      </PlainWindow>
+    );
   }
   if (!value) {
     return (
-      <div className="flex h-full items-center justify-center bg-background p-6 text-center">
-        <div>
+      <PlainWindow>
+        <div className="p-6 text-center">
           <ShieldCheck className="mx-auto size-10 text-muted-foreground" />
           <h1 className="mt-4 text-xl font-semibold">Staff access required</h1>
           <p className="mt-1 text-sm text-muted-foreground">This window is restricted to authorised Crystal staff.</p>
         </div>
-      </div>
+      </PlainWindow>
     );
   }
 

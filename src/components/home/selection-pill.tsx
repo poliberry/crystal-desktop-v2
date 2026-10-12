@@ -28,9 +28,11 @@ export type PillState = "idle" | "unread" | "active";
 export function SelectionPill({
   state,
   className,
+  groupName,
 }: {
   state: PillState;
   className?: string;
+  groupName?: string;
 }) {
   return (
     <span
@@ -40,7 +42,7 @@ export function SelectionPill({
         "transition-[height,opacity] duration-200 ease-out",
         // Hover only previews selection while you aren't already there —
         // an open item's pill is at full height and has nowhere to grow.
-        state !== "active" && "group-hover:h-5 group-hover:opacity-100",
+        state !== "active" && `${groupName ? `group-hover/${groupName}` : "group-hover"}:h-5 ${groupName ? `group-hover/${groupName}` : "group-hover"}:opacity-100`,
         state === "idle" && "h-0 opacity-0",
         state === "unread" && "h-2 opacity-100",
         state === "active" && "h-full opacity-100",

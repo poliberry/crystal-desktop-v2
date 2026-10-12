@@ -16,6 +16,7 @@ import {
 } from "./lib/extensionManifest";
 import { assertPanelUrl } from "./lib/panelClient";
 import { audit, getStaff, requireStaff } from "./lib/staff";
+import { systemUser } from "./systemMessages";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 /**
@@ -109,6 +110,58 @@ export const submitVersion = mutation({
       findings: findings.map((f) => ({ level: f.level, message: f.message })),
       createdAt: now,
     });
+  },
+});
+
+/**
+ * Staff publishing an extension version straight to the directory as Crystal: approved at once, published by Crystal's own
+ * account, with no review queue.
+ *
+ * Needs `system.manage`, the same permission as reviewing, checked here. What it skips is the waiting for a reviewer. It does
+ * not skip the checks that exist to keep the sandbox safe: the manifest is rebuilt, the source is scanned and a blocking
+ * finding still refuses it, the version number still has to be new, and the stored hash is what is run. Written to the audit log.
+ */
+export const staffPublishVersion = mutation({
+  args: { slug: v.string(), manifest: v.any(), source: v.string() },
+  handler: async (ctx, { slug, manifest: rawManifest, source }): Promise<Id<"extensionVersions">> => {
+    const staff = await requireStaff(ctx, "system.manage");
+    // A deployment that asks for a second pair of eyes on extension code has said no code goes live on one person's say-so.
+    if (process.env.EXTENSIONS_REQUIRE_SECOND_REVIEWER === "1") throw new Error("This deployment needs a second reviewer for extensions, so it can't be published straight away. Submit it for review instead.");
+    if (!SLUG.test(slug) || slug.length > 40) throw new Error("The id can use lowercase letters, numbers and hyphens.");
+    const manifest = normalizeManifest(rawManifest);
+    const findings = scanSource(source, manifest);
+    if (hasBlocking(findings)) throw new Error(findings.find((f) => f.level === "error")!.message);
+
+    const crystal = await systemUser(ctx);
+    const now = Date.now();
+    let extension = await ctx.db.query("extensions").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();
+    if (extension && extension.publisherId !== crystal._id) throw new Error("That id belongs to someone else. Pick another, or have them remove it.");
+    if (extension?.suspendedAt) throw new Error("This extension has been suspended.");
+    if (!extension) {
+      const id = await ctx.db.insert("extensions", { slug, publisherId: crystal._id, byCrystal: true, name: manifest.name, description: manifest.description, kind: manifest.kind, createdAt: now, updatedAt: now });
+      extension = (await ctx.db.get(id))!;
+    }
+    const versions = await ctx.db.query("extensionVersions").withIndex("by_extension", (q) => q.eq("extensionId", extension!._id)).collect();
+    const blocked = versionBlocker(versions.filter((x) => x.status !== "pending").map((x) => x.version), manifest.version);
+    if (blocked) throw new Error(blocked);
+
+    const hash = await sourceHash(source);
+    const versionId = await ctx.db.insert("extensionVersions", {
+      extensionId: extension._id,
+      version: manifest.version,
+      manifest,
+      source,
+      hash,
+      status: "approved",
+      findings: findings.map((f) => ({ level: f.level, message: f.message })),
+      reviewNote: "Published by Crystal staff without review.",
+      reviewedBy: staff.user._id,
+      reviewedAt: now,
+      createdAt: now,
+    });
+    await ctx.db.patch(extension._id, { name: manifest.name, description: manifest.description, kind: manifest.kind, updatedAt: now });
+    await audit(ctx, staff.user._id, "extension.publish_as_crystal", { type: "extensionVersion", id: versionId }, `${slug}@${manifest.version} (${hash.slice(0, 12)}) · published without review`);
+    return versionId;
   },
 });
 

@@ -7,6 +7,10 @@ import { toast } from "sonner";
 
 import { api } from "../../../../convex/_generated/api";
 import { SkuPreview } from "@/components/marketplace/sku-preview";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useLocale } from "@/hooks/use-locale";
+import { REGIONS, formatDateOnly, formatDateTime, formatNumber, formatTimeOnly, getHourCycle, getRegion, isHourCycle, isRegion, setHourCycle, setRegion } from "@/lib/locale";
+import { formatMoney } from "@/lib/money";
 import { useOpenMarketplace } from "@/components/pages/page-context";
 import { useUiPreferences } from "@/components/ui-preferences-provider";
 import { useTheme } from "@/components/theme-provider";
@@ -20,7 +24,74 @@ import { ThemePicker } from "@/components/settings/theme-picker";
 import { type Theme, PRESET_THEMES, getPresetById } from "@/lib/themes";
 
 /**
- * The theme packs the person owns, with the one in force marked. A pack is a font, colours, sounds and icons for the whole
+ * Which part of the English-speaking world dates, times, numbers and prices are written for. Shows a sample of each in the
+ * region chosen, so the effect is visible without leaving the page.
+ */
+function LanguageRegionCard() {
+  useLocale();
+  const region = getRegion();
+  const hours = getHourCycle();
+  const sample = Date.UTC(2026, 7, 29, 14, 5);
+  const rows: [string, string][] = [
+    ["Date", formatDateTime(sample, { dateStyle: "long" })],
+    ["Short date", formatDateOnly(sample, { day: "2-digit", month: "2-digit", year: "numeric" })],
+    ["Time", formatTimeOnly(sample)],
+    ["Number", formatNumber(1234567.89)],
+    ["Price", formatMoney(123456, "usd", { free: false })],
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Language &amp; region</CardTitle>
+        <CardDescription>Crystal is in English. Choose which region&apos;s way of writing dates, times, numbers and prices to use.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>Region</Label>
+            <Select value={region} onValueChange={(v) => isRegion(v) && setRegion(v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Automatic (this computer)</SelectItem>
+                {REGIONS.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Clock</Label>
+            <Select value={hours} onValueChange={(v) => isHourCycle(v) && setHourCycle(v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Follow the region</SelectItem>
+                <SelectItem value="12">12-hour</SelectItem>
+                <SelectItem value="24">24-hour</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 rounded-lg border bg-muted/20 p-3 text-sm">
+          {rows.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-muted-foreground">{k}</dt>
+              <dd className="font-medium tabular-nums">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The theme packs the person owns, with the one in force marked. A pack is a font, colours, background, sounds and icons for the whole
  * app (see theme-pack-provider.tsx); one is on at a time, and taking it off goes back to the theme chosen above.
  * Shown whenever there is something to show, and a way to the shop when there isn't, so the section is findable.
  */
@@ -52,7 +123,7 @@ function ThemePacksCard() {
       <CardHeader>
         <CardTitle>Theme packs</CardTitle>
         <CardDescription>
-          A pack changes the font, colours, sounds and icons together. One is on at a time; turning it off returns to the theme above.
+          A pack changes the font, colours, background, sounds and icons together. One is on at a time; turning it off returns to the theme above.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -211,6 +282,8 @@ export function AppearanceTab() {
       </Card>
 
       <ThemePacksCard />
+
+      <LanguageRegionCard />
 
       <Card>
         <CardHeader>

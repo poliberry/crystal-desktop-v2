@@ -225,7 +225,12 @@ async function itemsFor(c: Ctx, project: Project, assets: Map<string, AssetMeta>
     }
     case "themePack": {
       const data = project.themePack!;
-      const ids = new Set<string>([...(fontOf(data.font)?.faces.map((f) => f.assetId) ?? []), ...Object.values(data.sounds), ...Object.values(data.icons)]);
+      const ids = new Set<string>([
+        ...(fontOf(data.font)?.faces.map((f) => f.assetId) ?? []),
+        ...Object.values(data.sounds),
+        ...Object.values(data.icons),
+        ...(data.background ? [data.background.assetId] : []),
+      ]);
       for (const id of ids) {
         const meta = assets.get(id);
         if (meta) await uploadAsset(c, meta);
@@ -325,7 +330,8 @@ export interface StoreLink {
   supersedes?: string;
 }
 
-export async function submitProject(convex: ConvexReactClient, project: Project, progress: Progress, link: StoreLink = {}): Promise<string> {
+/** Check, upload and build everything a submission sends: the same for a creator's and for staff publishing as Crystal. */
+async function prepareSubmission(convex: ConvexReactClient, project: Project, progress: Progress): Promise<{ items: Item[]; previewUrl?: string; cents: number }> {
   const c: Ctx = { convex, progress, uploaded: new Map() };
   const own = new Map((await listAssets(project.id)).map((a) => [a.id, a]));
   const found = await checkProject(project, own);
@@ -349,8 +355,13 @@ export async function submitProject(convex: ConvexReactClient, project: Project,
     previewUrl = r.preview;
   }
 
-  progress("Submitting…");
   const cents = project.listing.free ? 0 : Math.round(Number(project.listing.priceUsd) * 100);
+  return { items, previewUrl, cents };
+}
+
+export async function submitProject(convex: ConvexReactClient, project: Project, progress: Progress, link: StoreLink = {}): Promise<string> {
+  const { items, previewUrl, cents } = await prepareSubmission(convex, project, progress);
+  progress("Submitting…");
   const id = await convex.mutation(api.marketplace.submitCreation, {
     name: project.listing.name.trim(),
     description: project.listing.description.trim() || undefined,
@@ -362,4 +373,31 @@ export async function submitProject(convex: ConvexReactClient, project: Project,
     ...(link.supersedes ? { supersedes: link.supersedes as never } : {}),
   });
   return id as string;
+}
+
+/**
+ * Staff only: publish straight to the Marketplace as Crystal, with no review (see `staffPublishCreation`). The same checks
+ * and uploads as a creator's submission run first, and the server checks the caller is staff again: this is the same request
+ * with a different destination, not a way around either.
+ */
+export async function publishAsCrystal(
+  convex: ConvexReactClient,
+  project: Project,
+  progress: Progress,
+  options: { categoryId: string; featured: boolean; updatesSkuId?: string },
+): Promise<{ skuId: string; slug: string }> {
+  const { items, previewUrl, cents } = await prepareSubmission(convex, project, progress);
+  progress("Publishing as Crystal…");
+  const r = await convex.mutation(api.marketplace.staffPublishCreation, {
+    name: project.listing.name.trim(),
+    description: project.listing.description.trim() || undefined,
+    items: items as never,
+    previewUrl,
+    priceCents: cents,
+    currency: "usd",
+    categoryId: options.categoryId as never,
+    featured: options.featured,
+    ...(options.updatesSkuId ? { updatesSkuId: options.updatesSkuId as never } : {}),
+  });
+  return { skuId: r.skuId as string, slug: r.slug };
 }

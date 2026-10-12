@@ -1,3 +1,4 @@
+import { ensureAgentKit, loadKitBundle, type KitBundle } from "@/studio/agents/agent-kit";
 import { newId } from "@/studio/model/doc";
 import { remapAssetIds } from "@/studio/model/remap";
 import type { AssetMeta, Project } from "@/studio/model/types";
@@ -100,6 +101,7 @@ export function createDiskStore(fs: Fs, legacy: StudioStorage): StudioStorage {
     e.project = p;
     await writeEntry(e, true);
     entries.set(p.id, e);
+    await installKit(e);
   }
 
   async function putAssetInternal(meta: AssetMeta, blob: Blob) {
@@ -116,6 +118,28 @@ export function createDiskStore(fs: Fs, legacy: StudioStorage): StudioStorage {
     e.assets.set(meta.id, { ...meta, size: blob.size, file: `${ASSETS_DIR}/${name}` });
     assetOwner.set(meta.id, e.project.id);
     await writeEntry(e, false);
+  }
+
+  // --- The AI-agent kit ----------------------------------------------------------------------------
+  // Skills, instructions and Studio's MCP server, in every project's folder whatever its kind (src/studio/agents). It is
+  // an extra: a failure here (the bundle isn't served, a file can't be written) is never a failed save, and is tried
+  // again the next time the project is saved or the folder is scanned.
+  let kitBundle: Promise<KitBundle> | null = null;
+  const kitDone = new Map<string, string>();
+  async function installKit(e: Entry) {
+    try {
+      kitBundle ??= loadKitBundle().catch((err) => {
+        kitBundle = null;
+        throw err;
+      });
+      const bundle = await kitBundle;
+      const key = `${bundle.version}:${e.project.kind}`;
+      if (kitDone.get(e.folder) === key) return;
+      await ensureAgentKit(fs, e.folder, e.project, bundle);
+      kitDone.set(e.folder, key);
+    } catch {
+      /* not there yet */
+    }
   }
 
   // --- Reading -----------------------------------------------------------------------------------
@@ -215,6 +239,10 @@ export function createDiskStore(fs: Fs, legacy: StudioStorage): StudioStorage {
       root = await fs.root();
       await scan();
       await migrate();
+      // Projects that were here before the kit existed get it too, without holding up opening Studio.
+      void run(async () => {
+        for (const e of [...entries.values()]) await installKit(e);
+      });
     }).catch((e) => {
       ready = null;
       throw e;

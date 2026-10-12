@@ -27,6 +27,7 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
   const status = presence?.effective ?? "offline";
   return {
     id: user._id,
+    isBot: !!user.isBot,
     name: user.name,
     username: user.username,
     imageUrl: user.imageUrl,
@@ -278,6 +279,7 @@ export const listMembersWithPresence = query({
           .unique();
         return {
           userId: m.userId,
+          isBot: !!user?.isBot,
           name: user?.name ?? "Unknown",
           username: user?.username ?? "unknown",
           imageUrl: user?.imageUrl,
@@ -405,7 +407,8 @@ export const getDirect = mutation({
   handler: async (ctx, { friendId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     if (friendId === me._id) throw new Error("You can't DM yourself.");
-    if (!(await areFriends(ctx, me._id, friendId))) {
+    const target = await ctx.db.get(friendId);
+    if (!target?.isBot && !(await areFriends(ctx, me._id, friendId))) {
       throw new Error("You can only message friends.");
     }
 
@@ -423,7 +426,8 @@ export const getOrCreateDirect = mutation({
   handler: async (ctx, { friendId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     if (friendId === me._id) throw new Error("You can't DM yourself.");
-    if (!(await areFriends(ctx, me._id, friendId))) {
+    const target = await ctx.db.get(friendId);
+    if (!target?.isBot && !(await areFriends(ctx, me._id, friendId))) {
       throw new Error("You can only message friends.");
     }
 

@@ -28,7 +28,7 @@ const BLURB: Record<ProjectKind, string> = {
   nameplate: "A banner behind a name in lists.",
   effect: "An animated flourish over a profile.",
   scene: "A room for lounge channels, with a screen, seats and props.",
-  themePack: "A font, colours, sounds and icons for the whole app.",
+  themePack: "A font, colours, background, sounds and icons for the whole app.",
   pack: "Several of your cosmetics, sold together.",
   extension: "A panel inside Crystal, written in TypeScript and run in a sandbox.",
   bot: "A TypeScript app on your own server that joins communities and responds to them.",
