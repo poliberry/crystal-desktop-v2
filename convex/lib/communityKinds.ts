@@ -35,19 +35,24 @@ export const CHANNEL_SURFACES = [
 export type ChannelSurface = (typeof CHANNEL_SURFACES)[number];
 
 /** What each surface is called and says about itself, for the pickers. */
-export const SURFACE_META: Record<ChannelSurface, { label: string; blurb: string; kinds: CommunityKind[] | "any" }> = {
+export const SURFACE_META: Record<ChannelSurface, { label: string; blurb: string; kinds: CommunityKind[] | "any" | "all" }> = {
   feed: { label: "Newsfeed", blurb: "Recent streams, VODs and uploads from your channel.", kinds: ["creator"] },
   calendar: { label: "Calendar", blurb: "Streams, events and scrims, with sign-ups.", kinds: "any" },
   ama: { label: "AMA", blurb: "Members ask; you answer one question at a time.", kinds: ["creator"] },
   threads: { label: "Threads", blurb: "A forum — every post is a conversation of its own.", kinds: "any" },
-  servers: { label: "Game servers", blurb: "Start, stop and watch your Pterodactyl servers.", kinds: "any" },
+  // "all": a standard community too. Game servers belong to whoever runs them, not to a kind of community.
+  servers: { label: "Game servers", blurb: "Start, stop and watch your Pterodactyl servers.", kinds: "all" },
   lfg: { label: "Looking for group", blurb: "Find people to play with, per game.", kinds: ["clan"] },
   roster: { label: "Roster", blurb: "Who plays what, and at what rank.", kinds: ["clan"] },
 };
 
-/** Whether a kind of community may have a given surface. */
+/**
+ * Whether a kind of community may have a given surface. `kind` is undefined for a standard community. "all" means every
+ * community, standard included; "any" means any community that has a kind (creator or clan); a list names the kinds.
+ */
 export function surfaceAllowed(kind: CommunityKind | undefined, surface: ChannelSurface): boolean {
   const allowed = SURFACE_META[surface].kinds;
+  if (allowed === "all") return true;
   if (allowed === "any") return kind !== undefined;
   return kind !== undefined && allowed.includes(kind);
 }

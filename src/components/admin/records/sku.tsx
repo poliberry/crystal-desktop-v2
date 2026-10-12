@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useConvex, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { Loader2, Package, Plus, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { EmptyState, Fields, Loading, Panel, StatusPill, useRun, useStaff } from "@/components/admin/admin-ui";
+import { EmptyState, Fields, Loading, Panel, ReasonDialog, StatusPill, useRun, useStaff } from "@/components/admin/admin-ui";
 import { useConsole } from "@/components/admin/console-state";
 import {
   blankDraft,
@@ -159,8 +159,9 @@ function GrantCard({
       {grant.raw !== null ? (
         <div className="space-y-1.5">
           <p className="text-xs text-muted-foreground">
-            This one has more than the form can show (several layers, text or shapes). It&apos;s kept exactly as it is — edit the raw
-            data if you need to.
+            {grant.kind === "loungeScene" || grant.kind === "themePack"
+              ? "This is made in Crystal Studio, so the form shows its data as it is stored. It's kept exactly as it is — edit the raw data only if you need to."
+              : "This one has more than the form can show (several layers, text or shapes). It's kept exactly as it is — edit the raw data if you need to."}
           </p>
           <Textarea value={grant.raw} onChange={(e) => set({ raw: e.target.value })} className="min-h-24 font-mono text-xs" />
         </div>
@@ -278,6 +279,72 @@ function GrantCard({
         </>
       )}
     </div>
+  );
+}
+
+// --- Deleting ------------------------------------------------------------------------------------
+
+/**
+ * Delete an item for good, and take it off Stripe. Deliberately separate from the form: it doesn't read the draft, so an item
+ * whose slug, picture or artwork no longer passes the form's checks (the reason you'd want it gone) can still be deleted.
+ */
+function DeleteSkuButton({ skuId, name, onDeleted }: { skuId: Id<"skus">; name: string; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [knowsOwners, setKnowsOwners] = useState(false);
+  const preview = useQuery(api.catalog.adminDeletePreview, open ? { skuId } : "skip");
+  const remove = useAction(api.payments.adminDeleteSku);
+
+  const owners = preview ? `${preview.owners}${preview.capped ? "+" : ""}` : "";
+  return (
+    <>
+      <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={() => { setKnowsOwners(false); setOpen(true); }}>
+        <Trash2 /> Delete
+      </Button>
+      <ReasonDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Delete “${name || "this item"}”?`}
+        description="This removes it from the Marketplace and from Stripe. It can't be undone."
+        confirmLabel="Delete for good"
+        destructive
+        placeholder="Why is it being deleted? (recorded in the audit log)"
+        onConfirm={async (reason) => {
+          if (!preview) throw new Error("Still checking what this affects. Try again in a moment.");
+          if (preview.blocker) throw new Error(preview.blocker);
+          const result = await remove({ skuId, reason, acknowledgeOwners: knowsOwners });
+          toast.success(`Deleted. Stripe: ${result.stripe}.`);
+          onDeleted();
+        }}
+      >
+        {preview === undefined ? (
+          <p className="text-sm text-muted-foreground">Checking what this affects…</p>
+        ) : preview === null ? (
+          <p className="text-sm text-muted-foreground">It has already been deleted.</p>
+        ) : preview.blocker ? (
+          <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{preview.blocker}</p>
+        ) : (
+          <div className="space-y-3 text-sm">
+            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+              <li>
+                {preview.onStripe
+                  ? "Stripe: its prices are switched off and its product is deleted, or archived if it was ever sold (Stripe doesn't allow deleting those)."
+                  : "It isn't on Stripe, so there is nothing to remove there."}
+              </li>
+              <li>Orders and creator earnings are kept as the financial record ({preview.ordersPaid}{preview.capped ? "+" : ""} paid).</li>
+            </ul>
+            {preview.pendingRecent && <p className="rounded-lg bg-amber-500/10 p-3 text-amber-500">Someone started buying this in the last day. Deleting is blocked until that settles.</p>}
+            {preview.owners > 0 && (
+              <label className="flex items-start gap-2 rounded-lg border border-foreground/10 p-3">
+                <input type="checkbox" className="mt-0.5" checked={knowsOwners} onChange={(e) => setKnowsOwners(e.target.checked)} />
+                <span>
+                  <span className="font-medium">{owners} people own this.</span> They keep it — deleting doesn&apos;t take it from them, and it will show to them as a removed item.
+                </span>
+              </label>
+            )}
+          </div>
+        )}
+      </ReasonDialog>
+    </>
   );
 }
 
@@ -607,6 +674,9 @@ export function SkuRecord({ id }: { id: string }) {
         <div className="sticky bottom-0 -mx-1 flex items-center justify-between gap-3 rounded-xl border border-foreground/10 bg-background/90 px-4 py-3 shadow-lg backdrop-blur-xl">
           <p className="text-sm text-muted-foreground">{problem ?? (dirty ? "You have unsaved changes." : "Everything is saved.")}</p>
           <div className="flex gap-2">
+            {!isNew && canWrite && canPrice && (
+              <DeleteSkuButton skuId={id as Id<"skus">} name={sku?.name ?? draft.name} onDeleted={() => closeSession(`sku:${id}`)} />
+            )}
             {dirty && !isNew && (
               <Button variant="ghost" onClick={() => source && setDraft(source)}>
                 <RotateCcw /> Discard

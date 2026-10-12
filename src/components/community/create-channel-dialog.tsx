@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ChannelGlyph } from "@/components/community/channel-glyph";
-import { CHANNEL_SURFACES, SURFACE_META, type ChannelSurface } from "@/lib/community-kinds";
+import { CHANNEL_SURFACES, SURFACE_META, surfaceAllowed, type ChannelSurface } from "@/lib/community-kinds";
 import { cn } from "@/lib/utils";
 
 interface CreateChannelDialogProps {
@@ -40,10 +40,8 @@ export function CreateChannelDialog({
   const community = useQuery(api.communities.get, { communityId }) as { kind?: "creator" | "clan" } | null | undefined;
   const [surface, setSurface] = useState<ChannelSurface | null>(null);
   // The special channels this kind of community can have.
-  const surfaces = CHANNEL_SURFACES.filter((s) => {
-    const kinds = SURFACE_META[s].kinds;
-    return community?.kind && (kinds === "any" || kinds.includes(community.kind));
-  });
+  // The server's own rule, so the list can't offer what the server would refuse. Nothing until the community has loaded.
+  const surfaces = community === undefined || community === null ? [] : CHANNEL_SURFACES.filter((s) => surfaceAllowed(community.kind, s));
   const [type, setType] = useState<"text" | "voice">(defaultType);
   const [lounge, setLounge] = useState(false);
   const [name, setName] = useState("");

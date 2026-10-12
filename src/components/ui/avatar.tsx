@@ -5,6 +5,12 @@ import { Avatar as AvatarPrimitive } from "radix-ui"
 
 import { LayerContent } from "@/components/profile/layer-content"
 import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations"
+import {
+  refractionFilterSvg,
+  refractionLensStyle,
+  refractionOf,
+  type RefractionKind,
+} from "@/lib/decoration-refraction"
 import { layerStyle, type CosmeticLayer } from "@/lib/cosmetic-layers"
 import { useCachedImageSrc } from "@/lib/image-cache"
 import { cn } from "@/lib/utils"
@@ -134,6 +140,11 @@ function AvatarDecoration({
     };
   }, [animate]);
 
+  // A decoration made of glass or ice asks, in its layer's address, for the picture behind it to be bent (see
+  // `decoration-refraction.ts`). The lens is only worth its cost while the decoration is allowed to play: a member list is fifty
+  // avatars and each lens is a filter over a backdrop, so a held-still avatar shows the artwork alone, as an older build would.
+  const refraction = React.useMemo(() => layers.map((layer) => refractionOf(layer.url)).find(Boolean), [layers]);
+
   if (layers.length === 0) return null;
   return (
     <span
@@ -141,14 +152,33 @@ function AvatarDecoration({
       data-slot="avatar-decoration"
       aria-hidden
       className={cn(
-        "pointer-events-none absolute inset-0 z-1 select-none [container-type:size]",
+        // `rounded-[inherit]` so a lens, which takes its corner shape from this, is the avatar's shape and not a square.
+        "pointer-events-none absolute inset-0 z-1 select-none rounded-[inherit] [container-type:size]",
         className
       )}
     >
+      {refraction && !frozen && <RefractionLens kind={refraction} />}
       {layers.map((layer) => (
         <CosmeticLayerImage key={layer.id} layer={layer} frozen={frozen} />
       ))}
     </span>
+  );
+}
+
+/**
+ * Bends the avatar's picture, from underneath its decoration: see `src/lib/decoration-refraction.ts`.
+ *
+ * The filter's markup is a constant built from a kind this build knows, never from anything in a decoration's address, so
+ * injecting it as HTML takes nothing from the outside. Every lens of a kind defines the same filter under the same id, which is
+ * harmless: the first one in the document is the one all of them reference, and they are identical.
+ */
+function RefractionLens({ kind }: { kind: RefractionKind }) {
+  const markup = React.useMemo(() => ({ __html: refractionFilterSvg(kind) }), [kind]);
+  return (
+    <>
+      <span aria-hidden dangerouslySetInnerHTML={markup} />
+      <span aria-hidden data-slot="avatar-refraction" style={refractionLensStyle(kind)} />
+    </>
   );
 }
 

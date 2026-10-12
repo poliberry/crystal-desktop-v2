@@ -101,7 +101,8 @@ function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsP
     ...(canManageIntegrations ? [{ title: "Bots" }] : []),
     ...(kind === "creator" ? [{ title: "Creator" }] : []),
     ...(kind === "clan" ? [{ title: "Clan" }] : []),
-    ...(kind && canManageServers ? [{ title: "Game servers" }] : []),
+    // Any community can run game servers, not just clans and creator communities.
+    ...(canManageServers ? [{ title: "Game servers" }] : []),
   ];
   // What to draw while it is being deleted, taken on click: the community
   // query goes null the moment the delete lands, mid-animation.

@@ -27,6 +27,8 @@
  * 76 units (12 to 88) and is a rounded square (about a fifth of its width). All original artwork, from primitives.
  */
 
+import type { RefractionKind } from "@/lib/decoration-refraction";
+
 export interface CollectionPreset {
   key: string;
   name: string;
@@ -38,6 +40,8 @@ export interface CollectionPreset {
   animatedSvg: string;
   /** What the animation is, for the shop's description and the tests. */
   motion: string;
+  /** Set when the artwork is meant to bend the picture behind it (see `decoration-refraction.ts`). */
+  refract?: RefractionKind;
 }
 
 const AV_MIN = 12;
@@ -115,60 +119,47 @@ const glint = (a: boolean, x: number, y: number, s: number, t: Timing, fill = "#
   `<path d="${SPARK}" fill="${fill}" transform="scale(${s})">${a ? animateT("scale", `${s};${n(s * 1.35)};${n(s * 0.45)};${s}`, t) + animate("opacity", "1;.95;.25;1", t) : ""}</path></g>`;
 const BLOOM = blurF("bloomB", 1.3);
 
-// --- Cat ears: plush, lit from the top left; a twitch every few seconds ----------------------------------------------------
+// --- Cat ears: flat anime style: a leaf-shaped cream ear with a scalloped pink inside, a pearl at the base, whiskers --------------
 
-const EAR = "M13.5,30 C12,19 13,9 18,3.6 C26.5,6.5 36.5,12 44,17.5 Z";
-const EAR_INNER = "M20.4,26 C19.2,18.8 20,12.8 22.4,9.4 C27.6,11.2 33,14.4 37.6,17.8 C32,22.8 26,25.4 20.4,26 Z";
+/** The ear is a leaf: it grows from a pearl at the base, sweeps up the outside in one smooth curve and ends in a sharp point. */
+const EAR_OUT = "M9,33.5 C6.5,22 11,10.5 21.5,7 C26.5,5.4 31,6.6 35,10.6 C28,12.2 22.5,17.5 18.8,25 C16.2,29.2 12.8,32.4 9,33.5 Z";
+const EAR_IN = "M11.4,31.4 C9.6,22.4 13.4,12.8 22,9.9 C25.8,8.8 29.4,9.4 32.6,11.4 C26.6,13.4 22,18.4 18.8,24.6 C16.6,28.2 14,30.4 11.4,31.4 Z";
+/** The deeper pink, with a scalloped edge along the inner side: the layered, bumpy look anime ears have. */
+const EAR_DEEP = "M12.6,29.6 C11.6,22.4 15.2,15 22.4,12.4 C25.4,11.5 28,11.7 30.2,12.8 Q29,14.2 27.2,14.8 Q26,16.4 24.4,17.2 Q23.4,19 21.8,20 Q20.6,21.8 19.2,23.2 Q18,25.2 16.6,26.6 Q15.2,28.2 12.6,29.6 Z";
+
+/** A whisker: a tapered stroke, thick where it leaves the face and fine at the tip. */
+function whisker(tipX: number, tipY: number, baseX: number, baseY: number, width: number): string {
+  const dx = baseX - tipX;
+  const dy = baseY - tipY;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * (width / 2);
+  const ny = (dx / len) * (width / 2);
+  const bow = len * 0.06;
+  return `<path d="M${tipX},${tipY} Q${n((tipX + baseX) / 2 + nx * 0.2)},${n((tipY + baseY) / 2 + ny * 0.2 - bow)} ${n(baseX + nx)},${n(baseY + ny)} L${n(baseX - nx)},${n(baseY - ny)} Q${n((tipX + baseX) / 2 - nx * 0.2)},${n((tipY + baseY) / 2 - ny * 0.2 - bow)} ${tipX},${tipY} Z" fill="#15121c"/>`;
+}
 
 const catEars: Draw = (a) => {
-  const r = rnd(5);
-  // Fur: short strokes laid along the ear from base to tip, clipped to its outline so none stray.
-  const dx = -0.456;
-  const dy = -0.89;
-  const px = 0.89;
-  const py = -0.456;
-  let fur = "";
-  for (let i = 0; i < 34; i++) {
-    const s = 1 + r() * 19;
-    const w = 15 * (1 - s / 24);
-    const u = (r() - 0.5) * 2 * w;
-    const x = 28.5 + dx * s + px * u;
-    const y = 24.5 + dy * s + py * u;
-    const len = 2.6 + r() * 2.4;
-    const bend = (r() - 0.5) * 1.6;
-    const light = r() > 0.55;
-    fur += `<path d="M${n(x)},${n(y)} q${n(bend)},${n(dy * len * 0.5)} ${n(dx * len + bend)},${n(dy * len)}" stroke="${light ? "#b99af0" : "#2c1a59"}" stroke-width=".55" stroke-linecap="round" opacity="${light ? 0.55 : 0.5}"/>`;
-  }
-  // Wisps of cream fluff along the lower edge of the inner ear, pointing back up it.
-  let fluff = "";
-  for (let i = 0; i < 7; i++) {
-    const t = i / 6;
-    const x = 21.8 + t * 15.4;
-    const y = 25.4 - t * 7.5 + Math.sin(t * Math.PI) * 1.4;
-    const lift = 3 + (i % 2) * 1.6;
-    fluff += `<path d="M${n(x)},${n(y)} q${n(-0.9)},${n(-lift * 0.55)} ${n(-1.6)},${n(-lift)}" stroke="#fff2f8" stroke-width="1.05" stroke-linecap="round" opacity=".95"/>`;
-  }
   const ear = (begin: number) =>
-    `<g filter="url(#ds)">${a ? animateT("rotate", "0 30 26;-6 30 26;3 30 26;0 30 26;0 30 26", { dur: 5, begin, keyTimes: "0;.05;.1;.15;1" }) : ""}` +
-    `<path d="${EAR}" fill="url(#fur)"/>` +
-    `<g clip-path="url(#earClip)">${fur}<path d="${EAR}" fill="url(#furShade)"/><path d="M13,30 C12,19 13,9 18,3.6" stroke="#d9c5ff" stroke-width="2.4" opacity=".28" filter="url(#bloomB)"/></g>` +
-    `<path d="${EAR}" stroke="url(#rim)" stroke-width="1.25" stroke-linejoin="round"/>` +
-    `<path d="${EAR_INNER}" fill="url(#pink)"/><path d="${EAR_INNER}" fill="url(#pinkShade)"/>` +
-    `<path d="M22,24.6 C21,18.6 21.8,13.6 23.4,10.6" stroke="#ffd3e6" stroke-width=".9" stroke-linecap="round" opacity=".6"/>` +
-    fluff +
-    `</g>`;
+    `<g>${a ? animateT("rotate", "0 9 33.5;-6 9 33.5;3 9 33.5;0 9 33.5;0 9 33.5", { dur: 5, begin, keyTimes: "0;.05;.1;.15;1" }) : ""}` +
+    `<path d="${EAR_OUT}" fill="#fff6f1"/>` +
+    `<path d="${EAR_IN}" fill="#f9bcd8"/>` +
+    `<path d="${EAR_DEEP}" fill="#e57fb6"/>` +
+    `<path d="${EAR_OUT}" stroke="#8a5a66" stroke-width=".7" stroke-linejoin="round"/>` +
+    `<path d="M11.6,30.4 C10.4,23 13.6,14 21,10.8" stroke="#fff" stroke-width=".5" stroke-linecap="round" opacity=".7"/>` +
+    // The pearl where the ear meets the head.
+    `<g transform="translate(9 33.6)"><circle r="1.75" fill="#fff" stroke="#b79aa6" stroke-width=".4"/><circle cx="-.5" cy="-.55" r=".5" fill="#fde7f1"/>${a ? glintOnly(begin) : ""}</g></g>`;
+  const whiskers = (begin: number) =>
+    `<g>${a ? animateT("rotate", "0 16 55;-2.6 16 55;1.4 16 55;0 16 55;0 16 55", { dur: 4.2, begin, keyTimes: "0;.07;.14;.2;1" }) : ""}` +
+    whisker(2.6, 51.2, 15.4, 51.6, 1.7) + whisker(2, 55.8, 15.4, 56.4, 1.8) + whisker(3.6, 64, 14.6, 58.6, 1.7) + `</g>`;
   return {
-    body: ear(-0.2) + mirrorX(ear(-2.6)),
-    defs:
-      shadowF("ds", 1.4, 1.2, 0.55) + BLOOM +
-      `<clipPath id="earClip"><path d="${EAR}"/></clipPath>` +
-      linU("fur", [[0, "#a47ce8"], [0.45, "#7048bd"], [1, "#35205f"]], 18, 3, 34, 30) +
-      linU("furShade", [[0, "#1d0f3c", 0], [0.55, "#1d0f3c", 0.0], [1, "#1d0f3c", 0.55]], 22, 8, 32, 31) +
-      linU("rim", [[0, "#e4d6ff"], [0.5, "#a98af0"], [1, "#5a3aa0"]], 14, 4, 42, 24) +
-      linU("pink", [[0, "#ff9cc4"], [0.55, "#ffc2da"], [1, "#ffe1ee"]], 22, 10, 33, 25) +
-      linU("pinkShade", [[0, "#a02f63", 0.7], [0.4, "#a02f63", 0.0], [1, "#a02f63", 0]], 22, 9, 28, 20),
+    body: ear(-0.2) + mirrorX(ear(-2.6)) + whiskers(-0.8) + mirrorX(whiskers(-2.1)),
+    defs: BLOOM,
   };
 };
+/** A tiny star-twinkle on a pearl, as a bare string so it can sit inside a transformed group. */
+function glintOnly(begin: number): string {
+  return `<path d="${SPARK}" fill="#fff" transform="scale(.4)" opacity="0">${animate("opacity", "0;0;1;0;0", { dur: 3.4, begin, keyTimes: "0;.5;.56;.64;1" })}</path>`;
+}
 
 // --- Halo: a lit gold torus, a slow hover and a pulse of light ----------------------------------------------------------------
 
@@ -512,18 +503,173 @@ const horns: Draw = (a) => {
   };
 };
 
-const make = (key: string, name: string, motion: string, draw: Draw): CollectionPreset => {
+// --- Ice cube: a slab of glassy ice that melts, over a lens that bends the picture behind it ------------------------------------
+
+/** A rounded rectangle as a path, so two of them can be one ring with `fill-rule="evenodd"`. */
+const rr = (x: number, y: number, w: number, h: number, r: number) =>
+  `M${x + r},${y} H${x + w - r} A${r},${r} 0 0 1 ${x + w},${y + r} V${y + h - r} A${r},${r} 0 0 1 ${x + w - r},${y + h} H${x + r} A${r},${r} 0 0 1 ${x},${y + h - r} V${y + r} A${r},${r} 0 0 1 ${x + r},${y} Z`;
+
+const iceCube: Draw = (a) => {
+  // A drip: a drop that swells on the bottom edge, lets go, falls into the puddle and rings it. All on one clock so they agree.
+  const DUR = 3.4;
+  const drip = (x: number, begin: number, size: number) => {
+    const swell = a ? animateT("scale", "1 .5;1 1.3;1 1.3;1 .5", { dur: DUR, begin, keyTimes: "0;.56;.6;1" }) : "";
+    const fall = a
+      ? animateT("translate", "0 0;0 0;0 7.5;0 7.5", { dur: DUR, begin, keyTimes: "0;.6;.94;1" }) + animate("opacity", "0;0;1;1;0;0", { dur: DUR, begin, keyTimes: "0;.595;.6;.9;.95;1" })
+      : "";
+    const ripple = a
+      ? animate("rx", "0.4;0.4;5.2", { dur: DUR, begin, keyTimes: "0;.93;1" }) + animate("opacity", "0;0;.8;0", { dur: DUR, begin, keyTimes: "0;.93;.95;1" })
+      : "";
+    return (
+      `<g transform="translate(${x} 91.2) scale(${size})"><g>${swell}<path d="M-1.5,-1 C-1.5,2.2 -2.4,3.3 -2.4,4.9 A2.4,2.4 0 0 0 2.4,4.9 C2.4,3.3 1.5,2.2 1.5,-1 Z" fill="url(#melt)"/><path d="M-1.1,3 C-1.4,3.7 -1.2,4.6 -.7,5" stroke="#fff" stroke-width=".55" stroke-linecap="round" opacity=".9"/></g></g>` +
+      `<g transform="translate(${x} 93)"><g opacity="0">${fall}<path d="M0,-1.7 C.9,-.4 1.5,.4 1.5,1.1 A1.5,1.5 0 0 1 -1.5,1.1 C-1.5,.4 -.9,-.4 0,-1.7 Z" fill="url(#melt)"/></g></g>` +
+      `<ellipse cx="${x}" cy="98.2" rx="${a ? 0.4 : 0}" ry=".55" stroke="#bfe8ff" stroke-width=".35" opacity="0">${ripple}</ellipse>`
+    );
+  };
+  const bubble = (x: number, y: number, r: number, b: number) =>
+    `<g><circle cx="${x}" cy="${y}" r="${r}" fill="#fff" opacity=".12"/><circle cx="${x}" cy="${y}" r="${r}" stroke="#eaf8ff" stroke-width=".35" opacity=".85"/><circle cx="${n(x - r * 0.35)}" cy="${n(y - r * 0.4)}" r="${n(r * 0.28)}" fill="#fff"/>${a ? animateT("translate", "0 0;.4 -1.6;0 0", { dur: 6, begin: b }) : ""}</g>`;
+  const wave = (up: boolean) => `M13,${up ? 79 : 81} C26,${up ? 76 : 83} 38,${up ? 83 : 76} 50,${up ? 79 : 81} S74,${up ? 76 : 83} 87,${up ? 79 : 81} V90 H13 Z`;
+  const streak = (x: number, y: number, h: number, begin: number) =>
+    `<path d="M${x},${y} C${n(x + 0.8)},${n(y + h * 0.35)} ${n(x - 0.6)},${n(y + h * 0.7)} ${x},${y + h}" pathLength="100" stroke="#fff" stroke-width=".9" stroke-linecap="round" stroke-dasharray="24 76" opacity=".3">${a ? animate("stroke-dashoffset", "0;-100", { dur: 5, begin, keyTimes: "0;1" }).replace(/calcMode[^/]*/, "") : ""}</path>` +
+    `<path d="M${x},${y} C${n(x + 0.8)},${n(y + h * 0.35)} ${n(x - 0.6)},${n(y + h * 0.7)} ${x},${y + h}" stroke="#bfe8ff" stroke-width=".3" stroke-linecap="round" opacity=".18"/>`;
+  return {
+    body:
+      // The puddle it is making, under everything.
+      `<ellipse cx="50" cy="98.4" rx="33" ry="2.1" fill="url(#puddle)"/><path d="M24,97.6 C38,96.7 62,96.7 76,97.6" stroke="#fff" stroke-width=".5" stroke-linecap="round" opacity=".6"/>` +
+      // The slab: a faint tint over the picture so it reads as something between you and it, then its bevel, which is where
+      // the light is: bright on the top left, deep blue on the bottom right.
+      `<path d="${rr(8, 8, 84, 84, 16)}" fill="url(#iceTint)"/>` +
+      `<g clip-path="url(#cube)">` +
+      `<path d="${wave(true)}" fill="url(#film)">${a ? `<animate attributeName="d" values="${wave(true)};${wave(false)};${wave(true)}" dur="4.2s" repeatCount="indefinite"/>` : ""}</path>` +
+      `<path d="M14,18 L38,8 L52,8 L14,30 Z" fill="url(#gloss)"/><path d="M12,40 L24,34 L12,56 Z" fill="url(#gloss)" opacity=".7"/>` +
+      `<g>${a ? animateT("translate", "-50 0;150 0", { dur: 5.4 }) : ""}<rect x="-30" y="-10" width="16" height="130" fill="url(#sweep)" transform="rotate(18 50 50)"/></g>` +
+      streak(19, 30, 40, 0) + streak(81, 24, 44, -2.4) +
+      bubble(23, 30, 1.5, 0) + bubble(75, 41, 1.1, -2) + bubble(31, 63, 0.9, -3.5) + bubble(70, 66, 1.7, -1.2) + bubble(55, 21, 0.7, -4.4) + bubble(20, 52, 0.6, -2.6) +
+      `<path d="M14.6,23 L19.5,28 L18.4,34.5 M19.5,28 L25.2,29.4 M85,70 L79.8,66.2 L80.6,60 M79.8,66.2 L74.4,68" stroke="#fff" stroke-width=".4" stroke-linecap="round" stroke-linejoin="round" opacity=".6"/>` +
+      `</g>` +
+      `<path d="${rr(8, 8, 84, 84, 16)} ${rr(13.6, 13.6, 72.8, 72.8, 11)}" fill="url(#bevel)" fill-rule="evenodd"/>` +
+      `<path d="${rr(13.6, 13.6, 72.8, 72.8, 11)}" stroke="#2f69b8" stroke-width="1.1" opacity=".42" filter="url(#bloomB)"/>` +
+      `<path d="${rr(13.6, 13.6, 72.8, 72.8, 11)}" stroke="#e9f8ff" stroke-width=".55" opacity=".75"/>` +
+      `<path d="${rr(8.3, 8.3, 83.4, 83.4, 15.7)}" stroke="#ffffff" stroke-width=".7" opacity=".8"/>` +
+      `<path d="M12.7,12.7 L16.9,16.9 M87.3,12.7 L83.1,16.9 M12.7,87.3 L16.9,83.1 M87.3,87.3 L83.1,83.1" stroke="#fff" stroke-width=".5" opacity=".55"/>` +
+      `<path d="M22,9.2 H52" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity=".9" filter="url(#bloomB)"/><path d="M9.2,24 V50" stroke="#fff" stroke-width="1.1" stroke-linecap="round" opacity=".75" filter="url(#bloomB)"/>` +
+      [[20.5, 10.4, 0.5], [60, 10, 0.4], [10.4, 38, 0.45], [88.6, 62, 0.4], [44, 90, 0.4]].map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}" fill="#fff" opacity=".9"/>`).join("") +
+      drip(25, 0, 1) + drip(43, -1.1, 1.25) + drip(61, -2.3, 0.9) + drip(77, -0.6, 1.1) +
+      glint(a, 17, 17, 0.8, { dur: 3.1 }, "#fff", "#bfe8ff"),
+    defs:
+      BLOOM + `<clipPath id="cube"><path d="${rr(8, 8, 84, 84, 16)}"/></clipPath>` +
+      linU("iceTint", [[0, "#ffffff", 0.24], [0.4, "#cdeaff", 0.07], [1, "#4f9ae6", 0.3]], 8, 8, 92, 92) +
+      linU("bevel", [[0, "#ffffff", 0.97], [0.32, "#d4f0ff", 0.92], [0.62, "#82c4f0", 0.88], [1, "#3b78cc", 0.92]], 8, 8, 92, 92) +
+      linU("gloss", [[0, "#ffffff", 0.5], [1, "#ffffff", 0]], 14, 10, 40, 36) +
+      lin("sweep", [[0, "#ffffff", 0], [0.5, "#ffffff", 0.5], [1, "#ffffff", 0]], [0, 0, 1, 0]) +
+      lin("film", [[0, "#7cc8ff", 0.0], [0.35, "#7cc8ff", 0.22], [1, "#3b86d8", 0.55]]) +
+      lin("melt", [[0, "#e9f8ff", 0.95], [1, "#7cc8ff", 0.9]]) +
+      lin("puddle", [[0, "#7cc8ff", 0], [0.2, "#9bd8ff", 0.65], [0.5, "#d8f2ff", 0.8], [0.8, "#9bd8ff", 0.65], [1, "#7cc8ff", 0]], [0, 0, 1, 0]),
+  };
+};
+
+// --- Sakura wreath: a ring of cherry blossom on a twig, with petals coming down over the picture --------------------------------
+
+const sakura: Draw = (a) => {
+  const r = rnd(77);
+  // A petal has a notch at its tip, which is the one thing that says cherry blossom and not just a pink flower.
+  const PETAL = "M0,0 C-3.7,-1.6 -4.9,-6.4 -2.6,-8.7 C-1.5,-7.9 -.7,-8.4 0,-7.2 C.7,-8.4 1.5,-7.9 2.6,-8.7 C4.9,-6.4 3.7,-1.6 0,0 Z";
+  const bloomDef =
+    `<g id="bloom">${[0, 72, 144, 216, 288].map((rot, i) => `<g transform="rotate(${rot + (i % 2) * 3})"><path d="${PETAL}" fill="url(#petal)"/><path d="M0,-.8 L0,-5.2 M0,-2 L-1.3,-4.4 M0,-2 L1.3,-4.4" stroke="#e86a9a" stroke-width=".22" stroke-linecap="round" opacity=".55"/><path d="${PETAL}" stroke="#f08db2" stroke-width=".28" opacity=".55"/></g>`).join("")}` +
+    `<circle r="2.2" fill="url(#heart)"/>` +
+    [0, 36, 72, 108, 144, 180, 216, 252, 288, 324].map((rot, i) => `<g transform="rotate(${rot})"><path d="M0,0 L0,${-(2.9 + (i % 3) * 0.3)}" stroke="#f7a8c6" stroke-width=".22"/><circle cy="${-(3.1 + (i % 3) * 0.3)}" r=".42" fill="${i % 2 ? "#ffd24a" : "#ffb938"}"/></g>`).join("") +
+    `<ellipse cx="-2.6" cy="-3" rx="3.6" ry="2.2" fill="#fff" opacity=".22" transform="rotate(-35)"/></g>` +
+    `<g id="bud"><path d="M0,0 C-2.2,-1 -2.6,-4.4 0,-6 C2.6,-4.4 2.2,-1 0,0 Z" fill="url(#budG)" stroke="#e57aa3" stroke-width=".3"/><path d="M-1.2,-1 C-1.6,-2.6 -.8,-4 0,-5" stroke="#fff" stroke-width=".4" opacity=".6"/><path d="M-1.4,.2 L0,-1 L1.4,.2 Z" fill="#7aa05a"/></g>` +
+    `<g id="leafS"><path d="M0,0 C2.4,-1.4 2.6,-4.8 0,-6.6 C-2.6,-4.8 -2.4,-1.4 0,0 Z" fill="url(#leafG)"/><path d="M0,-.4 L0,-5.6" stroke="#3d7a3a" stroke-width=".3" opacity=".8"/></g>`;
+  const blooms = (list: { x: number; y: number; out: number }[], s0: number, jitter: number, back: boolean) =>
+    list.map(({ x, y, out }, i) => {
+      const s = s0 * (0.82 + r() * jitter);
+      return `<g transform="translate(${x} ${y}) rotate(${n(out + r() * 70)}) scale(${n(s)})"${back ? ' opacity=".92"' : ""}><use xlink:href="#bloom"/></g>`;
+    }).join("");
+  const ring = squircle(20, 44.6, -90);
+  const inner = squircle(14, 42.2, -83);
+  const leaves = squircle(30, 43.6, -88).map(({ x, y, out, i }) => `<g transform="translate(${x} ${y}) rotate(${n(out + (i % 2 ? 62 : -62))}) scale(${n(0.55 + r() * 0.35)})"><use xlink:href="#leafS"/></g>`).join("");
+  const buds = squircle(12, 46.4, -75).map(({ x, y, out }) => `<g transform="translate(${x} ${y}) rotate(${n(out + (r() - 0.5) * 50)}) scale(${n(0.5 + r() * 0.3)})"><use xlink:href="#bud"/></g>`).join("");
+  const fall = (x: number, y: number, rot: number, s: number, begin: number, dx: number) => {
+    const path = `0 0;${dx} 9;${n(-dx * 0.7)} 19;${n(dx * 0.9)} 29;${n(-dx * 0.3)} 40`;
+    const mv = a ? animateT("translate", path, { dur: 8, begin }).replace(/ repeatCount/, ' calcMode="linear" repeatCount') : "";
+    const spin = a ? animateT("rotate", "0;200;380", { dur: 8, begin }) : "";
+    const fade = a ? animate("opacity", "0;1;1;0", { dur: 8, begin, keyTimes: "0;.1;.82;1" }) : "";
+    return `<g>${mv}<g transform="translate(${x} ${y}) rotate(${rot}) scale(${s})"><g>${spin}<g>${fade}<path d="M-2.6,0 C-2.6,-2.5 2.6,-2.5 2.6,0 C2.6,2.5 -2.6,2.5 -2.6,0 Z M-.2,-1.9 L0,-.6" fill="url(#fallG)" stroke="#ef8cb2" stroke-width=".3"/></g></g></g></g>`;
+  };
+  return {
+    body:
+      `<ellipse cx="50" cy="50" rx="47" ry="47" fill="url(#aura)"/>` +
+      `<g>${a ? animateT("rotate", "0 50 50;1.4 50 50;-1.1 50 50;0 50 50", { dur: 9 }) : ""}` +
+      `<g filter="url(#ds)">` +
+      squircleRect(9.4, `stroke="url(#bark)" stroke-width="1.5"`) + squircleRect(9.9, `stroke="#a9805c" stroke-width=".5" stroke-dasharray="3 2.4" opacity=".8"`) +
+      `<path d="M13,12 C9,9 6,10 4,7 M88,10 C92,6 95,8 97,5 M92,89 C96,93 94,96 98,97 M10,90 C6,94 8,97 4,98" stroke="#6b4332" stroke-width=".9" stroke-linecap="round"/>` +
+      leaves + `</g>` +
+      `<g filter="url(#ds)">${blooms(inner, 0.36, 0.3, true)}${buds}${blooms(ring, 0.6, 0.45, false)}</g></g>` +
+      [[96, 18, 4.6], [4, 80, 4], [94, 84, 3.4], [8, 12, 3]].map(([x, y, rr2]) => `<circle cx="${x}" cy="${y}" r="${rr2}" fill="#ffb3d1" opacity=".3" filter="url(#bloomB)"/>`).join("") +
+      fall(20, 16, 20, 0.95, 0, 3.4) + fall(48, 6, -30, 0.8, -1.1, -4) + fall(77, 14, 60, 1, -2.3, 3.6) + fall(90, 40, -10, 0.85, -3.4, -3) + fall(8, 44, 40, 0.9, -4.5, 3.2) +
+      fall(32, 8, 10, 0.7, -5.6, -3.6) + fall(66, 4, -50, 0.75, -6.7, 4) + fall(86, 20, 25, 0.8, -0.6, -3.4) + fall(12, 24, -25, 0.8, -2.9, 3),
+    defs:
+      shadowF("ds", 0.9, 0.9, 0.42) + BLOOM + bloomDef +
+      lin("petal", [[0, "#e8457f"], [0.28, "#f98cb5"], [0.7, "#ffd0e2"], [1, "#fff6f9"]], [0, 1, 0, 0]) +
+      rad("heart", [[0, "#c2185b"], [0.6, "#e8457f"], [1, "#f98cb5"]]) +
+      lin("budG", [[0, "#e8457f"], [0.6, "#ffa3c4"], [1, "#ffe0ec"]]) +
+      lin("leafG", [[0, "#4f8f45"], [1, "#98cf6a"]]) +
+      lin("bark", [[0, "#8a5c42"], [0.5, "#5e3a28"], [1, "#3e2418"]]) +
+      lin("fallG", [[0, "#ffd0e2"], [1, "#fff6f9"]], [0, 0, 1, 1]) +
+      rad("aura", [[0, "#ffb3d1", 0], [0.82, "#ffb3d1", 0], [0.94, "#ffb3d1", 0.28], [1, "#ffb3d1", 0]]),
+  };
+};
+
+// --- Moon: a cratered crescent over the corner, with a sky of stars that twinkle and one that shoots ----------------------------
+
+const moon: Draw = (a) => {
+  const twinkle = (x: number, y: number, s: number, b: number, dur: number, fill = "#fffbe8") => glint(a, x, y, s, { dur, begin: b }, fill, "#cfe0ff");
+  const dot = (x: number, y: number, rad: number, b: number, dur: number) => `<circle cx="${x}" cy="${y}" r="${rad}" fill="#fff">${a ? animate("opacity", "1;.2;1", { dur, begin: b }) : ""}</circle>`;
+  const crater = (x: number, y: number, rad: number) =>
+    `<circle cx="${x}" cy="${y}" r="${rad}" fill="url(#crater)"/><path d="M${n(x - rad * 0.8)},${n(y + rad * 0.5)} A${rad},${rad} 0 0 1 ${n(x + rad * 0.5)},${n(y - rad * 0.8)}" stroke="#2c2f55" stroke-width=".45" opacity=".55"/><path d="M${n(x + rad * 0.8)},${n(y - rad * 0.4)} A${rad},${rad} 0 0 1 ${n(x - rad * 0.4)},${n(y + rad * 0.8)}" stroke="#fff" stroke-width=".4" opacity=".6"/>`;
+  const field: [number, number, number][] = [[10, 8, 0], [24, 3, 1.3], [38, 7, 0.6], [4, 24, 1.9], [92, 62, 0.9], [96, 78, 2.2], [84, 94, 0.3], [66, 97, 1.6], [18, 95, 1.1], [5, 70, 2.4], [30, 92, 0.7], [94, 40, 1.4]];
+  return {
+    body:
+      // The sky it is in: a faint cool wash behind the crescent so the moon sits in a place, then stars at three sizes.
+      `<circle cx="82" cy="17" r="26" fill="url(#sky)"/>` +
+      field.map(([x, y, b], i) => dot(x, y, n(0.45 + (i % 3) * 0.2), -b, 2.2 + (i % 4) * 0.5)).join("") +
+      twinkle(14, 14, 0.8, 0, 2.6) + twinkle(44, 4.5, 0.55, -1.2, 3) + twinkle(6, 40, 0.6, -2.1, 2.4) + twinkle(93, 52, 0.7, -0.7, 2.9) + twinkle(88, 88, 0.6, -1.7, 3.2) + twinkle(14, 88, 0.75, -2.5, 2.7) +
+      // The shooting star: it crosses the top left once a loop and is not there the rest of the time.
+      `<g opacity="0"><g>${a ? animateT("translate", "0 0;0 0;34 21;34 21", { dur: 7, begin: -3, keyTimes: "0;.08;.2;1" }) + animate("opacity", "0;0;1;0;0", { dur: 7, begin: -3, keyTimes: "0;.08;.12;.2;1" }) : ""}` +
+      `<path d="M2,2 L-18,-10" stroke="url(#trail)" stroke-width="1.4" stroke-linecap="round"/><circle cx="2" cy="2" r="1.1" fill="#fff"/></g></g>` +
+      `<g filter="url(#ds)"><g filter="url(#glowM)" opacity=".55"><g mask="url(#cres)"><circle cx="82" cy="17" r="15.5" fill="#fff4c4"/></g>${a ? animate("opacity", ".4;.7;.4", { dur: 4 }) : ""}</g>` +
+      // The crescent: a disc with another disc taken out of it, which is what leaves the lit rim.
+      `<g mask="url(#cres)"><circle cx="82" cy="17" r="15.5" fill="url(#moonG)"/>` +
+      `<ellipse cx="88" cy="10" rx="5" ry="3.4" fill="#9a9bbd" opacity=".34" filter="url(#bloomB)"/><ellipse cx="76" cy="26" rx="3.4" ry="2.6" fill="#9a9bbd" opacity=".3" filter="url(#bloomB)"/><ellipse cx="91" cy="22" rx="2.6" ry="3.8" fill="#9a9bbd" opacity=".28" filter="url(#bloomB)"/>` +
+      crater(88, 9, 2.3) + crater(92, 19, 1.7) + crater(82, 5.5, 1.4) + crater(75.4, 25.6, 1.8) + crater(85, 27, 1.1) +
+      `<circle cx="82" cy="17" r="15.5" stroke="#fffdf0" stroke-width="1.1" opacity=".85"/>` +
+      `</g></g>` +
+      // Stars on the moon's own face: they glint where the light is brightest.
+      twinkle(87, 14, 0.46, -0.4, 2.2, "#fff") + twinkle(80, 8, 0.4, -1.4, 2.7, "#fff") + twinkle(93, 24, 0.36, -2.2, 2.4, "#fff") +
+      "",
+    defs:
+      shadowF("ds", 0.8, 0.9, 0.35) + BLOOM + blurF("glowM", 4) +
+      `<mask id="cres" maskUnits="userSpaceOnUse" x="55" y="-8" width="50" height="50"><rect x="55" y="-8" width="50" height="50" fill="#fff"/><circle cx="75" cy="22.6" r="13.2" fill="#000"/></mask>` +
+      rad("moonG", [[0, "#fffdf0"], [0.55, "#f2e6bd"], [1, "#c9bd96"]], 0.65, 0.3, 0.85) +
+      rad("crater", [[0, "#9c9ab8", 0.2], [0.7, "#8a88a8", 0.5], [1, "#7a789a", 0.7]]) +
+      rad("sky", [[0, "#7f9bff", 0.16], [0.6, "#4b5fd0", 0.06], [1, "#2a2f8a", 0]]) +
+      lin("trail", [[0, "#ffffff", 1], [1, "#ffffff", 0]], [0, 0, 1, 1]),
+  };
+};
+
+const make = (key: string, name: string, motion: string, draw: Draw, refract?: RefractionKind): CollectionPreset => {
   const still = draw(false);
   const live = draw(true);
   // The published file has an intrinsic size. With only a viewBox some renderers report a width of 0, which leaves the app
   // nothing to draw a first-frame poster at (see `useStaticFrame`).
   const sized = wrap(live.body, live.defs).replace('viewBox="0 0 100 100"', 'width="256" height="256" viewBox="0 0 100 100"');
-  return { key, name, value: `builtin:${key}`, src: dataUri(wrap(still.body, still.defs)), animatedSvg: sized, motion };
+  return { key, name, value: `builtin:${key}`, src: dataUri(wrap(still.body, still.defs)), animatedSvg: sized, motion, ...(refract ? { refract } : {}) };
 };
 
 /** In the order the shop lists them. */
 export const COLLECTION_PRESETS: CollectionPreset[] = [
-  make("cat-ears", "Cat Ears", "Each ear gives a quick twitch every few seconds, out of step with the other.", catEars),
+  make("cat-ears", "Cat Ears", "Each ear flicks about its pearl every few seconds, out of step with the other, the whiskers twitch and the pearls glint.", catEars),
   make("halo", "Halo", "The halo hovers and pulses with light while three stars glint.", halo),
   make("laurel", "Laurel Wreath", "A ripple of movement runs up the leaves and the berries glint.", laurel),
   make("lightning-corners", "Lightning Corners", "Each corner flickers on its own, like a failing bulb.", lightningCorners),
@@ -535,4 +681,7 @@ export const COLLECTION_PRESETS: CollectionPreset[] = [
   make("saturn", "Ringed Planet", "Two moons travel back and forth along the ring.", saturn),
   make("gem-frame", "Jeweled Frame", "The four stones catch the light one after another.", gemFrame),
   make("horns", "Little Horns", "The horns wiggle and the tips flare like embers.", horns),
+  make("ice-cube", "Ice Cube", "The ice bends the picture behind it, and melts: drips swell, fall and ring a puddle while light slides over the surface.", iceCube, "ice"),
+  make("sakura", "Sakura Wreath", "A wreath of cherry blossom sways gently while petals fall across the picture.", sakura),
+  make("moon", "Crescent Moon", "Stars twinkle across the sky and on the moon's face, and a shooting star crosses once a loop.", moon),
 ];

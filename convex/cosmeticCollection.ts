@@ -52,8 +52,8 @@ const itemValidator = v.object({
 });
 
 export const publish = internalAction({
-  args: { dryRun: v.optional(v.boolean()), createdBy: v.optional(v.id("users")) },
-  handler: async (ctx, { dryRun, createdBy }) => {
+  args: { dryRun: v.optional(v.boolean()), only: v.optional(v.array(v.string())), createdBy: v.optional(v.id("users")) },
+  handler: async (ctx, { dryRun, only, createdBy }) => {
     const items: (typeof itemValidator.type)[] = [];
 
     // Avatar decorations are published by `publishDecorations`, which uploads their artwork: they are not `builtin:` keys, because
@@ -63,7 +63,9 @@ export const publish = internalAction({
     {
       if (!dryRun && !isR2Enabled()) throw new Error("This deployment has no CDN configured (R2_* settings), so there is nowhere to publish nameplates and effects. ");
       // Nothing is written until every design has been checked: a bad one can't leave the collection half published.
-      for (const d of COLLECTION_DESIGNS) {
+      const chosen = COLLECTION_DESIGNS.filter((d) => !only || only.includes(d.slug));
+      if (only && chosen.length !== only.length) throw new Error(`Unknown design in only: ${only.filter((o) => !COLLECTION_DESIGNS.some((d) => d.slug === o)).join(", ")}.`);
+      for (const d of chosen) {
         const spec = JSON.parse(JSON.stringify(buildDesign(d)));
         const checked = normalizeMotionSpec(JSON.parse(JSON.stringify(spec)), noPictures);
         if (canonicalJson(checked.clips) !== canonicalJson(spec.clips)) throw new Error(`${d.slug} isn't what the validator would store, so nothing was published.`);
@@ -130,10 +132,11 @@ export function checkDecorationSvg(svg: string): string | null {
  * its price and status, and only has its artwork repointed, which `refreshOwners` then carries to everyone who owns it.
  */
 export const publishDecorations = internalAction({
-  args: { files: v.array(v.object({ key: v.string(), svg: v.string() })), dryRun: v.optional(v.boolean()) },
+  args: { files: v.array(v.object({ key: v.string(), svg: v.string(), refract: v.optional(v.literal("ice")) })), dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { files, dryRun }): Promise<unknown> => {
     const known = new Map(COLLECTION_DECORATIONS.map((d) => [d.key, d]));
-    if (files.length !== known.size || files.some((f) => !known.has(f.key))) throw new Error(`Expected exactly the ${known.size} collection decorations (${[...known.keys()].join(", ")}).`);
+    // Only the decorations handed in are touched: publishing a new one must never repoint an older one that people may own.
+    if (files.length === 0 || files.some((f) => !known.has(f.key)) || new Set(files.map((f) => f.key)).size !== files.length) throw new Error(`Expected one or more distinct collection decorations (${[...known.keys()].join(", ")}).`);
     for (const f of files) {
       const problem = checkDecorationSvg(f.svg);
       if (problem) throw new Error(`${f.key} ${problem}, so nothing was published.`);
@@ -153,7 +156,9 @@ export const publishDecorations = internalAction({
     const items = planned.map((p) => {
       const d = known.get(p.key)!;
       // 126 is the width a decoration is laid over an avatar at (see `defaultDecorationLayer`).
-      return { key: p.key, name: d.name, description: d.description, priceCents: d.priceCents, url: r2PublicUrlForKey(p.path) };
+      // A fragment names the refraction the app should draw under the artwork (see src/lib/decoration-refraction.ts). It is never
+      // sent to the CDN, and an app that does not know it draws the picture as an ordinary image.
+      return { key: p.key, name: d.name, description: d.description, priceCents: d.priceCents, url: r2PublicUrlForKey(p.path) + (p.refract ? `#refract=${p.refract}` : "") };
     });
     const result: { created: number; repointed: number } = await ctx.runMutation(internal.cosmeticCollection.seedDecorations, { items });
     return { published: planned.length, ...result };
@@ -200,9 +205,11 @@ export const seedDecorations = internalMutation({
  * it is. To charge for them later, set a price and status from the console (`pricing.write`).
  */
 export const activateFree = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const slugs = new Set<string>([...COLLECTION_DECORATIONS.map((d) => d.key), ...COLLECTION_DESIGNS.map((d) => d.slug)]);
+  args: { only: v.optional(v.array(v.string())) },
+  handler: async (ctx, { only }) => {
+    const all = [...COLLECTION_DECORATIONS.map((d) => d.key), ...COLLECTION_DESIGNS.map((d) => d.slug)];
+    if (only && only.some((o) => !all.includes(o))) throw new Error(`Unknown slug in only: ${only.filter((o) => !all.includes(o)).join(", ")}.`);
+    const slugs = new Set<string>(only ?? all);
     const author = (await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", "crystal")).unique())?._id;
     if (!author) throw new Error("There is no `crystal` user to record this against.");
     const now = Date.now();
@@ -217,6 +224,59 @@ export const activateFree = internalMutation({
     }
     await audit(ctx, author, "catalog.collection.activate_free", undefined, `Archive collection: ${activated} put on sale for free, ${left} left as they are`);
     return { activated, left, missing: slugs.size - activated - left };
+  },
+});
+
+/**
+ * Takes the collection's profile effects off sale.
+ *
+ *   npx convex run cosmeticCollection:archiveEffects
+ *
+ * Archiving keeps a SKU for the people who already own it (they keep it and can still equip it); it just stops being offered.
+ * Only this collection's own profile-effect SKUs are touched, and only ones that are on sale or still drafts.
+ */
+export const archiveEffects = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const author = (await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", "crystal")).unique())?._id;
+    if (!author) throw new Error("There is no `crystal` user to record this against.");
+    const now = Date.now();
+    let archived = 0;
+    let already = 0;
+    for (const d of COLLECTION_DESIGNS.filter((x) => x.kind === "effect")) {
+      const sku = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", d.slug)).unique();
+      if (!sku) continue;
+      if (sku.status === "archived") { already++; continue; }
+      await ctx.db.patch(sku._id, { status: "archived", featured: false, updatedAt: now });
+      archived++;
+    }
+    await audit(ctx, author, "catalog.collection.archive_effects", undefined, `Archive collection profile effects: ${archived} archived, ${already} already were`);
+    return { archived, already };
+  },
+});
+
+/**
+ * Puts the collection's profile effects back on sale, free, as `activateFree` left them: the reverse of `archiveEffects`.
+ *
+ *   npx convex run cosmeticCollection:restoreEffects
+ */
+export const restoreEffects = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const author = (await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", "crystal")).unique())?._id;
+    if (!author) throw new Error("There is no `crystal` user to record this against.");
+    const now = Date.now();
+    let restored = 0;
+    let already = 0;
+    for (const d of COLLECTION_DESIGNS.filter((x) => x.kind === "effect")) {
+      const sku = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", d.slug)).unique();
+      if (!sku) continue;
+      if (sku.status === "active") { already++; continue; }
+      await ctx.db.patch(sku._id, { status: "active", priceCents: 0, updatedAt: now });
+      restored++;
+    }
+    await audit(ctx, author, "catalog.collection.restore_effects", undefined, `Archive collection profile effects: ${restored} put back on sale for free, ${already} already were`);
+    return { restored, already };
   },
 });
 

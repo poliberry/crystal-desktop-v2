@@ -91,6 +91,7 @@ import type * as lib_r2 from "../lib/r2.js";
 import type * as lib_richEmbeds from "../lib/richEmbeds.js";
 import type * as lib_secrets from "../lib/secrets.js";
 import type * as lib_serverProfile from "../lib/serverProfile.js";
+import type * as lib_skuDelete from "../lib/skuDelete.js";
 import type * as lib_staff from "../lib/staff.js";
 import type * as lib_staffPermissions from "../lib/staffPermissions.js";
 import type * as lib_studioDocs from "../lib/studioDocs.js";
@@ -220,6 +221,7 @@ declare const fullApi: ApiFromModules<{
   "lib/richEmbeds": typeof lib_richEmbeds;
   "lib/secrets": typeof lib_secrets;
   "lib/serverProfile": typeof lib_serverProfile;
+  "lib/skuDelete": typeof lib_skuDelete;
   "lib/staff": typeof lib_staff;
   "lib/staffPermissions": typeof lib_staffPermissions;
   "lib/studioDocs": typeof lib_studioDocs;

@@ -15,6 +15,7 @@ import {
   GAME_CATALOGUE,
   PLATFORM_META,
   SURFACE_META,
+  surfaceAllowed,
   type ChannelSurface,
   type ClanGame,
   type CreatorAudience,
@@ -22,7 +23,7 @@ import {
 import { type CommunitySetup, type SetupChannel, type SetupRole } from "@/lib/community-templates";
 import { PERMISSIONS } from "@/lib/permissions";
 
-export { CHANNEL_SURFACES, GAME_CATALOGUE, SURFACE_META };
+export { CHANNEL_SURFACES, GAME_CATALOGUE, SURFACE_META, surfaceAllowed };
 
 /** The platforms, in the order the creator step lists them. */
 export const CREATOR_PLATFORM_LIST = CREATOR_PLATFORMS.map((id) => ({ id, ...PLATFORM_META[id] }));

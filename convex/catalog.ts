@@ -3,7 +3,9 @@ import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { isActive } from "./lib/entitlements";
+import { deleteBlocker } from "./lib/skuDelete";
 import { audit, requireStaff } from "./lib/staff";
 import { getCurrentUserOrNull } from "./users";
 
@@ -590,5 +592,49 @@ export const seedStarterCatalog = mutation({
     }
     await audit(ctx, staff.user._id, "catalog.seed", undefined, `starter catalogue: ${created.length} SKUs`);
     return { categories: categories.size, skus: created.length };
+  },
+});
+
+// --- Staff: deleting an item ------------------------------------------------------
+
+/**
+ * What deleting an item would touch, for the confirmation: who owns it, how it has sold, and what Stripe holds for it.
+ * Counts are capped (the cap is shown as "N+") so a very popular item can't make this read the whole table.
+ */
+export const adminDeletePreview = query({
+  args: { skuId: v.id("skus") },
+  handler: async (ctx, { skuId }) => {
+    await requireStaff(ctx, "catalog.read");
+    const sku = await ctx.db.get(skuId);
+    if (!sku) return null;
+    const CAP = 5000;
+    const entitlements = await ctx.db.query("entitlements").withIndex("by_sku", (q) => q.eq("skuId", skuId)).take(CAP);
+    const orders = await ctx.db.query("orders").withIndex("by_sku", (q) => q.eq("skuId", skuId)).take(CAP);
+    return {
+      blocker: deleteBlocker(sku),
+      owners: entitlements.filter((e) => isActive(e)).length,
+      ordersPaid: orders.filter((o) => o.status === "paid").length,
+      capped: entitlements.length >= CAP || orders.length >= CAP,
+      /** Someone is part-way through buying it. Deleting now could take their payment for something that no longer exists. */
+      pendingRecent: orders.some((o) => o.status === "pending" && Date.now() - o.createdAt < 24 * 60 * 60 * 1000),
+      onStripe: !!(sku.stripeProductId || sku.stripePriceId),
+    };
+  },
+});
+
+/**
+ * The delete itself, after Stripe has been dealt with. It checks nothing about the item's address, slug, picture or
+ * grants — an item whose data has gone bad is exactly the kind that can't pass `adminUpsertSku`'s validation, so this
+ * must not depend on it. Orders and creator earnings are left alone: they are the financial record, and everything that
+ * reads them already copes with an item that has been removed.
+ */
+export const deleteSkuRecord = internalMutation({
+  args: { skuId: v.id("skus"), actorId: v.id("users"), summary: v.string() },
+  handler: async (ctx, { skuId, actorId, summary }) => {
+    const sku = await ctx.db.get(skuId);
+    if (!sku) return { deleted: false };
+    await ctx.db.delete(skuId);
+    await audit(ctx, actorId, "catalog.sku.delete", { type: "sku", id: skuId }, `Deleted "${sku.name}" (${sku.slug}) · ${summary}`);
+    return { deleted: true };
   },
 });

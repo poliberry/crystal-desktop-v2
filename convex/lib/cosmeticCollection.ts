@@ -543,6 +543,73 @@ const crystalCavern: CollectionDesign = {
   },
 };
 
+const lsdTrip: CollectionDesign = {
+  slug: "lsd-trip-nameplate",
+  name: "LSD Trip",
+  kind: "nameplate",
+  description: "Total sensory overload: a gradient that never stops turning, three kaleidoscopes spinning against each other, hypnotic rings, colour clouds that melt into one another, rays in three directions, glitch bars and a blizzard of confetti going every way at once, all pushed through a hue shift that won't sit still. Nothing on it is standing still, and you are not meant to be able to follow it.",
+  priceCents: 299,
+  colors: ["#ff00c8", "#00f0ff", "#ffee00", "#7a00ff"],
+  duration: 6,
+  intro: 1.4,
+  build: (c) => {
+    const rainbow = ["#ff00c8", "#ffee00", "#00f0ff", "#7a00ff", "#00ff6a"];
+    const shift = (k: number) => [...rainbow.slice(k), ...rainbow.slice(0, k)];
+    const crazy = ["#ff00c8", "#ffee00", "#00f0ff", "#7a00ff", "#00ff6a", "#ff5a00"];
+    // A circle of shapes that turns whole turns each loop, against its neighbours: the kaleidoscope.
+    const mandala = (name: string, x: number, count: number, radius: number, turns: number, shape: (i: number) => Source, glowColor: string) =>
+      ringOf(c, name, [x, 0], count, radius, (i) => shape(i), { turns, blend: "normal", fx: [glow(glowColor, 7, 1.3)] });
+    const hyp = (i: number, x: number, color: string): Clip =>
+      make(c, `Ring ${i + 1}`, ring(120, color, 7), {
+        blend: "add",
+        fx: [glow(color, 10, 1.6)],
+        transform: tf({ x, scaleX: cycle(c, 1.5, [[0, 0.2, "out"], [0.99, 3.4]], i / 4), scaleY: cycle(c, 1.5, [[0, 0.2, "out"], [0.99, 3.4]], i / 4), opacity: cycle(c, 1.5, [[0, 0], [0.1, 0.8, "out"], [0.9, 0]], i / 4) }),
+      });
+    const bar = (i: number): Clip =>
+      make(c, `Glitch bar ${i + 1}`, { type: "solid", w: W, h: 7 + i * 9, color: crazy[(i * 2) % crazy.length] }, {
+        blend: "add",
+        transform: tf({
+          y: (i - 0.5) * H * 0.4,
+          x: cycle(c, 2.2 + i * 0.4, [[0, 0], [0.1, 60 - i * 40], [0.14, -44], [0.2, 0]], i / 3),
+          opacity: cycle(c, 2.2 + i * 0.4, [[0, 0, "out"], [0.1, 0.6, "out"], [0.14, 0, "out"], [0.5, 0, "out"], [0.55, 0.5, "out"], [0.58, 0, "out"]], i / 3),
+        }),
+      });
+    const spray = (name: string, shape: Particles["shape"], x: number, w: number, h: number, angle: number, spread: number, count: number, size: number, speed: number, seed: number): Clip =>
+      make(c, name, part(c, { shape, w, h, count: cnt(c, count), life: fit(c, 1.9), speed, speedJitter: 0.6, angle, spread, size, sizeJitter: 0.6, sizeEnd: 1, spin: 520, colors: crazy, drift: 24, fadeIn: 0.05, fadeOut: 0.2, seed: c.seed + seed }), { transform: tf({ x }) });
+    return [
+      make(c, "Wash", {
+        type: "gradient", w: W * 1.6, h: W * 1.6, kind: "linear", angle: spin(c, 1),
+        stops: [{ o: 0, c: colorLoop(c, shift(0)) }, { o: 0.33, c: colorLoop(c, shift(2)) }, { o: 0.66, c: colorLoop(c, shift(4)) }, { o: 1, c: colorLoop(c, shift(1)) }],
+      }, { ramp: false }),
+      haze(c, "#ff00c8", { a: 0.4, scale: 90, speed: 0.7, contrast: 0.95, blend: "overlay", seed: 3, name: "Melting magenta" }),
+      haze(c, "#00f0ff", { a: 0.4, scale: 130, speed: -0.55, contrast: 0.95, blend: "hardLight", seed: 12, name: "Melting cyan" }),
+      rays(c, "Rays A", 16, colorLoop(c, shift(1)), { x: -300, r: 340, a: 0.3, softness: 0.3, steps: 2 }),
+      rays(c, "Rays B", 24, colorLoop(c, shift(3)), { x: 300, r: 340, a: 0.28, softness: 0.3, dir: -1, steps: 3 }),
+      rays(c, "Rays C", 11, colorLoop(c, shift(2)), { x: 0, r: 520, a: 0.16, softness: 0.55, steps: 1 }),
+      mandala("Kaleidoscope A", -330, 7, 62, 1, (i) => (i % 2 ? star(22, "#ffee00", 5, 0.4) : disc(16, "#ff00c8")), "#ff00c8"),
+      mandala("Kaleidoscope B", 40, 7, 74, -2, (i) => (i % 2 ? box(14, 14, "#00f0ff", 3) : star(24, "#ffffff", 4, 0.3)), "#00f0ff"),
+      mandala("Kaleidoscope C", 380, 5, 52, 3, (i) => (i % 2 ? disc(20, "#00ff6a") : star(20, "#ffee00", 6, 0.5)), "#7a00ff"),
+      hyp(0, 380, "#ffee00"), hyp(1, 380, "#ff00c8"), hyp(2, -330, "#00f0ff"), hyp(3, -330, "#00ff6a"),
+      spray("Confetti falling", "square", 0, W, 10, 90, 20, 70, 10, 150, 3),
+      spray("Stars rising", "star", 0, W, 10, -90, 25, 40, 14, 170, 8),
+      spray("Hearts crossfire", "heart", -W / 2, 10, H, 0, 30, 36, 16, 360, 15),
+      spray("Rings crossfire", "ring", W / 2, 10, H, 180, 30, 30, 18, 330, 22),
+      sweep(c, "#ffffff", { a: 0.4, period: 2.3, width: 0.1, angle: 24, seed: 2 }),
+      sweep(c, "#ffee00", { a: 0.3, period: 4.6, width: 0.2, angle: -34, seed: 9 }),
+      bar(0), bar(1),
+      twinkles(c, 30, 16, { colors: ["#ffffff", "#ffee00", "#00f0ff"], seed: 55 }),
+      introFlash(c, "#ffffff", 0.85),
+      introSweep(c, "#ff00c8"),
+      ...introRings(c, "#00f0ff", { n: 3, x: 300, size: 140, to: 4.4 }),
+      introBurst(c, { name: "Stars every way", shape: "star", count: 110, speed: 720, spread: 360, gravity: 0, size: 14, colors: crazy }),
+      introBurst(c, { name: "Hearts every way", shape: "heart", x: -260, count: 60, speed: 540, spread: 360, gravity: 380, size: 16, colors: crazy, seed: c.seed + 77 }),
+      // Last, so it is over everything: an adjustment layer that turns every colour below it all the way round the wheel and
+      // oversaturates the lot, once a loop. This is what makes it impossible to settle on a colour.
+      make(c, "Acid", { type: "adjust" }, { fx: [{ type: "adjust", hue: spin(c, 1), saturation: 1.35, brightness: 0.96, contrast: 1.12 }] }),
+    ];
+  },
+};
+
 // --- Profile effects (600 × 700) ------------------------------------------------------------------------------------------
 
 const EW = MOTION_STAGES.effect.w;
@@ -760,7 +827,7 @@ const crystalBloom: CollectionDesign = {
   },
 };
 
-export const COLLECTION_NAMEPLATES: readonly CollectionDesign[] = [lofiRooftop, stormChaser, runeCircle, treasureVault, goldenGroove, mischiefNight, pizzazz, crystalCavern];
+export const COLLECTION_NAMEPLATES: readonly CollectionDesign[] = [lofiRooftop, stormChaser, runeCircle, treasureVault, goldenGroove, mischiefNight, pizzazz, crystalCavern, lsdTrip];
 export const COLLECTION_EFFECTS: readonly CollectionDesign[] = [lightningFrame, summoningCircle, treasureRain, starlitNight, confettiPop, mischiefSmoke, crystalBloom];
 export const COLLECTION_DESIGNS: readonly CollectionDesign[] = [...COLLECTION_NAMEPLATES, ...COLLECTION_EFFECTS];
 
@@ -797,7 +864,7 @@ export interface DecorationListing {
 }
 
 export const COLLECTION_DECORATIONS: readonly DecorationListing[] = [
-  { key: "cat-ears", name: "Cat Ears", description: "Two plum ears with pink insides, perched on the top corners of your avatar.", priceCents: 199 },
+  { key: "cat-ears", name: "Cat Ears", description: "Flat anime-style cat ears: cream with a layered, scalloped pink inside and a pearl at the base, and three whiskers on each cheek. The ears flick and the whiskers twitch.", priceCents: 199 },
   { key: "halo", name: "Halo", description: "A glowing gold ring hovering over your head, with two little stars.", priceCents: 199 },
   { key: "laurel", name: "Laurel Wreath", description: "Two green branches with red berries wrapped round the sides of your avatar.", priceCents: 249 },
   { key: "lightning-corners", name: "Lightning Corners", description: "A crackle of electric blue and yellow in each corner.", priceCents: 249 },
@@ -809,4 +876,7 @@ export const COLLECTION_DECORATIONS: readonly DecorationListing[] = [
   { key: "saturn", name: "Ringed Planet", description: "A tilted ring wrapping your avatar like a planet, with two moons.", priceCents: 249 },
   { key: "gem-frame", name: "Jeweled Frame", description: "A gold frame set with a ruby, a sapphire, an emerald and a diamond.", priceCents: 299 },
   { key: "horns", name: "Little Horns", description: "A pair of small red horns, for the member who is up to something.", priceCents: 199 },
+  { key: "ice-cube", name: "Ice Cube", description: "Your avatar frozen in a slab of ice that bends the picture behind it, and is melting: drips swell, fall and ring a puddle at its foot.", priceCents: 299 },
+  { key: "sakura", name: "Sakura Wreath", description: "A wreath of cherry blossom on a twig round your avatar, swaying gently, with petals falling across the picture.", priceCents: 299 },
+  { key: "moon", name: "Crescent Moon", description: "A cratered crescent moon over the corner of your avatar, in a sky of stars that twinkle on it and around it, with a shooting star every few seconds.", priceCents: 249 },
 ];

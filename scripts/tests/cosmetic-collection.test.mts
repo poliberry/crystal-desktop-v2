@@ -3,6 +3,7 @@ import { COLLECTION_DECORATIONS, COLLECTION_DESIGNS, COLLECTION_EFFECTS, COLLECT
 import { MAX_MOTION_BYTES, canonicalJson } from "../../convex/lib/motionAddress";
 import { COLLECTION_PRESETS } from "../../src/lib/avatar-decoration-collection";
 import { DECORATION_PRESETS, decorationLayers, decorationSrc } from "../../src/lib/avatar-decorations";
+import { refractionFilterId, refractionFilterSvg, refractionLensStyle, refractionOf } from "../../src/lib/decoration-refraction";
 
 let f = 0, p = 0;
 const ok = (n: string, c: boolean, d?: unknown) => { c ? p++ : (f++, console.log("FAIL", n, JSON.stringify(d)?.slice(0, 400))); };
@@ -12,7 +13,7 @@ const endOf = (c: Clip) => c.start + c.duration;
 const propsOf = (c: Clip) => [c.transform.x, c.transform.y, c.transform.scaleX, c.transform.scaleY, c.transform.rotation, c.transform.opacity];
 
 // ---- The set ------------------------------------------------------------------------------------------------------------------
-ok("eight nameplates and seven profile effects", COLLECTION_NAMEPLATES.length === 8 && COLLECTION_EFFECTS.length === 7);
+ok("nine nameplates and seven profile effects", COLLECTION_NAMEPLATES.length === 9 && COLLECTION_EFFECTS.length === 7);
 ok("every design is the kind its list says", COLLECTION_NAMEPLATES.every((d) => d.kind === "nameplate") && COLLECTION_EFFECTS.every((d) => d.kind === "effect"));
 ok("slugs are unique and valid for a SKU", new Set(COLLECTION_DESIGNS.map((d) => d.slug)).size === COLLECTION_DESIGNS.length && COLLECTION_DESIGNS.every((d) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(d.slug) && d.slug.length <= 60));
 ok("names are 2 to 80 characters and descriptions are under 600", COLLECTION_DESIGNS.every((d) => d.name.length >= 2 && d.name.length <= 80 && d.description.length > 40 && d.description.length <= 600));
@@ -88,9 +89,9 @@ for (const d of COLLECTION_DESIGNS) {
 }
 
 // ---- Avatar decorations -------------------------------------------------------------------------------------------------------
-ok("twelve decorations", COLLECTION_PRESETS.length === 12 && COLLECTION_DECORATIONS.length === 12);
+ok("fifteen decorations", COLLECTION_PRESETS.length === 15 && COLLECTION_DECORATIONS.length === 15);
 ok("the server's listing and the app's artwork name the same keys, in the same order", JSON.stringify(COLLECTION_DECORATIONS.map((d) => d.key)) === JSON.stringify(COLLECTION_PRESETS.map((x) => x.key)), { server: COLLECTION_DECORATIONS.map((d) => d.key), app: COLLECTION_PRESETS.map((x) => x.key) });
-ok("keys are URL-safe and unique", new Set(COLLECTION_PRESETS.map((x) => x.key)).size === 12 && COLLECTION_PRESETS.every((x) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(x.key)));
+ok("keys are URL-safe and unique", new Set(COLLECTION_PRESETS.map((x) => x.key)).size === 15 && COLLECTION_PRESETS.every((x) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(x.key)));
 ok("a preset's stored value is builtin:<key>", COLLECTION_PRESETS.every((x) => x.value === `builtin:${x.key}`));
 ok("decoration prices are whole cents above Stripe's minimum", COLLECTION_DECORATIONS.every((d) => Number.isInteger(d.priceCents) && d.priceCents >= 50 && d.description.length > 20 && d.name.length >= 2));
 ok("the app draws every one of them from its stored value", COLLECTION_PRESETS.every((x) => !!decorationSrc(x.value) && decorationSrc(x.value) === x.src));
@@ -105,6 +106,21 @@ ok("animations repeat for ever and have a duration", COLLECTION_PRESETS.every((x
 ok("the animated form is safe: no script, event handler, foreignObject or external address", COLLECTION_PRESETS.every((x) => !/<script|foreignObject|\son[a-z]+=|href=["'](?!#)|url\(["']?(?!#)|<image|@import|<style/i.test(x.animatedSvg)), COLLECTION_PRESETS.filter((x) => /<script|foreignObject|\son[a-z]+=|href=["'](?!#)|url\(["']?(?!#)|<image|@import|<style/i.test(x.animatedSvg)).map((x) => x.key));
 ok("every id used by a url(#…) or xlink:href=#… exists in the document", COLLECTION_PRESETS.every((x) => { const ids = new Set([...x.animatedSvg.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1])); return [...x.animatedSvg.matchAll(/(?:url\(#|href="#|mask="url\(#)([^)"]+)/g)].every((m) => ids.has(m[1])); }));
 ok("no script, no external references", COLLECTION_PRESETS.every((x) => { const s = decodeURIComponent(x.src); return !/<script|onload|href=["']http|url\(["']?http|<image/i.test(s); }));
+
+// ---- Refraction -------------------------------------------------------------------------------------------------------------------
+ok("an address can ask for ice refraction", refractionOf("https://cdn.test/marketplace/avatar-decorations/ice-cube-ab12.svg#refract=ice") === "ice");
+ok("no fragment, no refraction", refractionOf("https://cdn.test/a.svg") === undefined && refractionOf(undefined) === undefined && refractionOf("") === undefined);
+ok("a kind this build doesn't know is ignored, not drawn", refractionOf("https://cdn.test/a.svg#refract=lava") === undefined && refractionOf("https://cdn.test/a.svg#refract=") === undefined);
+ok("nothing after the kind leaks through", refractionOf("https://cdn.test/a.svg#refract=ice&x=<script>") === "ice");
+{
+  const svg = refractionFilterSvg("ice");
+  ok("the filter is a closed SVG with the id the lens refers to", svg.startsWith("<svg ") && svg.endsWith("</svg>") && svg.includes(`id="${refractionFilterId("ice")}"`));
+  ok("it displaces each colour channel separately, for a fringe", (svg.match(/<feDisplacementMap /g) ?? []).length === 3);
+  ok("and has no script or external reference", !/<script|\son[a-z]+=|href="https?:/i.test(svg));
+  const css = refractionLensStyle("ice");
+  ok("the lens filters the backdrop with that filter and keeps the avatar's corners", css.backdropFilter.includes(`url(#${refractionFilterId("ice")})`) && css.WebkitBackdropFilter === css.backdropFilter && css.borderRadius === "inherit" && css.pointerEvents === "none");
+}
+ok("the ice cube asks for it, and nothing else does", COLLECTION_PRESETS.filter((x) => x.refract).map((x) => x.key).join() === "ice-cube");
 
 console.log(f ? `${f} FAILED (${p} passed)` : `ALL PASSED (${p})`);
 process.exit(f ? 1 : 0);

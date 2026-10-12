@@ -722,3 +722,99 @@ async function applyEvent(ctx: ActionCtx, stripe: Stripe, event: Stripe.Event): 
       return;
   }
 }
+
+// --- Deleting an item -----------------------------------------------------------------
+
+/** Stripe saying the thing is already gone is the outcome we wanted. */
+const alreadyGone = (error: unknown): boolean => (error as { code?: string } | null)?.code === "resource_missing";
+
+/**
+ * Take an item off Stripe: every price switched off, and the product deleted or archived.
+ *
+ * Stripe never deletes a price, and a product that has had a price can only be archived, not deleted — archiving is what
+ * "removed from Stripe" can mean for anything that was ever on sale. A product that never had a price is deleted outright.
+ * Each step treats "already gone" as done, so running it again after a half-finished attempt is harmless.
+ */
+async function removeFromStripe(stripe: Stripe, ids: { productId?: string; priceId?: string }): Promise<string> {
+  const steps: string[] = [];
+  if (ids.priceId) {
+    try {
+      await stripe.prices.update(ids.priceId, { active: false });
+      steps.push("price switched off");
+    } catch (error) {
+      if (!alreadyGone(error)) throw error;
+    }
+  }
+  if (!ids.productId) return steps.join(", ") || "nothing on Stripe";
+
+  try {
+    // Older prices from a repricing, which `syncSku` switched off, are included: only "no prices at all" allows a delete.
+    const prices = await stripe.prices.list({ product: ids.productId, limit: 100 });
+    for (const price of prices.data) {
+      if (price.active) {
+        await stripe.prices.update(price.id, { active: false });
+        steps.push("price switched off");
+      }
+    }
+    if (prices.data.length === 0) {
+      await stripe.products.del(ids.productId);
+      steps.push("product deleted");
+    } else {
+      await stripe.products.update(ids.productId, { active: false });
+      steps.push("product archived");
+    }
+  } catch (error) {
+    if (alreadyGone(error)) steps.push("product already gone");
+    else throw error;
+  }
+  return steps.join(", ");
+}
+
+/**
+ * Delete a cosmetic item from the Marketplace, and take it off Stripe.
+ *
+ * Staff only: it needs both `catalog.write` and `pricing.write`, because it removes something that had a price. It checks
+ * the caller itself, from their row, and not by whether the console showed the button.
+ *
+ * Stripe goes first, so a Stripe failure leaves the item exactly as it was and the delete can simply be tried again. The
+ * item's own data is never validated, since an item with a bad address or slug is just the sort that needs deleting.
+ *
+ * What it leaves: people who own the item keep it (it shows to them as an item that has been removed), and orders and
+ * creator earnings stay as the financial record. `acknowledgeOwners` is the console's "yes, I know people own this".
+ */
+export const adminDeleteSku = action({
+  args: { skuId: v.id("skus"), reason: v.string(), acknowledgeOwners: v.optional(v.boolean()) },
+  handler: async (ctx, { skuId, reason, acknowledgeOwners }): Promise<{ stripe: string }> => {
+    const staff = await ctx.runQuery(api.staff.me, {});
+    if (!staff?.permissions.includes("catalog.write") || !staff.permissions.includes("pricing.write")) throw new Error("Not allowed.");
+    const note = reason.trim();
+    if (note.length < 3) throw new Error("Say why this is being deleted.");
+
+    const sku = await ctx.runQuery(internal.store.skuForSync, { skuId });
+    if (!sku) throw new Error("That item doesn't exist.");
+    const preview = await ctx.runQuery(api.catalog.adminDeletePreview, { skuId });
+    if (!preview) throw new Error("That item doesn't exist.");
+    if (preview.blocker) throw new Error(preview.blocker);
+    if (preview.pendingRecent) throw new Error("Someone is in the middle of buying this. Try again in a few minutes, or archive it now.");
+    if (preview.owners > 0 && !acknowledgeOwners) {
+      throw new Error(`${preview.owners}${preview.capped ? "+" : ""} people own this. Confirm that they keep it before deleting.`);
+    }
+
+    let stripe = "not on Stripe";
+    if (sku.stripeProductId || sku.stripePriceId) {
+      if (!process.env.STRIPE_SECRET_KEY) throw new Error("This item is on Stripe, but payments aren't set up here, so it can't be removed from Stripe. Nothing was deleted.");
+      try {
+        stripe = await removeFromStripe(stripeClient(), { productId: sku.stripeProductId, priceId: sku.stripePriceId });
+      } catch (error) {
+        throw new Error(`Stripe wouldn't remove it (${error instanceof Error ? error.message : "unknown error"}). Nothing was deleted; you can try again.`);
+      }
+    }
+
+    await ctx.runMutation(internal.catalog.deleteSkuRecord, {
+      skuId,
+      actorId: staff.userId,
+      summary: `${note} · Stripe: ${stripe} · owners ${preview.owners}, paid orders ${preview.ordersPaid}`,
+    });
+    return { stripe };
+  },
+});
