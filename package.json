@@ -1,11 +1,11 @@
 {
   "name": "crystal-desktop",
-  "version": "0.1.39",
+  "version": "0.2.0",
   "private": true,
-  "description": "Simple voice & video chat desktop app powered by LiveKit, Next.js and shadcn/ui",
+  "description": "Chat, Play, Create.",
   "author": "Crystal",
-  "homepage": "https://livekit.io",
-  "desktopName": "crystal-desktop",
+  "homepage": "https://usecrystal.app",
+  "desktopName": "Crystal",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently -k -s first -n next,crystal,studio,convex -c blue,green,magenta,gray \"bun run dev:next\" \"bun run dev:electron\" \"bun run dev:studio:wait\" \"bun run dev:convex\"",
