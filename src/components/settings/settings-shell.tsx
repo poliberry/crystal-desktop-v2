@@ -232,6 +232,7 @@ export function SettingsShell({
                         {me?.nameplateUrl && (
                           <CosmeticMedia
                             src={me.nameplateUrl}
+                            animate="hover"
                             className="fade-mask-l pointer-events-none absolute inset-0 h-full w-full object-cover opacity-20"
                           />
                         )}

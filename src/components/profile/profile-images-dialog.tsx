@@ -380,7 +380,7 @@ function CurrentPreview({
   return (
     <div className="relative flex h-14 items-center overflow-hidden rounded-xl border bg-muted/40 px-4">
       {url ? (
-        <Nameplate url={url} className="opacity-100 [mask-image:none]" />
+        <Nameplate url={url} animate className="opacity-100 [mask-image:none]" />
       ) : (
         <p className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
           No nameplate

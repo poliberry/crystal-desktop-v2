@@ -497,6 +497,9 @@ export function ChannelMessageList({
     [containerRef]
   );
 
+  // One function for every row — see the same handler in home/message-list.tsx: an inline arrow defeats `MessageRow`'s memo.
+  const handleReply = useCallback((draft: ReplyDraft) => onReply?.(draft), [onReply]);
+
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const jumpTo = useCallback((messageId: string) => {
     const el = scrollElRef.current?.querySelector<HTMLElement>(
@@ -573,7 +576,7 @@ export function ChannelMessageList({
                 canManageMessages={canManageMessages}
                 communityId={communityId}
                 channelId={channelId}
-                onReply={(draft) => onReply?.(draft)}
+                onReply={handleReply}
                 onJumpTo={jumpTo}
               />
             </Fragment>

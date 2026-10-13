@@ -20,11 +20,12 @@ import { useEffect, useState } from "react";
 const MAX_POSTER_EDGE = 192;
 
 /** `null` records a source that can't be posterised, so it isn't retried on
- * every render of every avatar wearing it. */
+ * every render of every avatar wearing it. Keyed by edge as well as address,
+ * since the same file can be wanted at two sizes. */
 const posters = new Map<string, string | null>();
 const inFlight = new Map<string, Promise<string | null>>();
 
-async function renderFirstFrame(src: string): Promise<string | null> {
+async function renderFirstFrame(src: string, maxEdge: number): Promise<string | null> {
   try {
     const image = new Image();
     // Without this the canvas is tainted and `toDataURL` throws. Convex storage
@@ -35,7 +36,7 @@ async function renderFirstFrame(src: string): Promise<string | null> {
     await image.decode();
 
     const longest = Math.max(image.naturalWidth, image.naturalHeight) || 1;
-    const scale = Math.min(1, MAX_POSTER_EDGE / longest);
+    const scale = Math.min(1, maxEdge / longest);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -54,15 +55,20 @@ async function renderFirstFrame(src: string): Promise<string | null> {
   }
 }
 
-function posterFor(src: string): Promise<string | null> {
-  const existing = inFlight.get(src);
+function posterKey(src: string, maxEdge: number): string {
+  return `${maxEdge}|${src}`;
+}
+
+function posterFor(src: string, maxEdge: number): Promise<string | null> {
+  const key = posterKey(src, maxEdge);
+  const existing = inFlight.get(key);
   if (existing) return existing;
-  const work = renderFirstFrame(src).then((poster) => {
-    posters.set(src, poster);
-    inFlight.delete(src);
+  const work = renderFirstFrame(src, maxEdge).then((poster) => {
+    posters.set(key, poster);
+    inFlight.delete(key);
     return poster;
   });
-  inFlight.set(src, work);
+  inFlight.set(key, work);
   return work;
 }
 
@@ -72,10 +78,14 @@ function posterFor(src: string): Promise<string | null> {
  * already static, it's one of our own data URIs, the poster hasn't been drawn
  * yet, or it can't be drawn at all.
  */
-export function useStaticFrame(src: string | undefined, enabled: boolean): string | undefined {
+export function useStaticFrame(
+  src: string | undefined,
+  enabled: boolean,
+  maxEdge: number = MAX_POSTER_EDGE
+): string | undefined {
   const wanted = enabled && !!src && /^https?:\/\//.test(src) ? src : undefined;
   const [poster, setPoster] = useState<string | undefined>(() =>
-    wanted ? posters.get(wanted) ?? undefined : undefined
+    wanted ? posters.get(posterKey(wanted, maxEdge)) ?? undefined : undefined
   );
 
   useEffect(() => {
@@ -83,19 +93,19 @@ export function useStaticFrame(src: string | undefined, enabled: boolean): strin
       setPoster(undefined);
       return;
     }
-    const cached = posters.get(wanted);
+    const cached = posters.get(posterKey(wanted, maxEdge));
     if (cached !== undefined) {
       setPoster(cached ?? undefined);
       return;
     }
     let live = true;
-    void posterFor(wanted).then((result) => {
+    void posterFor(wanted, maxEdge).then((result) => {
       if (live) setPoster(result ?? undefined);
     });
     return () => {
       live = false;
     };
-  }, [wanted]);
+  }, [wanted, maxEdge]);
 
   return wanted ? poster : undefined;
 }

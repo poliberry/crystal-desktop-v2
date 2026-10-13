@@ -296,10 +296,24 @@ export interface FontFaceSpec {
 /** A family's most files: regular, bold and italic of a few weights, with room to spare. */
 export const MAX_FONT_FACES = 12;
 
+/**
+ * The name of a font already installed on the wearer's computer ("Segoe UI", "Helvetica Neue", "Fira Code").
+ *
+ * It is written into a stylesheet between double quotes, so it is held to letters, numbers, spaces and a few
+ * joiners: nothing in it can close the quote, end the declaration or open a block. Letters are any script, since
+ * installed fonts are named in all of them.
+ */
+export const LOCAL_FONT_FAMILY = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,39}$/u;
+
 export interface ThemePackSpec {
   v: 1;
   name: string;
-  font?: { family: string; faces: FontFaceSpec[] };
+  /**
+   * Either a family shipped with the pack (`faces`, each a file), or — with `local` — the name of a font people
+   * already have installed, which ships nothing. A local font has no faces; whoever doesn't have it installed sees
+   * the app's own font instead.
+   */
+  font?: { family: string; faces: FontFaceSpec[]; local?: true };
   /**
    * The pack's colours. `isDark` says which scheme `colors` is for. `alt` is an optional second palette for the other
    * scheme: with it the pack follows the person's light/dark choice, wearing whichever palette matches. Without it the
@@ -348,6 +362,36 @@ export function extensionOf(url: string): string {
   return (path.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
 }
 
+/** The files of a family that ships with the pack: a name that is safe to show, and each file checked. */
+function normalizeFontFaces(family: string, f: Record<string, unknown>, assertUrl: UrlCheck): FontFaceSpec[] {
+  if (!/^[A-Za-z0-9 _-]{1,40}$/.test(family)) throw new Error("A font family's name can use letters, numbers, spaces, - and _.");
+
+  // A pack made before families had several files has just `url`: that is one regular face.
+  const rawFaces = Array.isArray(f.faces) ? f.faces : f.url ? [{ url: f.url, weight: 400, style: "normal" }] : [];
+  if (rawFaces.length === 0) throw new Error("A font family needs at least one font file, or the name of a font people already have.");
+  if (rawFaces.length > MAX_FONT_FACES) throw new Error(`A font family can have up to ${MAX_FONT_FACES} files.`);
+
+  const seen = new Set<string>();
+  return rawFaces.map((item) => {
+    const r = (item ?? {}) as Record<string, unknown>;
+    const url = assertUrl(String(r.url ?? ""), "font");
+    const format = extensionOf(url);
+    if (!(format in FONT_FORMATS)) throw new Error("A font has to be a WOFF2, WOFF, TTF or OTF file.");
+    const weight = Number(r.weight ?? 400);
+    const weightMax = r.weightMax === undefined || r.weightMax === null ? undefined : Number(r.weightMax);
+    const validWeight = (n: number) => Number.isInteger(n) && n >= 100 && n <= 900 && n % 100 === 0;
+    if (!validWeight(weight) || (weightMax !== undefined && (!validWeight(weightMax) || weightMax <= weight))) {
+      throw new Error("A font's weight is 100, 200 … 900 (a variable font covers a range, like 100–900).");
+    }
+    const style = r.style === "italic" ? "italic" : "normal";
+    // Two files claiming the same weight and style would fight; the first would win silently.
+    const key = `${style}:${weight}:${weightMax ?? ""}`;
+    if (seen.has(key)) throw new Error(`Two of the family's files are both ${style} ${weight}${weightMax ? `–${weightMax}` : ""}.`);
+    seen.add(key);
+    return { url, format: format as FontFormat, weight, weightMax, style };
+  });
+}
+
 export function normalizeThemePackSpec(input: unknown, assertUrl: UrlCheck): ThemePackSpec {
   if (!input || typeof input !== "object") throw new Error("That theme pack is broken.");
   const raw = input as Record<string, unknown>;
@@ -359,33 +403,18 @@ export function normalizeThemePackSpec(input: unknown, assertUrl: UrlCheck): The
   if (raw.font) {
     const f = raw.font as Record<string, unknown>;
     const family = String(f.family ?? "").trim();
-    if (!/^[A-Za-z0-9 _-]{1,40}$/.test(family)) throw new Error("A font family's name can use letters, numbers, spaces, - and _.");
 
-    // A pack made before families had several files has just `url`: that is one regular face.
-    const rawFaces = Array.isArray(f.faces) ? f.faces : f.url ? [{ url: f.url, weight: 400, style: "normal" }] : [];
-    if (rawFaces.length === 0) throw new Error("A font family needs at least one font file.");
-    if (rawFaces.length > MAX_FONT_FACES) throw new Error(`A font family can have up to ${MAX_FONT_FACES} files.`);
-
-    const seen = new Set<string>();
-    const faces: FontFaceSpec[] = rawFaces.map((item) => {
-      const r = (item ?? {}) as Record<string, unknown>;
-      const url = assertUrl(String(r.url ?? ""), "font");
-      const format = extensionOf(url);
-      if (!(format in FONT_FORMATS)) throw new Error("A font has to be a WOFF2, WOFF, TTF or OTF file.");
-      const weight = Number(r.weight ?? 400);
-      const weightMax = r.weightMax === undefined || r.weightMax === null ? undefined : Number(r.weightMax);
-      const validWeight = (n: number) => Number.isInteger(n) && n >= 100 && n <= 900 && n % 100 === 0;
-      if (!validWeight(weight) || (weightMax !== undefined && (!validWeight(weightMax) || weightMax <= weight))) {
-        throw new Error("A font's weight is 100, 200 … 900 (a variable font covers a range, like 100–900).");
+    // A font people already have: just its name. Nothing is uploaded, so there are no files to check — and anything
+    // that was sent along with the name is not carried, rather than rejected, so a creator who switched a family
+    // over from files isn't blocked by what they left behind.
+    if (f.local === true) {
+      if (!LOCAL_FONT_FAMILY.test(family)) {
+        throw new Error("An installed font's name can use letters, numbers, spaces, . - and _, up to 40 characters.");
       }
-      const style = r.style === "italic" ? "italic" : "normal";
-      // Two files claiming the same weight and style would fight; the first would win silently.
-      const key = `${style}:${weight}:${weightMax ?? ""}`;
-      if (seen.has(key)) throw new Error(`Two of the family's files are both ${style} ${weight}${weightMax ? `–${weightMax}` : ""}.`);
-      seen.add(key);
-      return { url, format: format as FontFormat, weight, weightMax, style };
-    });
-    out.font = { family, faces };
+      out.font = { family, faces: [], local: true };
+    } else {
+      out.font = { family, faces: normalizeFontFaces(family, f, assertUrl) };
+    }
   }
 
   if (raw.theme) {

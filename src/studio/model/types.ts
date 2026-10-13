@@ -370,7 +370,14 @@ export interface FontFaceData {
 export interface ThemePackData {
   /** A font family: one or more files, each a weight and style. Projects made when a
    * pack had a single font have `assetId` here instead of `faces` — see `fontOf`. */
-  font?: { family: string; faces?: FontFaceData[]; assetId?: string };
+  font?: {
+    family: string;
+    faces?: FontFaceData[];
+    assetId?: string;
+    /** The pack uses a font people already have installed, named by `family`, instead of shipping `faces`. Any files
+     * are kept (so switching back loses nothing) but neither checked nor submitted while this is on. */
+    local?: boolean;
+  };
   /** `template` is the id of the built-in app theme the colours started from, if any — so the
    * editor can say so and offer to go back to it. It is Studio's own note: it is never submitted. */
   theme?: {

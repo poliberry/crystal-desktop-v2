@@ -28,7 +28,7 @@ import { matchInProgressShortcode } from "@/lib/custom-emoji";
 import type { ReplyDraft } from "@/lib/reply";
 import { GLASS_BASE, GLASS_DARK, GLASS_SOFT } from "@/components/sidebar/glass";
 import { cn } from "@/lib/utils";
-import { randomSmiley, searchSystemEmoji } from "@/lib/system-emoji";
+import { randomSmiley, searchSystemEmoji, useSystemEmojiReady } from "@/lib/system-emoji";
 
 interface MessageComposerProps {
   conversationId: Id<"conversations">;
@@ -127,6 +127,9 @@ export function MessageComposer({
     };
   }, [conversationId, stopTyping]);
 
+  // The Unicode emoji data is a separate chunk (see system-emoji.ts). Subscribing is also what makes suggestions that were
+  // asked for before it arrived appear when it does.
+  useSystemEmojiReady();
   const suggestions =
     autocomplete && autocomplete.query.length >= 2
       ? searchSystemEmoji(autocomplete.query, 8).map((s) => ({

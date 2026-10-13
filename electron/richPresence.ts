@@ -332,14 +332,14 @@ class RichPresence {
    * unavailable — a day-old catalog is far better than none.
    */
   private async loadCatalog(): Promise<void> {
-    const cached = this.readCachedCatalog();
-    if (cached) this.applyCatalog(cached.entries);
+    const cached = await this.readCachedCatalog();
+    if (cached) await this.applyCatalog(cached.entries);
     if (cached && Date.now() - cached.fetchedAt < CATALOG_TTL_MS) return;
 
     try {
       const entries = await this.downloadCatalog();
       if (entries.length === 0) return;
-      this.applyCatalog(entries);
+      await this.applyCatalog(entries);
       const payload: CachedCatalog = { fetchedAt: Date.now(), entries };
       await fs.promises.writeFile(catalogPath(), JSON.stringify(payload)).catch(() => {});
     } catch (err) {
@@ -347,9 +347,14 @@ class RichPresence {
     }
   }
 
-  private readCachedCatalog(): CachedCatalog | null {
+  /**
+   * The catalog on disk. Read without blocking: the file is about 12 MB, and on Linux the main process is also Chromium's
+   * UI thread, so a synchronous read of it stalls every window while a slow disk catches up. (Parsing it is still one
+   * synchronous step, which is why `start()` is itself held back until the first window has loaded.)
+   */
+  private async readCachedCatalog(): Promise<CachedCatalog | null> {
     try {
-      const parsed = JSON.parse(fs.readFileSync(catalogPath(), "utf8")) as CachedCatalog;
+      const parsed = JSON.parse(await fs.promises.readFile(catalogPath(), "utf8")) as CachedCatalog;
       if (!Array.isArray(parsed.entries)) return null;
       return parsed;
     } catch {
@@ -373,12 +378,19 @@ class RichPresence {
     return [...games, ...nonGames];
   }
 
-  private applyCatalog(entries: Detectable[]): void {
+  private async applyCatalog(entries: Detectable[]): Promise<void> {
     this.detectableCount = entries.length;
     const osKey = detectableOsKey();
     const index: ExecutableIndex = new Map();
     const self = selfExecutableKeys();
+    let sinceYield = 0;
     for (const entry of entries) {
+      // Thousands of entries, each tested against several patterns. In batches, handing the thread back between them, so
+      // windows keep painting and answering input while the index is built.
+      if (++sinceYield >= 250) {
+        sinceYield = 0;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
       if (!entry?.name || !Array.isArray(entry.executables)) continue;
       if (isDeniedDetectable(entry.name)) continue;
       for (const exe of entry.executables) {

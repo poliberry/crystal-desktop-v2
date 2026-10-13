@@ -300,7 +300,7 @@ export function MemberProfileCard({
           // insets the banner into a floating strip and doubles the gutter of
           // everything else.
           "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/20",
-          hasGradient ? "bg-background/70" : "bg-accent",
+          hasGradient ? "bg-background/70" : "bg-sidebar-accent",
           // Radix wraps the viewport's children in a `display: table` box that
           // shrink-wraps to content — so a stream still (a replaced element with
           // its own pixel width) widens the whole card past its edges. Forcing
@@ -343,7 +343,7 @@ export function MemberProfileCard({
                   expanded ? "size-24" : "size-16",
                   !avatarDecoration && "ring-4",
                   !avatarDecoration &&
-                    (hasGradient ? "ring-background/70" : "ring-accent"),
+                    (hasGradient ? "ring-background/70" : "ring-sidebar-accent"),
                 )}
               >
                 <AvatarImage
@@ -367,7 +367,7 @@ export function MemberProfileCard({
                   accent={hasGradient ? member.borderGradientStart : undefined}
                   className={cn(
                     "min-w-7 min-h-7 ring-2",
-                    !hasGradient && "ring-accent bg-accent",
+                    !hasGradient && "ring-sidebar-accent bg-sidebar-accent",
                   )}
                 />
               </Avatar>

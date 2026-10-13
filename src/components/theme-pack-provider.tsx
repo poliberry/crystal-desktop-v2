@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { api } from "../../convex/_generated/api";
 import { PACK_SCHEME_ATTR, useTheme } from "@/components/theme-provider";
 import { setSoundOverrides } from "@/lib/ui-sounds";
-import { pickThemeVariant } from "../../convex/lib/creationSpecs";
+import { LOCAL_FONT_FAMILY, pickThemeVariant } from "../../convex/lib/creationSpecs";
 
 const STYLE_ID = "crystal-theme-pack";
 /** On <html> while the pack has a background picture on: what globals.css keys the picture layer and see-through panels on. */
@@ -72,7 +72,12 @@ export function ThemePackProvider({ children }: { children: React.ReactNode }) {
     const rules: string[] = [];
     const root: string[] = [];
 
-    if (spec.font) {
+    if (spec.font?.local) {
+      // A font the wearer already has: nothing to load, only a name to ask for. The name is re-checked against the
+      // same pattern the server used, since it is written between quotes. If this computer doesn't have the font the
+      // browser moves on to the next name in the list, which is the app's own font — the pack still wears.
+      if (LOCAL_FONT_FAMILY.test(spec.font.family)) root.push(`--font-sans:"${spec.font.family}","Blu Sans",system-ui,sans-serif;`);
+    } else if (spec.font) {
       // Every file of the family under one name, each with its weight and style, so the
       // app's own bold and italic pick the right file rather than a faked one.
       let any = false;

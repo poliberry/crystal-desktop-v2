@@ -33,6 +33,11 @@ export interface AccessibilityPreferences {
   textScale: number;
   /** Suppress animations and transitions, including framer-motion's. */
   reducedMotion: boolean;
+  /** Draw blurred, see-through panels as plain translucent ones. A blur re-draws everything behind it on every frame, which
+   * is cheap on a graphics card and the most expensive thing on the screen without one. Chosen for you the first time if
+   * the window turns out to be drawn in software (see `usesSoftwareRendering`); it is a setting under Settings →
+   * Performance, not Accessibility, but lives here because it is stored, applied and synced across windows the same way. */
+  reduceBlur: boolean;
   /** Stronger borders, brighter secondary text, always-visible focus rings. */
   highContrast: boolean;
   /** Swap the UI font for a wider, more distinguishable one. */
@@ -45,6 +50,7 @@ export const DEFAULT_ACCESSIBILITY: AccessibilityPreferences = {
   zoom: 1,
   textScale: 1,
   reducedMotion: false,
+  reduceBlur: false,
   highContrast: false,
   readableFont: false,
   underlineLinks: false,
@@ -83,12 +89,45 @@ function parse(raw: string | null): AccessibilityPreferences {
       zoom: nearestZoom(typeof stored.zoom === "number" ? stored.zoom : 1),
       textScale: typeof stored.textScale === "number" ? stored.textScale : 1,
       reducedMotion: stored.reducedMotion === true,
+      reduceBlur: stored.reduceBlur === true,
       highContrast: stored.highContrast === true,
       readableFont: stored.readableFont === true,
       underlineLinks: stored.underlineLinks === true,
     };
   } catch {
     return DEFAULT_ACCESSIBILITY;
+  }
+}
+
+/** Whether a stored preference was ever written, as opposed to being absent and so taking its default. */
+function hasStoredChoice(raw: string | null, key: keyof AccessibilityPreferences): boolean {
+  if (!raw) return false;
+  try {
+    return typeof (JSON.parse(raw) as Record<string, unknown>)[key] === "boolean";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this window is being drawn by the processor rather than a graphics card.
+ *
+ * Asked of WebGL, which is the one place a page can learn it: `failIfMajorPerformanceCaveat` makes the browser refuse a
+ * context it would have to emulate in software (SwiftShader, llvmpipe), so no context means no real GPU. Only asked on
+ * Linux, where that is a common state and a blocklisted or missing driver is the usual reason; elsewhere the answer isn't
+ * worth the few milliseconds. A browser with WebGL switched off says the same thing, which is also a machine worth easing.
+ */
+function usesSoftwareRendering(): boolean {
+  if (typeof navigator === "undefined" || !/Linux/.test(navigator.userAgent) || /Android/.test(navigator.userAgent)) return false;
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = (canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true }) ??
+      canvas.getContext("webgl", { failIfMajorPerformanceCaveat: true })) as WebGLRenderingContext | null;
+    if (!gl) return true;
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -118,6 +157,7 @@ function apply(prefs: AccessibilityPreferences): void {
   const root = document.documentElement;
   root.style.setProperty("--a11y-text-scale", String(prefs.textScale));
   root.classList.toggle("a11y-reduced-motion", prefs.reducedMotion);
+  root.classList.toggle("a11y-reduce-blur", prefs.reduceBlur);
   root.classList.toggle("a11y-high-contrast", prefs.highContrast);
   root.classList.toggle("a11y-readable-font", prefs.readableFont);
   root.classList.toggle("a11y-underline-links", prefs.underlineLinks);
@@ -146,7 +186,14 @@ export function AccessibilityProvider({ children }: { children: React.ReactNode 
   const [prefs, setPrefs] = useState<AccessibilityPreferences>(DEFAULT_ACCESSIBILITY);
 
   useEffect(() => {
-    const stored = parse(localStorage.getItem(STORAGE_KEY));
+    const raw = localStorage.getItem(STORAGE_KEY);
+    let stored = parse(raw);
+    // First launch on a machine that draws the window in software: start with the blurs off. Only when nobody has chosen —
+    // a stored `reduceBlur` of either value is a choice, and is never overridden.
+    if (!hasStoredChoice(raw, "reduceBlur") && usesSoftwareRendering()) {
+      stored = { ...stored, reduceBlur: true };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    }
     setPrefs(stored);
     apply(stored);
   }, []);

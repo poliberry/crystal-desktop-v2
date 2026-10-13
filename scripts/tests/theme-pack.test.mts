@@ -106,5 +106,48 @@ eq("a background survives a save and a reload", roundBg({ assetId: "a1", dim: 40
 eq("a reloaded background's numbers are clamped", roundBg({ assetId: "a1", dim: 999, blur: -5, panels: 0 }), { assetId: "a1", dim: 90, blur: 0, panels: 30 });
 eq("a background with no file is dropped on reload", roundBg({ dim: 10 }), undefined);
 
+// ---- An installed font, by name -------------------------------------------------------------------------------------------
+const localSpec = (font: unknown) => normalizeThemePackSpec({ name: "Local font", font }, same);
+eq("an installed font is just a name", localSpec({ family: "Segoe UI", local: true }).font, { family: "Segoe UI", faces: [], local: true });
+eq("a pack can be only an installed font", Object.keys(localSpec({ family: "Georgia", local: true })).sort(), ["font", "name", "v"]);
+eq("the name is trimmed", localSpec({ family: "  Helvetica Neue  ", local: true }).font?.family, "Helvetica Neue");
+eq("names with dots, digits and non-Latin letters are fine", [localSpec({ family: "Noto Sans CJK JP", local: true }), localSpec({ family: "Yu Gothic UI 2.0", local: true }), localSpec({ family: "游ゴシック", local: true })].map((s) => s.font?.family), ["Noto Sans CJK JP", "Yu Gothic UI 2.0", "游ゴシック"]);
+eq("files sent beside an installed font's name are not carried", localSpec({ family: "Arial", local: true, faces: [{ url: "https://cdn.test/a.woff2", weight: 400, style: "normal" }] }).font, { family: "Arial", faces: [], local: true });
+eq("local must be exactly true", throws(() => localSpec({ family: "Arial", local: "yes" })), true);
+// The name is written between quotes in a stylesheet, so nothing that could end the quote or the rule may pass.
+for (const bad of ['Arial"', "Arial\\", "Arial;", "Arial}", "a{b", "url(x)", "Arial'", "A/B", "<b>", "Arial\nSans", "", " ", "x".repeat(41), "-Arial", ".Arial", "Arial,serif"]) {
+  ok(`an installed font can't be called ${JSON.stringify(bad)}`, throws(() => localSpec({ family: bad, local: true })), bad);
+}
+// An uploaded family keeps its stricter rules, and an empty one still says what to do.
+ok("an uploaded family still needs a file", throws(() => localSpec({ family: "Inter" })));
+ok("an uploaded family's name is still ASCII-only", throws(() => localSpec({ family: "游ゴシック", faces: [{ url: "https://cdn.test/a.woff2", weight: 400, style: "normal" }] })));
+eq("an uploaded family is unchanged", localSpec({ family: "Inter", faces: [{ url: "https://cdn.test/a.woff2", weight: 400, style: "normal" }] }).font, { family: "Inter", faces: [{ url: "https://cdn.test/a.woff2", format: "woff2", weight: 400, weightMax: undefined, style: "normal" }] });
+ok("an uploaded family has no `local` key", !("local" in (localSpec({ family: "Inter", faces: [{ url: "https://cdn.test/a.woff2", weight: 400, style: "normal" }] }).font ?? {})));
+
+// Studio: what is sent, what is checked, what is kept.
+const fontAssets = new Map([["f1", { id: "f1", name: "Inter-Regular.woff2", size: 1000 }]]) as never;
+const fontData = (font: unknown) => ({ sounds: {}, icons: {}, font }) as never;
+const sentFont = (font: unknown) => (themePackSpecInput(fontData(font), "Pack", fontAssets, urlOf) as { font?: unknown }).font;
+eq("an installed font sends only its name", sentFont({ family: "Segoe UI", local: true }), { family: "Segoe UI", local: true });
+eq("files left in the project aren't sent for an installed font", sentFont({ family: "Segoe UI", local: true, faces: [{ assetId: "f1", weight: 400, style: "normal" }] }), { family: "Segoe UI", local: true });
+eq("switching back to files sends them again", (sentFont({ family: "Inter", faces: [{ assetId: "f1", weight: 400, style: "normal" }] }) as { faces: unknown[] }).faces.length, 1);
+eq("an installed font with no name yet sends nothing", sentFont({ family: "  ", local: true }), undefined);
+ok("an installed font passes the server's own validator", !checkThemePack(fontData({ family: "Segoe UI", local: true }), "Pack", fontAssets).some((x) => x.severity === "error"));
+ok("and is warned about, since not everyone has it", checkThemePack(fontData({ family: "Segoe UI", local: true }), "Pack", fontAssets).some((x) => x.severity === "warning" && x.message.includes("Segoe UI")));
+ok("an installed font with no name is an error", checkThemePack(fontData({ family: "", local: true }), "Pack", fontAssets).some((x) => x.severity === "error"));
+ok("an installed font isn't blamed for having no files", !checkThemePack(fontData({ family: "Segoe UI", local: true }), "Pack", fontAssets).some((x) => /no files|regular|bold/i.test(x.message)));
+ok("a badly named installed font is reported before it is sent", checkThemePack(fontData({ family: 'Arial"; x', local: true }), "Pack", fontAssets).some((x) => x.severity === "error"));
+
+const roundFont = (font: unknown) => {
+  const now = Date.now();
+  const project = { id: "abcd1234", kind: "themePack" as const, name: "Pack", createdAt: now, updatedAt: now, listing: { name: "Pack", description: "", free: true, priceUsd: "0" }, themePack: { sounds: {}, icons: {}, font } };
+  const enc = encodeProject(project as never, "Pack", []);
+  return decodeDocument(decodeProjectFile(enc.proj).project, enc.doc!).themePack?.font;
+};
+eq("an installed font survives a save and a reload", roundFont({ family: "Segoe UI", local: true, faces: [] })?.local, true);
+eq("its kept files survive too", roundFont({ family: "Inter", local: true, faces: [{ assetId: "f1", weight: 400, style: "normal" }] })?.faces?.length, 1);
+eq("an uploaded family reloads without the flag", roundFont({ family: "Inter", faces: [] }) && "local" in roundFont({ family: "Inter", faces: [] })!, false);
+eq("only `true` counts as installed on reload", roundFont({ family: "Inter", local: "yes", faces: [] }) && "local" in roundFont({ family: "Inter", local: "yes", faces: [] })!, false);
+
 console.log(f ? `${f} FAILED (${p} passed)` : `ALL PASSED (${p})`);
 process.exit(f ? 1 : 0);

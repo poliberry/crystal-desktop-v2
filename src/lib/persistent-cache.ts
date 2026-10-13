@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 /**
  * A small stale-while-revalidate cache on top of IndexedDB.
@@ -92,15 +92,58 @@ export function readCache<T>(key: string): T | undefined {
 
 export function writeCache<T>(key: string, data: T): void {
   const entry: Entry<T> = { at: Date.now(), data };
+  const isNew = !memo.has(key);
   // LRU cap: evict oldest first. Re-insert moves key to end (most recent).
-  if (memo.has(key)) memo.delete(key);
+  if (!isNew) memo.delete(key);
   memo.set(key, entry);
   if (memo.size > MAX_MEMO_ENTRIES) {
     const oldest = memo.keys().next().value as string | undefined;
     if (oldest) memo.delete(oldest);
   }
-  notify();
-  void putEntry(storageKey(key), entry);
+  // Only a key that wasn't there is news to anyone. Replacing a value that already was changes nothing a reader can
+  // see: whoever wrote it has live data, and a reader without live data was already being handed the older copy.
+  if (isNew) notifyKey(key);
+  scheduleWrite(storageKey(key), entry);
+}
+
+// --- Write coalescing --------------------------------------------------------
+
+/**
+ * How long a write waits for a newer one to replace it before it goes to IndexedDB.
+ *
+ * A live query writes its result on *every* change, and IndexedDB copies the whole value each time (structured clone, on the
+ * main thread, of a channel list or member array that can be 50–200 KB). A member list during a busy hour changes several
+ * times a second; that was several hundred KB of cloning a second to store something that is only ever read once, at the
+ * next launch. Only the last value of a burst matters, so a burst is one write.
+ */
+const WRITE_DELAY_MS = 1500;
+
+const pendingWrites = new Map<string, Entry<unknown>>();
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleWrite(fullKey: string, entry: Entry<unknown>): void {
+  pendingWrites.set(fullKey, entry);
+  if (writeTimer) return;
+  writeTimer = setTimeout(flushWrites, WRITE_DELAY_MS);
+}
+
+/** Writes everything waiting. Also called as the window is hidden or closed, so the last moments before a quit are kept. */
+export function flushWrites(): void {
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  if (pendingWrites.size === 0) return;
+  const batch = [...pendingWrites];
+  pendingWrites.clear();
+  for (const [fullKey, entry] of batch) void putEntry(fullKey, entry);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushWrites);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushWrites();
+  });
 }
 
 // --- IndexedDB -------------------------------------------------------------
@@ -254,26 +297,62 @@ export async function pruneExpired(): Promise<void> {
 // --- Hydration notifications ------------------------------------------------
 
 type Listener = () => void;
-const listeners = new Set<Listener>();
-let tick = 0;
 
-function notify(): void {
-  tick++;
-  for (const listener of listeners) listener();
+/** Bumped when the whole cache changes under everyone: a namespace finishing hydration, or an account switch. */
+let epoch = 0;
+
+/**
+ * Who is listening, by the key they care about (`null`: the cache as a whole).
+ *
+ * This used to be one global tick that every `writeCache` bumped, which woke every `useCachedQuery` and
+ * `useCachedFirstPage` in the app on every write — and each of those writes on every change to its own live data. One
+ * presence blip in a member list therefore re-rendered every cached view on screen, and the member list, the sidebar and
+ * each community card all write. Nothing needs that: once a query has live data it never reads the cache again, so the
+ * only change a reader can use is *its own key appearing* (a write that adds it, or hydration that loads it).
+ */
+const listeners = new Map<string | null, Set<Listener>>();
+
+/** Calls `listener` when `key` first appears (or, for `null`, never on its own) and whenever the whole cache changes under
+ * everyone. `useCacheHydration` is this plus React; it is exported so the behaviour can be tested without rendering. */
+export function subscribeCache(key: string | null, listener: () => void): () => void {
+  return addListener(key, listener);
 }
 
-function subscribe(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+function addListener(key: string | null, listener: Listener): () => void {
+  let set = listeners.get(key);
+  if (!set) listeners.set(key, (set = new Set()));
+  const mine = set;
+  mine.add(listener);
+  return () => {
+    mine.delete(listener);
+    if (mine.size === 0 && listeners.get(key) === mine) listeners.delete(key);
+  };
+}
+
+/** Everything changed: tell every listener, whichever key it is watching. */
+function notify(): void {
+  epoch++;
+  for (const set of [...listeners.values()]) for (const listener of [...set]) listener();
+}
+
+/** One key went from absent to present: tell only the listeners watching it. */
+function notifyKey(key: string): void {
+  const set = listeners.get(key);
+  if (set) for (const listener of [...set]) listener();
 }
 
 /**
- * A value that changes exactly when this cache has something new to offer —
- * a namespace finishing hydration, or a fresh write. Subscribing to it is how
- * `useCachedQuery` and `useCachedFirstPage` re-render the instant IndexedDB
- * catches up, without either of them polling or this module reaching into
- * React itself to force one.
+ * Re-renders the caller when this cache has something new for it — the instant IndexedDB catches up, or (with `key`)
+ * when a value for that key first becomes available — without either `useCachedQuery` or `useCachedFirstPage` polling,
+ * or this module reaching into React to force a render.
+ *
+ * Pass the key being read. Without one, only a hydration or an account switch is reported.
  */
-export function useCacheHydration(): number {
-  return useSyncExternalStore(subscribe, () => tick, () => tick);
+export function useCacheHydration(key?: string | null): number {
+  const watched = key ?? null;
+  const subscribe = useCallback((listener: Listener) => addListener(watched, listener), [watched]);
+  // The epoch says "re-read everything"; the low bit says "this key is here now". Both are plain numbers, so the store's
+  // snapshot is stable between renders unless one of them really changed.
+  const snapshot = () => epoch * 2 + (watched !== null && memo.has(watched) ? 1 : 0);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

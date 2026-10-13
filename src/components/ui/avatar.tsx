@@ -4,6 +4,7 @@ import * as React from "react"
 import { Avatar as AvatarPrimitive } from "radix-ui"
 
 import { LayerContent } from "@/components/profile/layer-content"
+import { useMotionAllowed } from "@/hooks/use-motion-allowed"
 import { decorationLayers, decorationSrc } from "@/lib/avatar-decorations"
 import {
   refractionFilterSvg,
@@ -120,7 +121,9 @@ function AvatarDecoration({
   const ref = React.useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = React.useState(false);
   const layers = React.useMemo(() => decorationLayers(value), [value]);
-  const frozen = animate !== true && !hovered;
+  // "Reduce motion" is a ceiling over everything below it: even `animate` (the profile card, the shop) holds still.
+  const motionAllowed = useMotionAllowed()
+  const frozen = !motionAllowed || (animate !== true && !hovered);
 
   // The hover target is the avatar, not this: the decoration is
   // `pointer-events-none` (it overhangs the avatar on every side, and a frame

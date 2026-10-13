@@ -433,6 +433,11 @@ export function MessageList({ conversationId, onReply }: MessageListProps) {
     [containerRef]
   );
 
+  // One function for every row. An inline `(draft) => onReply?.(draft)` is a new function on each render of the list, which
+  // made `MessageRow`'s `memo` compare unequal for every row every time — a typing indicator or a new message re-rendered
+  // all loaded rows instead of one.
+  const handleReply = useCallback((draft: ReplyDraft) => onReply?.(draft), [onReply]);
+
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const jumpTo = useCallback((messageId: string) => {
     const el = scrollElRef.current?.querySelector<HTMLElement>(
@@ -500,7 +505,7 @@ export function MessageList({ conversationId, onReply }: MessageListProps) {
                 }
                 highlighted={highlightId === message.id}
                 conversationId={conversationId}
-                onReply={(draft) => onReply?.(draft)}
+                onReply={handleReply}
                 onJumpTo={jumpTo}
               />
             </Fragment>

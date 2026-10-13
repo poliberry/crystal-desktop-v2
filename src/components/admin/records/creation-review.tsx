@@ -211,7 +211,9 @@ function PackReview({ grant, name, id }: { grant: Grant; name: string; id: strin
   if (spec.background) findings.push({ level: "warn", text: "Puts a picture behind the whole app — check it is appropriate and that text stays readable over it." });
   if (spec.icons) findings.push({ level: "warn", text: `Replaces ${Object.keys(spec.icons).length} icon(s) — check each is recognisable and means what the original does.` });
   if (spec.sounds) findings.push({ level: "warn", text: `Replaces ${Object.keys(spec.sounds).length} sound(s) — listen to each for volume and content.` });
-  if (spec.font) {
+  if (spec.font?.local) {
+    findings.push({ level: "warn", text: `Asks for “${spec.font.family}”, a font people are expected to have installed. Nothing is shipped, so anyone without it sees the app's own font — check the name is a real, widely available family and legible at small sizes.` });
+  } else if (spec.font) {
     findings.push({ level: "warn", text: `Replaces the app's font with “${spec.font.family}” (${spec.font.faces.length} file${spec.font.faces.length === 1 ? "" : "s"}) — check it is legible at small sizes and licensed for distribution.` });
     if (!spec.font.faces.some((f) => f.style === "normal" && f.weight <= 400 && (f.weightMax ?? f.weight) >= 400)) findings.push({ level: "warn", text: "No regular upright face: ordinary text will fall back to another weight." });
     if (!spec.font.faces.some((f) => f.weight >= 700 || (f.weightMax ?? 0) >= 700)) findings.push({ level: "warn", text: "No bold face: bold text will be synthesised." });
@@ -222,7 +224,7 @@ function PackReview({ grant, name, id }: { grant: Grant; name: string; id: strin
 
   return (
     <div className="space-y-4">
-      {loadFont && spec.font && (
+      {loadFont && spec.font && !spec.font.local && (
         <style>
           {spec.font.faces
             .map((f) => `@font-face{font-family:"${family}";src:url("${f.url}");font-weight:${f.weightMax ? `${f.weight} ${f.weightMax}` : f.weight};font-style:${f.style};}`)
@@ -233,7 +235,7 @@ function PackReview({ grant, name, id }: { grant: Grant; name: string; id: strin
       {spec.theme && (
         <div className="grid gap-3 md:grid-cols-[1.2fr_1fr]">
           {/* The colours applied to a little app, scoped to this box — nothing global changes. */}
-          <div className="overflow-hidden rounded-xl border border-border text-sm" style={{ ...(vars as React.CSSProperties), background: "var(--background)", color: "var(--foreground)", fontFamily: loadFont && spec.font ? `"${family}", system-ui` : undefined }}>
+          <div className="overflow-hidden rounded-xl border border-border text-sm" style={{ ...(vars as React.CSSProperties), background: "var(--background)", color: "var(--foreground)", fontFamily: spec.font?.local ? `"${spec.font.family}", system-ui` : loadFont && spec.font ? `"${family}", system-ui` : undefined }}>
             <div className="flex h-56">
               <div className="w-1/4 space-y-1 p-2" style={{ background: "var(--sidebar)", color: "var(--sidebar-foreground)" }}>
                 {["Home", "Friends", "Shop"].map((n, i) => (
@@ -284,7 +286,19 @@ function PackReview({ grant, name, id }: { grant: Grant; name: string; id: strin
         </div>
       )}
 
-      {spec.font && (
+      {spec.font?.local && (
+        <div className="space-y-2 rounded-xl border border-border p-3">
+          <p className="text-sm">Installed font “{spec.font.family}”</p>
+          <p className="text-xs text-muted-foreground">No file — it is drawn below only if this computer has it installed.</p>
+          <div className="space-y-0.5" style={{ fontFamily: `"${spec.font.family}", system-ui` }}>
+            {[400, 700].map((w) => (
+              <p key={w} className="text-lg" style={{ fontWeight: w }}>{w} — The quick brown fox jumps over the lazy dog <span className="text-[11px]">small: Pack my box with five dozen liquor jugs.</span></p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {spec.font && !spec.font.local && (
         <div className="space-y-2 rounded-xl border border-border p-3">
           <div className="flex items-center justify-between gap-2 text-sm">
             <span>Font family “{spec.font.family}”</span>

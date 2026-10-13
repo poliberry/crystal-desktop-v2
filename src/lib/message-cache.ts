@@ -78,8 +78,8 @@ export function useCachedFirstPage<T>(
   results: readonly T[],
   loading: boolean
 ): readonly T[] {
-  // Re-renders this once IndexedDB hydration lands — see persistent-cache.ts.
-  useCacheHydration();
+  // Re-renders this once IndexedDB hydration lands, or this view's own page first appears — see persistent-cache.ts.
+  useCacheHydration(`messages.${key}`);
 
   useEffect(() => {
     if (!loading) rememberFirstPage(key, results);

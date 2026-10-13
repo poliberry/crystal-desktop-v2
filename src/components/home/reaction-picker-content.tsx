@@ -20,7 +20,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import type { ServerEmoji } from "@/lib/custom-emoji";
-import { SYSTEM_EMOJI_GROUPS, filterSystemEmoji, type SystemEmoji } from "@/lib/system-emoji";
+import { filterSystemEmoji, getSystemEmojiGroups, useSystemEmojiReady, type SystemEmoji } from "@/lib/system-emoji";
 import { useSmoothScroll } from "@/hooks/use-smooth-scroll";
 import { cn } from "@/lib/utils";
 
@@ -144,6 +144,10 @@ export function ReactionPickerContent({
   onSelect: (text: string, custom?: ServerEmoji) => void;
 }) {
   const { groups } = useAccessibleEmojis();
+  // The Unicode emoji are a separate chunk, fetched after launch (see system-emoji.ts). Opening the picker before it has
+  // landed shows the server's own emoji at once, and the rest fills in the moment it arrives.
+  const systemReady = useSystemEmojiReady();
+  const systemGroups = getSystemEmojiGroups();
   const [query, setQuery] = useState("");
   const [activeSection, setActiveSection] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -163,7 +167,9 @@ export function ReactionPickerContent({
       }
     }
     return { custom, system: filterSystemEmoji(needle) };
-  }, [query, groups]);
+    // `systemReady` isn't read inside, but it is what makes the Unicode half of the results exist.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, groups, systemReady]);
 
   const scrollTo = (key: string) => {
     setActiveSection(key);
@@ -224,7 +230,7 @@ export function ReactionPickerContent({
 
         {groups.length > 0 && <div className="my-1 h-px w-6 shrink-0 bg-border" />}
 
-        {SYSTEM_EMOJI_GROUPS.map(({ group }) => {
+        {systemGroups.map(({ group }) => {
           const Icon = GROUP_ICON[group] ?? Smile;
           return (
             <RailButton
@@ -278,7 +284,7 @@ export function ReactionPickerContent({
                 </section>
               ))}
 
-              {SYSTEM_EMOJI_GROUPS.map(({ group, emojis }) => (
+              {systemGroups.map(({ group, emojis }) => (
                 <section
                   key={group}
                   id={sectionId(group)}

@@ -1,4 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap");
+/* Noto Color Emoji used to be pulled in here with an `@import url(https://fonts.googleapis.com/…)`. A CSS `@import` blocks
+ * the first paint until it has been fetched, so on a slow or offline connection the whole window waited on Google's
+ * servers. It is now added by `DeferredEmojiFont` (providers.tsx) once the app is up; the families named below fall back
+ * to the system's own emoji font in the meantime. */
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -715,6 +718,16 @@ html {
 
 :root.a11y-reduced-motion * {
   scroll-behavior: auto !important;
+}
+
+/* Reduce blur: every `backdrop-blur-*` (and the settings cards, and the dock's glass) loses its blur.
+ * A backdrop filter has to re-render what is behind it each frame, and with nothing but the processor to do it with
+ * (software rendering) a blurred panel over a scrolling message list is the single most expensive thing on screen. */
+:root.a11y-reduce-blur *,
+:root.a11y-reduce-blur *::before,
+:root.a11y-reduce-blur *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 :root.a11y-high-contrast {

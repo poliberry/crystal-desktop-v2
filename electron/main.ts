@@ -39,7 +39,26 @@ app.commandLine.appendSwitch("enable-smooth-scrolling");
 // GC (and can starve first paint) on Linux when the initial app bundle and
 // signed-in data subscriptions are loaded together.
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=512 --expose-gc");
-app.commandLine.appendSwitch("disable-features", "Translate");
+
+// `appendSwitch` replaces an earlier value for the same switch, so every feature goes into one list per switch.
+const disabledFeatures = ["Translate"];
+const enabledFeatures: string[] = [];
+
+if (process.platform === "linux") {
+  // Let the GPU decode video. Chromium on Linux decodes in software unless asked, so screen shares and cameras in a call
+  // run on the CPU, on the same machine that is drawing the interface. Where the driver can't do it, Chromium quietly falls
+  // back to software as before, and turning hardware acceleration off in Settings → Performance (or CRYSTAL_DISABLE_GPU=1)
+  // still wins. CRYSTAL_LINUX_DEFAULTS=0 skips this for a machine where it misbehaves.
+  //
+  // Deliberately not touched: the display backend (X11 or Wayland), and GPU blocklist overrides. Both are driver-dependent
+  // enough that they are better opt-in than default.
+  if (process.env.CRYSTAL_LINUX_DEFAULTS !== "0") {
+    enabledFeatures.push("VaapiVideoDecoder", "AcceleratedVideoDecodeLinuxGL");
+  }
+}
+
+app.commandLine.appendSwitch("disable-features", disabledFeatures.join(","));
+if (enabledFeatures.length) app.commandLine.appendSwitch("enable-features", enabledFeatures.join(","));
 
 /**
  * Which build this is: Stable, PTB, Canary or Development (see
@@ -413,6 +432,10 @@ function createWindow(): void {
     autoHideMenuBar: true,
     icon: appIconPath(),
     ...FRAMELESS_WINDOW_OPTIONS,
+    // Not shown until there is a first paint (see `ready-to-show` below). Showing it straight away puts an empty
+    // frameless rectangle on screen for the whole of a cold start, and on Linux the compositor then redraws it again as
+    // the page arrives.
+    show: false,
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -427,6 +450,18 @@ function createWindow(): void {
       enableWebSQL: false,
     },
   });
+
+  // The window appears with its first frame already drawn. If that never comes (a page that fails to load, a renderer that
+  // stalls) it is shown anyway after a few seconds, so a launch can never leave the app running with nothing on screen.
+  let shown = false;
+  const showOnce = () => {
+    if (shown || win.isDestroyed()) return;
+    shown = true;
+    win.show();
+  };
+  win.once("ready-to-show", showOnce);
+  const showFallback = setTimeout(showOnce, 4_000);
+  win.once("closed", () => clearTimeout(showFallback));
 
   if (isDev) {
     void win.loadURL(process.env.ELECTRON_START_URL as string);
@@ -915,8 +950,15 @@ app.whenReady().then(async () => {
           content.byteOffset,
           content.byteOffset + content.byteLength,
         ) as ArrayBuffer;
+        // Next names everything under /_next/static/ after a hash of its contents, so a given address never changes
+        // meaning and can be kept for good. Pages are the opposite — the same address after an update — and everything
+        // else (fonts, sounds) isn't hashed, so only the hashed files are marked cacheable.
+        const hashed = filePath.includes(`${path.sep}_next${path.sep}static${path.sep}`);
         return new Response(body, {
-          headers: { "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream" },
+          headers: {
+            "Content-Type": MIME_TYPES[ext] ?? "application/octet-stream",
+            "Cache-Control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
+          },
         });
       } catch {
         return new Response("Not Found", { status: 404 });
@@ -1499,11 +1541,14 @@ app.whenReady().then(async () => {
       if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send("rich-presence:changed", activities);
     }
   });
-  if (!isStudioApp) {
+  // Started once the main window has finished loading (plus a short settle), not before it is created: loading and indexing
+  // the catalog, opening the IPC socket and the first process scan all compete with the window for the same thread and
+  // disk. Detecting a game a few seconds later is invisible; a window that opens a second later is not.
+  const startRichPresence = () => {
     void richPresence.start().catch((err) => {
       console.warn("[rich-presence] failed to start:", err);
     });
-  }
+  };
 
   ipcMain.handle("rich-presence:get", () => richPresence.getActivities());
   ipcMain.handle("rich-presence:status", () => richPresence.getStatus());
@@ -1567,6 +1612,16 @@ app.whenReady().then(async () => {
   } else {
     createWindow();
     app.on("activate", () => createOrFocusMainWindow());
+    const firstLoad = mainWindow?.webContents;
+    let started = false;
+    const startOnce = () => {
+      if (started) return;
+      started = true;
+      startRichPresence();
+    };
+    firstLoad?.once("did-finish-load", () => setTimeout(startOnce, 3_000));
+    // If the page never finishes loading (offline dev server, a crash) detection still comes up.
+    setTimeout(startOnce, 20_000).unref();
   }
 });
 

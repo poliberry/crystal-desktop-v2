@@ -34,7 +34,7 @@ const TOGGLES: {
     key: "reducedMotion",
     title: "Reduce motion",
     description:
-      "Skip animations and transitions — panels, popovers and the call grid change instantly.",
+      "Skip animations and transitions — panels, popovers and the call grid change instantly. Avatar decorations, nameplates and profile effects stay on their first frame.",
   },
   {
     key: "highContrast",

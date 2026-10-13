@@ -11,7 +11,7 @@ import { canvasToPng, renderFx, bakeScale } from "@/studio/model/fx-render";
 import { fxBox } from "@/studio/model/fx";
 import { motionImageUrls, type MotionSpec } from "../../convex/lib/motion";
 
-import { checkThemePack, fontOf, themePackSpecInput } from "@/studio/model/theme-pack";
+import { checkThemePack, shippedFontFaces, themePackSpecInput } from "@/studio/model/theme-pack";
 import type { AssetMeta, ImageNode, Project } from "@/studio/model/types";
 import { getAssetBlob, getProject, listAssets } from "@/studio/storage/db";
 
@@ -226,7 +226,8 @@ async function itemsFor(c: Ctx, project: Project, assets: Map<string, AssetMeta>
     case "themePack": {
       const data = project.themePack!;
       const ids = new Set<string>([
-        ...(fontOf(data.font)?.faces.map((f) => f.assetId) ?? []),
+        // Files left over from before the font was switched to an installed one are not uploaded.
+        ...shippedFontFaces(data.font).map((f) => f.assetId),
         ...Object.values(data.sounds),
         ...Object.values(data.icons),
         ...(data.background ? [data.background.assetId] : []),

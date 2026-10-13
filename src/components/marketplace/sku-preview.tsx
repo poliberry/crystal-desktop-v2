@@ -167,7 +167,7 @@ function GrantPreview({ grant, viewer, size }: { grant: PreviewGrant; viewer: Vi
             PLATE_WIDTH[size],
           )}
         >
-          <Nameplate url={grant.payload} className="opacity-100" />
+          <Nameplate url={grant.payload} animate className="opacity-100" />
           <ViewerAvatar viewer={viewer} rounded="rounded-md" className="relative size-9 shrink-0" />
           <div className="relative min-w-0">
             <div className="truncate text-sm font-semibold">{viewer.name}</div>

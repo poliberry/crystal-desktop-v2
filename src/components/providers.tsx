@@ -8,6 +8,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 
 import { getDesktopAPI } from "@/lib/desktop";
+import { warmSystemEmoji } from "@/lib/system-emoji";
 import { pruneExpired, setCacheNamespace } from "@/lib/persistent-cache";
 import { pruneAttachmentCache, pruneImageCache } from "@/lib/image-cache";
 import { setOutboxUser } from "@/lib/outbox";
@@ -70,6 +71,39 @@ function AuthCallbackHandler() {
  * persistent-cache.ts), which finishes a few renders later and is what
  * `useCacheHydration` is for.
  */
+/**
+ * Adds the Noto Color Emoji stylesheet without holding anything up.
+ *
+ * It was a CSS `@import` at the top of globals.css, which the browser must finish before it paints anything: with no network
+ * (a packaged desktop app often has none) that is a wait for a DNS or connection timeout on every launch. As a `<link>`
+ * added after the page is up, the emoji font simply arrives when it arrives, and `font-display: swap` in its address means
+ * emoji drawn before then use the system's font and are swapped in place.
+ */
+function DeferredEmojiFont() {
+  // The Unicode emoji data for `:shortcodes:` and the picker is its own chunk now (see system-emoji.ts): fetch it at the
+  // same quiet moment as the font, so it is there before anyone types a colon.
+  useEffect(() => warmSystemEmoji(), []);
+
+  useEffect(() => {
+    if (document.getElementById("crystal-emoji-font")) return;
+    const add = () => {
+      const link = document.createElement("link");
+      link.id = "crystal-emoji-font";
+      link.rel = "stylesheet";
+      link.href = "https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap";
+      document.head.appendChild(link);
+    };
+    // After the first screen has had its time: idle if the browser says so, a couple of seconds at the latest.
+    if ("requestIdleCallback" in window) {
+      const handle = window.requestIdleCallback(add, { timeout: 4000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = setTimeout(add, 2000);
+    return () => clearTimeout(handle);
+  }, []);
+  return null;
+}
+
 function CacheScope() {
   const { userId } = useAuth();
   // Cache namespace is safe to set during render (idempotent string assign).
@@ -82,10 +116,15 @@ function CacheScope() {
     setOutboxUser(userId);
   }, [userId]);
 
+  // Housekeeping, not startup: each pass opens a cursor over a whole IndexedDB store, which competes with the cache
+  // hydration and the first queries for the same disk. A few seconds in, nobody can tell.
   useEffect(() => {
-    pruneExpired();
-    pruneImageCache();
-    pruneAttachmentCache();
+    const timer = window.setTimeout(() => {
+      pruneExpired();
+      pruneImageCache();
+      pruneAttachmentCache();
+    }, 4000);
+    return () => window.clearTimeout(timer);
   }, []);
 
   return null;
@@ -104,6 +143,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
               <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
                 <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
                   <CacheScope />
+                  <DeferredEmojiFont />
                   {/* Over everything while the app is starting or offline. */}
                   <AppLoadingGate />
                   <AuthCallbackHandler />

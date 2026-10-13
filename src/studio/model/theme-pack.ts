@@ -31,11 +31,21 @@ export const SOUND_LABELS: Record<string, string> = {
 const extOf = (name: string) => (name.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
 
 /** A font as a family of faces, whichever shape it was saved in. */
-export function fontOf(font: ThemePackData["font"]): { family: string; faces: FontFaceData[] } | undefined {
+export function fontOf(font: ThemePackData["font"]): { family: string; faces: FontFaceData[]; local: boolean } | undefined {
   if (!font) return undefined;
-  if (font.faces) return { family: font.family, faces: font.faces };
-  if (font.assetId) return { family: font.family, faces: [{ assetId: font.assetId, weight: 400, style: "normal" }] };
-  return { family: font.family, faces: [] };
+  const local = font.local === true;
+  if (font.faces) return { family: font.family, faces: font.faces, local };
+  if (font.assetId) return { family: font.family, faces: [{ assetId: font.assetId, weight: 400, style: "normal" }], local };
+  return { family: font.family, faces: [], local };
+}
+
+/**
+ * The files a pack will actually ship for its font: none when it names an installed font, since any files left in the
+ * project are only there in case the creator switches back.
+ */
+export function shippedFontFaces(font: ThemePackData["font"]): FontFaceData[] {
+  const f = fontOf(font);
+  return f && !f.local ? f.faces : [];
 }
 
 export const WEIGHT_NAMES: Record<number, string> = {
@@ -78,8 +88,11 @@ export function guessFace(fileName: string): Pick<FontFaceData, "weight" | "weig
 export function themePackSpecInput(data: ThemePackData, name: string, assets: Map<string, AssetMeta>, urlOf: (assetId: string) => string) {
   const input: Record<string, unknown> = { name };
   const font = fontOf(data.font);
-  const faces = (font?.faces ?? []).filter((f) => assets.get(f.assetId));
-  if (font && faces.length) {
+  const faces = shippedFontFaces(data.font).filter((f) => assets.get(f.assetId));
+  if (font?.local) {
+    // Just the name: an unnamed one is "no font yet", as a family with no files is.
+    if (font.family.trim()) input.font = { family: font.family.trim(), local: true };
+  } else if (font && faces.length) {
     input.font = { family: font.family, faces: faces.map((f) => ({ url: urlOf(f.assetId), weight: f.weight, weightMax: f.weightMax, style: f.style })) };
   }
   // Only what the server reads: the template note is Studio's own.
@@ -116,7 +129,15 @@ export function checkThemePack(data: ThemePackData, name: string, assets: Map<st
     void value;
   }
   const font = fontOf(data.font);
-  if (font) {
+  if (font?.local) {
+    if (!font.family.trim()) problems.push({ severity: "error", message: "Type the name of the installed font." });
+    else {
+      problems.push({
+        severity: "warning",
+        message: `“${font.family.trim()}” isn't sent with the pack. Anyone who doesn't have it installed sees Crystal's own font instead, so this works best for fonts that come with their system.`,
+      });
+    }
+  } else if (font) {
     if (font.faces.length === 0) problems.push({ severity: "error", message: "The font family has no files yet." });
     if (font.faces.length > MAX_FONT_FACES) problems.push({ severity: "error", message: `A font family can have up to ${MAX_FONT_FACES} files.` });
     const total = font.faces.reduce((n, f) => n + (assets.get(f.assetId)?.size ?? 0), 0);

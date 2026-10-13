@@ -3,7 +3,7 @@
 import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
 import { TAG_OR_SHORTCODE_RE, type ServerEmoji } from "@/lib/custom-emoji";
-import { findSystemEmojiBySlug } from "@/lib/system-emoji";
+import { findSystemEmojiBySlug, useSystemEmojiReady } from "@/lib/system-emoji";
 import { cn } from "@/lib/utils";
 
 /**
@@ -36,6 +36,9 @@ export function MessagePreview({
   className?: string;
 }) {
   const { byId, byName } = useAccessibleEmojis();
+  // Re-renders the line once the Unicode emoji data (a separate chunk, fetched after launch) has arrived, so a `:shortcode:`
+  // that was text a moment ago becomes the emoji.
+  useSystemEmojiReady();
 
   return (
     <span className={cn("truncate", className)}>

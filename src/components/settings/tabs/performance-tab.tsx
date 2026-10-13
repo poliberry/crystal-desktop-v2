@@ -1,8 +1,9 @@
 "use client";
 
-import { Cpu, Loader2, RotateCw } from "lucide-react";
+import { Cpu, Layers, Loader2, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useAccessibility } from "@/components/accessibility-provider";
 import { SettingRow, SettingsGroup } from "@/components/settings/settings-ui";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -22,6 +23,7 @@ import type { GpuSettings } from "@/types/desktop-api";
  */
 export function PerformanceTab() {
   const gpu = getDesktopAPI()?.gpu;
+  const { reduceBlur, setPreference } = useAccessibility();
   const [settings, setSettings] = useState<GpuSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -31,14 +33,30 @@ export function PerformanceTab() {
     void gpu.get().then(setSettings).catch(() => {});
   }, [gpu]);
 
+  // Shown in the browser as well as the desktop app: blurs are drawn by the page, not by anything Electron decides.
+  const blurRow = (
+    <SettingRow
+      icon={Layers}
+      title="Reduce blur"
+      description="Turn off the frosted-glass blur behind panels. Panels keep their tint but no longer re-blur what is behind them on every frame, which makes scrolling and window changes much lighter on computers without a graphics card, or where the app is drawn in software — switched on for you on those the first time."
+    >
+      <Switch
+        checked={reduceBlur}
+        onCheckedChange={(checked) => setPreference("reduceBlur", checked)}
+        aria-label="Reduce blur"
+      />
+    </SettingRow>
+  );
+
   if (!gpu) {
     return (
-      <SettingsGroup>
+      <SettingsGroup title="Graphics">
         <SettingRow
           icon={Cpu}
           title="Hardware acceleration"
           description="This setting is part of the desktop app. The browser decides this for itself."
         />
+        {blurRow}
       </SettingsGroup>
     );
   }
@@ -70,6 +88,8 @@ export function PerformanceTab() {
           aria-label="Hardware acceleration"
         />
       </SettingRow>
+
+      {blurRow}
 
       {settings?.forcedByEnv && (
         <p className="px-1 text-xs text-muted-foreground">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { ErrorBoundary } from "@/components/error-boundary";
 import { api } from "../../convex/_generated/api";
@@ -184,6 +184,10 @@ function useRecentViews(): RecentView[] {
  */
 export function DataPreloader() {
   const me = useQuery(api.users.getCurrentUser);
+  // The bulk of the warming — dozens of live subscriptions and a dozen pages of messages — starts a moment after the
+  // person's account has loaded, not in the same frame. Until then it shares one websocket and one thread with the queries
+  // for the screen that is actually showing, and the screen they asked for is what should win that race.
+  const settled = useSettledAfter(me !== undefined && me !== null, PRELOAD_DELAY_MS);
   // Your own cosmetics, which are the ones drawn most often and the ones a
   // slow first paint is most obvious on — your card is in the corner of every
   // screen. `ownDecorationState` because a birthday overrides what you chose.
@@ -193,8 +197,23 @@ export function DataPreloader() {
       [me],
     ),
   );
-  if (!me) return null;
+  if (!me || !settled) return null;
   return <PreloadEverything />;
+}
+
+/** How long after the account arrives the background warming begins. Long enough for the first screen to render and its
+ * own queries to land; short enough that a click on a second server is still instant. */
+const PRELOAD_DELAY_MS = 1500;
+
+/** `true` once `ready` has been true for `ms`. Stays true after that: it is a start gate, not a debounce. */
+function useSettledAfter(ready: boolean, ms: number): boolean {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!ready || settled) return;
+    const timer = window.setTimeout(() => setSettled(true), ms);
+    return () => window.clearTimeout(timer);
+  }, [ready, settled, ms]);
+  return settled;
 }
 
 /** Cap on how many community structures stay warm at once. Was unbounded

@@ -697,7 +697,7 @@ export function runThemeTool(name: string, args: Args, pack: ThemePackData): The
         for (const [k, v] of Object.entries(theme.alt.colors)) lines.push(`  ${k}: ${v}`);
       } else lines.push("No second look: the pack forces its one scheme on.");
       lines.push(data.background ? `Background: an app-wide picture, dim ${data.background.dim}%, blur ${data.background.blur}px, panels ${data.background.panels}% opaque.` : "Background: none.");
-      lines.push(`Font: ${data.font?.family ? data.font.family : "none"}. Sounds: ${Object.keys(data.sounds).length}. Icons: ${Object.keys(data.icons).length}. (Files are imported in Studio, not written here.)`);
+      lines.push(`Font: ${data.font?.family ? `${data.font.family}${data.font.local ? " (an installed font, by name)" : ""}` : "none"}. Sounds: ${Object.keys(data.sounds).length}. Icons: ${Object.keys(data.icons).length}. (Files are imported in Studio, not written here.)`);
       lines.push(`Tokens: ${THEME_TOKENS.join(", ")}`);
       return { text: lines.join("\n") };
     }

@@ -59,6 +59,12 @@ export const PACK_SCHEME_ATTR = "data-theme-pack-scheme";
 
 function injectTheme(theme: Theme) {
   let styleEl = document.getElementById("crystal-theme-vars") as HTMLStyleElement | null;
+  // The element the page's first-paint script made (src/lib/pre-hydration-script.ts) is in the wrong place in the head and
+  // is written to out-rank the stylesheet rather than sit after it. Replaced, in this same task, by the ordinary one below.
+  if (styleEl?.hasAttribute("data-prehydrate")) {
+    styleEl.remove();
+    styleEl = null;
+  }
   if (!styleEl) {
     styleEl = document.createElement("style");
     styleEl.id = "crystal-theme-vars";

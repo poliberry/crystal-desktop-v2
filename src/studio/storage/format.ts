@@ -368,7 +368,12 @@ function sanitizeThemePack(raw: unknown): ThemePackData {
             style: f.style === "italic" ? ("italic" as const) : ("normal" as const),
           }))
       : undefined;
-    out.font = { family: str(raw.font.family).slice(0, 80), ...(faces ? { faces } : {}), ...(typeof raw.font.assetId === "string" ? { assetId: raw.font.assetId } : {}) };
+    out.font = {
+      family: str(raw.font.family).slice(0, 80),
+      ...(faces ? { faces } : {}),
+      ...(typeof raw.font.assetId === "string" ? { assetId: raw.font.assetId } : {}),
+      ...(raw.font.local === true ? { local: true } : {}),
+    };
   }
   if (isObj(raw.background) && typeof raw.background.assetId === "string") {
     const within = (v: unknown, min: number, max: number, fallback: number) => Math.round(Math.min(max, Math.max(min, num(v, fallback))));

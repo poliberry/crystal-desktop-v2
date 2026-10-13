@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { findSystemEmojiBySlug } from "@/lib/system-emoji";
+import { findSystemEmojiBySlug, useSystemEmojiReady } from "@/lib/system-emoji";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { UserProfileContent } from "@/components/community/member-profile-card";
@@ -168,6 +168,9 @@ const MessageMarkdown = memo(function MessageMarkdown({
   mentionNames,
 }: MessageMarkdownProps) {
   const { byId: serverEmojiById, byName } = emojis;
+  // `:thumbs_up:` resolves through the Unicode emoji data, which is its own chunk fetched after launch. This is what
+  // re-renders the message with the emoji in place of the text once it has arrived; the value isn't needed here.
+  useSystemEmojiReady();
   // Approximates remark's paragraph count so `suffix` (e.g. "(edited)") only
   // lands in the last one, instead of after every paragraph.
   const paragraphCount = text.split(/\n{2,}/).filter((s) => s.trim()).length || 1;

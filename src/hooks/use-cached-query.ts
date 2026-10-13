@@ -27,10 +27,11 @@ export function useCachedQuery<Query extends FunctionReference<"query">>(
   cacheKey: string | null
 ): Query["_returnType"] | undefined {
   const live = useQuery(query, args);
-  // Re-renders this the moment IndexedDB hydration lands, which is the only
-  // thing that can change what `readCache` below returns without `live`
-  // having changed too — see the module doc in persistent-cache.ts.
-  useCacheHydration();
+  // Re-renders this the moment IndexedDB hydration lands, or this query's own
+  // key first appears — the only things that can change what `readCache` below
+  // returns without `live` having changed too. Other queries' writes don't
+  // concern it. See the module doc in persistent-cache.ts.
+  useCacheHydration(cacheKey);
 
   useEffect(() => {
     if (cacheKey && live !== undefined) writeCache(cacheKey, live);

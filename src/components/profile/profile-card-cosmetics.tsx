@@ -3,6 +3,7 @@
 import { isMotionUrl } from "../../../convex/lib/motion";
 import { MotionPlayer } from "@/components/motion/motion-player";
 import { useLoopedPlayback } from "@/hooks/use-looped-playback";
+import { useMotionAllowed } from "@/hooks/use-motion-allowed";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import { useEffect, useRef, useState } from "react";
 
@@ -49,7 +50,8 @@ function CosmeticLayer({
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const poster = useStaticFrame(src, !animate);
+  const motionAllowed = useMotionAllowed();
+  const poster = useStaticFrame(src, !animate || !motionAllowed);
   // The legacy single-image frame (a list of layers goes through
   // LayerContent instead) — see src/lib/image-cache.ts.
   const cachedSrc = useCachedImageSrc(src);
@@ -69,12 +71,13 @@ function CosmeticLayer({
  * box comes from `layerStyle`; what goes in it is `LayerContent`, which the
  * canvas editor draws with too, so what you arrange is what everyone sees. */
 function PlacedLayer({ layer, animate }: { layer: Layer; animate: boolean }) {
+  const motionAllowed = useMotionAllowed();
   return (
     <div
       className="pointer-events-none absolute select-none"
       style={layerStyle(layer)}
     >
-      <LayerContent layer={layer} frozen={!animate} />
+      <LayerContent layer={layer} frozen={!animate || !motionAllowed} />
     </div>
   );
 }
@@ -108,8 +111,11 @@ export function ProfileEffectLayer({
   className?: string;
 }) {
   const motion = isMotionUrl(src);
+  // With "Reduce motion" on, a picture effect holds its first frame for good rather than playing once; a motion
+  // design makes the same call itself (see `MotionPlayer`).
+  const motionAllowed = useMotionAllowed();
   // A picture effect plays once and holds; a motion design says for itself how it loops (see its `loop`).
-  const playback = useLoopedPlayback(motion ? undefined : src, animate);
+  const playback = useLoopedPlayback(motion ? undefined : src, animate && motionAllowed);
 
   if (!src) return null;
 

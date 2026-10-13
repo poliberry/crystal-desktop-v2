@@ -26,7 +26,7 @@ import { useComposerAttachments } from "@/hooks/use-composer-attachments";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import { encodeCustomEmojiShortcodes } from "@/lib/custom-emoji";
 import { formatCustomEmoji, matchInProgressShortcode } from "@/lib/custom-emoji";
-import { searchSystemEmoji } from "@/lib/system-emoji";
+import { searchSystemEmoji, useSystemEmojiReady } from "@/lib/system-emoji";
 import { matchInProgressMention, mentionToken } from "@/lib/mentions";
 import { useMentionNames, useMentionSuggestions } from "@/hooks/use-mentions";
 import type { ReplyDraft } from "@/lib/reply";
@@ -141,6 +141,9 @@ export function ChannelMessageComposer({
     insert: `${mentionToken(match.target)} `,
   }));
 
+  // The Unicode emoji data is a separate chunk (see system-emoji.ts). Subscribing is also what makes suggestions that were
+  // asked for before it arrived appear when it does.
+  useSystemEmojiReady();
   const emojiSuggestions: Suggestion[] =
     autocomplete?.kind === "emoji" && autocomplete.query.length >= 2
       ? (() => {

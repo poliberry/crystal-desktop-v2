@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { introLength, playbackTime, type MotionSpec } from "../../../convex/lib/motion";
 import { coverScale, drawCover, loadMotionImages, MotionRenderer } from "@/lib/motion-render";
 import { loadMotionSpec } from "@/lib/motion-load";
+import { useMotionAllowed } from "@/hooks/use-motion-allowed";
 import { motionImageUrls } from "../../../convex/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -45,8 +46,6 @@ function subscribe(s: Sub): () => void {
 /** How many players may animate at the same time; beyond this a player draws one still frame and waits. */
 const MAX_PLAYING = 8;
 let playing = 0;
-
-const reducedMotion = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 /**
  * The frame to show where nothing moves: a representative moment, not the first (which is often empty). With an intro
@@ -89,6 +88,8 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
   const fetched = useMotionSpec(given ? null : url);
   const spec = given ?? fetched;
   const ref = useRef<HTMLCanvasElement>(null);
+  // The app's "Reduce motion" setting as well as the OS's: either one holds the design on a still frame.
+  const motionAllowed = useMotionAllowed();
   const [ready, setReady] = useState<{ spec: MotionSpec; renderer: MotionRenderer } | null>(null);
 
   // The renderer, once the design's pictures are in.
@@ -134,7 +135,7 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
       drawCover(canvas, renderer.render(t));
     };
 
-    const wantsMotion = animate && time === undefined && !reducedMotion();
+    const wantsMotion = animate && time === undefined && motionAllowed;
     const release = () => {
       if (counted) {
         playing--;
@@ -201,7 +202,7 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
       io.disconnect();
       ro.disconnect();
     };
-  }, [ready, animate, time]);
+  }, [ready, animate, time, motionAllowed]);
 
   if (!url && !given) return null;
   return <canvas ref={ref} aria-hidden className={cn("pointer-events-none absolute inset-0 size-full select-none", className)} />;

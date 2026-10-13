@@ -1,9 +1,9 @@
 "use client";
 
 import { Check, Loader2, Paintbrush, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { MAX_FONT_FACES, PACK_BACKGROUND_DEFAULTS, PACK_BACKGROUND_EXTENSIONS, PACK_SOUNDS, THEME_TOKENS } from "../../../convex/lib/creationSpecs";
+import { LOCAL_FONT_FAMILY, MAX_FONT_FACES, PACK_BACKGROUND_DEFAULTS, PACK_BACKGROUND_EXTENSIONS, PACK_SOUNDS, THEME_TOKENS } from "../../../convex/lib/creationSpecs";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { COMMON_ICONS, SOUND_LABELS, WEIGHT_NAMES, fontOf, guessFace } from "@/s
 import { emptyThemePack, type FontFaceData, type Project, type ThemePackData } from "@/studio/model/types";
 import { ASSET_LIMITS, useProjectAssets, type LoadedAsset } from "@/studio/storage/assets";
 import { cssToHex } from "@/lib/css-color";
+import { COMMON_LOCAL_FONTS, isFontInstalled } from "@/lib/installed-font";
 import { themeEntries, type Theme } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 
@@ -329,20 +330,39 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
   // The family is loaded here too, so the specimen is really set in it — every face
   // under one name, each with its own weight and style, as the app will have it.
   const family = fontOf(data.font);
-  const fontFamilyName = `studio-${project.id}`;
-  const fontCss = (family?.faces ?? [])
-    .map((f) => {
-      const a = assets.get(f.assetId);
-      return a ? `@font-face{font-family:"${fontFamilyName}";src:url("${a.url}");font-weight:${f.weightMax !== undefined ? `${f.weight} ${f.weightMax}` : f.weight};font-style:${f.style};}` : "";
-    })
-    .join("");
-  const setFont = (font: { family: string; faces: FontFaceData[] } | undefined) => set({ ...data, font });
+  // Either a family of uploaded files, or the name of a font people already have (`local`). In the second case the
+  // files are kept in the project, so switching back loses nothing, but nothing is loaded from them or sent.
+  const local = family?.local === true;
+  const localName = local ? family!.family.trim() : "";
+  const localNameValid = LOCAL_FONT_FAMILY.test(localName);
+  const fontFamilyName = local ? localName : `studio-${project.id}`;
+  const fontCss = local
+    ? ""
+    : (family?.faces ?? [])
+        .map((f) => {
+          const a = assets.get(f.assetId);
+          return a ? `@font-face{font-family:"${fontFamilyName}";src:url("${a.url}");font-weight:${f.weightMax !== undefined ? `${f.weight} ${f.weightMax}` : f.weight};font-style:${f.style};}` : "";
+        })
+        .join("");
+  const setFont = (font: { family: string; faces: FontFaceData[]; local?: boolean } | undefined) =>
+    set({ ...data, font: font ? { family: font.family, faces: font.faces, ...(font.local ? { local: true } : {}) } : undefined });
+
+  // Whether this computer has the typed font, and which common ones it has. Measured after mount: the page may be
+  // rendered somewhere with no fonts to measure, and the two answers must not disagree on hydration.
+  const [localInstalled, setLocalInstalled] = useState<boolean | null>(null);
+  const [commonFound, setCommonFound] = useState<string[]>([]);
+  useEffect(() => {
+    setLocalInstalled(localNameValid ? isFontInstalled(localName) : null);
+  }, [localName, localNameValid]);
+  useEffect(() => {
+    setCommonFound(COMMON_LOCAL_FONTS.filter((name) => isFontInstalled(name)));
+  }, []);
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "preview", label: "Preview" },
     { id: "theme", label: "Theme", count: Object.keys(data.theme?.colors ?? {}).length + Object.keys(data.theme?.alt?.colors ?? {}).length || undefined },
     { id: "background", label: "Background", count: background ? 1 : undefined },
-    { id: "font", label: "Font", count: family?.faces.length || undefined },
+    { id: "font", label: "Font", count: (local ? (localName ? 1 : 0) : family?.faces.length) || undefined },
     { id: "sounds", label: "Sounds", count: Object.keys(data.sounds).length || undefined },
     { id: "icons", label: "Icons", count: Object.keys(data.icons).length || undefined },
   ];
@@ -376,7 +396,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
             data={data}
             assets={assets}
             fontFamilyName={fontFamilyName}
-            hasFont={!!family && family.faces.some((f) => assets.get(f.assetId))}
+            hasFont={local ? localNameValid : !!family && family.faces.some((f) => assets.get(f.assetId))}
             scope={previewScope}
           />
         )}
@@ -455,11 +475,103 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
         )}
 
         {tab === "font" && (
-          <Section title="Font family" hint={`A family is one or more files — regular, bold, italic and so on — that the app picks between by weight and style. WOFF2 is smallest; WOFF, TTF and OTF work too. Up to ${ASSET_LIMITS.font / 1024 / 1024} MB a file and ${MAX_FONT_FACES} files. Make sure you have the right to distribute them.`}>
+          <Section
+            title="Font family"
+            hint={
+              local
+                ? "Use a font people already have on their computer, by name. Nothing is uploaded, so there's no file to license or download — but anyone who doesn't have it installed sees Crystal's own font instead."
+                : `A family is one or more files — regular, bold, italic and so on — that the app picks between by weight and style. WOFF2 is smallest; WOFF, TTF and OTF work too. Up to ${ASSET_LIMITS.font / 1024 / 1024} MB a file and ${MAX_FONT_FACES} files. Make sure you have the right to distribute them.`
+            }
+          >
             <div className="space-y-4 rounded-xl border border-border p-4">
-              <Input value={family?.family ?? ""} maxLength={40} placeholder="Family name, e.g. Inter" onChange={(e) => setFont({ family: e.target.value, faces: family?.faces ?? [] })} />
+              <div role="radiogroup" aria-label="Where the font comes from" className="inline-flex rounded-lg border border-border p-0.5 text-sm">
+                {(
+                  [
+                    [false, "Upload files"],
+                    [true, "Installed font"],
+                  ] as const
+                ).map(([isLocal, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    role="radio"
+                    aria-checked={local === isLocal}
+                    onClick={() => {
+                      if (local === isLocal) return;
+                      setFont({ family: family?.family ?? "", faces: family?.faces ?? [], local: isLocal });
+                    }}
+                    className={cn("rounded-md px-3 py-1 font-medium transition-colors", local === isLocal ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
-              {family && family.faces.length > 0 && (
+              {local && (
+                <div className="space-y-3">
+                  <Input
+                    value={family?.family ?? ""}
+                    maxLength={40}
+                    placeholder="The font's name, e.g. Segoe UI"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    aria-invalid={!!localName && !localNameValid}
+                    onChange={(e) => setFont({ family: e.target.value, faces: family?.faces ?? [], local: true })}
+                  />
+                  {localName && !localNameValid && (
+                    <p role="alert" className="text-xs text-destructive">A font&apos;s name can use letters, numbers, spaces, . - and _.</p>
+                  )}
+                  {localNameValid && localInstalled === true && (
+                    <p className="flex items-center gap-1.5 text-xs text-emerald-500">
+                      <Check className="size-3.5" /> Found on this computer, so the preview is set in it.
+                    </p>
+                  )}
+                  {localNameValid && localInstalled === false && (
+                    <p className="text-xs text-amber-500">
+                      Not found on this computer, so the preview falls back to Crystal&apos;s font. Check the spelling against the name in your font list. If it&apos;s right, the pack still works for people who have the font.
+                    </p>
+                  )}
+                  {commonFound.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] text-muted-foreground">Common fonts found here</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {commonFound.map((name) => (
+                          <button
+                            key={name}
+                            type="button"
+                            onClick={() => setFont({ family: name, faces: family?.faces ?? [], local: true })}
+                            className={cn("rounded-full border px-2.5 py-0.5 text-xs hover:bg-accent", name === localName ? "border-primary" : "border-border")}
+                            style={{ fontFamily: `"${name}", system-ui` }}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    Use the family name as your system lists it, not a file name. Fonts that come with Windows, macOS or Linux are the safest choice, since they&apos;re the ones most people will have.
+                    {family && family.faces.length > 0 ? ` The ${family.faces.length} file${family.faces.length === 1 ? "" : "s"} you added are kept, and aren't sent while this is on.` : ""}
+                  </p>
+
+                  {localNameValid && (
+                    <div className="space-y-1 rounded-lg bg-card p-4" style={{ fontFamily: `"${localName}", system-ui` }}>
+                      {([[300, false], [400, false], [400, true], [700, false]] as const).map(([w, italic]) => (
+                        <p key={`${w}${italic}`} className="flex items-baseline gap-3 text-lg" style={{ fontWeight: w, fontStyle: italic ? "italic" : "normal" }}>
+                          <span className="w-24 shrink-0 font-sans text-[11px] font-normal text-muted-foreground not-italic">{w} {WEIGHT_NAMES[w]}{italic ? " italic" : ""}</span>
+                          The quick brown fox jumps over the lazy dog
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!local && (
+              <Input value={family?.family ?? ""} maxLength={40} placeholder="Family name, e.g. Inter" onChange={(e) => setFont({ family: e.target.value, faces: family?.faces ?? [] })} />
+              )}
+
+              {!local && family && family.faces.length > 0 && (
                 <ul className="divide-y divide-border/60 rounded-lg border border-border">
                   {family.faces.map((face, i) => {
                     const a = assets.get(face.assetId);
@@ -503,6 +615,7 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
                 </ul>
               )}
 
+              {!local && (
               <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground hover:border-foreground/40 hover:text-foreground">
                 <Upload className="size-4" /> {family && family.faces.length ? "Add more files" : "Choose font files"} — pick several at once
                 <input type="file" multiple accept=".woff2,.woff,.ttf,.otf" hidden onChange={async (e) => {
@@ -536,9 +649,10 @@ export function ThemePackEditor({ project, onChange }: { project: Project; onCha
                   }
                 }} />
               </label>
-              <p className="text-[11px] text-muted-foreground">Each file's weight and style are guessed from its name — check them. A variable font is one file that covers a range of weights.</p>
+              )}
+              {!local && <p className="text-[11px] text-muted-foreground">Each file's weight and style are guessed from its name — check them. A variable font is one file that covers a range of weights.</p>}
 
-              {family && family.faces.length > 0 && (
+              {!local && family && family.faces.length > 0 && (
                 <div className="space-y-1 rounded-lg bg-card p-4" style={{ fontFamily: `"${fontFamilyName}", system-ui` }}>
                   {[...new Set(family.faces.flatMap((f) => (f.weightMax !== undefined ? [100, 300, 400, 500, 700, 900].filter((w) => w >= f.weight && w <= f.weightMax!) : [f.weight])))]
                     .sort((a, b) => a - b)
