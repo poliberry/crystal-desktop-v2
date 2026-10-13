@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Archive, Globe2, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Archive, Ban, Gavel, Globe2, ShieldAlert, ShieldCheck } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -10,13 +10,26 @@ import { EmptyState, EntityLink, Fields, ListRow, Loading, Panel, ReasonDialog, 
 import { useConsole } from "@/components/admin/console-state";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatRelative } from "@/lib/money";
 
-const STATUS: Record<string, { tone: Tone; blurb: string }> = {
+type Status = "active" | "restricted" | "archived" | "suspended" | "banned";
+
+const STATUS: Record<Status, { tone: Tone; blurb: string }> = {
   active: { tone: "good", blurb: "Normal." },
   restricted: { tone: "warn", blurb: "No new members can join. Existing members carry on." },
   archived: { tone: "bad", blurb: "Read-only: nobody can post or join. Nothing is deleted." },
+  suspended: { tone: "bad", blurb: "Closed for a while: nobody can post, start a call or join. Nothing is deleted, and it reopens by itself when the time is up." },
+  banned: { tone: "bad", blurb: "Closed for good: nobody can post, start a call or join. Nothing is deleted. Only an admin can lift it." },
 };
+
+const SUSPEND_LENGTHS: [string, string][] = [
+  ["1", "1 day"],
+  ["7", "7 days"],
+  ["30", "30 days"],
+  ["90", "90 days"],
+  ["forever", "Until lifted"],
+];
 
 export function CommunityRecord({ id }: { id: string }) {
   const staff = useStaff();
@@ -24,7 +37,8 @@ export function CommunityRecord({ id }: { id: string }) {
   const communityId = id as Id<"communities">;
   const detail = useQuery(api.operations.communityDetail, { communityId });
   const setStatus = useMutation(api.operations.setCommunityStatus);
-  const [changing, setChanging] = useState<"restricted" | "archived" | "active" | null>(null);
+  const [changing, setChanging] = useState<Status | null>(null);
+  const [days, setDays] = useState("7");
 
   useEffect(() => {
     if (detail) retitle({ kind: "community", id }, detail.name, `${detail.memberCount} members`);
@@ -33,7 +47,10 @@ export function CommunityRecord({ id }: { id: string }) {
   if (detail === undefined) return <Loading />;
   if (detail === null) return <EmptyState icon={Globe2} title="That community no longer exists" />;
   const manage = staff.can("communities.manage");
+  const canBan = staff.can("users.ban");
   const status = STATUS[detail.status];
+  // A ban is lifted by someone who could have imposed it.
+  const locked = detail.status === "banned" && !canBan;
 
   return (
     <div className="space-y-5">
@@ -99,17 +116,20 @@ export function CommunityRecord({ id }: { id: string }) {
         <Panel title="Platform status">
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">{status.blurb}</p>
+            {detail.until && <p className="text-xs text-muted-foreground">Reopens {formatDate(detail.until, true)}.</p>}
             {detail.reason && <p className="rounded-lg bg-foreground/5 p-2 text-sm">{detail.reason}</p>}
             {detail.moderatedBy && (
               <p className="text-xs text-muted-foreground">
                 Set by @{detail.moderatedBy} {detail.moderatedAt ? formatRelative(detail.moderatedAt) : ""}
               </p>
             )}
-            {manage ? (
+            {manage && locked ? (
+              <p className="text-xs text-muted-foreground">Only an admin can lift a ban.</p>
+            ) : manage ? (
               <div className="space-y-2">
                 {detail.status !== "active" && (
                   <Button variant="outline" className="w-full" onClick={() => setChanging("active")}>
-                    <ShieldCheck className="text-emerald-500" /> Restore to normal
+                    <ShieldCheck className="text-emerald-500" /> {detail.status === "banned" ? "Lift the ban" : "Restore to normal"}
                   </Button>
                 )}
                 {detail.status !== "restricted" && (
@@ -120,6 +140,16 @@ export function CommunityRecord({ id }: { id: string }) {
                 {detail.status !== "archived" && (
                   <Button variant="outline" className="w-full text-destructive" onClick={() => setChanging("archived")}>
                     <Archive /> Archive (read-only)
+                  </Button>
+                )}
+                {detail.status !== "suspended" && (
+                  <Button variant="outline" className="w-full text-destructive" onClick={() => setChanging("suspended")}>
+                    <Ban /> Suspend
+                  </Button>
+                )}
+                {canBan && detail.status !== "banned" && (
+                  <Button variant="destructive" className="w-full" onClick={() => setChanging("banned")}>
+                    <Gavel /> Ban
                   </Button>
                 )}
               </div>
@@ -133,13 +163,44 @@ export function CommunityRecord({ id }: { id: string }) {
       <ReasonDialog
         open={!!changing}
         onOpenChange={(o) => !o && setChanging(null)}
-        title={changing === "active" ? "Restore this community?" : changing === "restricted" ? "Restrict joining?" : "Archive this community?"}
+        title={
+          changing === "active"
+            ? detail.status === "banned" ? "Lift this ban?" : "Restore this community?"
+            : changing === "restricted" ? "Restrict joining?"
+            : changing === "suspended" ? "Suspend this community?"
+            : changing === "banned" ? "Ban this community?"
+            : "Archive this community?"
+        }
         description={changing ? STATUS[changing].blurb : undefined}
-        confirmLabel={changing === "active" ? "Restore" : changing === "restricted" ? "Restrict" : "Archive"}
-        destructive={changing === "archived"}
+        confirmLabel={
+          changing === "active" ? "Restore" : changing === "restricted" ? "Restrict" : changing === "suspended" ? "Suspend" : changing === "banned" ? "Ban" : "Archive"
+        }
+        destructive={changing === "archived" || changing === "suspended" || changing === "banned"}
         minLength={changing === "active" ? 0 : 3}
-        onConfirm={(reason) => setStatus({ communityId, status: changing!, reason: reason || undefined })}
-      />
+        onConfirm={(reason) =>
+          setStatus({
+            communityId,
+            status: changing!,
+            reason: reason || undefined,
+            days: changing === "suspended" && days !== "forever" ? Number(days) : undefined,
+          })
+        }
+      >
+        {changing === "suspended" && (
+          <Select value={days} onValueChange={setDays}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SUSPEND_LENGTHS.map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </ReasonDialog>
     </div>
   );
 }

@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Award, Ban, Gift, Loader2, ShieldCheck, ShieldOff, UserRound } from "lucide-react";
+import { Award, Ban, Gift, Gavel, Loader2, ShieldCheck, ShieldOff, SlidersHorizontal, UserRound } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { ABILITIES, ABILITY_LABELS, type Ability } from "../../../../convex/lib/abilities";
 import {
   EmptyState,
   EntityLink,
@@ -25,6 +26,7 @@ import { useConsole } from "@/components/admin/console-state";
 import { GRANT_KIND_META, type GrantKind } from "@/components/marketplace/sku-kinds";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatMoney, formatRelative } from "@/lib/money";
 
@@ -41,6 +43,33 @@ const DURATIONS: [string, string][] = [
   ["forever", "Until lifted"],
 ];
 
+const HISTORY: Record<string, { label: string; tone: Tone }> = {
+  suspend: { label: "Suspended", tone: "bad" },
+  unsuspend: { label: "Suspension lifted", tone: "good" },
+  limit: { label: "Limited", tone: "warn" },
+  unlimit: { label: "Limits lifted", tone: "good" },
+  ban: { label: "Banned", tone: "bad" },
+  unban: { label: "Ban lifted", tone: "good" },
+};
+
+/** The length choices as a select, shared by suspending and limiting. */
+function DurationSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {DURATIONS.map(([option, label]) => (
+          <SelectItem key={option} value={option}>
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export function UserRecord({ id }: { id: string }) {
   const staff = useStaff();
   const { retitle } = useConsole();
@@ -50,8 +79,19 @@ export function UserRecord({ id }: { id: string }) {
   const [suspending, setSuspending] = useState(false);
   const [lifting, setLifting] = useState(false);
   const [days, setDays] = useState("7");
+  const [limiting, setLimiting] = useState(false);
+  const [unlimiting, setUnlimiting] = useState(false);
+  const [limitDays, setLimitDays] = useState("7");
+  const [limitAbilities, setLimitAbilities] = useState<Ability[]>(["send_messages"]);
+  const [banning, setBanning] = useState(false);
+  const [unbanning, setUnbanning] = useState(false);
+  const [includeNetwork, setIncludeNetwork] = useState(true);
   const suspend = useMutation(api.operations.suspendUser);
   const unsuspend = useMutation(api.operations.unsuspendUser);
+  const limit = useMutation(api.operations.limitUser);
+  const unlimit = useMutation(api.operations.unlimitUser);
+  const ban = useMutation(api.operations.banUser);
+  const unban = useMutation(api.operations.unbanUser);
 
   useEffect(() => {
     if (detail) retitle({ kind: "user", id }, detail.user.name, `@${detail.user.username}`);
@@ -60,8 +100,9 @@ export function UserRecord({ id }: { id: string }) {
   if (detail === undefined) return <Loading />;
   if (detail === null) return <EmptyState icon={UserRound} title="That account no longer exists" />;
 
-  const { user, suspension } = detail;
+  const { user, suspension, ban: banned, limits } = detail;
   const canModerate = staff.can("users.moderate");
+  const canBan = staff.can("users.ban");
 
   return (
     <div className="space-y-5">
@@ -76,22 +117,73 @@ export function UserRecord({ id }: { id: string }) {
             @{user.username} · joined {formatDate(user.joinedAt)}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {detail.isStaff && <StatusPill tone="info">Staff</StatusPill>}
+          {banned && <StatusPill tone="bad">Banned</StatusPill>}
           {suspension && <StatusPill tone="bad">Suspended</StatusPill>}
-          {canModerate && !detail.isStaff && (
-            suspension ? (
-              <Button variant="outline" onClick={() => setLifting(true)}>
-                <ShieldCheck /> Lift suspension
+          {limits && <StatusPill tone="warn">Limited</StatusPill>}
+          {!detail.isStaff && !banned && canModerate && (
+            <>
+              {limits ? (
+                <Button variant="outline" onClick={() => setUnlimiting(true)}>
+                  <ShieldCheck /> Lift limits
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={() => setLimiting(true)}>
+                  <SlidersHorizontal /> Limit
+                </Button>
+              )}
+              {suspension ? (
+                <Button variant="outline" onClick={() => setLifting(true)}>
+                  <ShieldCheck /> Lift suspension
+                </Button>
+              ) : (
+                <Button variant="outline" className="text-destructive" onClick={() => setSuspending(true)}>
+                  <Ban /> Suspend
+                </Button>
+              )}
+            </>
+          )}
+          {!detail.isStaff && canBan &&
+            (banned ? (
+              <Button variant="outline" onClick={() => setUnbanning(true)}>
+                <ShieldCheck /> Lift ban
               </Button>
             ) : (
-              <Button variant="outline" className="text-destructive" onClick={() => setSuspending(true)}>
-                <Ban /> Suspend
+              <Button variant="destructive" onClick={() => setBanning(true)}>
+                <Gavel /> Ban
               </Button>
-            )
-          )}
+            ))}
         </div>
       </header>
+
+      {banned && (
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
+          <Gavel className="mt-0.5 size-5 shrink-0 text-destructive" />
+          <div className="text-sm">
+            <p className="font-medium text-destructive">Banned {formatDate(banned.at, true)}</p>
+            {banned.reason && <p className="text-muted-foreground">{banned.reason}</p>}
+            <p className="mt-1 text-xs text-muted-foreground">
+              {detail.network.bannedNetworks > 0
+                ? `New accounts are refused from ${detail.network.bannedNetworks} network${detail.network.bannedNetworks === 1 ? "" : "s"} this account used.`
+                : "No networks are banned with this account."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {limits && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <SlidersHorizontal className="mt-0.5 size-5 shrink-0 text-amber-500" />
+          <div className="text-sm">
+            <p className="font-medium text-amber-500">
+              Limited {limits.until ? `until ${formatDate(limits.until, true)}` : "until lifted"}
+            </p>
+            <p className="text-muted-foreground">Can't: {limits.abilities.map((ability) => ABILITY_LABELS[ability as Ability]?.label.toLowerCase() ?? ability).join(", ")}</p>
+            {limits.reason && <p className="text-muted-foreground">{limits.reason}</p>}
+          </div>
+        </div>
+      )}
 
       {suspension && (
         <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4">
@@ -131,19 +223,82 @@ export function UserRecord({ id }: { id: string }) {
         placeholder="Reason — shown to them, and kept in the audit log"
         onConfirm={(reason) => suspend({ userId, reason, days: days === "forever" ? undefined : Number(days) })}
       >
-        <Select value={days} onValueChange={setDays}>
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {DURATIONS.map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <DurationSelect value={days} onChange={setDays} />
       </ReasonDialog>
+      <ReasonDialog
+        open={limiting}
+        onOpenChange={setLimiting}
+        title={`Limit @${user.username}?`}
+        description="They can still sign in and use everything else. The server refuses only what's ticked, and tells them so."
+        confirmLabel="Limit"
+        placeholder="Reason — shown to them, and kept in the audit log"
+        onConfirm={(reason) => limit({ userId, reason, abilities: limitAbilities, days: limitDays === "forever" ? undefined : Number(limitDays) })}
+      >
+        <div className="space-y-3">
+          <div className="space-y-2">
+            {ABILITIES.map((ability) => (
+              <label key={ability} className="flex cursor-pointer items-start gap-3 text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={limitAbilities.includes(ability)}
+                  onCheckedChange={(checked) =>
+                    setLimitAbilities((current) => (checked ? [...current.filter((a) => a !== ability), ability] : current.filter((a) => a !== ability)))
+                  }
+                />
+                <span>
+                  <span className="font-medium">{ABILITY_LABELS[ability].label}</span>
+                  <span className="block text-xs text-muted-foreground">{ABILITY_LABELS[ability].description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <DurationSelect value={limitDays} onChange={setLimitDays} />
+          {limitAbilities.length === 0 && <p className="text-xs text-destructive">Pick at least one.</p>}
+        </div>
+      </ReasonDialog>
+      <ReasonDialog
+        open={unlimiting}
+        onOpenChange={setUnlimiting}
+        title={`Lift the limits on @${user.username}?`}
+        confirmLabel="Lift limits"
+        minLength={0}
+        placeholder="Why they're being lifted (optional)"
+        onConfirm={(reason) => unlimit({ userId, reason: reason || undefined })}
+      />
+      <ReasonDialog
+        open={banning}
+        onOpenChange={setBanning}
+        title={`Ban @${user.username}?`}
+        description="They are signed out of everything and can't read or do anything, until a ban is lifted. This can't be undone by them."
+        confirmLabel="Ban"
+        destructive
+        placeholder="Reason — shown to them, and kept in the audit log"
+        onConfirm={async (reason) => {
+          await ban({ userId, reason, includeNetwork });
+        }}
+      >
+        <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <Checkbox className="mt-0.5" checked={includeNetwork} onCheckedChange={(checked) => setIncludeNetwork(checked === true)} disabled={!detail.network.protectionOn} />
+          <span>
+            <span className="font-medium">Also refuse new accounts from their networks</span>
+            <span className="block text-xs text-muted-foreground">
+              {detail.network.protectionOn
+                ? "Anyone who makes a new account from an address this account has used is banned on arrival. People who already have accounts there aren't affected. Addresses are encrypted and never shown."
+                : "Network bans aren't set up on this deployment (IP_HASH_KEY and CREDENTIALS_ENCRYPTION_KEY), so only the account will be banned."}
+            </span>
+          </span>
+        </label>
+      </ReasonDialog>
+      <ReasonDialog
+        open={unbanning}
+        onOpenChange={setUnbanning}
+        title={`Lift the ban on @${user.username}?`}
+        description="The account works again, and the networks banned with it are cleared."
+        confirmLabel="Lift ban"
+        minLength={0}
+        placeholder="Why it's being lifted (optional)"
+        onConfirm={(reason) => unban({ userId, reason: reason || undefined })}
+      />
       <ReasonDialog
         open={lifting}
         onOpenChange={setLifting}
@@ -194,7 +349,8 @@ function Overview({ detail }: { detail: Detail }) {
 function Badges({ detail, userId }: { detail: Detail; userId: Id<"users"> }) {
   const staff = useStaff();
   const setBadge = useMutation(api.operations.setUserBadge);
-  const badges = useQuery(api.badges.list) ?? [];
+  // Every badge there is, built-in ones included whether or not the catalogue has been seeded.
+  const badges = useQuery(api.badges.adminCatalogue) ?? [];
   const [giving, setGiving] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [badgeId, setBadgeId] = useState("");
@@ -369,12 +525,23 @@ function Moderation({ detail }: { detail: Detail }) {
           <div className="divide-y divide-foreground/10">
             {detail.moderationLog.map((entry) => (
               <ListRow key={entry.id} className="items-start">
-                <StatusPill tone={entry.action === "suspend" ? "bad" : "good"}>{entry.action === "suspend" ? "Suspended" : "Lifted"}</StatusPill>
+                <StatusPill tone={HISTORY[entry.action]?.tone ?? "neutral"}>{HISTORY[entry.action]?.label ?? entry.action}</StatusPill>
                 <div className="min-w-0 flex-1 text-sm">
                   <p>{entry.reason ?? "No reason recorded"}</p>
+                  {entry.abilities && entry.abilities.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {entry.abilities.map((ability) => ABILITY_LABELS[ability as Ability]?.label ?? ability).join(", ")}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
-                    @{entry.actor} · {formatDate(entry.createdAt, true)}
-                    {entry.until ? ` · until ${formatDate(entry.until)}` : entry.action === "suspend" ? " · indefinitely" : ""}
+                    {entry.actor === "Crystal" ? "Crystal (automatic)" : `@${entry.actor}`} · {formatDate(entry.createdAt, true)}
+                    {entry.until
+                      ? ` · until ${formatDate(entry.until)}`
+                      : entry.action === "suspend"
+                        ? " · indefinitely"
+                        : entry.action === "limit"
+                          ? " · until lifted"
+                          : ""}
                   </p>
                 </div>
               </ListRow>

@@ -10,7 +10,7 @@ summary: Versions, what a reviewer reads, and what happens after it is approved.
 ## Before you send
 
 1. **Build.** The built script, `dist/extension.js`, is what is checked and what is reviewed.
-2. **Run** it once and use every button. The test run is the real sandbox, with the network simulated and storage thrown away afterwards.
+2. **Run** it once and use every button. The test run is the real sandbox. Requests really go out through Crystal, to the sites you listed and nowhere else, so you can see what the site sends back; storage is thrown away afterwards, so a test never touches anyone's saved data.
 3. Read the **Checks** in the project settings. Errors stop you sending; warnings are worth reading.
 4. Write a real description (at least a sentence) and set the **version**. Each submission needs a new one, like `1.0.1`.
 

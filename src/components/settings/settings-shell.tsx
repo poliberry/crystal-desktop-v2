@@ -3,6 +3,7 @@
 import { CosmeticMedia } from "@/components/motion/cosmetic-media";
 import {
   Accessibility,
+  Ban,
   Bell,
   ChevronDown,
   Code2,
@@ -33,6 +34,7 @@ import { AboutTab } from "@/components/settings/tabs/about-tab";
 import { AccessibilityTab } from "@/components/settings/tabs/accessibility-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { BillingTab } from "@/components/settings/tabs/billing-tab";
+import { BlockedTab } from "@/components/settings/tabs/blocked-tab";
 import { CreatorTab } from "@/components/settings/tabs/creator-tab";
 import { ExtensionsTab } from "@/components/settings/tabs/extensions-tab";
 import { SubscriptionsTab } from "@/components/settings/tabs/subscriptions-tab";
@@ -94,6 +96,7 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
     children: [
       { value: "profile", label: "Edit Profile", icon: User, opens: "profile-editor" },
       { value: "account", label: "Account", icon: KeyRound },
+      { value: "blocked", label: "Blocked & Ignored", icon: Ban },
       { value: "updates", label: "Updates", icon: Download },
     ],
   },
@@ -132,6 +135,7 @@ const SECTION_ORDER = [...NAVIGATION.flatMap((group) => group.children.map((c) =
 /** What each section is called at the top of its page, and what it is for. */
 const SECTION_META: Record<string, { title: string; description: string }> = {
   account: { title: "Account", description: "Your sign-in, username and personal details." },
+  blocked: { title: "Blocked & ignored", description: "People you've muted for a while or shut out for good." },
   updates: { title: "Updates", description: "Keep Crystal up to date." },
   billing: { title: "Billing", description: "Payment methods, receipts and help with a payment." },
   subscriptions: { title: "Subscriptions", description: "Your Crystal plan and anything else that renews." },
@@ -361,6 +365,7 @@ export function SettingsShell({
               {section === "accessibility" && <AccessibilityTab />}
               {section === "servers" && <ServerProfilesTab />}
               {section === "account" && <AccountTab />}
+              {section === "blocked" && <BlockedTab />}
               {section === "billing" && <BillingTab />}
               {section === "subscriptions" && <SubscriptionsTab />}
               {section === "creator" && <CreatorTab />}

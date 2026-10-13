@@ -20,6 +20,7 @@ import { BOT_IMAGE_BYTES, BOT_LIMITS, BOT_MESSAGE, constantTimeEqual, grantableT
 import { visibleActivities } from "./lib/activities";
 import { validateComponents } from "./lib/components";
 import { validateEmbeds } from "./lib/embeds";
+import { isSuppressing } from "./lib/blocking";
 import { notifyUsers } from "./notifications";
 import { applyBotPresence, type BotActivity, type BotStatus } from "./presence";
 import { PERMISSIONS, getBasePermissions, getHighestRolePosition, requireAbove } from "./permissions";
@@ -842,6 +843,11 @@ const ops: Record<string, Handler> = {
     const target = ident(ctx, "users", req.params.userId, "That person");
     const user = await ctx.db.get(target);
     if (!user || user.isBot) return fail(404, "That person wasn't found.");
+    // A person can stop a bot messaging them by blocking or ignoring it; the
+    // bot is told nothing more than that the person can't be reached.
+    if (await isSuppressing(ctx, target, bot.userId)) {
+      return fail(403, "That person can't receive messages from this bot.");
+    }
     const content = text(req.body, "content", { max: 2000, required: true })!;
     // The person has to have just used this bot — a command or a button — in a community where it
     // may send direct messages. That is the whole of the consent: without it a bot is a spam cannon.

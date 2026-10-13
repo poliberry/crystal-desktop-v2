@@ -402,6 +402,17 @@ export default defineSchema({
     /** Optional platform-level moderation state, separate from community bans. */
     platformSuspendedUntil: v.optional(v.number()),
     platformSuspensionReason: v.optional(v.string()),
+    /** Banned from the platform: permanent until staff lift it. A banned account
+     * can't act or read, and its addresses are refused for new accounts (see
+     * `bannedIps`). Nothing about addresses lives on this row — it is sent to the
+     * user's own browser. */
+    platformBannedAt: v.optional(v.number()),
+    platformBanReason: v.optional(v.string()),
+    /** Abilities staff have taken away (see lib/abilities.ts), until
+     * `platformLimitedUntil` — or until lifted, when that is absent. */
+    platformLimits: v.optional(v.array(v.string())),
+    platformLimitedUntil: v.optional(v.number()),
+    platformLimitReason: v.optional(v.string()),
   })
     .index("by_clerk_id", ["clerkId"])
     .index("by_username", ["username"])
@@ -485,6 +496,33 @@ export default defineSchema({
     .index("by_recipient", ["recipientId"])
     .index("by_requester", ["requesterId"])
     .index("by_pair", ["requesterId", "recipientId"]),
+
+  /**
+   * One person ignoring or blocking another, as a span of time.
+   *
+   * A window rather than a flag because of how Ignore behaves: what someone
+   * sends while they are ignored stays hidden *for good*, even once the ignore
+   * has run out or been lifted. Whether a message is hidden is therefore a
+   * question about when it was sent, and that needs the history of windows, not
+   * just whether one is open now. Blocking uses the same table so a blocked
+   * user's messages in a shared group or server hide by the same rule.
+   *
+   * `endsAt` absent means "until it is lifted"; lifting sets it to that moment
+   * instead of deleting the row. See convex/lib/blocking.ts.
+   */
+  userSuppressions: defineTable({
+    /** Who ignored or blocked. */
+    userId: v.id("users"),
+    /** Who they ignored or blocked. */
+    targetId: v.id("users"),
+    kind: v.union(v.literal("ignore"), v.literal("block")),
+    startedAt: v.number(),
+    endsAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_target", ["userId", "targetId"])
+    /** "Who has blocked me" — the side a profile has to check from. */
+    .index("by_target", ["targetId"]),
 
   presence: defineTable({
     userId: v.id("users"),
@@ -1126,10 +1164,10 @@ export default defineSchema({
     .index("by_user_extension", ["userId", "extensionId"])
     .index("by_user_extension_key", ["userId", "extensionId", "key"]),
 
-  /** Requests an extension has made through Crystal's proxy, for rate limiting. */
+  /** Requests an extension has made through Crystal's proxy, for rate limiting. No `extensionId` is a Studio test run. */
   extensionHttpLog: defineTable({
     userId: v.id("users"),
-    extensionId: v.id("extensions"),
+    extensionId: v.optional(v.id("extensions")),
     at: v.number(),
   }).index("by_user_extension_at", ["userId", "extensionId", "at"]),
 
@@ -2244,21 +2282,74 @@ export default defineSchema({
   /** Immutable record of platform-wide account moderation. */
   platformModerationLog: defineTable({
     userId: v.id("users"),
-    actorId: v.id("users"),
-    action: v.union(v.literal("suspend"), v.literal("unsuspend")),
+    /** Absent when the platform acted by itself (a new account on a banned address). */
+    actorId: v.optional(v.id("users")),
+    action: v.union(
+      v.literal("suspend"),
+      v.literal("unsuspend"),
+      v.literal("ban"),
+      v.literal("unban"),
+      v.literal("limit"),
+      v.literal("unlimit"),
+    ),
     reason: v.optional(v.string()),
     until: v.optional(v.number()),
+    /** For `limit`: which abilities were taken away. */
+    abilities: v.optional(v.array(v.string())),
     createdAt: v.number(),
   }).index("by_user", ["userId", "createdAt"]),
 
-  /** Staff-visible state for a community, without deleting its content. */
+  /** Staff-visible state for a community, without deleting its content.
+   * `restricted` and `archived` limit it; `suspended` closes it for a while
+   * (until `until`, or until lifted) and `banned` closes it for good. */
   communityModeration: defineTable({
     communityId: v.id("communities"),
-    status: v.union(v.literal("active"), v.literal("restricted"), v.literal("archived")),
+    status: v.union(
+      v.literal("active"),
+      v.literal("restricted"),
+      v.literal("archived"),
+      v.literal("suspended"),
+      v.literal("banned"),
+    ),
     reason: v.optional(v.string()),
+    until: v.optional(v.number()),
     actorId: v.id("users"),
     updatedAt: v.number(),
   }).index("by_community", ["communityId"]),
+
+  /**
+   * Where each account has been seen from. SENSITIVE: never returned by any query
+   * or shown anywhere. `ipCipher` is the address encrypted; `ipHash` is a keyed
+   * hash of it, used to match an address against `bannedIps` — see lib/ip.ts.
+   */
+  userIps: defineTable({
+    userId: v.id("users"),
+    ipHash: v.string(),
+    ipCipher: v.string(),
+    firstSeenAt: v.number(),
+    lastSeenAt: v.number(),
+  })
+    .index("by_user_hash", ["userId", "ipHash"])
+    .index("by_user_seen", ["userId", "lastSeenAt"]),
+
+  /**
+   * Addresses refused for new accounts, because an account that used them was
+   * banned. SENSITIVE like `userIps`. An address bans *signups*, never signs
+   * anybody else out: a shared address (a school, a household) shouldn't cost
+   * its other users the accounts they already have.
+   */
+  bannedIps: defineTable({
+    ipHash: v.string(),
+    ipCipher: v.string(),
+    /** The banned account this came from. */
+    userId: v.id("users"),
+    actorId: v.id("users"),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+    liftedAt: v.optional(v.number()),
+  })
+    .index("by_hash", ["ipHash"])
+    .index("by_user", ["userId"]),
 
   // --- Marketplace ----------------------------------------------------------
 

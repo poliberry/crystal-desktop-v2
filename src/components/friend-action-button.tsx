@@ -1,13 +1,24 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Check, Clock, Loader2, MessageSquare, UserCheck, UserPlus } from "lucide-react";
+import {
+  Check,
+  Clock,
+  Ellipsis,
+  Loader2,
+  MessageSquare,
+  ShieldCheck,
+  UserCheck,
+  UserPlus,
+} from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { BlockDialog, BlockIgnoreDropdownItems } from "@/components/blocking/block-ignore";
 import { useNavigation } from "@/components/home/navigation-context";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -44,12 +55,14 @@ export function FriendActionButton({
   const acceptRequest = useMutation(api.friends.acceptFriendRequest);
   const cancelRequest = useMutation(api.friends.cancelFriendRequest);
   const removeFriend = useMutation(api.friends.removeFriend);
+  const unblockUser = useMutation(api.blocks.unblockUser);
   const getOrCreateDirect = useMutation(api.conversations.getOrCreateDirect);
   const navigation = useNavigation();
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [blocking, setBlocking] = useState(false);
 
   // Undefined while the query is in flight — showing "Add Friend" then
   // flipping it to "Message" a beat later would be worse than a placeholder.
@@ -127,6 +140,16 @@ export function FriendActionButton({
       size: "icon" as const,
       variant: "default" as const,
       onClick: () => run(() => sendRequest({ username })),
+    },
+    // Only ever the blocker's side (see `relationshipWith`). The way back out
+    // belongs right here, where the block is most visible.
+    blocked: {
+      label: "Unblock",
+      icon: ShieldCheck,
+      size: "default" as const,
+      className: "w-fit",
+      variant: "outline" as const,
+      onClick: () => run(() => unblockUser({ userId })),
     },
   }[(relationship as any).kind as string] as any;
 
@@ -219,8 +242,34 @@ export function FriendActionButton({
             </PopoverContent>
           </Popover>
         )}
+
+        {/* Ignore and Block, for anyone who isn't you. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              title="More"
+              aria-label={`More options for @${username}`}
+            >
+              <Ellipsis className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <BlockIgnoreDropdownItems
+              userId={userId}
+              name={username}
+              onBlock={() => setBlocking(true)}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {error && <p className="text-[11px] text-destructive">{error}</p>}
+      <BlockDialog
+        target={blocking ? { id: userId, name: username } : null}
+        onClose={() => setBlocking(false)}
+      />
     </div>
   );
 }

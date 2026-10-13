@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { BlockDialog, BlockIgnoreContextItems } from "@/components/blocking/block-ignore";
 import { ReportDialog } from "@/components/reports/report-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -72,6 +73,7 @@ export function MemberContextMenu({
   const setMemberNickname = useMutation(api.communities.setMemberNickname);
 
   const [reporting, setReporting] = useState(false);
+  const [blocking, setBlocking] = useState<{ id: Id<"users">; name: string } | null>(null);
   const [nicknameOpen, setNicknameOpen] = useState(false);
   const [nickname, setNickname] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -165,6 +167,16 @@ export function MemberContextMenu({
               Ban {name}
             </ContextMenuItem>
           )}
+          {/* Personal, not moderation: anyone can ignore or block anyone here,
+              whatever their permissions. Bots can be ignored too — it's their
+              messages that are hidden. */}
+          {!isSelf && (
+            <BlockIgnoreContextItems
+              userId={userId}
+              name={name}
+              onBlock={() => setBlocking({ id: userId, name })}
+            />
+          )}
           {!isSelf && (
             <>
               {(canModerate || canNickname) && <ContextMenuSeparator />}
@@ -181,6 +193,7 @@ export function MemberContextMenu({
         target={reporting ? { type: "user", id: userId, label: name } : null}
         onClose={() => setReporting(false)}
       />
+      <BlockDialog target={blocking} onClose={() => setBlocking(null)} />
 
       <Dialog open={nicknameOpen} onOpenChange={setNicknameOpen}>
         <DialogContent className="sm:max-w-sm">

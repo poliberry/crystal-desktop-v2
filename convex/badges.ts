@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 
 import type { Doc } from "./_generated/dataModel";
-import { internalMutation, query, type QueryCtx } from "./_generated/server";
+import { internalMutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { requireStaff } from "./lib/staff";
 import { getCurrentUserOrNull } from "./users";
 
 /**
@@ -140,54 +141,68 @@ const BUG_HUNTER_TIERS = [
   { tier: 5, name: "Diamond", className: "text-cyan-400 dark:text-cyan-300" },
 ];
 
-export const seedDefaults = internalMutation({
+export const DEFAULT_BADGES: BadgeView[] = [
+  {
+    badgeId: "official",
+    label: "OFFICIAL",
+    description: "Official Crystal system account.",
+    icon: "BsPatchCheckFill",
+    className: "text-sky-400",
+    position: -1,
+  },
+  {
+    badgeId: "poliberry_staff",
+    label: "Poliberry Staff",
+    description: "Works on Crystal at Poliberry.",
+    icon: "BsFillPersonBadgeFill",
+    className: "text-sky-400",
+    position: 0,
+  },
+  {
+    badgeId: "early_supporter",
+    label: "Early Supporter",
+    description: "Here before it was finished.",
+    icon: "BsStars",
+    className: "text-amber-400",
+    position: 1,
+  },
+  ...BUG_HUNTER_TIERS.map(({ tier, name, className }) => ({
+    badgeId: `bug_hunter_${tier}`,
+    label: `Bug Hunter — ${name}`,
+    description: `Found and reported bugs in Crystal. Tier ${tier} of ${BUG_HUNTER_TIERS.length}.`,
+    icon: "BsBugFill",
+    className,
+    group: "bug_hunter",
+    tier,
+    position: 2,
+  })),
+];;
+
+/**
+ * The definition for a badge id, creating it from the built-in set if the catalogue has never been seeded. Only ever fills a
+ * gap: a definition someone has edited is never overwritten. Null for an id that is neither in the catalogue nor built in.
+ */
+export async function ensureBadgeDefinition(ctx: MutationCtx, badgeId: string): Promise<Doc<"badges"> | null> {
+  const existing = await ctx.db.query("badges").withIndex("by_badge_id", (q) => q.eq("badgeId", badgeId)).unique();
+  if (existing) return existing;
+  const builtIn = DEFAULT_BADGES.find((b) => b.badgeId === badgeId);
+  if (!builtIn) return null;
+  const id = await ctx.db.insert("badges", builtIn);
+  return ctx.db.get(id);
+}
+
+/**
+ * Every badge staff can give: the catalogue, plus any built-in badge it doesn't have a row for yet (so a deployment that
+ * never ran `seedDefaults` still offers Poliberry Staff, Early Supporter and the Bug Hunter tiers). `defined` says whether
+ * there is a row; granting one that isn't creates it.
+ */
+export const adminCatalogue = query({
   args: {},
   handler: async (ctx) => {
-    const defaults = [
-      {
-        badgeId: "official",
-        label: "OFFICIAL",
-        description: "Official Crystal system account.",
-        icon: "BsPatchCheckFill",
-        className: "text-sky-400",
-        position: -1,
-      },
-      {
-        badgeId: "poliberry_staff",
-        label: "Poliberry Staff",
-        description: "Works on Crystal at Poliberry.",
-        icon: "BsFillPersonBadgeFill",
-        className: "text-sky-400",
-        position: 0,
-      },
-      {
-        badgeId: "early_supporter",
-        label: "Early Supporter",
-        description: "Here before it was finished.",
-        icon: "BsStars",
-        className: "text-amber-400",
-        position: 1,
-      },
-      ...BUG_HUNTER_TIERS.map(({ tier, name, className }) => ({
-        badgeId: `bug_hunter_${tier}`,
-        label: `Bug Hunter — ${name}`,
-        description: `Found and reported bugs in Crystal. Tier ${tier} of ${BUG_HUNTER_TIERS.length}.`,
-        icon: "BsBugFill",
-        className,
-        group: "bug_hunter",
-        tier,
-        position: 2,
-      })),
-    ];
-
-    for (const badge of defaults) {
-      const existing = await ctx.db
-        .query("badges")
-        .withIndex("by_badge_id", (q) => q.eq("badgeId", badge.badgeId))
-        .unique();
-      if (existing) await ctx.db.patch(existing._id, badge);
-      else await ctx.db.insert("badges", badge);
-    }
-    return { badges: defaults.length };
+    await requireStaff(ctx, "users.read");
+    const rows = (await ctx.db.query("badges").collect()).map((row) => ({ ...badgeView(row), defined: true }));
+    const have = new Set(rows.map((r) => r.badgeId));
+    const missing = DEFAULT_BADGES.filter((b) => !have.has(b.badgeId)).map((b) => ({ ...b, defined: false }));
+    return [...rows, ...missing].sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || (a.tier ?? 0) - (b.tier ?? 0) || a.badgeId.localeCompare(b.badgeId));
   },
 });

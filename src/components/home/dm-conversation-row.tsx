@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
+import { useState } from "react";
 import {
   Phone,
   Pin,
@@ -15,6 +16,7 @@ import {
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { BlockDialog, BlockIgnoreContextItems } from "@/components/blocking/block-ignore";
 import { GroupAvatar } from "@/components/home/group-avatar";
 import { Nameplate } from "@/components/profile/nameplate";
 import { SelectionPill } from "@/components/home/selection-pill";
@@ -72,11 +74,14 @@ function DmConversationMenu({
   pinned,
   friend,
   onOpen,
+  onBlock,
 }: {
   conversationId: Id<"conversations">;
   pinned: boolean;
   friend?: DmFriend;
   onOpen: () => void;
+  /** Hands the confirmation to the row, which outlives this menu. */
+  onBlock: () => void;
 }) {
   const setPinned = useMutation(api.conversations.setPinned);
   const setPriority = useMutation(api.priority.setConversation);
@@ -177,6 +182,12 @@ function DmConversationMenu({
         </ContextMenuSub>
       )}
 
+      {/* Bots aren't people to ignore or block, and the Crystal account can't
+          be — it carries announcements you can't opt out of. */}
+      {friend && !friend.isBot && friend.username !== "crystal" && (
+        <BlockIgnoreContextItems userId={friend.id} name={friend.name} onBlock={onBlock} />
+      )}
+
       {friend && (
         <>
           <ContextMenuSeparator />
@@ -208,6 +219,7 @@ export function DmConversationRow({
   onSelect: (id: Id<"conversations">) => void;
 }) {
   const setClosed = useMutation(api.conversations.setClosed);
+  const [blocking, setBlocking] = useState<{ id: Id<"users">; name: string } | null>(null);
 
   const isGroup = conversation.type === "group";
   const title = isGroup
@@ -415,7 +427,9 @@ export function DmConversationRow({
         pinned={pinned}
         friend={friend}
         onOpen={() => onSelect(conversation.id)}
+        onBlock={() => friend && setBlocking({ id: friend.id, name: friend.name })}
       />
+      <BlockDialog target={blocking} onClose={() => setBlocking(null)} />
     </ContextMenu>  );
 }
 

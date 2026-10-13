@@ -1,13 +1,15 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText } from "./lib/mentions";
 import { allowsReply, loadNotificationPolicy } from "./lib/notificationPolicy";
+import { isMessageHidden, requireNotBlocked, windowsByTarget } from "./lib/blocking";
 import { notifyUsers } from "./notifications";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import { requireAbility } from "./lib/moderation";
 import { getCurrentUserOrThrow } from "./users";
 import { isAcceptableAttachmentSource } from "./lib/klipy";
 import { effectiveFileType } from "./lib/mediaType";
@@ -33,6 +35,29 @@ async function requireMembership(
   return membership;
 }
 
+/**
+ * Refuse to act in a 1:1 DM when either person has blocked the other.
+ *
+ * Only DMs: in a group the blocker and the blocked can both remain, and what a
+ * block does there is hide messages and silence notifications (see
+ * convex/lib/blocking.ts), not stop either person talking to the room.
+ */
+async function requireNoBlockInDirect(
+  ctx: QueryCtx,
+  conversationId: Id<"conversations">,
+  me: Id<"users">,
+) {
+  const conversation = await ctx.db.get(conversationId);
+  if (conversation?.type !== "dm") return;
+  const members = await ctx.db
+    .query("conversationMembers")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+    .collect();
+  for (const member of members) {
+    if (member.userId !== me) await requireNotBlocked(ctx, me, member.userId);
+  }
+}
+
 /** Longest a reply preview snippet gets before it's cut — a preview is one
  * line, not the message. */
 const REPLY_SNIPPET_MAX = 140;
@@ -51,6 +76,8 @@ async function resolveReplyPreview(
   if (!target) {
     return {
       id: replyToId,
+      authorId: undefined as Id<"users"> | undefined,
+      createdAt: undefined as number | undefined,
       authorName: "Unknown",
       authorImageUrl: undefined as string | undefined,
       text: null as string | null,
@@ -67,6 +94,11 @@ async function resolveReplyPreview(
   ]);
   return {
     id: target._id as string,
+    // Carried so the viewer-specific pass in `withoutHidden` can blank a
+    // preview of a message they have ignored. It runs after the first-page
+    // cache, which is shared between viewers and so can't decide this itself.
+    authorId: target.authorId as Id<"users"> | undefined,
+    createdAt: target._creationTime as number | undefined,
     authorName: author?.name ?? "Unknown",
     authorImageUrl: author?.imageUrl,
     text: target.text
@@ -75,6 +107,61 @@ async function resolveReplyPreview(
     hasAttachment: firstAttachment.length > 0,
     deleted: false,
   };
+}
+
+type PageMessage = {
+  createdAt: number;
+  author: { id: Id<"users"> } | null;
+  replyTo: {
+    id: string;
+    authorId?: Id<"users">;
+    createdAt?: number;
+    authorName: string;
+    authorImageUrl?: string;
+    text: string | null;
+    hasAttachment: boolean;
+    deleted: boolean;
+    hidden?: boolean;
+  } | null;
+};
+
+/**
+ * Take what the viewer has ignored or blocked out of a page of messages.
+ *
+ * Applied to the page after it has come from the cache, never before: the
+ * first page is cached once per conversation and served to everyone in it, so
+ * who is hidden can't be baked in. A reply that quotes a hidden message keeps
+ * its place but loses the quote — otherwise the ignored person's words would
+ * still be readable one level down.
+ */
+function withoutHidden<T extends PageMessage>(
+  hidden: ReadonlyMap<Id<"users">, Doc<"userSuppressions">[]>,
+  messages: T[],
+): T[] {
+  if (hidden.size === 0) return messages;
+  return messages
+    .filter((m) => !m.author || !isMessageHidden(hidden, m.author.id, m.createdAt))
+    .map((m) => {
+      const quoted = m.replyTo;
+      if (
+        !quoted?.authorId ||
+        quoted.createdAt === undefined ||
+        !isMessageHidden(hidden, quoted.authorId, quoted.createdAt)
+      ) {
+        return m;
+      }
+      return {
+        ...m,
+        replyTo: {
+          id: quoted.id,
+          authorName: "Hidden user",
+          text: null,
+          hasAttachment: false,
+          deleted: true,
+          hidden: true,
+        },
+      };
+    });
 }
 
 async function reactionsFor(
@@ -111,6 +198,7 @@ export const list = query({
   handler: async (ctx, { conversationId, paginationOpts }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireMembership(ctx, conversationId, me._id);
+    const hidden = await windowsByTarget(ctx, me._id);
 
     // Redis cache for first page only (hot path) — pagination cursor = null
     const isFirstPage = !paginationOpts.cursor;
@@ -119,7 +207,7 @@ export const list = query({
       try {
         const { cacheGetJson } = await import("./cache");
         const cached = await cacheGetJson<any>(cacheKey);
-        if (cached) return cached;
+        if (cached) return { ...cached, page: withoutHidden(hidden, cached.page as PageMessage[]) };
       } catch {}
     }
 
@@ -200,10 +288,11 @@ export const list = query({
     if (isFirstPage) {
       try {
         const { cacheSetJson } = await import("./cache");
+        // The unfiltered page: it is shared, so the filter below is per viewer.
         await cacheSetJson(cacheKey, result, 30);
       } catch {}
     }
-    return result;
+    return { ...result, page: withoutHidden(hidden, result.page) };
   },
 });
 
@@ -244,9 +333,11 @@ export const send = mutation({
     ctx,
     { conversationId, text, attachments, birthdayWish, replyToId, pingReply, clientId },
   ) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "send_messages");
+    if (attachments?.length) requireAbility(me, "upload_media");
     if (me.clerkId === "system:crystal") throw new Error("The Crystal system account cannot compose messages.");
     const membership = await requireMembership(ctx, conversationId, me._id);
+    await requireNoBlockInDirect(ctx, conversationId, me._id);
 
     if (clientId) {
       const existing = await ctx.db
@@ -454,6 +545,7 @@ export const toggleReaction = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
     await requireMembership(ctx, message.conversationId, me._id);
+    await requireNoBlockInDirect(ctx, message.conversationId, me._id);
 
     const existing = await ctx.db
       .query("messageReactions")
@@ -477,7 +569,7 @@ export const toggleReaction = mutation({
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -520,9 +612,11 @@ export const listPinned = query({
       .filter((q) => q.neq(q.field("pinnedAt"), undefined))
       .collect();
     pinned.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
+    const hidden = await windowsByTarget(ctx, me._id);
+    const visible = pinned.filter((m) => !isMessageHidden(hidden, m.authorId, m._creationTime));
 
     return Promise.all(
-      pinned.map(async (message) => {
+      visible.map(async (message) => {
         const author = await ctx.db.get(message.authorId);
         return {
           id: message._id,
@@ -567,8 +661,11 @@ export const listAttachments = query({
       .order("desc")
       .paginate(paginationOpts);
 
+    const hidden = await windowsByTarget(ctx, me._id);
     const perMessage = await Promise.all(
-      page.page.map(async (message) => {
+      page.page
+        .filter((m) => !isMessageHidden(hidden, m.authorId, m._creationTime))
+        .map(async (message) => {
         const rows = await ctx.db
           .query("messageAttachments")
           .withIndex("by_message", (q) => q.eq("messageId", message._id))

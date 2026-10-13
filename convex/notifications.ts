@@ -16,9 +16,10 @@ import {
   type NotificationPolicy,
 } from "./lib/notificationPolicy";
 import { renderMentionsAsText } from "./lib/mentions";
+import { hasBlocked, isMessageHidden, isSuppressing, windowsByTarget } from "./lib/blocking";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
-import { markAllConversationsRead } from "./conversations";
+import { lastMessageOf, markAllConversationsRead } from "./conversations";
 
 type NotificationType =
   | "dm_message"
@@ -102,6 +103,15 @@ export async function notifyUsers(
     // own DND state and their own settings for that server.
     const policy = await loadNotificationPolicy(ctx, userId);
     if (!wants(policy, rest.type, rest.communityId, isMention)) continue;
+    // Nobody is notified by someone they are ignoring or have blocked — nor
+    // by someone who has blocked them, since the blocker's @-mention in a
+    // shared server shouldn't ping the person they blocked.
+    if (
+      actorId &&
+      ((await isSuppressing(ctx, userId, actorId)) || (await hasBlocked(ctx, actorId, userId)))
+    ) {
+      continue;
+    }
 
     await ctx.db.insert("notifications", {
       userId,
@@ -226,6 +236,10 @@ export const feed = query({
         })
     );
 
+    // Unlike the notification rows above, this reads messages directly, so the
+    // viewer's ignore/block windows have to be applied here — or the desktop
+    // would toast a message the conversation itself no longer shows.
+    const hidden = await windowsByTarget(ctx, me._id);
     const memberships = await ctx.db
       .query("conversationMembers")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
@@ -235,11 +249,7 @@ export const feed = query({
         memberships.map(async (membership) => {
           const conversation = await ctx.db.get(membership.conversationId);
           if (!conversation) return null;
-          const [lastMessage] = await ctx.db
-            .query("messages")
-            .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
-            .order("desc")
-            .take(1);
+          const lastMessage = await lastMessageOf(ctx, conversation._id, hidden);
           if (!lastMessage) return null;
           const author = await ctx.db.get(lastMessage.authorId);
 
@@ -302,6 +312,7 @@ export const feed = query({
           .order("desc")
           .take(1);
         if (!lastMessage) continue;
+        if (isMessageHidden(hidden, lastMessage.authorId, lastMessage._creationTime)) continue;
 
         const mentionsMe = (lastMessage.text ?? "").includes(`<@${me._id}>`);
         if (!allowsChannelMessage(policy, community._id, mentionsMe)) continue;

@@ -20,12 +20,16 @@ function loadEsbuild(): typeof esbuild {
     try {
       const pkgJson = require.resolve("esbuild/package.json");
       if (pkgJson.includes("app.asar")) {
-        const nodeModules = path.dirname(path.dirname(pkgJson)).replace("app.asar", "app.asar.unpacked");
+        // The platform package is found the way esbuild itself finds it: looking from esbuild's own folder, which reaches the
+        // copy nested inside it before any other. That matters: another package's (Convex's) older esbuild can leave a
+        // different version of the same platform package hoisted above, and esbuild refuses to run a binary whose version
+        // isn't its own ("Host version does not match binary version" - which surfaces as "The service is no longer running").
+        const fromEsbuild = path.dirname(pkgJson);
         const platform = `${process.platform}-${process.arch}`;
-        const found = ["bin/esbuild", "esbuild.exe"]
-          .map((rel) => path.join(nodeModules, "@esbuild", platform, rel))
-          .find((candidate) => fs.existsSync(candidate));
-        if (found) process.env.ESBUILD_BINARY_PATH = found;
+        const rel = process.platform === "win32" ? "esbuild.exe" : "bin/esbuild";
+        const inAsar = require.resolve(`@esbuild/${platform}/${rel}`, { paths: [fromEsbuild] });
+        const real = inAsar.replace("app.asar", "app.asar.unpacked");
+        if (fs.existsSync(real)) process.env.ESBUILD_BINARY_PATH = real;
       }
     } catch {
       /* leave it to esbuild, which will say what it couldn't find */

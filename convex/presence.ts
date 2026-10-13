@@ -8,6 +8,7 @@ import {
   query,
 } from "./_generated/server";
 import { activitiesOf, visibleActivities } from "./lib/activities";
+import { hasBlocked } from "./lib/blocking";
 import {
   HISTORY_WINDOW_MS,
   closeOpenSessions,
@@ -504,6 +505,7 @@ export const recentGames = query({
   handler: async (ctx, { userId, limit }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
+    if (me._id !== userId && (await hasBlocked(ctx, userId, me._id))) return [];
 
     const presence = await ctx.db
       .query("presence")
@@ -750,6 +752,7 @@ export const streamOf = query({
   handler: async (ctx, { userId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
+    if (me._id !== userId && (await hasBlocked(ctx, userId, me._id))) return null;
 
     const myCommunities = new Set(
       (

@@ -10,6 +10,7 @@
 
 import type * as ama from "../ama.js";
 import type * as badges from "../badges.js";
+import type * as blocks from "../blocks.js";
 import type * as botDelivery from "../botDelivery.js";
 import type * as botEvents from "../botEvents.js";
 import type * as botHttp from "../botHttp.js";
@@ -49,8 +50,10 @@ import type * as friends from "../friends.js";
 import type * as gameServers from "../gameServers.js";
 import type * as http from "../http.js";
 import type * as klipy from "../klipy.js";
+import type * as lib_abilities from "../lib/abilities.js";
 import type * as lib_activities from "../lib/activities.js";
 import type * as lib_birthday from "../lib/birthday.js";
+import type * as lib_blocking from "../lib/blocking.js";
 import type * as lib_botAccess from "../lib/botAccess.js";
 import type * as lib_botAuth from "../lib/botAuth.js";
 import type * as lib_botEvents from "../lib/botEvents.js";
@@ -70,6 +73,8 @@ import type * as lib_entitlements from "../lib/entitlements.js";
 import type * as lib_extensionManifest from "../lib/extensionManifest.js";
 import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_geode from "../lib/geode.js";
+import type * as lib_ip from "../lib/ip.js";
+import type * as lib_ipBans from "../lib/ipBans.js";
 import type * as lib_klipy from "../lib/klipy.js";
 import type * as lib_listingUpdate from "../lib/listingUpdate.js";
 import type * as lib_liveKitAdmin from "../lib/liveKitAdmin.js";
@@ -140,6 +145,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   ama: typeof ama;
   badges: typeof badges;
+  blocks: typeof blocks;
   botDelivery: typeof botDelivery;
   botEvents: typeof botEvents;
   botHttp: typeof botHttp;
@@ -179,8 +185,10 @@ declare const fullApi: ApiFromModules<{
   gameServers: typeof gameServers;
   http: typeof http;
   klipy: typeof klipy;
+  "lib/abilities": typeof lib_abilities;
   "lib/activities": typeof lib_activities;
   "lib/birthday": typeof lib_birthday;
+  "lib/blocking": typeof lib_blocking;
   "lib/botAccess": typeof lib_botAccess;
   "lib/botAuth": typeof lib_botAuth;
   "lib/botEvents": typeof lib_botEvents;
@@ -200,6 +208,8 @@ declare const fullApi: ApiFromModules<{
   "lib/extensionManifest": typeof lib_extensionManifest;
   "lib/gameHistory": typeof lib_gameHistory;
   "lib/geode": typeof lib_geode;
+  "lib/ip": typeof lib_ip;
+  "lib/ipBans": typeof lib_ipBans;
   "lib/klipy": typeof lib_klipy;
   "lib/listingUpdate": typeof lib_listingUpdate;
   "lib/liveKitAdmin": typeof lib_liveKitAdmin;

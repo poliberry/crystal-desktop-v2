@@ -58,7 +58,8 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
  * you can see what the mistake does.
  *
  * The test run is the genuine thing: the same worker, engine, limits and host as for someone who
- * installs it, with the network simulated and storage a throwaway in memory.
+ * installs it, and requests really go out through Crystal's proxy to the sites it lists. Storage is a throwaway in memory, so
+ * a test never writes into anyone's saved data.
  */
 export function ExtensionEditor({ project, onChange }: { project: Project; onChange: (p: Project) => void }) {
   const ext = project.extension!;
@@ -114,9 +115,9 @@ export function ExtensionEditor({ project, onChange }: { project: Project; onCha
         delete: async (k) => void store.current.delete(k),
         list: async () => [...store.current.keys()],
       },
-      http: async (req) => {
-        throw new Error(`Test runs don't reach the network (it would have fetched ${req.url.slice(0, 60)}).`);
-      },
+      // The real thing: through Crystal's proxy, to the sites listed in the manifest being tested and nowhere else, with the
+      // same checks and limits as a published extension (see `devHttp`). Needs the extension to ask for the network power.
+      http: (req) => convex.action(api.extensions.devHttp, { origins: verdict.manifest!.network, ...req }),
       notify: (t) => setNotices((n) => [...n.slice(-4), t]),
     };
     const h = new ExtensionHost(
@@ -250,7 +251,7 @@ export function ExtensionEditor({ project, onChange }: { project: Project; onCha
           ) : null}
         </span>
       </div>
-      <p className="text-[11px] text-muted-foreground">Builds, then runs in the real sandbox. The network is simulated.</p>
+      <p className="text-[11px] text-muted-foreground">Builds, then runs in the real sandbox. Requests really go out, to the sites you list; storage is thrown away afterwards.</p>
       <ExtensionFrame name={check.manifest?.name ?? project.name} version={ext.version} status={status} detail={detail} tree={tree} act={(a, v) => host.current?.action(a, v)} onRestart={() => void run()} onStop={stop} />
       {notices.length > 0 && (
         <div className="space-y-1">

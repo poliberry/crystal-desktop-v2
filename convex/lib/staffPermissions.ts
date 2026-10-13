@@ -19,6 +19,9 @@ export type StaffPermission =
   | "users.read"
   | "users.entitle"
   | "users.moderate"
+  /** Ban an account (and its network) from the platform. Held back from
+   * moderators: it is permanent, and it reaches people who share an address. */
+  | "users.ban"
   | "support.read"
   | "support.act"
   | "system.broadcast"
@@ -42,6 +45,7 @@ const ALL_BUT_FINANCE: StaffPermission[] = [
   "users.read",
   "users.entitle",
   "users.moderate",
+  "users.ban",
   "communities.read",
   "communities.manage",
   "reports.read",
@@ -64,6 +68,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, readonly StaffPermission[]> = {
     "users.read",
     "users.entitle",
     "users.moderate",
+    "users.ban",
     "communities.read",
     "communities.manage",
     "reports.read",

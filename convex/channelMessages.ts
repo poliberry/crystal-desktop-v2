@@ -1,4 +1,4 @@
-import { requireCommunityOpen } from "./lib/moderation";
+import { requireAbility, requireCommunityOpen } from "./lib/moderation";
 import { paginationOptsValidator } from "convex/server";
 import { v, type ObjectType } from "convex/values";
 
@@ -13,6 +13,7 @@ import { unexpiredCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
 import { markChannelRead } from "./channels";
+import { isMessageHidden, windowsByTarget } from "./lib/blocking";
 import { describeMessage, dispatchMessageCreated, fireCommunityEvent } from "./lib/botEvents";
 import type { ActionRow } from "./lib/components";
 import type { Embed } from "./lib/embeds";
@@ -67,6 +68,8 @@ async function resolveReplyPreview(
   if (!target) {
     return {
       id: replyToId as string,
+      authorId: undefined as Id<"users"> | undefined,
+      createdAt: undefined as number | undefined,
       authorName: "Unknown",
       authorImageUrl: undefined as string | undefined,
       text: null as string | null,
@@ -83,6 +86,10 @@ async function resolveReplyPreview(
   ]);
   return {
     id: target._id as string,
+    // For the per-viewer pass in `withoutHidden`; see the twin in
+    // convex/messages.ts.
+    authorId: target.authorId as Id<"users"> | undefined,
+    createdAt: target._creationTime as number | undefined,
     authorName: author?.name ?? "Unknown",
     authorImageUrl: author?.imageUrl,
     text: target.text
@@ -91,6 +98,58 @@ async function resolveReplyPreview(
     hasAttachment: firstAttachment.length > 0,
     deleted: false,
   };
+}
+
+type PageMessage = {
+  createdAt: number;
+  author: { id: Id<"users"> } | null;
+  replyTo: {
+    id: string;
+    authorId?: Id<"users">;
+    createdAt?: number;
+    authorName: string;
+    authorImageUrl?: string;
+    text: string | null;
+    hasAttachment: boolean;
+    deleted: boolean;
+    hidden?: boolean;
+  } | null;
+};
+
+/**
+ * Take what the viewer has ignored or blocked out of a page of channel
+ * messages — after the shared first-page cache, never before it. See the twin
+ * in convex/messages.ts for why, and for what a reply to a hidden message
+ * becomes.
+ */
+function withoutHidden<T extends PageMessage>(
+  hidden: ReadonlyMap<Id<"users">, Doc<"userSuppressions">[]>,
+  messages: T[]
+): T[] {
+  if (hidden.size === 0) return messages;
+  return messages
+    .filter((m) => !m.author || !isMessageHidden(hidden, m.author.id, m.createdAt))
+    .map((m) => {
+      const quoted = m.replyTo;
+      if (
+        !quoted?.authorId ||
+        quoted.createdAt === undefined ||
+        !isMessageHidden(hidden, quoted.authorId, quoted.createdAt)
+      ) {
+        return m;
+      }
+      return {
+        ...m,
+        replyTo: {
+          id: quoted.id,
+          authorName: "Hidden user",
+          text: null,
+          hasAttachment: false,
+          deleted: true,
+          hidden: true,
+        },
+      };
+    });
 }
 
 /**
@@ -167,13 +226,14 @@ export const list = query({
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
     if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) return EMPTY_PAGE;
 
+    const hidden = await windowsByTarget(ctx, me._id);
     const isFirstPage = !paginationOpts.cursor;
     const cacheKey = `channel:${channelId}:messages:${paginationOpts.numItems}`;
     if (isFirstPage) {
       try {
         const { cacheGetJson } = await import("./cache");
         const cached = await cacheGetJson<any>(cacheKey);
-        if (cached) return cached;
+        if (cached) return { ...cached, page: withoutHidden(hidden, cached.page as PageMessage[]) };
       } catch {}
     }
 
@@ -256,10 +316,11 @@ export const list = query({
     if (isFirstPage) {
       try {
         const { cacheSetJson } = await import("./cache");
+        // The unfiltered page: it is shared, so the filter below is per viewer.
         await cacheSetJson(cacheKey, result, 30);
       } catch {}
     }
-    return result;
+    return { ...result, page: withoutHidden(hidden, result.page) };
   },
 });
 
@@ -324,6 +385,10 @@ export async function sendChannelMessage(
   opts: { permissionChecked?: boolean; /** Already validated by `validateEmbeds`. Only the Bot API passes these. */ embeds?: Embed[]; /** Already validated by `validateComponents`. */ components?: ActionRow[] } = {}
 ): Promise<Id<"channelMessages">> {
   if (!opts.permissionChecked) await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
+  // Staff can take sending away from an account; a bot's user is never limited, so this
+  // only ever stops a person (including one a bot acts for, which re-reads the row).
+  requireAbility(me, "send_messages");
+  if (attachments?.length) requireAbility(me, "upload_media");
   await requireNotTimedOut(ctx, channelId, me._id);
   {
     const channel = await ctx.db.get(channelId);
@@ -599,7 +664,7 @@ export const toggleReaction = mutation({
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -640,9 +705,11 @@ export const listPinned = query({
       .filter((q) => q.neq(q.field("pinnedAt"), undefined))
       .collect();
     pinned.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
+    const hidden = await windowsByTarget(ctx, me._id);
+    const visible = pinned.filter((m) => !isMessageHidden(hidden, m.authorId, m._creationTime));
 
     return Promise.all(
-      pinned.map(async (message) => {
+      visible.map(async (message) => {
         const author = await ctx.db.get(message.authorId);
         return {
           id: message._id,
@@ -675,8 +742,11 @@ export const listAttachments = query({
       .order("desc")
       .paginate(paginationOpts);
 
+    const hidden = await windowsByTarget(ctx, me._id);
     const perMessage = await Promise.all(
-      page.page.map(async (message) => {
+      page.page
+        .filter((m) => !isMessageHidden(hidden, m.authorId, m._creationTime))
+        .map(async (message) => {
         const rows = await ctx.db
           .query("channelMessageAttachments")
           .withIndex("by_message", (q) => q.eq("messageId", message._id))

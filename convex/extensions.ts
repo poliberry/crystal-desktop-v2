@@ -547,6 +547,61 @@ async function readCapped(res: Response, max: number): Promise<string> {
 }
 
 /**
+ * Make one request for an extension, to the sites in `allowed` and nowhere else. The one implementation behind both the real
+ * proxy and Studio's test runs, so a test run is held to exactly the rules a published extension is.
+ */
+async function proxyRequest(
+  allowed: Set<string>,
+  { url, method, headers, body }: { url: string; method?: string; headers?: Record<string, string>; body?: string },
+): Promise<{ status: number; contentType: string; body: string }> {
+  const verb = (method ?? "GET").toUpperCase();
+  if (!METHODS.includes(verb)) throw new Error("That isn't a request method.");
+  if (body !== undefined && new TextEncoder().encode(body).length > HTTP_MAX_REQUEST_BODY) throw new Error("The request is too large.");
+  if (body !== undefined && (verb === "GET" || verb === "DELETE")) throw new Error(`${verb} requests have no body.`);
+
+  const outHeaders: Record<string, string> = { "User-Agent": "Crystal-Extension/1.0 (+https://usecrystal.app)" };
+  const entries = Object.entries(headers ?? {});
+  if (entries.length > 10) throw new Error("Too many headers.");
+  for (const [k, val] of entries) {
+    const name = k.toLowerCase();
+    if (!ALLOWED_HEADERS.has(name)) throw new Error(`The “${k}” header can't be set.`);
+    if (val.length > 1000 || /[\r\n]/.test(val)) throw new Error("A header value is invalid.");
+    outHeaders[name] = val;
+  }
+
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const origin = assertPanelUrl(current);
+    if (!allowed.has(origin)) throw new Error(`This extension isn't allowed to talk to ${new URL(origin).hostname}.`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+    try {
+      const res = await fetch(current, { method: hop === 0 ? verb : "GET", headers: outHeaders, body: hop === 0 ? body : undefined, redirect: "manual", signal: controller.signal });
+      if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+        current = new URL(res.headers.get("location")!, current).href;
+        // A redirect to somewhere else on the list is fine; anywhere else is caught at the top of the loop.
+        continue;
+      }
+      const text = await readCapped(res, HTTP_MAX_BODY);
+      return { status: res.status, contentType: (res.headers.get("content-type") ?? "").slice(0, 100), body: text };
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") throw new Error("The site took too long to answer.");
+      throw e instanceof Error && !/fetch failed/i.test(e.message) ? e : new Error("Couldn't reach the site.");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error("Too many redirects.");
+}
+
+const httpArgs = {
+  url: v.string(),
+  method: v.optional(v.string()),
+  headers: v.optional(v.record(v.string(), v.string())),
+  body: v.optional(v.string()),
+};
+
+/**
  * A request on an extension's behalf — only to the sites its manifest lists, which the
  * person was shown and agreed to.
  *
@@ -557,53 +612,40 @@ async function readCapped(res: Response, max: number): Promise<string> {
  * response is read up to a limit and no further.
  */
 export const http = action({
-  args: {
-    extensionId: v.id("extensions"),
-    url: v.string(),
-    method: v.optional(v.string()),
-    headers: v.optional(v.record(v.string(), v.string())),
-    body: v.optional(v.string()),
-  },
-  handler: async (ctx, { extensionId, url, method, headers, body }): Promise<{ status: number; contentType: string; body: string }> => {
+  args: { extensionId: v.id("extensions"), ...httpArgs },
+  handler: async (ctx, { extensionId, ...req }): Promise<{ status: number; contentType: string; body: string }> => {
     const gate: { origins: string[] } = await ctx.runMutation(internal.extensions.httpGate, { extensionId });
-    const allowed = new Set(gate.origins);
-    const verb = (method ?? "GET").toUpperCase();
-    if (!METHODS.includes(verb)) throw new Error("That isn't a request method.");
-    if (body !== undefined && new TextEncoder().encode(body).length > HTTP_MAX_REQUEST_BODY) throw new Error("The request is too large.");
-    if (body !== undefined && (verb === "GET" || verb === "DELETE")) throw new Error(`${verb} requests have no body.`);
+    return proxyRequest(new Set(gate.origins), req);
+  },
+});
 
-    const outHeaders: Record<string, string> = { "User-Agent": "Crystal-Extension/1.0 (+https://usecrystal.app)" };
-    const entries = Object.entries(headers ?? {});
-    if (entries.length > 10) throw new Error("Too many headers.");
-    for (const [k, val] of entries) {
-      const name = k.toLowerCase();
-      if (!ALLOWED_HEADERS.has(name)) throw new Error(`The “${k}” header can't be set.`);
-      if (val.length > 1000 || /[\r\n]/.test(val)) throw new Error("A header value is invalid.");
-      outHeaders[name] = val;
+/** The dev-run counterpart of `httpGate`: a signed-in person, counted against the same per-minute limit (under no extension). */
+export const devHttpGate = internalMutation({
+  args: {},
+  handler: async (ctx: MutationCtx) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const since = Date.now() - 60_000;
+    const recent = await ctx.db.query("extensionHttpLog").withIndex("by_user_extension_at", (q) => q.eq("userId", me._id).eq("extensionId", undefined).gt("at", since)).collect();
+    if (recent.length >= HTTP_PER_MINUTE) throw new Error("Test runs are making requests too quickly.");
+    await ctx.db.insert("extensionHttpLog", { userId: me._id, at: Date.now() });
+    for (const old of await ctx.db.query("extensionHttpLog").withIndex("by_user_extension_at", (q) => q.eq("userId", me._id).eq("extensionId", undefined).lt("at", since)).take(50)) {
+      await ctx.db.delete(old._id);
     }
+  },
+});
 
-    let current = url;
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      const origin = assertPanelUrl(current);
-      if (!allowed.has(origin)) throw new Error(`This extension isn't allowed to talk to ${new URL(origin).hostname}.`);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-      try {
-        const res = await fetch(current, { method: hop === 0 ? verb : "GET", headers: outHeaders, body: hop === 0 ? body : undefined, redirect: "manual", signal: controller.signal });
-        if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
-          current = new URL(res.headers.get("location")!, current).href;
-          // A redirect to somewhere else on the list is fine; anywhere else is caught at the top of the loop.
-          continue;
-        }
-        const text = await readCapped(res, HTTP_MAX_BODY);
-        return { status: res.status, contentType: (res.headers.get("content-type") ?? "").slice(0, 100), body: text };
-      } catch (e) {
-        if (e instanceof Error && e.name === "AbortError") throw new Error("The site took too long to answer.");
-        throw e instanceof Error && !/fetch failed/i.test(e.message) ? e : new Error("Couldn't reach the site.");
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-    throw new Error("Too many redirects.");
+/**
+ * A request from a Studio test run. The extension being tested isn't published, so there is no stored version to read its
+ * sites from: they come from the manifest the creator is testing, each re-checked here (https, a real public domain, no
+ * private or internal address), and the request then goes through exactly the same checks as a real one. Only the
+ * person's own sign-in is needed, and the same per-minute limit applies.
+ */
+export const devHttp = action({
+  args: { origins: v.array(v.string()), ...httpArgs },
+  handler: async (ctx, { origins, ...req }): Promise<{ status: number; contentType: string; body: string }> => {
+    if (origins.length > EXTENSION_LIMITS.origins) throw new Error(`An extension can talk to up to ${EXTENSION_LIMITS.origins} sites.`);
+    const allowed = new Set(origins.map((o) => assertPanelUrl(o)));
+    await ctx.runMutation(internal.extensions.devHttpGate, {});
+    return proxyRequest(allowed, req);
   },
 });

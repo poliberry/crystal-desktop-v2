@@ -85,7 +85,7 @@ export async function requireCommunity(ctx: QueryCtx, communityId: Id<"communiti
 export const create = mutation({
   args: { name: v.string() },
   handler: async (ctx, { name }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "create_communities");
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Community name can't be empty.");
 
@@ -161,7 +161,7 @@ export const createFromSetup = mutation({
     ),
   },
   handler: async (ctx, { name, setup: rawSetup, inviteOnly, templateId, kind, clanGames, creator }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "create_communities");
     const trimmed = name.trim().slice(0, 64);
     if (!trimmed) throw new Error("Community name can't be empty.");
     const setup = sanitizeSetup(rawSetup);
@@ -513,7 +513,7 @@ export const get = query({
 export const join = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "join_communities");
     const community = await requireCommunity(ctx, communityId);
 
     const ban = await ctx.db
@@ -629,7 +629,7 @@ export const updateSettings = mutation({
 export const generateIconUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -666,7 +666,7 @@ export const setIcon = mutation({
 export const generateBannerUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -1349,7 +1349,7 @@ export const resolveInvite = query({
 export const joinByInviteCode = mutation({
   args: { code: v.string() },
   handler: async (ctx, { code }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "join_communities");
     const community = await ctx.db
       .query("communities")
       .withIndex("by_invite_code", (q) => q.eq("inviteCode", code))

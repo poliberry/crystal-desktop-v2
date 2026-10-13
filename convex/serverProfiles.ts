@@ -114,7 +114,7 @@ export const upsertServerProfile = mutation({
 export const generateServerAvatarUploadUrl = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     await requireMember(ctx, communityId, me._id);
     return ctx.storage.generateUploadUrl();
   },
@@ -200,7 +200,7 @@ async function lookupServerProfile(
 export const generateServerBannerUploadUrl = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     await requireMember(ctx, communityId, me._id);
     return ctx.storage.generateUploadUrl();
   },
@@ -282,7 +282,7 @@ export const removeServerBanner = mutation({
 export const generateServerNameplateUploadUrl = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     await requireMember(ctx, communityId, me._id);
     return ctx.storage.generateUploadUrl();
   },

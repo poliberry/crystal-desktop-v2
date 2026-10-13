@@ -369,7 +369,7 @@ export const listForEditing = query({
 export const generateWidgetUploadUrl = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
     return ctx.storage.generateUploadUrl();

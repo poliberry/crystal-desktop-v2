@@ -6,6 +6,7 @@ import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
+import { hasBlocked, requireNotBlocked } from "./lib/blocking";
 
 async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
   return ctx.db
@@ -117,6 +118,9 @@ export const relationshipWith = query({
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return { kind: "none" as const };
     if (me._id === userId) return { kind: "self" as const };
+    // Only the blocker's side is reported. From the other side a block must
+    // look like no relationship at all, or it would be a way to detect one.
+    if (await hasBlocked(ctx, me._id, userId)) return { kind: "blocked" as const };
 
     const friendship = await ctx.db
       .query("friendships")
@@ -143,7 +147,7 @@ export const relationshipWith = query({
 export const sendFriendRequest = mutation({
   args: { username: v.string() },
   handler: async (ctx, { username }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "friend_requests");
     const normalized = username.trim().toLowerCase();
     if (!normalized) throw new Error("Enter a username.");
 
@@ -155,6 +159,10 @@ export const sendFriendRequest = mutation({
     if (target.clerkId === "system:crystal") throw new Error("The Crystal account cannot receive friend requests.");
     if (target.isBot) throw new Error("Bots can't be added as friends. You can message them directly instead.");
     if (target._id === me._id) throw new Error("You can't add yourself.");
+    // Someone who has blocked you reads as someone who doesn't exist: a
+    // distinct error would confirm the block, and the account with it.
+    if (await hasBlocked(ctx, target._id, me._id)) throw new Error("No user found with that username.");
+    if (await hasBlocked(ctx, me._id, target._id)) throw new Error("You've blocked this person. Unblock them first.");
 
     const alreadyFriends = await ctx.db
       .query("friendships")
@@ -210,6 +218,9 @@ export const acceptFriendRequest = mutation({
     if (!request || request.recipientId !== me._id) throw new Error("Request not found.");
     const requester = await ctx.db.get(request.requesterId);
     if (requester?.clerkId === "system:crystal" || requester?.isBot) throw new Error("Bots can't be added as friends.");
+    // Blocking deletes pending requests, so this only matters for one that
+    // slipped through a race; it must not turn into a friendship.
+    await requireNotBlocked(ctx, me._id, request.requesterId);
 
     await ctx.db.delete(request._id);
     const now = Date.now();

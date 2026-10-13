@@ -14,13 +14,16 @@ import {
 } from "./lib/birthday";
 import { badgeByIdMap, badgeView } from "./badges";
 import { geodeBadge, geodeStanding } from "./lib/geode";
+import { hasBlocked } from "./lib/blocking";
 import { intersectIds, MUTUALS_SCAN_LIMIT, MUTUALS_SHOWN } from "./lib/mutuals";
 import {
   dropProfileAsset,
   FRAME_MODES,
   resolveProfileAsset,
 } from "./lib/profileCosmetics";
-import { activeSuspension } from "./lib/moderation";
+import { abilityValidator, type Ability } from "./lib/abilities";
+import { recordIp, isIpBanned, sealRequestIp } from "./lib/ipBans";
+import { activeBan, activeSuspension, requireAbility } from "./lib/moderation";
 import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import {
   dropUnusedLayerAssets,
@@ -41,7 +44,10 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
+/** The signed-in account's row, banned or not. Only for the few places that have
+ * to see a banned account (the screen that tells it so, leaving a call);
+ * everything else goes through `getCurrentUserOrNull`. */
+async function loadCurrentUser(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
   return ctx.db
@@ -50,11 +56,20 @@ export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> 
     .unique();
 }
 
-export async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
-  const user = await getCurrentUserOrNull(ctx);
+/** The signed-in account, or `null`. A banned or suspended account counts as
+ * nobody: this is what every query reads through, so they stop reading as well
+ * as writing (the app shows them their notice instead — see
+ * `AccountSuspendedGate`, which reads the raw row via `getCurrentUser`). */
+export async function getCurrentUserOrNull(ctx: QueryCtx): Promise<Doc<"users"> | null> {
+  const user = await loadCurrentUser(ctx);
+  return user && (activeBan(user) || activeSuspension(user)) ? null : user;
+}
+
+export async function getCurrentUserOrThrow(ctx: QueryCtx, ability?: Ability): Promise<Doc<"users">> {
+  const user = await loadCurrentUser(ctx);
   if (!user) throw new Error("Not authenticated, or user has not been bootstrapped yet.");
-  // A suspended account can still read — the app shows it its own notice — but
-  // can't do anything: every mutation goes through here.
+  if (activeBan(user)) throw new Error("Your account has been banned.");
+  // A suspended account can't do anything: every mutation goes through here.
   const suspension = activeSuspension(user);
   if (suspension) {
     throw new Error(
@@ -63,6 +78,8 @@ export async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">
         : `Your account is suspended until ${new Date(suspension.until).toDateString()}.`,
     );
   }
+  // A limited account carries on, minus the one thing this call is about.
+  if (ability) requireAbility(user, ability);
   return user;
 }
 
@@ -77,11 +94,18 @@ export const ensureUser = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated.");
 
+    // Where this request came from, sealed (encrypted + keyed hash) before it
+    // goes anywhere near the database. Null when it can't be used; signing in
+    // never fails because of it.
+    const sealed = await sealRequestIp((await ctx.meta.getRequestMetadata()).ip);
+
     const existing = await ctx.db
       .query("users")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
       .unique();
     if (existing) {
+      if (activeBan(existing)) return existing._id;
+      if (sealed) await recordIp(ctx, existing._id, sealed);
       await syncStaffBadge(ctx, existing._id, identity.email);
       return existing._id;
     }
@@ -107,6 +131,28 @@ export const ensureUser = mutation({
       username,
       imageUrl,
     });
+
+    // A new account from an address that a banned account used is a banned
+    // account itself. Only *new* accounts are checked: somebody who already has
+    // one and shares that address (a household, a school) isn't touched.
+    if (sealed) {
+      if (await isIpBanned(ctx, sealed.ipHash)) {
+        const now = Date.now();
+        await ctx.db.patch(userId, {
+          platformBannedAt: now,
+          platformBanReason: "This account was created from a network that is banned from Crystal.",
+        });
+        await ctx.db.insert("platformModerationLog", {
+          userId,
+          action: "ban",
+          reason: "Created from a banned network.",
+          createdAt: now,
+        });
+        await recordIp(ctx, userId, sealed);
+        return userId;
+      }
+      await recordIp(ctx, userId, sealed);
+    }
     await syncStaffBadge(ctx, userId, identity.email);
 
     return userId;
@@ -173,7 +219,7 @@ export const updateProfile = mutation({
 export const generateAvatarUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -181,7 +227,7 @@ export const generateAvatarUploadUrl = mutation({
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -645,7 +691,7 @@ export const setProfileFrameLayers = mutation({
 export const uploadCosmeticLayer = mutation({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, { storageId }) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return resolveProfileAsset(ctx, storageId, "Profile artwork");
   },
 });
@@ -900,9 +946,12 @@ export const releaseBirthday = mutation({
   },
 });
 
+/** The caller's own row — including a banned account's, since this is what the
+ * app reads to know it should show the banned screen. It holds nothing about
+ * addresses (those live in tables no query returns). */
 export const getCurrentUser = query({
   args: {},
-  handler: async (ctx) => getCurrentUserOrNull(ctx),
+  handler: async (ctx) => loadCurrentUser(ctx),
 });
 
 export const getProfile = query({
@@ -912,6 +961,9 @@ export const getProfile = query({
     if (!me) return null;
     const user = await ctx.db.get(userId);
     if (!user) return null;
+    // A person who has blocked you has no profile as far as you can tell: the
+    // same `null` as an id that doesn't exist, so the block can't be inferred.
+    if (me._id !== userId && (await hasBlocked(ctx, userId, me._id))) return null;
     const presence = await ctx.db
       .query("presence")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -1090,12 +1142,23 @@ export const searchByUsername = query({
   },
 });
 
+/** Lets an action (which can't read the database) ask whether the caller may do
+ * something: it throws exactly what a mutation would. */
+export const assertAbility = internalQuery({
+  args: { ability: abilityValidator },
+  handler: async (ctx, { ability }) => {
+    await getCurrentUserOrThrow(ctx, ability);
+    return null;
+  },
+});
+
 /** Resolves the caller's Convex user id from a `"use node"` action, which
  * can't touch `ctx.db` itself (see callTokens.ts / channelCalls.ts's `leave` actions). */
 export const getCurrentUserIdInternal = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const me = await getCurrentUserOrNull(ctx);
+    // The raw row: a banned account must still be able to leave a call it was in.
+    const me = await loadCurrentUser(ctx);
     return me?._id ?? null;
   },
 });
@@ -1121,6 +1184,7 @@ export const badgesOf = query({
   handler: async (ctx, { userId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
+    if (me._id !== userId && (await hasBlocked(ctx, userId, me._id))) return [];
     const [rows, definitions] = await Promise.all([
       ctx.db
         .query("userBadges")
@@ -1184,6 +1248,7 @@ export const mutuals = query({
     };
     const me = await getCurrentUserOrNull(ctx);
     if (!me || me._id === userId) return empty;
+    if (await hasBlocked(ctx, userId, me._id)) return empty;
 
     const [myFriends, theirFriends, myCommunities, theirCommunities] = await Promise.all([
       ctx.db

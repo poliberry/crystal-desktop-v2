@@ -49,7 +49,7 @@ export const list = query({
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -65,7 +65,7 @@ export const add = mutation({
     durationMs: v.optional(v.number()),
   },
   handler: async (ctx, { communityId, name, emoji, storageId, durationMs }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_EMOJIS);
 

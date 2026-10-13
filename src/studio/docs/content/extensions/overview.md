@@ -16,7 +16,7 @@ Your code runs on the **person's computer**, inside a sandbox: a bare JavaScript
 - You write ordinary **TypeScript** in a project folder, in the code editor in Studio (or in VS Code, if you prefer: it's just a folder).
 - You import everything from one package, `@crystal/extension`. Studio copies its source into `.crystal/sdk/extension` in your project, so you can read it and press F12 on anything to jump to it.
 - **Build** bundles your files into one plain script, `dist/extension.js`. That script, not your TypeScript, is what Crystal's reviewers read and what runs.
-- **Run** tries it in the real sandbox, the same one a person gets, with the network simulated.
+- **Run** tries it in the real sandbox, the same one a person gets. Requests to the sites you listed really go out, so a test shows what they send back.
 - **Send for review** submits it. Every version is read by a person before anyone can install it.
 
 ## What it can't do

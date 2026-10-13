@@ -24,6 +24,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { requireMember } from "./communities";
+import { hasBlocked } from "./lib/blocking";
 import { isR2Url, dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
@@ -138,6 +139,7 @@ export const listBoard = query({
   handler: async (ctx, { userId, communityId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
+    if (me._id !== userId && (await hasBlocked(ctx, userId, me._id))) return [];
     if (communityId) {
       const scoped = await widgetsFor(ctx, userId, communityId);
       if (scoped.length > 0) return scoped.map(widgetView);
@@ -167,7 +169,7 @@ export const listMyBoard = query({
 export const generateWidgetUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });

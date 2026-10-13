@@ -615,7 +615,7 @@ export const clearServerIcon = mutation({
 export const generateIconUploadUrl = mutation({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_GAME_SERVERS);
     return ctx.storage.generateUploadUrl();

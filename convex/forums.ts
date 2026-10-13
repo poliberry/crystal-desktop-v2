@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { requireAbility, requireCommunityOpen } from "./lib/moderation";
 import { canDo, requireSurface } from "./lib/surfaces";
 import { PERMISSIONS } from "./permissions";
 
@@ -95,6 +96,8 @@ export const create = mutation({
   handler: async (ctx, { channelId, title, body }) => {
     const { me, channel, perms } = await requireSurface(ctx, channelId, "threads");
     if (!canDo(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You can't post here.");
+    requireAbility(me, "send_messages");
+    await requireCommunityOpen(ctx, channel.communityId, "post");
     const t = title.trim().slice(0, MAX_TITLE);
     const b = body.trim().slice(0, MAX_BODY);
     if (t.length < 3) throw new Error("Give it a title.");
@@ -122,6 +125,8 @@ export const reply = mutation({
     if (!post) throw new Error("That thread is gone.");
     const { me, perms } = await requireSurface(ctx, post.channelId, "threads");
     if (!canDo(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You can't post here.");
+    requireAbility(me, "send_messages");
+    await requireCommunityOpen(ctx, post.communityId, "post");
     if (post.locked && !canDo(perms, PERMISSIONS.MANAGE_MESSAGES)) throw new Error("This thread is locked.");
     const body = text.trim().slice(0, MAX_REPLY);
     if (!body) throw new Error("Write something first.");

@@ -28,6 +28,7 @@ export type StaffPermission =
   | "users.read"
   | "users.entitle"
   | "users.moderate"
+  | "users.ban"
   | "support.read"
   | "support.act"
   | "system.broadcast"

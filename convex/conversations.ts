@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
+import { isMessageHidden, requireNotBlocked, windowsByTarget } from "./lib/blocking";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { clearConversationPriority } from "./priority";
 import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
@@ -71,14 +72,35 @@ async function otherMembers(ctx: QueryCtx, conversationId: Id<"conversations">, 
 /** Past this a count stops being informative and becomes "a lot". */
 const UNREAD_COUNT_CAP = 99;
 
-/** The newest message in a conversation, or `undefined` if it has none. */
-async function lastMessageOf(ctx: QueryCtx, conversationId: Id<"conversations">) {
-  const [last] = await ctx.db
+/** How far back to look for a message the viewer can see, when the newest ones
+ * are from people they ignore. Past this the conversation previews as empty
+ * rather than scanning an unbounded history for one line of text. */
+const VISIBLE_SCAN_DEPTH = 25;
+
+/**
+ * The newest message in a conversation that the viewer can see, or `undefined`
+ * if it has none. `hidden` is the viewer's ignore/block windows; with none, this
+ * is a single-row read.
+ */
+export async function lastMessageOf(
+  ctx: QueryCtx,
+  conversationId: Id<"conversations">,
+  hidden?: ReadonlyMap<Id<"users">, Doc<"userSuppressions">[]>
+) {
+  if (!hidden || hidden.size === 0) {
+    const [last] = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+      .order("desc")
+      .take(1);
+    return last;
+  }
+  const recent = await ctx.db
     .query("messages")
     .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
     .order("desc")
-    .take(1);
-  return last;
+    .take(VISIBLE_SCAN_DEPTH);
+  return recent.find((m) => !isMessageHidden(hidden, m.authorId, m._creationTime));
 }
 
 /**
@@ -117,13 +139,18 @@ export const listMine = query({
       .query("conversationMembers")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
       .collect();
+    // Whoever the viewer ignores or has blocked must not surface through the
+    // preview line or the unread dot. This list is cached per person, not per
+    // conversation, so it is safe to bake the viewer's windows in — and
+    // blocks.ts drops the cache whenever they change.
+    const hidden = await windowsByTarget(ctx, me._id);
 
     const conversations = await Promise.all(
       memberships.map(async (membership) => {
         const conversation = await ctx.db.get(membership.conversationId);
         if (!conversation) return null;
 
-        const lastMessage = await lastMessageOf(ctx, conversation._id);
+        const lastMessage = await lastMessageOf(ctx, conversation._id, hidden);
         const unread = isUnread(lastMessage, membership.lastReadAt, me._id);
 
         // A closed DM stays out of the list until it has something new to say —
@@ -155,7 +182,10 @@ export const listMine = query({
             .order("desc")
             .take(UNREAD_COUNT_CAP + 1);
           unreadCount = recent.filter(
-            (m) => m._creationTime > membership.lastReadAt && m.authorId !== me._id
+            (m) =>
+              m._creationTime > membership.lastReadAt &&
+              m.authorId !== me._id &&
+              !isMessageHidden(hidden, m.authorId, m._creationTime)
           ).length;
         }
 
@@ -235,8 +265,10 @@ export const get = query({
       backgroundUrl: conversation.backgroundUrl,
       backgroundOpacity: conversation.backgroundOpacity,
       members: await otherMembers(ctx, conversationId, me._id),
+      // The cache key above is per viewer, so their own ignore/block windows
+      // can shape this; blocks.ts drops these keys when the windows change.
       unread: isUnread(
-        await lastMessageOf(ctx, conversationId),
+        await lastMessageOf(ctx, conversationId, await windowsByTarget(ctx, me._id)),
         membership.lastReadAt,
         me._id
       ),
@@ -367,7 +399,7 @@ export const removeGroupIcon = mutation({
 export const generateGroupIconUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -407,6 +439,7 @@ export const getDirect = mutation({
   handler: async (ctx, { friendId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     if (friendId === me._id) throw new Error("You can't DM yourself.");
+    await requireNotBlocked(ctx, me._id, friendId);
     const target = await ctx.db.get(friendId);
     if (!target?.isBot && !(await areFriends(ctx, me._id, friendId))) {
       throw new Error("You can only message friends.");
@@ -426,6 +459,7 @@ export const getOrCreateDirect = mutation({
   handler: async (ctx, { friendId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     if (friendId === me._id) throw new Error("You can't DM yourself.");
+    await requireNotBlocked(ctx, me._id, friendId);
     const target = await ctx.db.get(friendId);
     if (!target?.isBot && !(await areFriends(ctx, me._id, friendId))) {
       throw new Error("You can only message friends.");
@@ -488,6 +522,10 @@ export const createGroup = mutation({
       if (!(await areFriends(ctx, me._id, id))) {
         throw new Error("You can only add friends to a group.");
       }
+      // Friends are unfriended on block, so this is a backstop. Blocked people
+      // can still share a group someone else made; they just can't be put
+      // into a new one with the person who blocked them.
+      await requireNotBlocked(ctx, me._id, id);
     }
 
     const now = Date.now();
@@ -716,7 +754,7 @@ export const setConversationBackground = mutation({
 export const generateConversationAssetUploadUrl = mutation({
   args: { conversationId: v.id("conversations") },
   handler: async (ctx, { conversationId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const membership = await ctx.db
       .query("conversationMembers")
       .withIndex("by_conversation_user", (q) =>

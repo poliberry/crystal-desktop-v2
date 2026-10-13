@@ -49,6 +49,8 @@ export function AccountsSection() {
             {rows.map((u) => (
               <ListRow key={u.id} onOpen={(e) => open({ kind: "user", id: u.id, title: u.name, subtitle: `@${u.username}` }, e)}>
                 <Person user={u} className="flex-1" />
+                {u.banned && <StatusPill tone="bad">Banned</StatusPill>}
+                {u.limited && <StatusPill tone="warn">Limited</StatusPill>}
                 {u.suspended && <StatusPill tone="bad">{u.suspended.until ? `Suspended until ${formatDate(u.suspended.until)}` : "Suspended"}</StatusPill>}
                 <span className="hidden w-28 text-right text-xs text-muted-foreground md:block">Joined {formatDate(u.joinedAt)}</span>
               </ListRow>
@@ -86,7 +88,7 @@ export function CommunitiesSection() {
                   <p className="truncate font-medium">{c.name}</p>
                   <p className="truncate text-xs text-muted-foreground">Owned by @{c.owner}</p>
                 </div>
-                {c.status !== "active" && <StatusPill tone={c.status === "archived" ? "bad" : "warn"}>{c.status}</StatusPill>}
+                {c.status !== "active" && <StatusPill tone={c.status === "restricted" ? "warn" : "bad"}>{c.status}</StatusPill>}
                 <span className="w-24 text-right text-xs text-muted-foreground tabular-nums">{c.memberCount} members</span>
                 <span className="hidden w-28 text-right text-xs text-muted-foreground md:block">{formatDate(c.createdAt)}</span>
               </ListRow>

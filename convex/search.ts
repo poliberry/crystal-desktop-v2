@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
+import { isMessageHidden, windowsByTarget } from "./lib/blocking";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
 
@@ -94,7 +95,12 @@ export const inChannel = query({
       .withSearchIndex("search_text", (q) => q.search("text", needle).eq("channelId", channelId))
       .take(LIMIT);
 
-    return decorate(ctx, rows, new Map([[channelId as string, channel.name]]));
+    const hidden = await windowsByTarget(ctx, me._id);
+    return decorate(
+      ctx,
+      rows.filter((r) => !isMessageHidden(hidden, r.authorId, r._creationTime)),
+      new Map([[channelId as string, channel.name]])
+    );
   },
 });
 
@@ -140,7 +146,9 @@ export const inCommunity = query({
     // someone scanning for "that thing from yesterday" expects.
     rows.sort((a, b) => b._creationTime - a._creationTime);
 
-    return decorate(ctx, rows.slice(0, LIMIT), channelNames);
+    const hidden = await windowsByTarget(ctx, me._id);
+    const visible = rows.filter((r) => !isMessageHidden(hidden, r.authorId, r._creationTime));
+    return decorate(ctx, visible.slice(0, LIMIT), channelNames);
   },
 });
 
@@ -167,6 +175,11 @@ export const inConversation = query({
       )
       .take(LIMIT);
 
-    return decorate(ctx, rows, new Map());
+    const hidden = await windowsByTarget(ctx, me._id);
+    return decorate(
+      ctx,
+      rows.filter((r) => !isMessageHidden(hidden, r.authorId, r._creationTime)),
+      new Map()
+    );
   },
 });

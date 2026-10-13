@@ -10,6 +10,7 @@ import { isKlipyMediaUrl } from "./lib/klipy";
 import { isLoungeStickerId } from "./lib/loungeStickers";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
 import { MAX_ATTACHMENT_BYTES } from "./uploadLimits";
+import { requireCommunityOpen } from "./lib/moderation";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 /**
@@ -103,7 +104,7 @@ export const messages = query({
 export const generateUploadUrl = mutation({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     await loungeOf(ctx, channelId);
     if (!(await isInCall(ctx, channelId, me._id))) throw new Error("Join the lounge first.");
     return ctx.storage.generateUploadUrl();
@@ -130,9 +131,10 @@ export const send = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "send_messages");
     const channel = await loungeOf(ctx, args.channelId);
     await requireMember(ctx, channel.communityId, me._id);
+    await requireCommunityOpen(ctx, channel.communityId, "post");
     if (!(await isInCall(ctx, args.channelId, me._id))) throw new Error("Join the lounge to say something.");
 
     // A little pause between messages: this is a room, not a firehose, and every

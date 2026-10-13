@@ -23,6 +23,7 @@ import { evictBotFromVoice } from "./lib/botAccess";
 import { fireChannelEvent, fireVoiceEvent } from "./lib/botEvents";
 import { notifyUsers } from "./notifications";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import { requireCommunityOpen } from "./lib/moderation";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 async function requireChannel(ctx: { db: { get: (id: Id<"channels">) => Promise<Doc<"channels"> | null> } }, channelId: Id<"channels">) {
@@ -620,11 +621,12 @@ export const listAllVoiceParticipants = internalQuery({
 export const getVoiceJoinContext = internalQuery({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "voice_calls");
     const channel = await requireChannel(ctx, channelId);
     if (channel.type !== "voice") throw new Error("Not a voice channel.");
     const community = await requireCommunity(ctx, channel.communityId);
     await requireMember(ctx, channel.communityId, me._id);
+    await requireCommunityOpen(ctx, channel.communityId, "post");
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
     if (!can(perms, PERMISSIONS.CONNECT)) throw new Error("You don't have permission to join this channel.");
     return { userId: me._id, name: me.name, communityId: channel.communityId };
@@ -848,7 +850,7 @@ export const clearStreamThumbnail = mutation({
 export const generateStreamThumbnailUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -864,7 +866,7 @@ export const generateStreamThumbnailUploadUrl = mutation({
 export const generateChannelAssetUploadUrl = mutation({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const channel = await requireChannel(ctx, channelId);
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);

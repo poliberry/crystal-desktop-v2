@@ -9,6 +9,7 @@ import {
   query,
   type MutationCtx,
 } from "./_generated/server";
+import { hasBlocked, isSuppressing, requireNotBlocked } from "./lib/blocking";
 import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -171,7 +172,7 @@ export const listAllParticipants = internalQuery({
 export const getJoinContext = internalQuery({
   args: { conversationId: v.id("conversations") },
   handler: async (ctx, { conversationId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "voice_calls");
     const membership = await ctx.db
       .query("conversationMembers")
       .withIndex("by_conversation_user", (q) =>
@@ -247,7 +248,7 @@ export const listIncomingRings = query({
 export const ring = mutation({
   args: { conversationId: v.id("conversations") },
   handler: async (ctx, { conversationId }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "voice_calls");
 
     const membership = await ctx.db
       .query("conversationMembers")
@@ -271,9 +272,27 @@ export const ring = mutation({
     if (memberUsers.some((user) => user?.clerkId === "system:crystal")) throw new Error("Crystal is not available for calls.");
     const alreadyInCall = new Set(inCall.map((p) => p.userId));
 
+    // A 1:1 call to someone you've blocked, or who has blocked you, doesn't
+    // start. In a group it can't be refused — the others still want the call —
+    // so those people are just not rung (below).
+    const conversationRow = await ctx.db.get(conversationId);
+    if (conversationRow?.type === "dm") {
+      for (const member of members) {
+        if (member.userId !== me._id) await requireNotBlocked(ctx, me._id, member.userId);
+      }
+    }
+
     const newlyRung: Id<"users">[] = [];
     for (const member of members) {
       if (member.userId === me._id || alreadyInCall.has(member.userId)) continue;
+      // Someone ignoring the caller isn't rung; someone the caller has blocked
+      // isn't either, nor is someone who blocked the caller.
+      if (
+        (await isSuppressing(ctx, member.userId, me._id)) ||
+        (await hasBlocked(ctx, me._id, member.userId))
+      ) {
+        continue;
+      }
 
       const existing = await ctx.db
         .query("callRings")

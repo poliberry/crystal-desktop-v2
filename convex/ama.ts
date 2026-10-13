@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { requireAbility, requireCommunityOpen } from "./lib/moderation";
 import { canDo, requireSurface } from "./lib/surfaces";
 import { PERMISSIONS } from "./permissions";
 
@@ -63,6 +64,8 @@ export const ask = mutation({
   args: { channelId: v.id("channels"), text: v.string() },
   handler: async (ctx, { channelId, text }) => {
     const { me, channel } = await requireSurface(ctx, channelId, "ama");
+    requireAbility(me, "send_messages");
+    await requireCommunityOpen(ctx, channel.communityId, "post");
     const body = text.trim().slice(0, MAX_QUESTION);
     if (body.length < 3) throw new Error("Ask a proper question.");
     const mine = (

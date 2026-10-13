@@ -268,7 +268,7 @@ export const create = mutation({
     details: v.optional(v.string()),
   },
   handler: async (ctx, { targetType, targetId, category, details }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "file_reports");
 
     const mine = await ctx.db
       .query("reports")

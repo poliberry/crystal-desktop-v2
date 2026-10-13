@@ -169,6 +169,8 @@ export const createUploadUrl = action({
   handler: async (ctx, { kind, fileName, contentType, contentHash, ownerId, ext, layerId }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
+    // Refuses a banned or suspended account, and one staff have stopped uploading.
+    await ctx.runQuery(internal.users.assertAbility, { ability: "upload_media" });
     // Marketplace artwork goes to a folder the app never cleans up (see
     // `PROTECTED_PREFIX`), so only the people who manage the catalogue may put
     // anything there.

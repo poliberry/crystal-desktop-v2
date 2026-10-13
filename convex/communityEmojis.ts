@@ -115,7 +115,7 @@ export const getInfo = query({
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => {
-    await getCurrentUserOrThrow(ctx);
+    await getCurrentUserOrThrow(ctx, "upload_media");
     return ctx.storage.generateUploadUrl();
   },
 });
@@ -132,7 +132,7 @@ export const add = mutation({
     cdnUrl: v.optional(v.string()),
   },
   handler: async (ctx, { communityId, name, storageId, cdnKey, cdnUrl }) => {
-    const me = await getCurrentUserOrThrow(ctx);
+    const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const community = await requireCommunity(ctx, communityId);
 
     // Permission check — owner always passes.

@@ -3,10 +3,14 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { grantEntitlements, isActive, ownsSku } from "./lib/entitlements";
-import { activeSuspension, INDEFINITE } from "./lib/moderation";
+import { abilityValidator, normalizeAbilities } from "./lib/abilities";
+import { banAddressesOf, countAddressBansOf, liftAddressBansOf } from "./lib/ipBans";
+import { ipProtectionConfigured } from "./lib/ip";
+import { activeBan, activeLimits, activeSuspension, effectiveCommunityStatus, INDEFINITE } from "./lib/moderation";
 import { audit, getStaff, requireStaff } from "./lib/staff";
 import { can } from "./lib/staffPermissions";
 import { badgeByIdMap, badgeView } from "./badges";
+import { ensureBadgeDefinition } from "./badges";
 import { grantBadge, revokeBadge } from "./users";
 
 /**
@@ -66,6 +70,8 @@ function userRow(user: Doc<"users">) {
     suspended: suspension
       ? { until: suspension.indefinite ? null : suspension.until, reason: suspension.reason ?? null }
       : null,
+    banned: activeBan(user) !== null,
+    limited: activeLimits(user) !== null,
   };
 }
 
@@ -122,12 +128,16 @@ export const userDetail = query({
       ]);
 
     const actors = new Map<Id<"users">, string>();
-    const nameOf = async (id: Id<"users">) => {
+    // No actor means the platform acted by itself (a signup from a banned network).
+    const nameOf = async (id: Id<"users"> | undefined) => {
+      if (!id) return "Crystal";
       if (!actors.has(id)) actors.set(id, (await ctx.db.get(id))?.username ?? "unknown");
       return actors.get(id)!;
     };
 
     const suspension = activeSuspension(user);
+    const ban = activeBan(user);
+    const limits = activeLimits(user);
     const [badgeRows, badgeDefinitions] = await Promise.all([
       ctx.db.query("userBadges").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       badgeByIdMap(ctx),
@@ -137,6 +147,13 @@ export const userDetail = query({
       suspension: suspension
         ? { until: suspension.indefinite ? null : suspension.until, reason: suspension.reason ?? null }
         : null,
+      ban: ban ? { at: ban.at, reason: ban.reason ?? null } : null,
+      limits: limits ? { abilities: limits.abilities, until: limits.until, reason: limits.reason ?? null } : null,
+      // Only ever a yes/no and a count: the addresses themselves are never shown.
+      network: {
+        protectionOn: ipProtectionConfigured(),
+        bannedNetworks: await countAddressBansOf(ctx, userId),
+      },
       isStaff: !!staffRow && staffRow.revokedAt === undefined,
       badges: badgeRows
         .map((row) => {
@@ -150,6 +167,7 @@ export const userDetail = query({
           action: entry.action,
           reason: entry.reason,
           until: entry.until ?? null,
+          abilities: entry.abilities ?? null,
           createdAt: entry.createdAt,
           actor: await nameOf(entry.actorId),
         })),
@@ -194,7 +212,8 @@ export const setUserBadge = mutation({
   handler: async (ctx, { userId, badgeId, granted, reason }) => {
     const staff = await requireStaff(ctx, "users.moderate");
     const user = await ctx.db.get(userId);
-    const badge = await ctx.db.query("badges").withIndex("by_badge_id", (q) => q.eq("badgeId", badgeId)).unique();
+    // A built-in badge whose definition was never seeded is created here, so it can be given.
+    const badge = await ensureBadgeDefinition(ctx, badgeId);
     if (!user || !badge) throw new Error("User or badge not found.");
     const why = reason.trim().slice(0, 300);
     if (why.length < 3) throw new Error("Say why this badge is being changed.");
@@ -263,6 +282,141 @@ export const unsuspendUser = mutation({
       createdAt: Date.now(),
     });
     await audit(ctx, staff.user._id, "users.unsuspend", { type: "user", id: userId }, user.username);
+  },
+});
+
+/** The account staff are about to act on, refusing the cases that are never
+ * right: acting on yourself, or on another member of staff (whose access is
+ * changed through Staff & roles, on the record). */
+async function moderationTarget(ctx: QueryCtx, staffUserId: Id<"users">, userId: Id<"users">, verb: string) {
+  const user = await ctx.db.get(userId);
+  if (!user) throw new Error("User not found.");
+  if (userId === staffUserId) throw new Error(`You can't ${verb} yourself.`);
+  const target = await ctx.db.query("staffMembers").withIndex("by_user", (q) => q.eq("userId", userId)).unique();
+  if (target && target.revokedAt === undefined) throw new Error("Remove their staff access first.");
+  return user;
+}
+
+function cleanReason(reason: string | undefined, required: boolean): string | undefined {
+  const why = reason?.trim().slice(0, 500);
+  if (required && (!why || why.length < 3)) throw new Error("A reason is required.");
+  return why || undefined;
+}
+
+/** Take some abilities away from an account for a while (or until lifted). It
+ * keeps signing in and reading; the server refuses just these. */
+export const limitUser = mutation({
+  args: {
+    userId: v.id("users"),
+    abilities: v.array(abilityValidator),
+    /** Days; omit for until lifted. */
+    days: v.optional(v.number()),
+    reason: v.string(),
+  },
+  handler: async (ctx, { userId, abilities, days, reason }) => {
+    const staff = await requireStaff(ctx, "users.moderate");
+    const user = await moderationTarget(ctx, staff.user._id, userId, "limit");
+    const why = cleanReason(reason, true)!;
+    const chosen = normalizeAbilities(abilities);
+    if (chosen.length === 0) throw new Error("Pick at least one thing to limit, or lift the limits instead.");
+    if (days !== undefined && (!Number.isFinite(days) || days <= 0 || days > MAX_SUSPENSION_DAYS)) {
+      throw new Error(`A limit is between 1 and ${MAX_SUSPENSION_DAYS} days, or until lifted.`);
+    }
+    const until = days === undefined ? undefined : Date.now() + Math.round(days * 24 * 60 * 60 * 1000);
+
+    await ctx.db.patch(userId, { platformLimits: chosen, platformLimitedUntil: until, platformLimitReason: why });
+    await ctx.db.insert("platformModerationLog", {
+      userId,
+      actorId: staff.user._id,
+      action: "limit",
+      abilities: chosen,
+      until,
+      reason: why,
+      createdAt: Date.now(),
+    });
+    await audit(
+      ctx,
+      staff.user._id,
+      "users.limit",
+      { type: "user", id: userId },
+      `${user.username}: ${chosen.join(", ")} ${days === undefined ? "until lifted" : `for ${days} days`} — ${why}`,
+    );
+  },
+});
+
+export const unlimitUser = mutation({
+  args: { userId: v.id("users"), reason: v.optional(v.string()) },
+  handler: async (ctx, { userId, reason }) => {
+    const staff = await requireStaff(ctx, "users.moderate");
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error("User not found.");
+    await ctx.db.patch(userId, { platformLimits: undefined, platformLimitedUntil: undefined, platformLimitReason: undefined });
+    await ctx.db.insert("platformModerationLog", {
+      userId,
+      actorId: staff.user._id,
+      action: "unlimit",
+      reason: cleanReason(reason, false),
+      createdAt: Date.now(),
+    });
+    await audit(ctx, staff.user._id, "users.unlimit", { type: "user", id: userId }, user.username);
+  },
+});
+
+/**
+ * Ban an account: it can no longer do or read anything, and — unless
+ * `includeNetwork` is switched off — new accounts can't be opened from the
+ * addresses it has used. Lasts until lifted.
+ *
+ * Only the *count* of networks covered is reported or logged. The addresses are
+ * never returned, shown, or written to the audit log.
+ */
+export const banUser = mutation({
+  args: { userId: v.id("users"), reason: v.string(), includeNetwork: v.optional(v.boolean()) },
+  handler: async (ctx, { userId, reason, includeNetwork }) => {
+    const staff = await requireStaff(ctx, "users.ban");
+    const user = await moderationTarget(ctx, staff.user._id, userId, "ban");
+    if (activeBan(user)) throw new Error("They're already banned.");
+    const why = cleanReason(reason, true)!;
+    const now = Date.now();
+
+    await ctx.db.patch(userId, { platformBannedAt: now, platformBanReason: why });
+    const networks = includeNetwork === false ? 0 : await banAddressesOf(ctx, userId, staff.user._id, why);
+    await ctx.db.insert("platformModerationLog", {
+      userId,
+      actorId: staff.user._id,
+      action: "ban",
+      reason: why,
+      createdAt: now,
+    });
+    await audit(
+      ctx,
+      staff.user._id,
+      "users.ban",
+      { type: "user", id: userId },
+      `${user.username}: ${includeNetwork === false ? "account only" : `account and ${networks} network${networks === 1 ? "" : "s"}`} — ${why}`,
+    );
+    return { networks };
+  },
+});
+
+/** Lift a ban, and the network bans that came with it. */
+export const unbanUser = mutation({
+  args: { userId: v.id("users"), reason: v.optional(v.string()) },
+  handler: async (ctx, { userId, reason }) => {
+    const staff = await requireStaff(ctx, "users.ban");
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error("User not found.");
+    if (!activeBan(user)) throw new Error("They aren't banned.");
+    await ctx.db.patch(userId, { platformBannedAt: undefined, platformBanReason: undefined });
+    const networks = await liftAddressBansOf(ctx, userId);
+    await ctx.db.insert("platformModerationLog", {
+      userId,
+      actorId: staff.user._id,
+      action: "unban",
+      reason: cleanReason(reason, false),
+      createdAt: Date.now(),
+    });
+    await audit(ctx, staff.user._id, "users.unban", { type: "user", id: userId }, `${user.username}: ${networks} network${networks === 1 ? "" : "s"} lifted`);
   },
 });
 
@@ -341,8 +495,9 @@ async function communityRow(ctx: QueryCtx, community: Doc<"communities">) {
     owner: owner?.username ?? "unknown",
     ownerId: community.ownerId,
     memberCount: members.length,
-    status: moderation?.status ?? ("active" as const),
+    status: effectiveCommunityStatus(moderation),
     reason: moderation?.reason ?? null,
+    until: moderation?.status === "suspended" ? (moderation.until ?? null) : null,
     createdAt: community.createdAt,
   };
 }
@@ -397,20 +552,35 @@ export const communityDetail = query({
 export const setCommunityStatus = mutation({
   args: {
     communityId: v.id("communities"),
-    status: v.union(v.literal("active"), v.literal("restricted"), v.literal("archived")),
+    status: v.union(
+      v.literal("active"),
+      v.literal("restricted"),
+      v.literal("archived"),
+      v.literal("suspended"),
+      v.literal("banned"),
+    ),
     reason: v.optional(v.string()),
+    /** Days, for a suspension only; omit for until lifted. */
+    days: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const staff = await requireStaff(ctx, "communities.manage");
+    // A ban is permanent and closes the community for good, so it asks for what banning a person does.
+    const staff = await requireStaff(ctx, args.status === "banned" ? "users.ban" : "communities.manage");
     const community = await ctx.db.get(args.communityId);
     if (!community) throw new Error("Community not found.");
     const reason = args.reason?.trim().slice(0, 500);
     if (args.status !== "active" && (!reason || reason.length < 3)) throw new Error("A reason is required.");
+    if (args.days !== undefined && (args.status !== "suspended" || !Number.isFinite(args.days) || args.days <= 0 || args.days > MAX_SUSPENSION_DAYS)) {
+      throw new Error(`Only a suspension takes a length, between 1 and ${MAX_SUSPENSION_DAYS} days.`);
+    }
+    const until = args.status === "suspended" && args.days !== undefined ? Date.now() + Math.round(args.days * 24 * 60 * 60 * 1000) : undefined;
     const existing = await ctx.db
       .query("communityModeration")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .unique();
-    const fields = { status: args.status, reason, actorId: staff.user._id, updatedAt: Date.now() };
+    // Lifting a ban takes what imposing one does.
+    if (existing?.status === "banned" && args.status !== "banned") await requireStaff(ctx, "users.ban");
+    const fields = { status: args.status, reason, until, actorId: staff.user._id, updatedAt: Date.now() };
     if (existing) await ctx.db.patch(existing._id, fields);
     else await ctx.db.insert("communityModeration", { communityId: args.communityId, ...fields });
     await audit(
@@ -418,7 +588,7 @@ export const setCommunityStatus = mutation({
       staff.user._id,
       `communities.${args.status}`,
       { type: "community", id: args.communityId },
-      `${community.name}${reason ? ` — ${reason}` : ""}`,
+      `${community.name}${args.days !== undefined ? ` (${args.days} days)` : ""}${reason ? ` — ${reason}` : ""}`,
     );
   },
 });

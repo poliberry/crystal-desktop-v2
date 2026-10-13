@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { hasOpen, windowsByTarget } from "./lib/blocking";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 const TYPING_EXPIRE_MS = 5_000;
@@ -121,7 +122,14 @@ export const list = query({
           )
           .collect();
 
-    const others = entries.filter((e) => e.userId !== me._id);
+    // Someone you're ignoring or have blocked typing is a signal you've asked
+    // not to get. Only what's in force now matters: a typing indicator lasts
+    // seconds.
+    const suppressed = await windowsByTarget(ctx, me._id);
+    const now = Date.now();
+    const others = entries.filter(
+      (e) => e.userId !== me._id && !hasOpen(suppressed.get(e.userId), now)
+    );
 
     return Promise.all(
       others.map(async (e) => {
