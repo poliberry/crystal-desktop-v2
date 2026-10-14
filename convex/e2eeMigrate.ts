@@ -3,6 +3,7 @@ import { action, internalAction, internalMutation, internalQuery, query } from "
 import { paginationOptsValidator } from "convex/server";
 import { api, internal } from "./_generated/api";
 import { requireStaff } from "./lib/staff";
+import { getCurrentUserOrThrow } from "./users";
 import { encryptMessage } from "./lib/e2eeCrypto";
 import { newEscrowedRoomKey } from "./lib/e2eeEscrow";
 import type { Id } from "./_generated/dataModel";
@@ -18,7 +19,8 @@ export const run: any = action({args:{scope:v.union(v.literal("conversation"),v.
 export const startAll: any = action({
   args: { batchSize: v.optional(v.number()) },
   handler: async (ctx, { batchSize = 100 }) => {
-    const staff = await ctx.runQuery((api as any).e2eeMigrate.authorize, {});
+    // The backfill replaces every stored message body, so it is the one console action here that asks for a code.
+    await ctx.runQuery((internal as any).staff.requireForAction, { permissions: ["system.manage"], destructive: true });
     const jobId: Id<"e2eeMigrationJobs"> = await ctx.runMutation((internal as any).e2eeMigrate.createJob, { batchSize: Math.max(1, Math.min(batchSize, 200)) });
     await ctx.scheduler.runAfter(0, (internal as any).e2eeMigrate.processBatch, { jobId });
     return { jobId, status: "running" as const };
@@ -30,12 +32,10 @@ export const createJob = internalMutation({
   handler: async (ctx, { batchSize }) => {
     const running = await ctx.db.query("e2eeMigrationJobs").withIndex("by_status", q => q.eq("status", "running")).first();
     if (running) throw new Error("An all-rooms E2EE migration is already running.");
-    const user = await ctx.auth.getUserIdentity();
-    if (!user) throw new Error("Not authenticated.");
-    // The public action has already checked staff assurance. Resolve the user id without
-    // trusting any caller-supplied identity; authorization is repeated by startAll.
-    const dbUser = await ctx.db.query("users").withIndex("by_clerk_id", q => q.eq("clerkId", user.subject)).first();
-    if (!dbUser) throw new Error("User not found.");
+    // The public action has already checked staff assurance. Resolve the user from the session
+    // the same way every other function does (the identity subject is `userId|sessionId` under
+    // Convex Auth, not a Clerk id, so it can't be looked up by `clerkId`).
+    const dbUser = await getCurrentUserOrThrow(ctx);
     return ctx.db.insert("e2eeMigrationJobs", { status: "running", phase: "conversation", batchSize, roomScanDone: false, migrated: 0, skipped: 0, batches: 0, startedAt: Date.now(), updatedAt: Date.now(), startedBy: dbUser._id });
   },
 });

@@ -2,6 +2,36 @@ import type { Doc } from "../_generated/dataModel";
 
 type Activity = NonNullable<Doc<"presence">["activities"]>[number];
 
+/** Richest first when two devices report different kinds of activity. */
+const ACTIVITY_ORDER: Record<Activity["type"], number> = { streaming: 0, playing: 1, watching: 2, listening: 3 };
+
+/**
+ * One list out of every live device's own, for the user's presence row.
+ *
+ * Each device reports only what it can see, so the user is doing the union: playing a game on the PC
+ * while their laptop (which sees nothing) is also open must still read as playing. The same activity
+ * on two devices is shown once. Order is stable: kind first, then the order the devices registered in.
+ */
+export function mergeSessionActivities(
+  sessions: readonly { activities: readonly Activity[]; created: number }[],
+): Activity[] {
+  const seen = new Set<string>();
+  const merged: Activity[] = [];
+  for (const session of [...sessions].sort((a, b) => a.created - b.created)) {
+    for (const activity of session.activities) {
+      const key = `${activity.type}|${activity.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(activity);
+    }
+  }
+  return merged
+    .map((activity, index) => ({ activity, index }))
+    .sort((a, b) => ACTIVITY_ORDER[a.activity.type] - ACTIVITY_ORDER[b.activity.type] || a.index - b.index)
+    .map(({ activity }) => activity);
+}
+
+
 /**
  * Read a presence row's Rich Presence activities.
  *

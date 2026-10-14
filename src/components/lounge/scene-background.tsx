@@ -1,39 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
-import { useAccessibility } from "@/components/accessibility-provider";
+import { useMotionAllowed } from "@/hooks/use-motion-allowed";
 import { isVideoUrl } from "@/lib/media";
 import { cn } from "@/lib/utils";
-
-/** Whether looping motion should be running at all: not in a hidden window, and not
- * for someone who has asked the app (or their system) to hold still. */
-function useMotionAllowed(): boolean {
-  const { reducedMotion } = useAccessibility();
-  const [system, setSystem] = useState(false);
-  const [hidden, setHidden] = useState(false);
-  useEffect(() => {
-    const q = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setSystem(q.matches);
-    const onQ = (e: MediaQueryListEvent) => setSystem(e.matches);
-    q.addEventListener("change", onQ);
-    const onVis = () => setHidden(document.hidden);
-    onVis();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      q.removeEventListener("change", onQ);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, []);
-  return !(reducedMotion || system || hidden);
-}
 
 /**
  * A scene's background: a picture, or a looping clip.
  *
  * A clip is muted, loops, and plays inline — the only way a browser starts one on
- * its own — and it stops when the window is hidden or when the person has asked
- * for reduced motion, in which case it holds on its first frame like a still. It
+ * its own — and it stops when the window is hidden or out of focus, or when the
+ * person has asked for reduced motion, and holds on its first frame like a still. It
  * is wallpaper: nothing in the room waits on it.
  */
 export function SceneBackground({ url, video: isVideo, className }: { url: string; /** Say so where the address can't (a local blob has no extension). */ video?: boolean; className?: string }) {

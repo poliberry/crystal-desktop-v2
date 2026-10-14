@@ -782,7 +782,7 @@ async function removeFromStripe(stripe: Stripe, ids: { productId?: string; price
 export const adminDeleteSku = action({
   args: { skuId: v.id("skus"), reason: v.string(), acknowledgeOwners: v.optional(v.boolean()) },
   handler: async (ctx, { skuId, reason, acknowledgeOwners }): Promise<{ stripe: string }> => {
-    const staff = await ctx.runQuery(internal.staff.requireForAction, { permissions: ["catalog.write", "pricing.write"] });
+    const staff = await ctx.runQuery(internal.staff.requireForAction, { permissions: ["catalog.write", "pricing.write"], destructive: true });
     const note = reason.trim();
     if (note.length < 3) throw new Error("Say why this is being deleted.");
 

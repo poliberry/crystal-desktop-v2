@@ -1,8 +1,8 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { getCurrentUserOrNull } from "../users";
-import { can, type StaffPermission, type StaffRole } from "./staffPermissions";
-import { platformSecurity, requireAdminAssurance } from "./stepUp";
+import { can, isDestructivePermission, type StaffPermission, type StaffRole } from "./staffPermissions";
+import { isMutationCtx, platformSecurity, requireAdminAssurance } from "./stepUp";
 
 /**
  * Server-side checks for the admin console.
@@ -39,30 +39,46 @@ export async function getStaff(ctx: QueryCtx): Promise<StaffContext | null> {
  */
 export async function requireStaff(
   ctx: QueryCtx,
-  permission: StaffPermission
+  permission: StaffPermission,
+  options: { destructive?: boolean } = {},
 ): Promise<StaffContext> {
   const staff = await getStaff(ctx);
   if (!staff || !can(staff.roles, permission)) throw new Error("Not allowed.");
-  await assertStaffAssurance(ctx, staff);
+  // A query can't be paused for a code and retried, and none of the console's queries destroy
+  // anything, so only a mutation is ever asked for one.
+  const destructive = (options.destructive ?? isDestructivePermission(permission)) && isMutationCtx(ctx);
+  await assertStaffAssurance(ctx, staff, { destructive });
   return staff;
 }
 
 /**
- * The two-step rules for staff: refuses unless this session may do administrative things.
+ * The two-step rules for staff.
  *
  * Every administrative function goes through `requireStaff`, so this is the one place the
- * platform's rules are enforced: staff whose account has two-step verification enter a code before
- * the console does anything (it unlocks the session for a few minutes), and when the platform
- * requires it, staff without it are turned away until they set it up.
+ * platform's rules are enforced. Two separate rules:
+ *
+ *   - When the platform requires two-step verification, staff without it are turned away from
+ *     everything until they set it up.
+ *   - Staff who have it enter a code, but only for a *destructive* action (a ban, a refund, a
+ *     payout, a deletion; see `DESTRUCTIVE_STAFF_PERMISSIONS`). The code unlocks the session for a
+ *     few minutes. Reading, editing and reviewing never ask.
  *
  * Called only once the caller is known to be staff with the permission: the refusals say things
  * ("turn on two-step verification", "enter your code") that aren't for anybody else to hear.
  * The few functions that use `getStaff` directly to decide what to *show* call it themselves
  * before returning anything an administrator would see.
  */
-export async function assertStaffAssurance(ctx: QueryCtx, staff: StaffContext): Promise<void> {
+export async function assertStaffAssurance(
+  ctx: QueryCtx,
+  staff: StaffContext,
+  options: { destructive?: boolean } = {},
+): Promise<void> {
   const { requireStaffTwoFactor } = await platformSecurity(ctx);
-  await requireAdminAssurance(ctx, staff.user._id, { mustEnroll: requireStaffTwoFactor, why: "platform" });
+  await requireAdminAssurance(ctx, staff.user._id, {
+    mustEnroll: requireStaffTwoFactor,
+    why: "platform",
+    askForCode: options.destructive === true,
+  });
 }
 
 /** Record what a staff member did. Call it in the same mutation as the change,

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useCall } from "@/components/call/call-provider";
+import { useJoinGesture } from "@/hooks/use-join-gesture";
 import { DmMemberList } from "@/components/home/dm-member-list";
 import { RightSidebarContent, useRightSidebar } from "@/components/sidebar/right-sidebar";
 import { GroupAvatar } from "@/components/home/group-avatar";
@@ -78,6 +79,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   const markRead = useOutboxMutation("markRead", "dm");
   const focused = useWindowFocus();
   const { activeCall } = useCall();
+  const joinGesture = useJoinGesture();
   const isActiveCall =
     activeCall?.kind === "dm" && activeCall.conversationId === conversationId;
   // Held by the window, which draws the right sidebar this fills.
@@ -240,7 +242,9 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               }
               className="gap-1.5"
               title="Shift-click to join without ringing anyone"
-              onClick={(e) => onStartCall({ silent: e.shiftKey })}
+              {...(isActiveCall
+                ? { onClick: (e: React.MouseEvent) => onStartCall({ silent: e.shiftKey }) }
+                : joinGesture((e) => onStartCall({ silent: e.shiftKey })))}
             >
               <PhoneCall className="size-4" />
               {isActiveCall

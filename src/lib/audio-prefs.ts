@@ -78,6 +78,9 @@ export interface AudioPreferences {
   /** How much quieter the stream gets, as a fraction taken off. */
   audioAttentionStrength: number;
   richPresenceEnabled: boolean;
+  /** Joining a voice channel or a call needs a double click instead of a single one, so a stray click in
+   * the sidebar doesn't drop you into a call. Off until chosen. Keyboard activation still joins at once. */
+  doubleClickToJoin: boolean;
 }
 
 export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
@@ -97,6 +100,7 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   audioAttention: false,
   audioAttentionStrength: 0.6,
   richPresenceEnabled: true,
+  doubleClickToJoin: false,
 };
 
 export const AUDIO_PREFERENCES_STORAGE_KEY = "crystal:audio-preferences";
@@ -176,6 +180,7 @@ export function readAudioPreferences(): AudioPreferences {
     audioAttention: stored.audioAttention === true,
     audioAttentionStrength: clampStrength(stored.audioAttentionStrength),
     richPresenceEnabled: stored.richPresenceEnabled !== false,
+    doubleClickToJoin: stored.doubleClickToJoin === true,
   };
 }
 

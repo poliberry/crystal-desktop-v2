@@ -349,7 +349,7 @@ export function AdminConsole() {
   }
 
   return (
-    <AdminGate gate={staff!.twoFactor.gate} unlockedUntil={staff!.twoFactor.unlockedUntil}>
+    <AdminGate gate={staff!.twoFactor.gate}>
       <StaffProvider value={value}>
         <ConsoleProvider userId={value.userId}>
           <TooltipProvider delayDuration={200}>
@@ -362,53 +362,20 @@ export function AdminConsole() {
 }
 
 /**
- * Keeps the console shut until this session has entered a verification code, and shuts it again when
- * that runs out.
- *
- * The server is what refuses everything (see `requireStaff`); this is so the screen says why instead
- * of filling with errors, and so its queries stop running the moment the unlocked window ends — a
- * query that is re-run after that would be refused, and a refused query has nowhere to show it.
- * It locks a moment *before* the server would, to be on the safe side of a slightly different clock.
+ * Keeps the console shut only when the platform requires two-step verification and this account
+ * hasn't turned it on. A code is not asked for on the way in: destructive actions ask for one at
+ * the moment they are taken (see `requireStaff`, and the Convex client that prompts and retries).
  */
-function AdminGate({ gate, unlockedUntil, children }: { gate: "open" | "step_up" | "enroll"; unlockedUntil: number | null; children: React.ReactNode }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (gate !== "open" || unlockedUntil === null) return;
-    const wait = unlockedUntil - 1500 - Date.now();
-    if (wait <= 0) {
-      setNow(Date.now());
-      return;
-    }
-    const timer = window.setTimeout(() => setNow(Date.now()), wait);
-    return () => window.clearTimeout(timer);
-  }, [gate, unlockedUntil]);
-
-  // An account without two-step verification has no window: `unlockedUntil` is null and the gate is `open` outright.
-  const expired = gate === "open" && unlockedUntil !== null && unlockedUntil - 1500 <= now;
-  const effective = expired ? "step_up" : gate;
-
-  // Ask straight away when it locks, rather than waiting to be clicked.
-  useEffect(() => {
-    if (effective === "step_up") void requestPrompt({ kind: "code" });
-  }, [effective]);
-
-  if (effective === "open") return <>{children}</>;
+function AdminGate({ gate, children }: { gate: "open" | "enroll"; children: React.ReactNode }) {
+  if (gate === "open") return <>{children}</>;
   return (
     <PlainWindow>
       <div className="max-w-sm space-y-4 p-6 text-center">
-        {effective === "enroll" ? <ShieldAlert className="mx-auto size-10 text-amber-400" /> : <LockKeyhole className="mx-auto size-10 text-muted-foreground" />}
-        <h1 className="text-xl font-semibold">{effective === "enroll" ? "Two-step verification required" : "Admin console locked"}</h1>
+        <ShieldAlert className="mx-auto size-10 text-amber-400" />
+        <h1 className="text-xl font-semibold">Two-step verification required</h1>
         <p className="text-sm text-muted-foreground">
-          {effective === "enroll"
-            ? "Crystal requires two-step verification on staff accounts. Open Crystal, go to Settings → Security, turn it on with an authenticator app or a passkey, then come back."
-            : "Enter a verification code to use the console. It stays unlocked for a few minutes."}
+          Crystal requires two-step verification on staff accounts. Open Crystal, go to Settings → Security, turn it on with an authenticator app or a passkey, then come back.
         </p>
-        {effective === "step_up" && (
-          <Button onClick={() => void requestPrompt({ kind: "code" })}>
-            <LockKeyhole className="size-4" />
-            Enter code
-          </Button>
-        )}
       </div>
     </PlainWindow>
   );

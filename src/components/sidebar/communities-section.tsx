@@ -340,7 +340,8 @@ function ChannelRow({
   const button = (
     <button
       type="button"
-      onClick={() => openChannel(communityId, channel.id, channel.type)}
+      onClick={(e) => openChannel(communityId, channel.id, channel.type, e)}
+      onDoubleClick={(e) => openChannel(communityId, channel.id, channel.type, e)}
       className={cn(
         "group/channel flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-white/10 focus-visible:bg-white/10",
         active

@@ -65,44 +65,60 @@ interface PcmCapture {
 let pcmCapture: PcmCapture | null = null;
 
 // AudioWorklet that turns a stream of interleaved Float32 PCM (48 kHz stereo)
-// into a real-time media stream. Keeps a spool; drops old audio if the UI
-// stalls so it never buffers indefinitely.
+// into a real-time media stream. Audio sits in a fixed ring buffer (4 s); if the
+// UI stalls, the oldest audio is dropped so it never buffers indefinitely.
+//
+// A ring buffer rather than re-slicing an array: process() runs on the realtime
+// audio thread every 128 frames, and copying up to several MB per call there
+// causes GC pauses and glitches in the stream handed to WebRTC.
 const PCM_WORKLET_SOURCE = `
 class CrystalSystemAudioWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.buf = new Float32Array(0);
-    this.max = 48000 * 2 * 4;
+    this.cap = 48000 * 2 * 4;
+    this.ring = new Float32Array(this.cap);
+    this.rd = 0;
+    this.count = 0;
     this.port.onmessage = (e) => {
       const frames = e.data && e.data.frames;
       if (!(frames instanceof Float32Array) || frames.length === 0) return;
-      if (this.buf.length === 0) {
-        this.buf = frames;
-      } else {
-        const nb = new Float32Array(this.buf.length + frames.length);
-        nb.set(this.buf, 0);
-        nb.set(frames, this.buf.length);
-        this.buf = nb;
+      let src = frames;
+      if (src.length > this.cap) src = src.subarray(src.length - this.cap);
+      const overflow = this.count + src.length - this.cap;
+      if (overflow > 0) {
+        this.rd = (this.rd + overflow) % this.cap;
+        this.count -= overflow;
       }
-      if (this.buf.length > this.max) this.buf = this.buf.slice(this.buf.length - this.max);
+      const wr = (this.rd + this.count) % this.cap;
+      const first = Math.min(src.length, this.cap - wr);
+      this.ring.set(src.subarray(0, first), wr);
+      if (first < src.length) this.ring.set(src.subarray(first), 0);
+      this.count += src.length;
     };
   }
   process(_inputs, outputs) {
     const out = outputs[0];
     if (!out || out.length < 2) return true;
-    const n = out[0].length;
+    const l = out[0];
+    const r = out[1];
+    const n = l.length;
     const need = n * 2;
-    for (let c = 0; c < out.length; c++) out[c].fill(0);
-    if (this.buf.length >= need) {
-      const b = this.buf;
-      const l = out[0];
-      const r = out[1];
-      for (let i = 0; i < n; i++) {
-        l[i] = b[i * 2];
-        r[i] = b[i * 2 + 1];
-      }
-      this.buf = b.slice(need);
+    if (this.count < need) {
+      l.fill(0);
+      r.fill(0);
+      return true;
     }
+    const ring = this.ring;
+    const cap = this.cap;
+    let p = this.rd;
+    for (let i = 0; i < n; i++) {
+      l[i] = ring[p];
+      if (++p === cap) p = 0;
+      r[i] = ring[p];
+      if (++p === cap) p = 0;
+    }
+    this.rd = p;
+    this.count -= need;
     return true;
   }
 }
@@ -129,11 +145,9 @@ function stopPcmCapture(): void {
   } catch {
     /* noop */
   }
-  try {
-    void c.ctx.close();
-  } catch {
-    /* noop */
-  }
+  // close() returns a promise that rejects if the context is already closed;
+  // `try`/`void` doesn't catch that.
+  c.ctx.close().catch(() => {});
 }
 
 /** Tear down the PCM pipeline and disable the platform's capture backend. */
@@ -460,7 +474,7 @@ async function acquirePcmLoopbackTrack(opts: {
     } catch {
       /* noop */
     }
-    void ctx.close();
+    ctx.close().catch(() => {});
     throw new Error("Failed to create an audio track from system audio.");
   }
 
@@ -468,12 +482,27 @@ async function acquirePcmLoopbackTrack(opts: {
   return new LocalAudioTrack(track, undefined, true);
 }
 
+/** The start in progress, if any. Starting twice at once (a double click, or a
+ * share-picker change racing the initial start) used to build two pipelines and
+ * overwrite `pcmCapture`, leaking the first AudioContext, worklet and track. */
+let sharePromise: Promise<LocalAudioTrack> | null = null;
+
 /**
  * Start sharing system audio. Returns the published track on success.
+ * Concurrent calls share one start.
  */
-export async function shareSystemAudio(room: Room): Promise<LocalAudioTrack> {
-  if (activeTrack) return activeTrack;
+export function shareSystemAudio(room: Room): Promise<LocalAudioTrack> {
+  if (activeTrack) return Promise.resolve(activeTrack);
+  if (!sharePromise) {
+    const p = startSystemAudio(room).finally(() => {
+      if (sharePromise === p) sharePromise = null;
+    });
+    sharePromise = p;
+  }
+  return sharePromise;
+}
 
+async function startSystemAudio(room: Room): Promise<LocalAudioTrack> {
   // Every backend below needs the main process: a PCM helper, a virtual sink,
   // or Electron's loopback display-media handler. In a browser the share's
   // audio comes from `getDisplayMedia` alongside the video instead (see
@@ -508,7 +537,12 @@ export async function shareSystemAudio(room: Room): Promise<LocalAudioTrack> {
       source: Track.Source.ScreenShareAudio,
     });
   } catch (err) {
-    if (pcmCapture) stopPcmCapture();
+    // Release everything acquired above, including the main-process recorder and
+    // virtual sink; stopping only the PCM pipeline left those running.
+    track.stop();
+    await stopCaptureBackend();
+    playbackSink = null;
+    captureDeviceId = null;
     throw err;
   }
 
@@ -522,14 +556,22 @@ export async function shareSystemAudio(room: Room): Promise<LocalAudioTrack> {
  * Stop sharing system audio and tear down any virtual capture device.
  */
 export async function stopSystemAudio(room: Room): Promise<void> {
-  await stopCaptureBackend();
+  // A start still in flight must finish first, or its pipeline would be built
+  // after this teardown and never released.
+  await sharePromise?.catch(() => {});
 
-  if (activeTrack) {
-    await room.localParticipant.unpublishTrack(activeTrack).catch(() => {});
-    activeTrack.stop();
-    activeTrack.detach();
-    activeTrack = null;
+  // Unpublish and stop the track *before* closing the AudioContext that feeds
+  // it. Closing the context first pulled the audio source out from under a
+  // live WebRTC sender.
+  const track = activeTrack;
+  activeTrack = null;
+  if (track) {
+    await room.localParticipant.unpublishTrack(track).catch(() => {});
+    track.stop();
+    track.detach();
   }
+
+  await stopCaptureBackend();
 
   captureDeviceId = null;
   stopWatchingNewMediaElements();

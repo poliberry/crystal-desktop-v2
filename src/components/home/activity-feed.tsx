@@ -1,5 +1,6 @@
 "use client";
 
+import { useJoinGesture } from "@/hooks/use-join-gesture";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowRight, MessageSquare, PhoneCall, Volume2 } from "lucide-react";
 
@@ -37,6 +38,7 @@ export function ActivityFeed() {
   const smoothRef = useSmoothScrollRef<HTMLDivElement>();
   const nav = useNavigation();
   const { joinChannelCall, joinDmCall } = useCall();
+  const joinGesture = useJoinGesture();
   const getOrCreateDirect = useMutation(api.conversations.getOrCreateDirect);
   const data = useQuery(api.presence.activeNow);
 
@@ -93,7 +95,7 @@ export function ActivityFeed() {
                   <HoverCardContent side="left" align="start" className="w-48 p-1">
                     <button
                       type="button"
-                      onClick={() => {
+                      {...joinGesture(() => {
                         if (call.conversationId) {
                           void joinDmCall(call.conversationId as Id<"conversations">, {
                             ring: false,
@@ -104,7 +106,7 @@ export function ActivityFeed() {
                             call.communityId as Id<"communities">
                           );
                         }
-                      }}
+                      })}
                       className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
                     >
                       <PhoneCall className="size-3.5 shrink-0" />

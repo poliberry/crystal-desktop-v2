@@ -49,6 +49,7 @@ interface AudioPreferencesContextValue extends AudioPreferences {
   setAudioAttention: (enabled: boolean) => void;
   setAudioAttentionStrength: (strength: number) => void;
   setRichPresenceEnabled: (enabled: boolean) => void;
+  setDoubleClickToJoin: (enabled: boolean) => void;
   /** Re-enumerate devices, prompting for microphone access first so labels
    * are populated. Called when a device dropdown is opened. */
   refreshDevices: () => Promise<void>;
@@ -212,6 +213,7 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       setAudioAttention: (audioAttention) => update({ audioAttention }),
       setAudioAttentionStrength: (strength) => update({ audioAttentionStrength: clampStrength(strength) }),
       setRichPresenceEnabled: (richPresenceEnabled) => update({ richPresenceEnabled }),
+      setDoubleClickToJoin: (doubleClickToJoin) => update({ doubleClickToJoin }),
       refreshDevices,
       playCue: cue,
     }),

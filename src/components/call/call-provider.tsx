@@ -522,16 +522,25 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   );
   const myVoiceRow = voiceRoster?.find((p) => p.id === me?._id);
 
+  // Whether our own row has been seen for the call we're in. A roster that was cached before this join
+  // landed has no row for us yet; that is "not caught up", not "removed", so a missing row only counts as
+  // a disconnect once we've seen it and it then goes away (and stays away, below).
+  const sawMyRowFor = useRef<string | null>(null);
+
   useEffect(() => {
     if (activeCall?.kind !== "channel" || status !== "connected") return;
     if (!voiceRoster || !me) return;
 
-    if (!myVoiceRow) {
-      void leaveCall();
+    if (myVoiceRow) {
+      sawMyRowFor.current = activeCall.roomName;
+      if (myVoiceRow.serverMuted && !muted) setMuted(true);
+      if (myVoiceRow.serverDeafened && !deafened) setDeafened(true);
       return;
     }
-    if (myVoiceRow.serverMuted && !muted) setMuted(true);
-    if (myVoiceRow.serverDeafened && !deafened) setDeafened(true);
+    if (sawMyRowFor.current !== activeCall.roomName) return;
+    // A brief gap happens when the row is re-stamped or the roster re-syncs; only a row that stays gone is a removal.
+    const timer = setTimeout(() => void leaveCall(), 4000);
+    return () => clearTimeout(timer);
   }, [activeCall, status, voiceRoster, myVoiceRow, me, muted, deafened, setMuted, setDeafened, leaveCall]);
 
   useEffect(() => {

@@ -1,7 +1,19 @@
 import { app } from "electron";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import path from "node:path";
 
 import { CHANNELS } from "./channels";
+import {
+  classifyProcess,
+  identityKey,
+  isBrowserPlayback,
+  parseBusctlPid,
+  parseBusctlString,
+  parseInstancePid,
+  pickDisplayName,
+  processExecutableName,
+  readProcessIdentity,
+} from "./mprisPlayers";
 
 /**
  * Cross-platform "what is playing right now", read from the operating
@@ -145,6 +157,10 @@ interface RawNowPlaying {
    * probes read a real player position. */
   timelineOk?: boolean;
   source?: string;
+  /** The probe already judged `source` by the process behind it, so `publish`
+   * must not second-guess it from the name. Needed on Linux, where an Electron
+   * app and a browser can share the bus name `chromium.instance<PID>`. */
+  vetted?: boolean;
 }
 
 class MediaSession {
@@ -254,7 +270,7 @@ class MediaSession {
     // music" activities. Chromium publishes every <audio>/<video> element to
     // the OS media layer, so a voice message, a video attachment, a soundboard
     // clip, video tab, or advert would otherwise get announced as an activity.
-    if (isOwnPlayback(raw.source) || isBrowserPlayback(raw.source)) {
+    if (!raw.vetted && (isOwnPlayback(raw.source) || isBrowserPlayback(raw.source))) {
       if (this.current) {
         this.current = null;
         this.emit();
@@ -353,13 +369,6 @@ class MediaSession {
 
 // --- our own sessions ------------------------------------------------------
 
-/** Lowercased, stripped of everything that isn't a letter or digit, so an
- * AUMID ("dev.crystal.desktop.canary!App"), a bus name and a bare executable
- * all compare on the same footing. */
-function identityKey(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 /**
  * Every identifier the OS might report Crystal's own media under.
  *
@@ -385,41 +394,16 @@ function isOwnPlayback(rawSource: string | undefined): boolean {
 }
 
 /**
- * Browsers publish every tab's media element as an MPRIS/SMTC session. The
- * desktop media APIs do not tell us whether that tab is playing music, a
- * video, a voice message, or an advert, so browser sessions are not reliable
- * Rich Presence activities. Keep this separate from `isOwnPlayback`: a
- * Chromium-based Crystal build must be excluded as our own app as well as
- * matching the browser family catch-all.
+ * Executable names Crystal installs as, for judging the process behind an
+ * MPRIS bus name. Narrower than `ownIdentityKeys`: a dev run's binary is a bare
+ * `electron`, which is also what third-party Electron apps are launched
+ * through on distros that package them against the system Electron, so it only
+ * counts once packaged. (Our own process is matched by pid regardless.)
  */
-const BROWSER_MEDIA_IDS = new Set([
-  "brave",
-  "chromium",
-  "chrome",
-  "epiphany",
-  "falkon",
-  "firefox",
-  "floorp",
-  "googlechrome",
-  "librewolf",
-  "midori",
-  "microsoftedge",
-  "msedge",
-  "opera",
-  "operagx",
-  "qutebrowser",
-  "thorium",
-  "vivaldi",
-  "waterfox",
-  "yandexbrowser",
-]);
-
-function isBrowserPlayback(rawSource: string | undefined): boolean {
-  if (!rawSource) return false;
-  const tokens = rawSource.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const compact = identityKey(rawSource);
-  return tokens.some((token) => BROWSER_MEDIA_IDS.has(token)) ||
-    [...BROWSER_MEDIA_IDS].some((browser) => compact.startsWith(browser));
+function ownExecutableKeys(): string[] {
+  const names = Object.values(CHANNELS).flatMap((c) => [c.productName, c.fileName]);
+  if (app.isPackaged) names.push(path.basename(app.getPath("exe")));
+  return [...new Set(names.map(identityKey).filter((k) => k.length >= 5))];
 }
 
 // --- source naming ---------------------------------------------------------
@@ -611,6 +595,91 @@ async function readMacNowPlaying(): Promise<RawNowPlaying> {
   return { playing: false };
 }
 
+interface PlayerVetting {
+  allowed: boolean;
+  /** Executable name of the process behind the player, used as its display
+   * name when the bus name (`chromium.instance<PID>`) says nothing useful. */
+  label?: string;
+}
+
+/** Verdicts by bus name. The name embeds a pid, so it identifies one process
+ * for its whole life. Only definite answers are cached; "couldn't tell" is
+ * retried on the next poll. */
+const playerVettingCache = new Map<string, PlayerVetting>();
+
+/** The pid that owns `org.mpris.MediaPlayer2.<player>`, straight from the bus.
+ * Preferred over the pid in the bus name: inside a Flatpak that one is in the
+ * sandbox's pid namespace and would point at an unrelated host process. */
+function busOwnerPid(player: string): Promise<number | undefined> {
+  return run(
+    "busctl",
+    [
+      "--user",
+      "call",
+      "org.freedesktop.DBus",
+      "/org/freedesktop/DBus",
+      "org.freedesktop.DBus",
+      "GetConnectionUnixProcessID",
+      "s",
+      `org.mpris.MediaPlayer2.${player}`,
+    ],
+    2_000
+  )
+    .then(parseBusctlPid)
+    .catch(() => undefined);
+}
+
+/**
+ * Decide whether an MPRIS player may be announced as music.
+ *
+ * A name that looks like neither a browser nor us is accepted as before. One
+ * that does — notably `chromium.instance<PID>`, which every Chromium-based
+ * process registers, Electron apps included — is judged by the executable
+ * behind it, so a desktop YouTube Music client isn't dropped along with
+ * Chrome, while Crystal and real browsers still are. Anything we can't
+ * resolve stays excluded, as it was when the name alone decided.
+ */
+async function vetLinuxPlayer(player: string): Promise<PlayerVetting> {
+  if (!isOwnPlayback(player) && !isBrowserPlayback(player)) return { allowed: true };
+
+  const cached = playerVettingCache.get(player);
+  if (cached) return cached;
+
+  const pid = (await busOwnerPid(player)) ?? parseInstancePid(player);
+  if (!pid) return { allowed: false };
+
+  const identity = await readProcessIdentity(pid);
+  const verdict = classifyProcess({
+    pid,
+    ownPid: process.pid,
+    identity,
+    ownExeKeys: ownExecutableKeys(),
+  });
+  if (verdict === "unknown") return { allowed: false };
+
+  const result: PlayerVetting =
+    verdict === "allow" ? { allowed: true, label: processExecutableName(identity) } : { allowed: false };
+  playerVettingCache.set(player, result);
+  return result;
+}
+
+function mprisProperty(player: string, property: string): Promise<string | undefined> {
+  return run(
+    "busctl",
+    [
+      "--user",
+      "get-property",
+      `org.mpris.MediaPlayer2.${player}`,
+      "/org/mpris/MediaPlayer2",
+      "org.mpris.MediaPlayer2",
+      property,
+    ],
+    2_000
+  )
+    .then(parseBusctlString)
+    .catch(() => undefined);
+}
+
 /** Linux: MPRIS via `playerctl`, if it's installed. */
 async function readLinuxNowPlaying(): Promise<RawNowPlaying> {
   const format = [
@@ -628,18 +697,39 @@ async function readLinuxNowPlaying(): Promise<RawNowPlaying> {
   // player, and querying playerctl without --player can therefore hide a
   // legitimate Spotify/VLC session behind the browser we intentionally
   // ignore.
-  const players = (await run("playerctl", ["-l"], 4_000).catch(() => ""))
+  const listed = (await run("playerctl", ["-l"], 4_000).catch(() => ""))
     .split(/\r?\n/)
     .map((player) => player.trim())
-    .filter((player) => player && !isOwnPlayback(player) && !isBrowserPlayback(player));
+    .filter(Boolean);
+  for (const name of playerVettingCache.keys()) {
+    if (!listed.includes(name)) playerVettingCache.delete(name);
+  }
+
+  const vetted = await Promise.all(listed.map(async (player) => ({ player, vetting: await vetLinuxPlayer(player) })));
+  const players = vetted.filter((entry) => entry.vetting.allowed);
   if (players.length === 0) return { playing: false };
 
   const snapshots = await Promise.all(
-    players.map((player) => run("playerctl", ["--player", player, "metadata", "--format", format], 4_000).catch(() => "")),
+    players.map(({ player }) =>
+      run("playerctl", ["--player", player, "metadata", "--format", format], 4_000).catch(() => "")
+    ),
   );
-  const out = snapshots.find((snapshot) => snapshot.trim().split("\n")[1] === "Playing") ?? "";
+  const index = snapshots.findIndex((snapshot) => snapshot.trim().split("\n")[1] === "Playing");
+  const out = index >= 0 ? snapshots[index] : "";
   const [player, status, title, artist, album, artUrl, length, position] = out.trim().split("\n");
   if (!player || status !== "Playing" || !title) return { playing: false };
+  // `{{playerName}}` drops the `.instance<PID>` suffix, leaving a bare
+  // "chromium" for an Electron app. Name the app instead, from what it says
+  // about itself over MPRIS and failing that the executable behind it.
+  let source = player;
+  if (isBrowserPlayback(player) || isOwnPlayback(player)) {
+    const listedAs = players[index].player;
+    const [identity, desktopEntry] = await Promise.all([
+      mprisProperty(listedAs, "Identity"),
+      mprisProperty(listedAs, "DesktopEntry"),
+    ]);
+    source = pickDisplayName([identity, desktopEntry, players[index].vetting.label]) ?? "Music";
+  }
 
   // MPRIS expresses both `mpris:length` and `position` in microseconds.
   const toMs = (value: string | undefined) => {
@@ -655,7 +745,8 @@ async function readLinuxNowPlaying(): Promise<RawNowPlaying> {
     artworkUrl: artUrl?.startsWith("http") ? artUrl : undefined,
     durationMs: toMs(length),
     positionMs: toMs(position),
-    source: player,
+    source,
+    vetted: true,
   };
 }
 

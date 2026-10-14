@@ -6,6 +6,7 @@ import { Megaphone } from "lucide-react";
 import { Sticker } from "@/components/lounge/sticker-art";
 import { CustomEmojiImage } from "@/components/custom-emoji-image";
 import { useAccessibleEmojis } from "@/hooks/use-accessible-emojis";
+import { useAppActive } from "@/hooks/use-app-active";
 import { parseCustomEmoji } from "@/lib/custom-emoji";
 import { cn } from "@/lib/utils";
 
@@ -150,6 +151,8 @@ export function AvatarEffects({ events }: { events: LoungeEvent[] }) {
 /** A megaphone beside someone while their soundboard clip plays: it shakes with
  * the sound and sends rings outward. */
 export function Megaphones({ active }: { active: boolean }) {
+  // The shake is an endless loop; a window nobody is looking at gets the megaphone standing still.
+  const appActive = useAppActive();
   return (
     <AnimatePresence>
       {active && (
@@ -161,8 +164,8 @@ export function Megaphones({ active }: { active: boolean }) {
           transition={{ type: "spring", stiffness: 560, damping: 20 }}
         >
           <motion.div
-            animate={{ rotate: [-6, 6, -6], scale: [1, 1.12, 1] }}
-            transition={{ duration: 0.28, repeat: Infinity, ease: "easeInOut" }}
+            animate={appActive ? { rotate: [-6, 6, -6], scale: [1, 1.12, 1] } : { rotate: 0, scale: 1 }}
+            transition={appActive ? { duration: 0.28, repeat: Infinity, ease: "easeInOut" } : { duration: 0 }}
           >
             <Megaphone className="size-[2.4cqw] min-h-5 min-w-5 drop-shadow-[0_2px_6px_rgba(0,0,0,0.5)]" fill="currentColor" strokeWidth={1.6} />
           </motion.div>

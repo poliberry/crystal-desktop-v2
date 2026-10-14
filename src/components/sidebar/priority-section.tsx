@@ -217,7 +217,8 @@ function PriorityChannelRow({ item }: { item: PriorityChannel }) {
         <div
           role="button"
           tabIndex={0}
-          onClick={() => openChannel(item.communityId, item.channelId, isVoice ? "voice" : "text")}
+          onClick={(e) => openChannel(item.communityId, item.channelId, isVoice ? "voice" : "text", e)}
+          onDoubleClick={(e) => openChannel(item.communityId, item.channelId, isVoice ? "voice" : "text", e)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();

@@ -65,14 +65,17 @@ export async function grantStepUp(
  * Refuse an administrative function unless the caller's session may perform it.
  *
  * `mustEnroll` is the "this role requires two-step verification" rule; `why` names whose rule it
- * is in the message. Throws a `ConvexError` carrying a code the app switches on: the client turns
- * `STEP_UP_REQUIRED` into a prompt and retries, and `TWO_FACTOR_REQUIRED` into a pointer at
- * Settings → Security.
+ * is in the message. `askForCode` is whether this particular call is one that needs a fresh code
+ * from someone who has two-step verification: it is for destructive actions only (see
+ * `DESTRUCTIVE_STAFF_PERMISSIONS`), so everything else an administrator does goes through without
+ * interrupting them. The enrolment rule is independent of it and applies to every call. Throws a
+ * `ConvexError` carrying a code the app switches on: the client turns `STEP_UP_REQUIRED` into a
+ * prompt and retries, and `TWO_FACTOR_REQUIRED` into a pointer at Settings → Security.
  */
 export async function requireAdminAssurance(
   ctx: QueryCtx,
   userId: Id<"users">,
-  options: { mustEnroll: boolean; why: "platform" | "server" },
+  options: { mustEnroll: boolean; why: "platform" | "server"; askForCode: boolean },
 ): Promise<void> {
   const state = await stepUpState(ctx, userId);
   if (!state.enrolled) {
@@ -86,6 +89,7 @@ export async function requireAdminAssurance(
           : "This server requires two-step verification to manage it. Turn it on in Settings → Security.",
     });
   }
+  if (!options.askForCode) return;
   if (state.unlockedUntil !== null && state.unlockedUntil > Date.now()) return;
   throw new ConvexError({
     code: AUTH_ERROR.stepUpRequired,

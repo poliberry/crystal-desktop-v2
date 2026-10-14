@@ -7,7 +7,7 @@ import {
   type MutationCtx,
   query,
 } from "./_generated/server";
-import { activitiesOf, visibleActivities } from "./lib/activities";
+import { activitiesOf, mergeSessionActivities, visibleActivities } from "./lib/activities";
 import { hasBlocked } from "./lib/blocking";
 import {
   HISTORY_WINDOW_MS,
@@ -95,7 +95,15 @@ function computeEffective(
   return isIdle ? ("idle" as const) : ("online" as const);
 }
 
-type LiveSession = { platform: "desktop" | "mobile" | "web"; isIdle: boolean };
+type Activity = NonNullable<Doc<"presence">["activities"]>[number];
+type LiveSession = {
+  deviceId: string;
+  platform: "desktop" | "mobile" | "web";
+  isIdle: boolean;
+  activities: Activity[];
+  created: number;
+};
+
 
 /** This user's devices that have beaten recently enough to still count. */
 async function liveSessions(
@@ -110,7 +118,13 @@ async function liveSessions(
     .collect();
   return rows
     .filter((row) => row.lastHeartbeat > cutoff)
-    .map((row) => ({ platform: row.platform, isIdle: row.isIdle }));
+    .map((row) => ({
+      deviceId: row.deviceId,
+      platform: row.platform,
+      isIdle: row.isIdle,
+      activities: row.activities ?? [],
+      created: row._creationTime,
+    }));
 }
 
 /**
@@ -154,14 +168,26 @@ async function reconcile(ctx: MutationCtx, userId: Id<"users">): Promise<void> {
     : ("offline" as const);
 
   const dropActivities = !anyDesktop && activitiesOf(row).length > 0;
-  if (row.effective === effective && row.isIdle === isIdle && !dropActivities) return;
+
+  // The row's activities are what the live devices report between them, so a device that went away (or
+  // stopped reporting) takes only its own contribution with it. Not for a bot: it has no per-device
+  // reports and writes the row directly (`applyBotPresence`). Not for an old client either, which writes
+  // the row directly too and has no session behind it to merge from.
+  const mergeable = online && !dropActivities && sessions.length > 0 && !sessions.some((s) => s.deviceId === "bot");
+  const merged = mergeable ? (row.manualStatus === "invisible" ? [] : mergeSessionActivities(sessions)) : null;
+  const previous = activitiesOf(row);
+  const activitiesChanged = merged !== null && !sameStoredActivities(previous, merged);
+
+  if (row.effective === effective && row.isIdle === isIdle && !dropActivities && !activitiesChanged) return;
 
   await ctx.db.patch(row._id, {
     effective,
     isIdle,
     ...(dropActivities ? { activities: [], activity: undefined } : {}),
+    ...(activitiesChanged ? { activities: merged, activity: undefined } : {}),
   });
   if (dropActivities) await closeOpenSessions(ctx, userId);
+  else if (activitiesChanged) await recordGameTransitions(ctx, userId, previous, merged);
 }
 
 export const getMine = query({
@@ -456,40 +482,63 @@ export const setStatus = mutation({
  * nobody can infer they're online from what they're playing.
  */
 export const setActivities = mutation({
-  args: { activities: v.array(activityInputValidator) },
-  handler: async (ctx, { activities }) => {
+  args: {
+    activities: v.array(activityInputValidator),
+    /** Which device is reporting. Each device's list is kept apart and merged, so this one clearing its
+     * own never erases what another is playing. Absent from a client that predates per-device lists. */
+    deviceId: v.optional(v.string()),
+  },
+  handler: async (ctx, { activities, deviceId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return;
+
+    const now = Date.now();
+    const stamped = activities.map((activity) =>
+      activity.positionMs !== undefined ? { ...activity, positionUpdatedAt: now } : activity
+    );
+
+    // This device's own list.
+    const session = await ctx.db
+      .query("presenceSessions")
+      .withIndex("by_user_device", (q) =>
+        q.eq("userId", me._id).eq("deviceId", deviceId ?? LEGACY_DEVICE_ID)
+      )
+      .unique();
+    if (session) {
+      if (!sameStoredActivities(session.activities ?? [], stamped)) {
+        await ctx.db.patch(session._id, { activities: stamped });
+      }
+    } else if (stamped.length > 0) {
+      // A device announcing something before its first heartbeat landed.
+      await ctx.db.insert("presenceSessions", {
+        userId: me._id,
+        deviceId: deviceId ?? LEGACY_DEVICE_ID,
+        platform: "desktop",
+        isIdle: false,
+        lastHeartbeat: now,
+        activities: stamped,
+      });
+    }
 
     const existing = await ctx.db
       .query("presence")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
       .unique();
-    const manualStatus = existing?.manualStatus ?? "online";
-    const now = Date.now();
-    const stamped = activities.map((activity) =>
-      activity.positionMs !== undefined ? { ...activity, positionUpdatedAt: now } : activity
-    );
-    const next = manualStatus === "invisible" ? [] : stamped;
-
-    if (existing) {
-      const previous = activitiesOf(existing);
-      if (sameStoredActivities(previous, next)) return;
-      // Clear the legacy single-activity field on the way past, so a row is
-      // never carrying two competing sources of truth.
-      await ctx.db.patch(existing._id, { activities: next, activity: undefined });
-      await recordGameTransitions(ctx, me._id, previous, next);
+    if (!existing) {
+      const manualStatus = "online" as const;
+      await ctx.db.insert("presence", {
+        userId: me._id,
+        manualStatus,
+        isIdle: false,
+        lastHeartbeat: now,
+        effective: computeEffective(manualStatus, false),
+        activities: stamped,
+      });
+      await recordGameTransitions(ctx, me._id, [], stamped);
       return;
     }
-    await ctx.db.insert("presence", {
-      userId: me._id,
-      manualStatus,
-      isIdle: false,
-      lastHeartbeat: now,
-      effective: computeEffective(manualStatus, false),
-      activities: next,
-    });
-    await recordGameTransitions(ctx, me._id, [], next);
+    // What the row shows is the merge of every live device, not this device's list on its own.
+    await reconcile(ctx, me._id);
   },
 });
 

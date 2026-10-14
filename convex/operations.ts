@@ -235,7 +235,7 @@ export const suspendUser = mutation({
     reason: v.string(),
   },
   handler: async (ctx, { userId, days, reason }) => {
-    const staff = await requireStaff(ctx, "users.moderate");
+    const staff = await requireStaff(ctx, "users.moderate", { destructive: true });
     const user = await ctx.db.get(userId);
     if (!user) throw new Error("User not found.");
     if (userId === staff.user._id) throw new Error("You can't suspend yourself.");
@@ -409,7 +409,8 @@ export const banUser = mutation({
 export const unbanUser = mutation({
   args: { userId: v.id("users"), reason: v.optional(v.string()) },
   handler: async (ctx, { userId, reason }) => {
-    const staff = await requireStaff(ctx, "users.ban");
+    // Lifting a ban holds the ban permission but destroys nothing, so it doesn't ask for a code.
+    const staff = await requireStaff(ctx, "users.ban", { destructive: false });
     const user = await ctx.db.get(userId);
     if (!user) throw new Error("User not found.");
     if (!activeBan(user)) throw new Error("They aren't banned.");
@@ -464,7 +465,7 @@ export const grantSku = mutation({
 export const revokeEntitlement = mutation({
   args: { entitlementId: v.id("entitlements"), reason: v.string() },
   handler: async (ctx, { entitlementId, reason }) => {
-    const staff = await requireStaff(ctx, "users.entitle");
+    const staff = await requireStaff(ctx, "users.entitle", { destructive: true });
     const entitlement = await ctx.db.get(entitlementId);
     if (!entitlement) throw new Error("That item doesn't exist.");
     const why = reason.trim().slice(0, 300);
@@ -571,7 +572,10 @@ export const setCommunityStatus = mutation({
   },
   handler: async (ctx, args) => {
     // A ban is permanent and closes the community for good, so it asks for what banning a person does.
-    const staff = await requireStaff(ctx, args.status === "banned" ? "users.ban" : "communities.manage");
+    // Banning, suspending or archiving a community is destructive; restoring or restricting it is not.
+    const staff = await requireStaff(ctx, args.status === "banned" ? "users.ban" : "communities.manage", {
+      destructive: args.status === "banned" || args.status === "suspended" || args.status === "archived",
+    });
     const community = await ctx.db.get(args.communityId);
     if (!community) throw new Error("Community not found.");
     const reason = args.reason?.trim().slice(0, 500);
@@ -585,7 +589,7 @@ export const setCommunityStatus = mutation({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .unique();
     // Lifting a ban takes what imposing one does.
-    if (existing?.status === "banned" && args.status !== "banned") await requireStaff(ctx, "users.ban");
+    if (existing?.status === "banned" && args.status !== "banned") await requireStaff(ctx, "users.ban", { destructive: false });
     const fields = { status: args.status, reason, until, actorId: staff.user._id, updatedAt: Date.now() };
     if (existing) await ctx.db.patch(existing._id, fields);
     else await ctx.db.insert("communityModeration", { communityId: args.communityId, ...fields });

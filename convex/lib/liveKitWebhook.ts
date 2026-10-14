@@ -52,16 +52,23 @@ export const handle = internalAction({
     const parsed = parseRoomName(roomName);
     if (!parsed) return;
 
+    // When that connection joined LiveKit. Our own row is written just before the client connects, so a
+    // row newer than this belongs to a later connection (a rejoin, a second device) and stays.
+    const joinedSeconds = Number(event.participant?.joinedAt ?? 0);
+    const joinedBefore = joinedSeconds > 0 ? joinedSeconds * 1000 : undefined;
+
     if (parsed.kind === "dm") {
       const remaining = await ctx.runMutation(internal.calls.recordLeave, {
         conversationId: parsed.conversationId as Id<"conversations">,
         userId: identity as Id<"users">,
+        joinedBefore,
       });
       await closeRoomIfEmpty(roomName, remaining);
     } else {
       const remaining = await ctx.runMutation(internal.channels.recordVoiceLeave, {
         channelId: parsed.channelId as Id<"channels">,
         userId: identity as Id<"users">,
+        joinedBefore,
       });
       await closeRoomIfEmpty(roomName, remaining);
     }

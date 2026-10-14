@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { MotionConfig } from "framer-motion";
 
+import { startAppActivity } from "@/hooks/use-app-active";
 import { getDesktopAPI } from "@/lib/desktop";
 
 const STORAGE_KEY = "crystal-accessibility";
@@ -33,9 +34,9 @@ export interface AccessibilityPreferences {
   textScale: number;
   /** Suppress animations and transitions, including framer-motion's. */
   reducedMotion: boolean;
-  /** Draw blurred, see-through panels as plain translucent ones. A blur re-draws everything behind it on every frame, which
-   * is cheap on a graphics card and the most expensive thing on the screen without one. Chosen for you the first time if
-   * the window turns out to be drawn in software (see `usesSoftwareRendering`); it is a setting under Settings →
+  /** Draw blurred, see-through panels as plain translucent ones, and drop the decorative blurred glows and the theme-pack
+   * background blur. A blur re-draws everything behind it on every frame, which is cheap on a strong graphics card and the
+   * most expensive thing on the screen on anything else. On for you the first time on Linux (see `isLinuxDesktop`); it is a setting under Settings →
    * Performance, not Accessibility, but lives here because it is stored, applied and synced across windows the same way. */
   reduceBlur: boolean;
   /** Stronger borders, brighter secondary text, always-visible focus rings. */
@@ -110,25 +111,15 @@ function hasStoredChoice(raw: string | null, key: keyof AccessibilityPreferences
 }
 
 /**
- * Whether this window is being drawn by the processor rather than a graphics card.
+ * Whether this is a Linux desktop, where the blurs start switched off.
  *
- * Asked of WebGL, which is the one place a page can learn it: `failIfMajorPerformanceCaveat` makes the browser refuse a
- * context it would have to emulate in software (SwiftShader, llvmpipe), so no context means no real GPU. Only asked on
- * Linux, where that is a common state and a blocklisted or missing driver is the usual reason; elsewhere the answer isn't
- * worth the few milliseconds. A browser with WebGL switched off says the same thing, which is also a machine worth easing.
+ * This used to ask WebGL whether the window was drawn in software and only then ease the blurs. That missed the common
+ * case: a GPU that is present and passes the check but is too weak (or has a driver too poor) to re-blur a message list
+ * every frame, which reads as the app freezing whenever the window is brought back. Linux graphics stacks vary enough that
+ * starting light is the safer default; it is one switch under Settings → Performance for anyone who wants the glass back.
  */
-function usesSoftwareRendering(): boolean {
-  if (typeof navigator === "undefined" || !/Linux/.test(navigator.userAgent) || /Android/.test(navigator.userAgent)) return false;
-  try {
-    const canvas = document.createElement("canvas");
-    const gl = (canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true }) ??
-      canvas.getContext("webgl", { failIfMajorPerformanceCaveat: true })) as WebGLRenderingContext | null;
-    if (!gl) return true;
-    gl.getExtension("WEBGL_lose_context")?.loseContext();
-    return false;
-  } catch {
-    return false;
-  }
+function isLinuxDesktop(): boolean {
+  return typeof navigator !== "undefined" && /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
 }
 
 /** Snap a stored/incoming factor onto the nearest stop, so a value written by
@@ -185,12 +176,17 @@ function apply(prefs: AccessibilityPreferences): void {
 export function AccessibilityProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState<AccessibilityPreferences>(DEFAULT_ACCESSIBILITY);
 
+  // Pause decorative motion while the window is in the background (see use-app-active.ts).
+  useEffect(() => {
+    startAppActivity();
+  }, []);
+
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     let stored = parse(raw);
-    // First launch on a machine that draws the window in software: start with the blurs off. Only when nobody has chosen —
+    // First launch on Linux: start with the blurs off. Only when nobody has chosen —
     // a stored `reduceBlur` of either value is a choice, and is never overridden.
-    if (!hasStoredChoice(raw, "reduceBlur") && usesSoftwareRendering()) {
+    if (!hasStoredChoice(raw, "reduceBlur") && isLinuxDesktop()) {
       stored = { ...stored, reduceBlur: true };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     }

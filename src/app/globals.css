@@ -720,6 +720,16 @@ html {
   scroll-behavior: auto !important;
 }
 
+/* The window is in the background (another app has focus, or it is minimised): hold every CSS animation where it is.
+ * `app-inactive` is set by src/hooks/use-app-active.ts. Paused rather than removed, so everything carries on from the same
+ * frame when the window comes back, and it covers animations started while inactive too (a new toast, a typing indicator,
+ * a lounge prop). Transitions are untouched: they are finite and end on their own. */
+:root.app-inactive *,
+:root.app-inactive *::before,
+:root.app-inactive *::after {
+  animation-play-state: paused !important;
+}
+
 /* Reduce blur: every `backdrop-blur-*` (and the settings cards, and the dock's glass) loses its blur.
  * A backdrop filter has to re-render what is behind it each frame, and with nothing but the processor to do it with
  * (software rendering) a blurred panel over a scrolling message list is the single most expensive thing on screen. */
@@ -728,6 +738,18 @@ html {
 :root.a11y-reduce-blur *::after {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
+}
+
+/* The same switch also drops the blurs that are not backdrop filters:
+ *  - the decorative glows (`blur-2xl` / `blur-3xl` on an aria-hidden or pointer-events-none layer). Un-blurred they would
+ *    show as hard-edged discs, so they are hidden rather than sharpened. `backdrop-blur-*` panels are real UI and excluded;
+ *  - a theme pack's background picture, which is a full-window layer blurred by up to --pack-bg-blur. It stays, sharp. */
+:root.a11y-reduce-blur [class*="blur-2xl"]:not([class*="backdrop-blur"]),
+:root.a11y-reduce-blur [class*="blur-3xl"]:not([class*="backdrop-blur"]) {
+  display: none !important;
+}
+:root.a11y-reduce-blur[data-pack-bg]::before {
+  filter: none !important;
 }
 
 :root.a11y-high-contrast {

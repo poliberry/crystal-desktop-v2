@@ -38,6 +38,28 @@ export type StaffPermission =
   /** Write Studio's guides and articles. */
   | "docs.write";
 
+/**
+ * The permissions whose use is destructive or moves money: the only staff actions that ask for a
+ * verification code. Everything else an administrator does (reading, editing, reviewing, replying)
+ * goes straight through once the account meets the platform's two-step enrolment rule.
+ *
+ * A permission that covers both harmless and destructive functions (`users.moderate`,
+ * `system.manage`, `catalog.write` …) is not listed; the one function that destroys something
+ * says so itself with `requireStaff(ctx, permission, { destructive: true })`. A function can also
+ * opt out with `{ destructive: false }`, for example lifting a ban, which holds `users.ban` but
+ * destroys nothing.
+ */
+export const DESTRUCTIVE_STAFF_PERMISSIONS: readonly StaffPermission[] = [
+  "users.ban",
+  "finance.refund",
+  "finance.payout",
+  "staff.manage",
+];
+
+export function isDestructivePermission(permission: StaffPermission): boolean {
+  return DESTRUCTIVE_STAFF_PERMISSIONS.includes(permission);
+}
+
 const ALL_BUT_FINANCE: StaffPermission[] = [
   "catalog.read",
   "catalog.write",

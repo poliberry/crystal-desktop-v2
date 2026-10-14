@@ -5,7 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { introLength, playbackTime, type MotionSpec } from "../../../convex/lib/motion";
 import { coverScale, drawCover, loadMotionImages, MotionRenderer } from "@/lib/motion-render";
 import { loadMotionSpec } from "@/lib/motion-load";
+import { isAppActive } from "@/hooks/use-app-active";
 import { useMotionAllowed } from "@/hooks/use-motion-allowed";
+import { useAccessibility } from "@/components/accessibility-provider";
 import { motionImageUrls } from "../../../convex/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +35,9 @@ let raf = 0;
 function loop(now: number) {
   raf = 0;
   for (const s of subs) s.tick(now);
-  if (subs.size > 0) raf = requestAnimationFrame(loop);
+  // A window nobody is looking at has nothing to animate. Each player re-subscribes when the app becomes active again
+  // (`motionAllowed` is one of its effect's inputs), which starts the loop afresh.
+  if (subs.size > 0 && isAppActive()) raf = requestAnimationFrame(loop);
 }
 function subscribe(s: Sub): () => void {
   subs.add(s);
@@ -45,6 +49,9 @@ function subscribe(s: Sub): () => void {
 
 /** How many players may animate at the same time; beyond this a player draws one still frame and waits. */
 const MAX_PLAYING = 8;
+/** The same, where the app has been put in its light mode (Settings → Performance → Reduce blur; on by default on Linux):
+ * every playing canvas is redrawn by the processor every frame, so fewer of them run, and at half the rate. */
+const MAX_PLAYING_LIGHT = 3;
 let playing = 0;
 
 /**
@@ -90,6 +97,7 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
   const ref = useRef<HTMLCanvasElement>(null);
   // The app's "Reduce motion" setting as well as the OS's: either one holds the design on a still frame.
   const motionAllowed = useMotionAllowed();
+  const { reduceBlur: light } = useAccessibility();
   const [ready, setReady] = useState<{ spec: MotionSpec; renderer: MotionRenderer } | null>(null);
 
   // The renderer, once the design's pictures are in.
@@ -111,7 +119,8 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
     if (!canvas || !parent || !ready) return;
     const { spec: s, renderer } = ready;
     const nameplate = s.kind === "nameplate";
-    const frameMs = nameplate ? 1000 / 24 : 1000 / 60;
+    const frameMs = nameplate ? 1000 / (light ? 15 : 24) : 1000 / (light ? 30 : 60);
+    const maxPlaying = light ? MAX_PLAYING_LIGHT : MAX_PLAYING;
     let visible = true;
     let size = { w: 0, h: 0 };
     let started = performance.now();
@@ -165,7 +174,7 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
           return;
         }
         if (!counted) {
-          if (playing >= MAX_PLAYING) {
+          if (playing >= maxPlaying) {
             if (last === -Infinity) {
               draw(stillTime(s));
               last = 0;
@@ -202,7 +211,7 @@ export function MotionPlayer({ url, spec: given, animate = true, time, className
       io.disconnect();
       ro.disconnect();
     };
-  }, [ready, animate, time, motionAllowed]);
+  }, [ready, animate, time, motionAllowed, light]);
 
   if (!url && !given) return null;
   return <canvas ref={ref} aria-hidden className={cn("pointer-events-none absolute inset-0 size-full select-none", className)} />;

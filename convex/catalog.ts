@@ -315,7 +315,7 @@ export const adminUpsertCategory = mutation({
 export const adminDeleteCategory = mutation({
   args: { categoryId: v.id("skuCategories") },
   handler: async (ctx, { categoryId }) => {
-    const staff = await requireStaff(ctx, "catalog.write");
+    const staff = await requireStaff(ctx, "catalog.write", { destructive: true });
     const category = await ctx.db.get(categoryId);
     if (!category) return;
     const inUse = await ctx.db

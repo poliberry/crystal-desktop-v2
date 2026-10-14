@@ -4,7 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import { assertStaffAssurance, audit, getStaff, requireStaff } from "./lib/staff";
 import { platformSecurity, stepUpState } from "./lib/stepUp";
-import { can, permissionsFor, STAFF_ROLES, type StaffRole } from "./lib/staffPermissions";
+import { can, isDestructivePermission, permissionsFor, STAFF_ROLES, type StaffPermission, type StaffRole } from "./lib/staffPermissions";
 
 const rolesValidator = v.array(
   v.union(
@@ -32,18 +32,13 @@ export const me = query({
   handler: async (ctx) => {
     const staff = await getStaff(ctx);
     if (!staff) return null;
-    // Whether the console may be shown yet, so it can ask for a code instead of failing on its first
-    // query: `open`, `step_up` (enter a code) or `enroll` (the platform requires two-step
-    // verification and this account hasn't turned it on). The server enforces it either way — see
-    // `requireStaff`; this is only so the screen can say so.
+    // Whether the console may be shown yet, so it can say why instead of failing on its first
+    // query: `open`, or `enroll` (the platform requires two-step verification and this account
+    // hasn't turned it on). A code is not asked for on the way in: only a destructive action asks
+    // for one, at the moment it is taken. The server enforces both either way — see `requireStaff`;
+    // this is only so the screen can say so.
     const [{ requireStaffTwoFactor }, state] = await Promise.all([platformSecurity(ctx), stepUpState(ctx, staff.user._id)]);
-    const gate = !state.enrolled
-      ? requireStaffTwoFactor
-        ? ("enroll" as const)
-        : ("open" as const)
-      : state.unlockedUntil !== null && state.unlockedUntil > Date.now()
-        ? ("open" as const)
-        : ("step_up" as const);
+    const gate = !state.enrolled && requireStaffTwoFactor ? ("enroll" as const) : ("open" as const);
     return {
       userId: staff.user._id,
       name: staff.user.name,
@@ -59,15 +54,18 @@ export const me = query({
 /**
  * The caller's staff access for an action that has to check it itself (an action can't call
  * `requireStaff`): throws unless they hold *every* permission named, and — like `requireStaff` —
- * unless this session may do administrative things (a code entered recently, and two-step
- * verification on where the platform requires it).
+ * unless this session may do this (two-step verification on where the platform requires it, and a
+ * code entered recently when the action is destructive). An action is destructive when it says so
+ * with `destructive`, or when it needs a permission that always is (a refund, a payout).
  */
 export const requireForAction = internalQuery({
-  args: { permissions: v.array(v.string()) },
-  handler: async (ctx, { permissions }) => {
+  args: { permissions: v.array(v.string()), destructive: v.optional(v.boolean()) },
+  handler: async (ctx, { permissions, destructive }) => {
     const staff = await getStaff(ctx);
     if (!staff || !permissions.every((p) => can(staff.roles, p as Parameters<typeof can>[1]))) throw new Error("Not allowed.");
-    await assertStaffAssurance(ctx, staff);
+    await assertStaffAssurance(ctx, staff, {
+      destructive: destructive ?? permissions.some((p) => isDestructivePermission(p as StaffPermission)),
+    });
     return { userId: staff.user._id };
   },
 });

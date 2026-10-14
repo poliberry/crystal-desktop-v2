@@ -14,7 +14,14 @@ function getClient(): RoomServiceClient | null {
   return new RoomServiceClient(url, apiKey, apiSecret);
 }
 
-type Row = { kind: "dm"; id: Id<"conversations">; userId: Id<"users"> } | { kind: "channel"; id: Id<"channels">; userId: Id<"users"> };
+type Row = (
+  | { kind: "dm"; id: Id<"conversations">; userId: Id<"users"> }
+  | { kind: "channel"; id: Id<"channels">; userId: Id<"users"> }
+) & { joinedAt: number };
+
+/** A row is written just before the client connects to LiveKit, so a user can legitimately be missing from
+ * the room for a while (slow token, slow ICE). Rows younger than this are left alone. */
+const JOIN_GRACE_MS = 60_000;
 
 /**
  * Defense-in-depth for the LiveKit webhook (convex/http.ts): a refresh, crash,
@@ -40,13 +47,13 @@ export const reconcile = internalAction({
     for (const row of dmRows) {
       const roomName = `dm-${row.conversationId}`;
       const list = byRoom.get(roomName) ?? [];
-      list.push({ kind: "dm", id: row.conversationId, userId: row.userId });
+      list.push({ kind: "dm", id: row.conversationId, userId: row.userId, joinedAt: row.joinedAt });
       byRoom.set(roomName, list);
     }
     for (const row of channelRows) {
       const roomName = `channel-${row.channelId}`;
       const list = byRoom.get(roomName) ?? [];
-      list.push({ kind: "channel", id: row.channelId, userId: row.userId });
+      list.push({ kind: "channel", id: row.channelId, userId: row.userId, joinedAt: row.joinedAt });
       byRoom.set(roomName, list);
     }
 
@@ -61,10 +68,13 @@ export const reconcile = internalAction({
 
       for (const row of rows) {
         if (liveIdentities.has(row.userId)) continue;
+        // Still connecting? Not stale yet.
+        if (Date.now() - row.joinedAt < JOIN_GRACE_MS) continue;
+        // `joinedBefore` re-checks inside the mutation that the row is still the one we looked at.
         if (row.kind === "dm") {
-          await ctx.runMutation(internal.calls.recordLeave, { conversationId: row.id, userId: row.userId });
+          await ctx.runMutation(internal.calls.recordLeave, { conversationId: row.id, userId: row.userId, joinedBefore: row.joinedAt });
         } else {
-          await ctx.runMutation(internal.channels.recordVoiceLeave, { channelId: row.id, userId: row.userId });
+          await ctx.runMutation(internal.channels.recordVoiceLeave, { channelId: row.id, userId: row.userId, joinedBefore: row.joinedAt });
         }
       }
     }

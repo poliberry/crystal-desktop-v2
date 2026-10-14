@@ -782,6 +782,10 @@ export default defineSchema({
      * live device is — a phone in a pocket shouldn't idle out a desktop. */
     isIdle: v.boolean(),
     lastHeartbeat: v.number(),
+    /** What this device itself detected (a game, the music playing on it). The user's `presence.activities`
+     * is the merge of every live device's list, so one device reporting nothing never erases what another
+     * one is doing. */
+    activities: v.optional(v.array(activityValidator)),
   })
     .index("by_user", ["userId"])
     .index("by_user_device", ["userId", "deviceId"])

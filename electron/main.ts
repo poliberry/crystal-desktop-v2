@@ -135,10 +135,64 @@ const MIME_TYPES: Record<string, string> = {
 // renderer injects it through an AudioWorklet → MediaStreamAudioDestinationNode,
 // mirroring the macOS ScreenCaptureKit pipeline below.
 let linuxAudioSender: Electron.WebContents | null = null;
-const unsubLinuxAudio = systemAudio.onAudioData((data) => {
-  if (linuxAudioSender && !linuxAudioSender.isDestroyed()) {
-    linuxAudioSender.send("system-audio-linux:audio", data);
+let unwatchLinuxAudioSender: (() => void) | null = null;
+
+/**
+ * Send to a page that may have died. `isDestroyed()` is not enough: a crashed or
+ * navigating renderer still has a live WebContents, but its main frame is gone, and
+ * `send()` throws "Render frame was disposed before WebFrameMain could be accessed".
+ * Audio arrives dozens of times a second, so that throw floods the log (and, from an
+ * event handler, can surface as an uncaught exception). Returns false when the page
+ * can't take the message so the caller can stop streaming to it.
+ */
+function trySend(target: Electron.WebContents, channel: string, ...args: unknown[]): boolean {
+  if (target.isDestroyed() || target.isCrashed()) return false;
+  try {
+    target.send(channel, ...args);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+/**
+ * Calls `onGone` once when the page can no longer receive audio: it was destroyed,
+ * its renderer died, or it loaded a new document (whose audio worklet doesn't exist
+ * yet). Returns a function that stops watching.
+ */
+function watchSenderLifetime(sender: Electron.WebContents, onGone: () => void): () => void {
+  const onNavigate = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
+    if (startsNewDocument(details)) gone();
+  };
+  const off = () => {
+    if (sender.isDestroyed()) return;
+    sender.removeListener("destroyed", gone);
+    sender.removeListener("render-process-gone", gone);
+    sender.removeListener("did-start-navigation", onNavigate);
+  };
+  function gone() {
+    off();
+    onGone();
+  }
+  sender.once("destroyed", gone);
+  sender.once("render-process-gone", gone);
+  sender.on("did-start-navigation", onNavigate);
+  return off;
+}
+
+function stopLinuxAudio(): void {
+  unwatchLinuxAudioSender?.();
+  unwatchLinuxAudioSender = null;
+  linuxAudioSender = null;
+  // Without a page to play it back, leaving the capture sink as the default
+  // output would silence the user's audio.
+  void systemAudio.disable().catch(() => {});
+}
+
+const unsubLinuxAudio = systemAudio.onAudioData((data) => {
+  const sender = linuxAudioSender;
+  if (!sender) return;
+  if (!trySend(sender, "system-audio-linux:audio", data)) stopLinuxAudio();
 });
 
 // --- macOS system-audio helper (ScreenCaptureKit) ---------------------------
@@ -1402,7 +1456,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("system-audio:info", () => systemAudio.getInfo());
 
   ipcMain.handle("system-audio-linux:enable", async (event) => {
-    linuxAudioSender = event.sender;
+    unwatchLinuxAudioSender?.();
+    const sender = event.sender;
+    linuxAudioSender = sender;
+    unwatchLinuxAudioSender = watchSenderLifetime(sender, () => {
+      if (linuxAudioSender === sender) stopLinuxAudio();
+    });
     try {
       await systemAudio.enable();
       await systemAudio.startCapture();
@@ -1413,8 +1472,10 @@ app.whenReady().then(async () => {
         playbackSink: systemAudio.getPlaybackSink(),
       };
     } catch (err) {
-      await systemAudio.disable().catch(() => {});
+      unwatchLinuxAudioSender?.();
+      unwatchLinuxAudioSender = null;
       linuxAudioSender = null;
+      await systemAudio.disable().catch(() => {});
       return {
         started: false,
         error: err instanceof Error ? err.message : String(err),
@@ -1423,6 +1484,8 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle("system-audio-linux:disable", async () => {
+    unwatchLinuxAudioSender?.();
+    unwatchLinuxAudioSender = null;
     linuxAudioSender = null;
     await systemAudio.disable();
     return { stopped: true };
@@ -1507,12 +1570,19 @@ app.whenReady().then(async () => {
               sampleRate: parsed.sampleRate ?? 48000,
               channels: parsed.channels ?? 2,
             });
+            const unwatch = watchSenderLifetime(sender, () => {
+              if (macAudioChild === child) stopMacAudioChild();
+            });
+            child.once("exit", unwatch);
             if (rest.length > 0) {
-              sender.send("system-audio-mac:audio", toTransferable(rest));
+              trySend(sender, "system-audio-mac:audio", toTransferable(rest));
             }
             child.stdout?.on("data", (c: Buffer) => {
               if (!macAudioEnabled) return;
-              sender.send("system-audio-mac:audio", toTransferable(c));
+              if (!trySend(sender, "system-audio-mac:audio", toTransferable(c))) {
+                unwatch();
+                if (macAudioChild === child) stopMacAudioChild();
+              }
             });
           } else {
             finish(false, { error: parsed.message ?? "Helper failed to start." });

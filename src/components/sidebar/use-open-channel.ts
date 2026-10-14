@@ -5,6 +5,8 @@ import { useCallback } from "react";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useCall } from "@/components/call/call-provider";
 import { useNavigation } from "@/components/home/navigation-context";
+import { useAudioPreferences } from "@/components/audio-provider";
+import { joinsOn, type GestureEvent } from "@/hooks/use-join-gesture";
 
 /**
  * Open a channel from anywhere in the sidebar: a text channel becomes the
@@ -18,14 +20,19 @@ import { useNavigation } from "@/components/home/navigation-context";
 export function useOpenChannel() {
   const nav = useNavigation();
   const { activeCall, expand, joinChannelCall, dismissJoinError } = useCall();
+  const { doubleClickToJoin } = useAudioPreferences();
 
   return useCallback(
     (
       communityId: Id<"communities">,
       channelId: Id<"channels">,
       type: "text" | "voice",
+      /** The click or double click that asked, so "double-click to join" can tell them apart. */
+      event?: GestureEvent,
     ) => {
       if (type === "text") {
+        // Only the first click of a double click opens a text channel; the second has nothing to add.
+        if (event?.type === "dblclick") return;
         nav.openCommunity(communityId, channelId);
         return;
       }
@@ -33,9 +40,11 @@ export function useOpenChannel() {
         expand();
         return;
       }
+      // With "double-click to join" on, a single click on a voice channel does nothing.
+      if (!joinsOn(doubleClickToJoin, event)) return;
       dismissJoinError();
       void joinChannelCall(channelId, communityId);
     },
-    [nav, activeCall, expand, joinChannelCall, dismissJoinError],
+    [nav, activeCall, expand, joinChannelCall, dismissJoinError, doubleClickToJoin],
   );
 }

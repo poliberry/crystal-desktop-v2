@@ -3,14 +3,17 @@
 import { useSyncExternalStore } from "react";
 
 import { useAccessibility } from "@/components/accessibility-provider";
+import { useAppActive } from "@/hooks/use-app-active";
 
 /**
  * Whether anything decorative is allowed to move at all.
  *
- * Two things can say no: Settings → Accessibility → "Reduce motion", and the
- * operating system's own preference. Either is enough — someone who turned it on
- * in their OS has said so for every app, and someone who turned it on here has
- * said so for this one.
+ * Three things can say no: Settings → Accessibility → "Reduce motion", the
+ * operating system's own preference, and the window not being the one the person
+ * is looking at (another app has focus, or it is minimised). The first two are
+ * choices — someone who turned it on in their OS has said so for every app, and
+ * someone who turned it on here has said so for this one. The third is a pause:
+ * everything resumes the moment the window is back.
  *
  * Cosmetics (avatar decorations, nameplates, profile effects and frames) combine
  * this with their own rule for when to play: this is the ceiling, "hover" or
@@ -35,5 +38,6 @@ const serverSnapshot = () => false;
 export function useMotionAllowed(): boolean {
   const { reducedMotion } = useAccessibility();
   const system = useSyncExternalStore(subscribe, systemPrefersReduced, serverSnapshot);
-  return !reducedMotion && !system;
+  const appActive = useAppActive();
+  return !reducedMotion && !system && appActive;
 }

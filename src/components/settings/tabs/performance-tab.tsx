@@ -38,7 +38,7 @@ export function PerformanceTab() {
     <SettingRow
       icon={Layers}
       title="Reduce blur"
-      description="Turn off the frosted-glass blur behind panels. Panels keep their tint but no longer re-blur what is behind them on every frame, which makes scrolling and window changes much lighter on computers without a graphics card, or where the app is drawn in software — switched on for you on those the first time."
+      description="Turn off the frosted-glass blur behind panels, the soft glows, and the blur on theme backgrounds. Panels keep their tint but no longer re-blur what is behind them on every frame, which makes scrolling and bringing the window back much lighter on computers with a weak graphics card, or none. Switched on for you the first time on Linux; turn it off here to get the glass look back."
     >
       <Switch
         checked={reduceBlur}

@@ -348,6 +348,10 @@ export function useRoom() {
       setStatus("disconnected");
       setScreenSharing(false);
       setScreenShares([]);
+      // A server-side or network disconnect never went through stopScreenShare,
+      // so the capture pipeline (AudioContext, worklet, recorder process) would
+      // otherwise keep running with no room to publish to.
+      if (isSystemAudioSharing()) void stopSystemAudio(room);
       setSystemAudioSharing(false);
       setScreenShareSourceId(null);
       screenShareSourceIdRef.current = null;

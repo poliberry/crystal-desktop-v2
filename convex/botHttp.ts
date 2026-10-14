@@ -70,9 +70,16 @@ export const handle = httpAction(async (ctx, request) => {
       }
       return respond(200, { mode: "poll", events: [], cursor });
     }
-    // voice.join / voice.leave need no action of their own: bot voice is switched off, so joining is a
-    // plain refusal and leaving only drops a row (see `VOICE_UNSUPPORTED` in lib/botAccess.ts).
-    result = await ctx.runMutation(internal.botOps.execute, { ...args, op: route.op, body, query });
+    // voice.join mints a LiveKit token, which only Node can do, so it runs as an action
+    // (`voice.prepare` inside it does the checks, the participant row and the audit, exactly as
+    // for every other operation). voice.leave goes the same way so the room is closed in LiveKit
+    // as well as in the participant rows — through `execute` alone it would only drop the row.
+    if (route.op === "voice.join" || route.op === "voice.leave") {
+      const action = route.op === "voice.join" ? internal.botVoice.join : internal.botVoice.leave;
+      result = await ctx.runAction(action, { prefix: args.prefix, hash: args.hash, params });
+    } else {
+      result = await ctx.runMutation(internal.botOps.execute, { ...args, op: route.op, body, query });
+    }
     return result.ok ? respond(result.status, result.data) : problem(result.status, result.message, {}, result.code);
   } catch (e) {
     // Many requests from one bot at once all touch its request counter; the ones that lose the race

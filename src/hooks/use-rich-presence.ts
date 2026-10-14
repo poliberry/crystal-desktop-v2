@@ -7,6 +7,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { getDesktopAPI } from "@/lib/desktop";
+import { getDeviceId } from "@/lib/device-id";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 
 /**
@@ -28,7 +29,7 @@ export function useRichPresenceReporter(): void {
     let cancelled = false;
     const publish = (activities: RichPresenceActivity[]) => {
       if (cancelled) return;
-      void setActivities({ activities: activities.map(toPayload) }).catch(() => {});
+      void setActivities({ activities: activities.map(toPayload), deviceId: getDeviceId() }).catch(() => {});
     };
 
     // Keep the main process in step with the setting, so it stops scanning
@@ -44,11 +45,24 @@ export function useRichPresenceReporter(): void {
 
     // Pick up whatever was already detected before this mounted — the main
     // process starts scanning at launch, well before sign-in completes.
-    void desktop.get().then(publish).catch(() => {});
-    const unsubscribe = desktop.onChange(publish);
+    let latest: RichPresenceActivity[] = [];
+    const remember = (activities: RichPresenceActivity[]) => {
+      latest = activities;
+      publish(activities);
+    };
+    void desktop.get().then(remember).catch(() => {});
+    const unsubscribe = desktop.onChange(remember);
+
+    // Say it again now and then. The server keeps each device's list apart and merges them, so a device
+    // that stops reporting is dropped from the merge; this keeps a long-running game or song on the card
+    // across a server update or a missed write. An unchanged list costs the server nothing.
+    const refresh = setInterval(() => {
+      if (latest.length > 0) publish(latest);
+    }, 60_000);
 
     return () => {
       cancelled = true;
+      clearInterval(refresh);
       unsubscribe();
     };
   }, [richPresenceEnabled, setActivities]);
@@ -58,7 +72,7 @@ export function useRichPresenceReporter(): void {
   // hard crash, but this makes a clean exit immediate.)
   useEffect(() => {
     const onUnload = () => {
-      void setActivities({ activities: [] }).catch(() => {});
+      void setActivities({ activities: [], deviceId: getDeviceId() }).catch(() => {});
     };
     window.addEventListener("pagehide", onUnload);
     return () => window.removeEventListener("pagehide", onUnload);

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAccessibility } from "@/components/accessibility-provider";
 import { useAudioPreferences } from "@/components/audio-provider";
+import { useAppActive } from "@/hooks/use-app-active";
 import { CONFETTI_COLOURS, scatter } from "@/lib/celebration";
 import { playClip, startMusicTrack } from "@/lib/ui-sounds";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,8 @@ function GiftBox({
 }) {
   const opening = stage === "opening";
   const shake = useAnimationControls();
+  // The bob never ends, so it is the one thing here that has to be told to stop while the window is in the background.
+  const appActive = useAppActive();
 
   const handleTap = () => {
     if (opening) return;
@@ -125,9 +128,9 @@ function GiftBox({
           something to touch rather than a picture. */}
       <motion.div
         className="gift-3d absolute inset-0"
-        animate={opening ? { y: 0 } : { y: [0, -10, 0] }}
+        animate={opening || !appActive ? { y: 0 } : { y: [0, -10, 0] }}
         transition={
-          opening
+          opening || !appActive
             ? { duration: 0.2 }
             : { duration: 3.2, repeat: Infinity, ease: "easeInOut" }
         }
@@ -191,6 +194,7 @@ function GiftBox({
 /** Falling-upward confetti across the whole window, rising in from below. */
 function ConfettiField() {
   const pieces = useMemo(() => makeConfetti(34, 7), []);
+  const appActive = useAppActive();
 
   return (
     <motion.div
@@ -200,7 +204,8 @@ function ConfettiField() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.6, ease: "easeOut" }}
     >
-      {pieces.map((piece) => (
+      {/* Thirty-four endless animations: not worth keeping alive behind another window. They start over on return. */}
+      {appActive && pieces.map((piece) => (
         <motion.span
           key={piece.id}
           className="absolute bottom-0 block rounded-[2px]"
@@ -235,20 +240,21 @@ function ConfettiField() {
 /** The horn, and the arc of paper coming out of it. */
 function Popper() {
   const burst = useMemo(() => makeConfetti(16, 91), []);
+  const appActive = useAppActive();
 
   return (
     <div className="relative">
       <motion.div
         // A recoil on each blow, timed to the burst below it.
-        animate={{ rotate: [-14, -30, -14], scale: [1, 1.12, 1] }}
-        transition={{ duration: 0.7, repeat: Infinity, repeatDelay: 1.1, ease: "easeOut" }}
+        animate={appActive ? { rotate: [-14, -30, -14], scale: [1, 1.12, 1] } : { rotate: -14, scale: 1 }}
+        transition={appActive ? { duration: 0.7, repeat: Infinity, repeatDelay: 1.1, ease: "easeOut" } : { duration: 0 }}
       >
         <PartyPopper className="size-16 text-amber-300" />
       </motion.div>
 
       {/* Fired from the horn's mouth, up and to the right. */}
       <div aria-hidden className="pointer-events-none absolute top-0 right-0">
-        {burst.map((piece) => (
+        {appActive && burst.map((piece) => (
           <motion.span
             key={piece.id}
             className="absolute block rounded-[2px]"

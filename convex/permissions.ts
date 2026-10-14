@@ -62,6 +62,9 @@ export const SERVER_ADMIN_PERMISSIONS: number =
   PERMISSIONS.MANAGE_INTEGRATIONS |
   PERMISSIONS.MANAGE_GAME_SERVERS;
 
+/** The server permissions that remove people, the only ones that ask for a code from a member who has two-step on. */
+export const SERVER_DESTRUCTIVE_PERMISSIONS: number = PERMISSIONS.KICK_MEMBERS | PERMISSIONS.BAN_MEMBERS;
+
 /** Every permission a server's "require two-step verification" setting covers: administering plus moderating. */
 export const SERVER_MODERATION_PERMISSIONS: number =
   SERVER_ADMIN_PERMISSIONS |
@@ -207,9 +210,10 @@ export async function enforceServerAssurance(
   flag: number
 ): Promise<void> {
   const mustEnroll = community.requireTwoFactor === true && (flag & SERVER_MODERATION_PERMISSIONS) !== 0;
-  const asksForCode = isMutationCtx(ctx) && (flag & SERVER_ADMIN_PERMISSIONS) !== 0;
+  // Only removing people is destructive enough to ask a code of someone who has two-step on.
+  const asksForCode = isMutationCtx(ctx) && (flag & SERVER_DESTRUCTIVE_PERMISSIONS) !== 0;
   if (!mustEnroll && !asksForCode) return;
-  await requireAdminAssurance(ctx, userId, { mustEnroll, why: "server" });
+  await requireAdminAssurance(ctx, userId, { mustEnroll, why: "server", askForCode: asksForCode });
 }
 
 export async function requireChannelPermission(

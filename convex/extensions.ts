@@ -54,6 +54,7 @@ async function canPublish(ctx: QueryCtx, options: { enforce: boolean }): Promise
   // Publishing as staff is an administrative function: the one that does it asks for the code.
   // The query that only decides whether to *show* the option doesn't, or the option would vanish
   // the moment the unlocked window ended instead of asking.
+  // Publishing isn't destructive, so no code; this still applies the platform's enrolment rule.
   if (options.enforce) await assertStaffAssurance(ctx, staff);
   return true;
 }
@@ -287,7 +288,7 @@ export const adminReview = mutation({
 export const adminRevokeVersion = mutation({
   args: { versionId: v.id("extensionVersions"), reason: v.string() },
   handler: async (ctx, { versionId, reason }) => {
-    const staff = await requireStaff(ctx, "system.manage");
+    const staff = await requireStaff(ctx, "system.manage", { destructive: true });
     const x = await ctx.db.get(versionId);
     if (!x) throw new Error("That version doesn't exist.");
     const why = reason.trim().slice(0, 500);
@@ -302,7 +303,7 @@ export const adminRevokeVersion = mutation({
 export const adminSetSuspended = mutation({
   args: { extensionId: v.id("extensions"), suspended: v.boolean(), reason: v.optional(v.string()) },
   handler: async (ctx, { extensionId, suspended, reason }) => {
-    const staff = await requireStaff(ctx, "system.manage");
+    const staff = await requireStaff(ctx, "system.manage", { destructive: suspended });
     const e = await ctx.db.get(extensionId);
     if (!e) throw new Error("That extension doesn't exist.");
     if (suspended && (reason?.trim().length ?? 0) < 3) throw new Error("Say why — it goes in the audit log.");

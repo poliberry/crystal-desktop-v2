@@ -99,6 +99,8 @@ export function VoiceVideoTab() {
     setCallParticipantSounds,
     richPresenceEnabled,
     setRichPresenceEnabled,
+    doubleClickToJoin,
+    setDoubleClickToJoin,
   } = useAudioPreferences();
 
   const [status, setStatus] = useState<SystemAudioStatus>({ kind: "other" });
@@ -501,6 +503,18 @@ export function VoiceVideoTab() {
               checked={callParticipantSounds}
               onCheckedChange={setCallParticipantSounds}
             />
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="double-click-to-join" className="text-sm font-normal">
+                Double-click to join calls
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Joining a voice channel or starting a call takes a double click instead of a single one, so a stray
+                click doesn&apos;t put you in a call. Pressing Enter on a focused button still joins.
+              </p>
+            </div>
+            <Switch id="double-click-to-join" checked={doubleClickToJoin} onCheckedChange={setDoubleClickToJoin} />
           </div>
           <div className="space-y-3">
             <div className="flex items-start justify-between gap-4">

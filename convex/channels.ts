@@ -640,7 +640,11 @@ export const recordVoiceJoin = internalMutation({
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
       .unique();
-    if (existing) return;
+    if (existing) {
+      // See calls.recordJoin: re-stamp a row left by an earlier connection so its late leave can't remove it.
+      await ctx.db.patch(existing._id, { joinedAt: Date.now() });
+      return;
+    }
     await ctx.db.insert("channelCallParticipants", { channelId, userId, joinedAt: Date.now() });
     await fireVoiceEvent(ctx, channelId, userId, "joined");
     await notifyVoiceChannelActivity(ctx, {
@@ -653,13 +657,18 @@ export const recordVoiceJoin = internalMutation({
 });
 
 export const recordVoiceLeave = internalMutation({
-  args: { channelId: v.id("channels"), userId: v.id("users") },
-  handler: async (ctx, { channelId, userId }) => {
+  args: {
+    channelId: v.id("channels"),
+    userId: v.id("users"),
+    /** See calls.recordLeave: only remove a row made at or before this time (ms). */
+    joinedBefore: v.optional(v.number()),
+  },
+  handler: async (ctx, { channelId, userId, joinedBefore }) => {
     const row = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
       .unique();
-    if (row) {
+    if (row && (joinedBefore === undefined || row.joinedAt <= joinedBefore)) {
       await ctx.db.delete(row._id);
       await fireVoiceEvent(ctx, channelId, userId, "left");
     }

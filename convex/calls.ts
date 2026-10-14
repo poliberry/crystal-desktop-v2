@@ -52,15 +52,21 @@ export const listParticipants = query({
  * REST API itself (no outbound network access), hence the split.
  */
 export const recordLeave = internalMutation({
-  args: { conversationId: v.id("conversations"), userId: v.id("users") },
-  handler: async (ctx, { conversationId, userId }) => {
+  args: {
+    conversationId: v.id("conversations"),
+    userId: v.id("users"),
+    /** Only remove the row if it was made at or before this time (ms). A late `participant_left` for
+     * a connection that has since been replaced by a newer join must not take the newer row with it. */
+    joinedBefore: v.optional(v.number()),
+  },
+  handler: async (ctx, { conversationId, userId, joinedBefore }) => {
     const row = await ctx.db
       .query("callParticipants")
       .withIndex("by_conversation_user", (q) =>
         q.eq("conversationId", conversationId).eq("userId", userId)
       )
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    if (row && (joinedBefore === undefined || row.joinedAt <= joinedBefore)) await ctx.db.delete(row._id);
 
     const remaining = await ctx.db
       .query("callParticipants")
@@ -80,7 +86,12 @@ export const recordJoin = internalMutation({
         q.eq("conversationId", conversationId).eq("userId", userId)
       )
       .unique();
-    if (existing) return;
+    if (existing) {
+      // A row left over from an earlier connection (its leave hasn't landed yet): this join is the live
+      // one now, so stamp it as such. Otherwise that late leave deletes the row out from under us.
+      await ctx.db.patch(existing._id, { joinedAt: Date.now() });
+      return;
+    }
     await ctx.db.insert("callParticipants", { conversationId, userId, joinedAt: Date.now() });
 
     // "Someone joined the call" — but not for the person who started it (an
