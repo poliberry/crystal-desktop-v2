@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -13,6 +14,17 @@ const nextConfig: NextConfig = {
   // Paper.js (Studio's Pathfinder) has Node-only canvas code that the server-side render of a client
   // component tries to bundle and can't. It is only ever used in the browser, loaded on first use.
   serverExternalPackages: ["paper"],
+  turbopack: {
+    rules: {
+      // The extension engine (QuickJS) embeds its WebAssembly as a template literal that the production
+      // minifier corrupts (`\x000` -> `\00`, an octal escape), so the extension Worker's chunk won't
+      // even parse. This re-encodes it as base64 first. See the loader for the details.
+      "*emscripten-module.browser-*.mjs": {
+        loaders: [path.resolve(process.cwd(), "scripts/turbopack-wasm-literal-loader.cjs")],
+        as: "*.js",
+      },
+    },
+  },
   // Tree-shake large packages per route — less JS parsed = less heap
   experimental: {
     optimizePackageImports: [

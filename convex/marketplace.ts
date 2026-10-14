@@ -18,7 +18,7 @@ import { creationArtworkUrl, creationFolder, dropR2Url } from "./lib/r2";
 import { isMotionAddress } from "./lib/motionAddress";
 import { CURRENCIES } from "./catalog";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
-import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { creatorKey, getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { audit, requireStaff } from "./lib/staff";
 import { COMMUNITY_CREATION_KINDS, MAX_CREATION_CENTS, MAX_PACK_ITEMS, MIN_PAID_CENTS, checkCreationShape, slugFromName, uniqueSlug } from "./lib/creationRules";
 import { listingPatch, refreshedGrant, sameKinds, updateBlocker } from "./lib/listingUpdate";
@@ -303,7 +303,7 @@ export const submitListing = mutation({
       throw new Error("You have a lot waiting for review already. Wait for some to be reviewed first.");
     }
 
-    const grant = creationGrant(args.kind, name, args, me.clerkId);
+    const grant = creationGrant(args.kind, name, args, creatorKey(me));
     const now = Date.now();
     return ctx.db.insert("marketplaceSubmissions", {
       creatorId: me._id,
@@ -434,8 +434,8 @@ export const submitCreation = mutation({
       if (blocked) throw new Error(blocked);
     }
 
-    const grants = args.items.map((item) => buildCreationItem(item, name, me.clerkId));
-    const previewUrl = args.previewUrl ? creationArtworkUrl(args.previewUrl, me.clerkId) : undefined;
+    const grants = args.items.map((item) => buildCreationItem(item, name, creatorKey(me)));
+    const previewUrl = args.previewUrl ? creationArtworkUrl(args.previewUrl, creatorKey(me)) : undefined;
     const single = grants.length === 1 ? grants[0] : null;
     if (!previewUrl && !(single && previewOf(single))) {
       throw new Error("Add a store picture so people can see what they are buying.");
@@ -495,8 +495,8 @@ export const staffPublishCreation = mutation({
     if (!category) throw new Error("Choose a category for the listing.");
 
     // The artwork has to be in the publishing staff member's own folder, like a creator's: nothing in the arguments is taken on trust.
-    const grants = args.items.map((item) => buildCreationItem(item, name, staff.user.clerkId));
-    const previewUrl = args.previewUrl ? creationArtworkUrl(args.previewUrl, staff.user.clerkId) : undefined;
+    const grants = args.items.map((item) => buildCreationItem(item, name, creatorKey(staff.user)));
+    const previewUrl = args.previewUrl ? creationArtworkUrl(args.previewUrl, creatorKey(staff.user)) : undefined;
     const single = grants.length === 1 ? grants[0] : null;
     if (!previewUrl && !(single && previewOf(single))) throw new Error("Add a store picture so people can see what they are buying.");
 

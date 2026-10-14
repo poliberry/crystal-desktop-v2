@@ -23,6 +23,7 @@ const r = (method: Method, path: string, op: string, summary: string, upload?: R
 export const ROUTES: Route[] = [
   r("GET", "/me", "me", "Who this bot is and where it has been added."),
   r("PATCH", "/me", "profile.update", "Change the bot's bio or avatar."),
+  r("PUT", "/me/e2ee-key", "e2ee.register", "Register or rotate this bot's public E2EE identity key."),
   r("GET", "/events", "events.poll", "Collect events, for a bot with no endpoint: ?after=<cursor>&wait=<seconds, up to 25> waits for something to happen. The SDK does this for you."),
   r("PUT", "/commands", "commands.set", "Replace the bot's slash commands."),
   r("POST", "/uploads", "upload.ticket", "Get a one-use address to upload a file to; the answer's storageId goes into the calls that take files."),
@@ -64,6 +65,7 @@ export const ROUTES: Route[] = [
   r("POST", "/channels/:channelId/typing", "typing", "Show the bot as typing."),
 
   r("GET", "/channels/:channelId/messages", "message.list", "Recent messages, newest first (messages.read)."),
+  r("GET", "/channels/:channelId/e2ee-key", "e2ee.current", "The current room key wrap addressed to this bot (messages.read)."),
   r("POST", "/channels/:channelId/messages", "message.send", "Send a message, with embeds, buttons and files.", "files"),
   r("POST", "/channels/:channelId/messages/bulk-delete", "message.bulkDelete", "Delete up to 100 messages (Manage messages)."),
   r("GET", "/channels/:channelId/messages/:messageId", "message.get", "One message (messages.read)."),

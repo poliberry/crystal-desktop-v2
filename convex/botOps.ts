@@ -26,6 +26,7 @@ import { applyBotPresence, type BotActivity, type BotStatus } from "./presence";
 import { PERMISSIONS, getBasePermissions, getHighestRolePosition, requireAbove } from "./permissions";
 import { MAX_SOUND_BYTES } from "./uploadLimits";
 import { effectiveFileType } from "./lib/mediaType";
+import { fingerprintOf } from "./lib/e2eeCrypto";
 
 /**
  * Every Bot API operation, run as ONE transaction per request: authenticate → count → check → act →
@@ -57,7 +58,7 @@ type Handler = (ctx: MutationCtx, req: Req) => Promise<Out>;
 
 // --- Small helpers -------------------------------------------------------------------------------
 
-type IdTable = "channels" | "communities" | "channelMessages" | "users" | "roles" | "communityEmojis" | "communitySounds" | "channelCategories";
+type IdTable = "channels" | "communities" | "channelMessages" | "users" | "roles" | "communityEmojis" | "communitySounds" | "channelCategories" | "e2eeKeys";
 
 function ident<T extends IdTable>(ctx: QueryCtx, table: T, raw: unknown, what = "That"): Id<T> {
   const id = typeof raw === "string" ? ctx.db.normalizeId(table, raw) : null;
@@ -92,6 +93,14 @@ function valid<T>(fn: () => T): T {
   } catch (e) {
     return fail(400, e instanceof Error ? e.message : "That isn't valid.");
   }
+}
+
+function envelope(ctx: QueryCtx, raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail(400, "`enc` must be an encrypted message envelope.");
+  const value = raw as Record<string, unknown>;
+  const keyId = typeof value.keyId === "string" ? ctx.db.normalizeId("e2eeKeys", value.keyId) : null;
+  if (!keyId || typeof value.iv !== "string" || typeof value.ct !== "string") return fail(400, "`enc` must include a valid keyId, iv and ct.");
+  return { keyId, iv: value.iv, ct: value.ct };
 }
 
 async function community(ctx: MutationCtx, req: Req): Promise<Acting> {
@@ -262,6 +271,33 @@ const ops: Record<string, Handler> = {
     return { data: { ok: true, pendingReview: plan.pending !== null } };
   },
 
+  async "e2ee.current"(ctx, req) {
+    const { acting, channel, perms } = await inChannel(ctx, req);
+    requirePermission(perms, PERMISSIONS.SEND_MESSAGES, "send messages in this channel");
+    const [key] = await ctx.db.query("e2eeKeys").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).order("desc").take(1);
+    if (!key) return { data: null };
+    const wrap = await ctx.db.query("e2eeKeyWraps").withIndex("by_key_bot", (q) => q.eq("keyId", key._id).eq("botId", acting.bot._id)).unique();
+    return { data: { keyId: key._id, epoch: key.epoch, escrowed: key.escrowed, myWrap: wrap?.wrapped ?? null } };
+  },
+
+  async "e2ee.register"(ctx, { botId, body }) {
+    const bot = await ctx.db.get(botId);
+    if (!bot) return fail(401, "Unknown bot.");
+    const publicKey = body.publicKey;
+    if (typeof publicKey !== "string" || publicKey.length < 50 || publicKey.length > 256 || !/^[A-Za-z0-9_-]+$/.test(publicKey)) {
+      return fail(400, "`publicKey` must be a base64url encoded P-256 public key.");
+    }
+    let fingerprint: string;
+    try {
+      fingerprint = await fingerprintOf(publicKey);
+    } catch {
+      return fail(400, "`publicKey` is not a valid P-256 public key.");
+    }
+    await ctx.db.patch(botId, { e2eePublicKey: publicKey, e2eeFingerprint: fingerprint, updatedAt: Date.now() });
+    await ctx.scheduler.runAfter(0, internal.e2eeKeys.queueBotWraps, { botId });
+    return { data: { fingerprint } };
+  },
+
   async "commands.set"(ctx, { botId, body }) {
     const commands = valid(() => validateCommands(body.commands));
     await ctx.db.patch(botId, { commands, updatedAt: Date.now() });
@@ -400,21 +436,23 @@ const ops: Record<string, Handler> = {
     const cursor = req.query.before ? await ctx.db.get(ident(ctx, "channelMessages", req.query.before, "That message")) : null;
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
     const rows = await ctx.db.query("channelMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).order("desc").filter((q) => (cursor ? q.lt(q.field("_creationTime"), cursor._creationTime) : true)).take(limit);
-    return { data: { messages: await Promise.all(rows.map((m) => describeMessage(ctx, m))) } };
+    return { data: { messages: await Promise.all(rows.map((m) => describeMessage(ctx, m, acting.bot._id))) } };
   },
 
   async "message.get"(ctx, req) {
     const { acting, channel } = await inChannel(ctx, req);
     requireScope(acting, "messages.read");
-    return { data: await describeMessage(ctx, await messageIn(ctx, channel, req.params.messageId)) };
+    return { data: await describeMessage(ctx, await messageIn(ctx, channel, req.params.messageId), acting.bot._id) };
   },
 
   async "message.send"(ctx, req) {
     const { acting, channel, perms } = await inChannel(ctx, req);
     requirePermission(perms, PERMISSIONS.SEND_MESSAGES, "send messages in this channel");
-    const content = text(req.body, "content", { max: BOT_MESSAGE.content, trim: true });
-    const embeds = valid(() => validateEmbeds(req.body.embeds));
-    const components = valid(() => validateComponents(req.body.components));
+    const enc = req.body.enc === undefined ? undefined : envelope(ctx, req.body.enc);
+    if (enc && (req.body.content !== undefined || req.body.embeds !== undefined || req.body.components !== undefined)) return fail(400, "Send either `enc` or plaintext content, embeds and components, not both.");
+    const content = enc ? undefined : text(req.body, "content", { max: BOT_MESSAGE.content, trim: true });
+    const embeds = enc ? [] : valid(() => validateEmbeds(req.body.embeds));
+    const components = enc ? [] : valid(() => validateComponents(req.body.components));
     const filesIn = req.body.files === undefined ? [] : Array.isArray(req.body.files) ? req.body.files : fail(400, "`files` is a list.");
     if (filesIn.length > BOT_MESSAGE.files) return fail(400, `A message can carry up to ${BOT_MESSAGE.files} files.`);
     const attachments = [];
@@ -425,11 +463,11 @@ const ops: Record<string, Handler> = {
       if (/^(text\/html|application\/(xhtml|javascript|x-javascript)|image\/svg)/.test(up.contentType)) return fail(400, "That kind of file can't be sent.");
       attachments.push({ storageId: up.id, fileName, fileType: effectiveFileType(up.contentType, fileName), fileSize: up.size });
     }
-    if (!content && !embeds.length && !components.length && !attachments.length) return fail(400, "A message needs `content`, `embeds`, `components` or `files`.");
+    if (!enc && !content && !embeds.length && !components.length && !attachments.length) return fail(400, "A message needs `content`, `embeds`, `components` or `files`.");
     if (content && MENTIONS_EVERYONE.test(content)) requirePermission(perms, PERMISSIONS.MENTION_EVERYONE, "mention everyone or a role");
     const reply = typeof req.body.replyToId === "string" ? ctx.db.normalizeId("channelMessages", req.body.replyToId) : null;
     await spendRate(ctx, req.botId, "send");
-    const id = await sendChannelMessage(ctx, acting.botUser, { channelId: channel._id, text: content, replyToId: reply ?? undefined, pingReply: req.body.pingReply !== false, attachments: attachments.length ? attachments : undefined }, { permissionChecked: true, embeds, components });
+    const id = await sendChannelMessage(ctx, acting.botUser, { channelId: channel._id, text: content, enc, replyToId: reply ?? undefined, pingReply: req.body.pingReply !== false, attachments: attachments.length ? attachments : undefined }, { permissionChecked: true, embeds, components });
     return { status: 201, data: { id } };
   },
 
@@ -437,7 +475,11 @@ const ops: Record<string, Handler> = {
     const { acting, channel } = await inChannel(ctx, req);
     const message = await messageIn(ctx, channel, req.params.messageId);
     if (message.authorId !== acting.bot.userId) return fail(403, "A bot can only edit its own messages.");
-    const change: { text?: string; embeds?: ReturnType<typeof validateEmbeds>; components?: ReturnType<typeof validateComponents> } = {};
+    const change: { text?: string; enc?: ReturnType<typeof envelope>; embeds?: ReturnType<typeof validateEmbeds>; components?: ReturnType<typeof validateComponents> } = {};
+    if (req.body.enc !== undefined) {
+      if (req.body.content !== undefined || req.body.embeds !== undefined || req.body.components !== undefined) return fail(400, "Send either `enc` or plaintext content, embeds and components, not both.");
+      change.enc = envelope(ctx, req.body.enc);
+    }
     if (req.body.content !== undefined) change.text = text(req.body, "content", { max: BOT_MESSAGE.content }) ?? "";
     if (req.body.embeds !== undefined) change.embeds = valid(() => validateEmbeds(req.body.embeds));
     if (req.body.components !== undefined) change.components = valid(() => validateComponents(req.body.components));
@@ -501,7 +543,7 @@ const ops: Record<string, Handler> = {
     requireScope(acting, "messages.read");
     const pinned = await ctx.db.query("channelMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).filter((q) => q.neq(q.field("pinnedAt"), undefined)).take(100);
     pinned.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
-    return { data: { messages: await Promise.all(pinned.map((m) => describeMessage(ctx, m))) } };
+    return { data: { messages: await Promise.all(pinned.map((m) => describeMessage(ctx, m, acting.bot._id))) } };
   },
 
   async "pin.add"(ctx, req) {
@@ -889,7 +931,7 @@ const ops: Record<string, Handler> = {
 /** Operations that only read: not written to the audit trail unless refused (a bot polling would bury everything). */
 const READS = /^(me|presence\.get|community\.get|channel\.(list|get)|overwrite\.list|message\.(list|get)|pin\.list|member\.(list|get)|ban\.list|role\.list|emoji\.list|sound\.list|voice\.list)$/;
 
-export type OpResult = { ok: true; status: number; data: unknown; botId: Id<"bots"> } | { ok: false; status: number; message: string };
+export type OpResult = { ok: true; status: number; data: unknown; botId: Id<"bots"> } | { ok: false; status: number; message: string; code?: string };
 
 /**
  * Authenticate, count, run one operation and audit it — in one transaction. The bot is found by

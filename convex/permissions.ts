@@ -1,5 +1,6 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
+import { isMutationCtx, requireAdminAssurance } from "./lib/stepUp";
 
 /**
  * Community permission bitfield. Mirrored (for rendering, not authority) on
@@ -41,6 +42,37 @@ export const PERMISSIONS = {
 } as const;
 
 export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
+
+/**
+ * The permissions that count as *administering* a server — the ones Discord also asks two-factor
+ * for. Using one of these asks a member who has two-step verification for a code before a change
+ * is made (see `enforceServerAssurance`).
+ *
+ * Everyday moderation (deleting a message, muting someone in a call) isn't here: it happens too
+ * often for a code each time, and a server that requires two-step verification already covers it
+ * through `SERVER_MODERATION_PERMISSIONS`.
+ */
+export const SERVER_ADMIN_PERMISSIONS: number =
+  PERMISSIONS.ADMINISTRATOR |
+  PERMISSIONS.MANAGE_COMMUNITY |
+  PERMISSIONS.MANAGE_ROLES |
+  PERMISSIONS.MANAGE_CHANNELS |
+  PERMISSIONS.KICK_MEMBERS |
+  PERMISSIONS.BAN_MEMBERS |
+  PERMISSIONS.MANAGE_INTEGRATIONS |
+  PERMISSIONS.MANAGE_GAME_SERVERS;
+
+/** Every permission a server's "require two-step verification" setting covers: administering plus moderating. */
+export const SERVER_MODERATION_PERMISSIONS: number =
+  SERVER_ADMIN_PERMISSIONS |
+  PERMISSIONS.MANAGE_MESSAGES |
+  PERMISSIONS.MANAGE_EMOJIS |
+  PERMISSIONS.MODERATE_MEMBERS |
+  PERMISSIONS.MANAGE_EVENTS |
+  PERMISSIONS.MANAGE_NICKNAMES |
+  PERMISSIONS.MUTE_MEMBERS |
+  PERMISSIONS.DEAFEN_MEMBERS |
+  PERMISSIONS.MOVE_MEMBERS;
 
 /** Sensible defaults for a brand-new community's @everyone role. */
 export const DEFAULT_EVERYONE_PERMISSIONS =
@@ -155,6 +187,29 @@ export async function requireCommunityPermission(
 ): Promise<void> {
   const perms = await getBasePermissions(ctx, community, userId);
   if (!can(perms, flag)) throw new Error("You don't have permission to do that.");
+  await enforceServerAssurance(ctx, community, userId, flag);
+}
+
+/**
+ * Two-step verification for using a server's permissions, applied to everyone who passes
+ * `requireCommunityPermission` — so no administrative function has to remember to ask.
+ *
+ *   - A server that requires two-step verification refuses any moderation permission to a member
+ *     who hasn't turned it on. The owner included: the owner is who set the rule.
+ *   - The administrative permissions ask a member who *has* it on for a code, on writes. (A query
+ *     can't be paused for a code and retried, so reads are left alone: the data they show is
+ *     what the member could already see.)
+ */
+export async function enforceServerAssurance(
+  ctx: QueryCtx,
+  community: Doc<"communities">,
+  userId: Id<"users">,
+  flag: number
+): Promise<void> {
+  const mustEnroll = community.requireTwoFactor === true && (flag & SERVER_MODERATION_PERMISSIONS) !== 0;
+  const asksForCode = isMutationCtx(ctx) && (flag & SERVER_ADMIN_PERMISSIONS) !== 0;
+  if (!mustEnroll && !asksForCode) return;
+  await requireAdminAssurance(ctx, userId, { mustEnroll, why: "server" });
 }
 
 export async function requireChannelPermission(
@@ -166,6 +221,7 @@ export async function requireChannelPermission(
 ): Promise<void> {
   const perms = await getChannelPermissions(ctx, community, channelId, userId);
   if (!can(perms, flag)) throw new Error("You don't have permission to do that.");
+  await enforceServerAssurance(ctx, community, userId, flag);
 }
 
 /**

@@ -163,7 +163,19 @@ export const BOT_DELIVERY = { timeoutMs: 5_000, backoffMs: [5_000, 30_000, 120_0
 export const BOT_RATE = { requestsPerMinute: 120, sendsPerMinute: 40 } as const;
 
 /** What one message from a bot may carry. */
-export const BOT_MESSAGE = { content: 4000, files: 4, fileBytes: 10 * 1024 * 1024 } as const;
+export const BOT_MESSAGE = {
+  content: 4000,
+  files: 4,
+  fileBytes: 10 * 1024 * 1024,
+  /**
+   * Longest `enc.ct` (base64url characters) a bot may send. The server can't open a ciphertext, so it can't
+   * apply the content/embed limits above; this stands in for them. 4000 characters of content plus 6000 of
+   * embed text is 40 KB as UTF-8 at worst, and the JSON around embeds and buttons (keys, addresses) fits in
+   * the 24 KB left of a 64 KB plaintext. 64 KB plus the GCM tag is 87,403 base64url characters, rounded up
+   * to 90,000. Under the 100,000 that `e2eePure.ENVELOPE_MAX_CT_LENGTH` allows any sender.
+   */
+  encCtChars: 90_000,
+} as const;
 
 export const BOT_LIMITS = { botsPerUser: 10, botsPerCommunity: 25, commands: 25, descriptionChars: 300, bioChars: 190 } as const;
 

@@ -5,8 +5,10 @@ import { useCallback } from "react";
 import { enqueue, stashBlob } from "@/lib/outbox";
 import type {
   OutboxAttachmentInput,
+  OutboxMentions,
   OutboxVariant,
 } from "@/lib/outbox-types";
+import { extractMentions } from "@/lib/mentions";
 
 /**
  * `useMutation`, but durable: the call lands in the IndexedDB outbox first (see
@@ -37,6 +39,8 @@ export interface OutboxSendInput {
   conversationId?: string;
   channelId?: string;
   text?: string;
+  /** From `extractMentions(text)`; travels in the clear beside the ciphertext. */
+  mentions?: OutboxMentions;
   birthdayWish?: boolean;
   replyToId?: string;
   pingReply?: boolean;
@@ -59,6 +63,7 @@ interface TargetedInput {
 export interface OutboxEditInput extends TargetedInput {
   messageId: string;
   text: string;
+  mentions?: OutboxMentions;
 }
 export interface OutboxDeleteInput extends TargetedInput {
   messageId: string;
@@ -138,6 +143,7 @@ export function useOutboxMutation<
             conversationId: send.conversationId,
             channelId: send.channelId,
             text: send.text,
+            mentions: send.mentions ?? extractMentions(send.text ?? ""),
             birthdayWish: send.birthdayWish,
             replyToId: send.replyToId,
             pingReply: send.pingReply,
@@ -175,7 +181,7 @@ export function useOutboxMutation<
           id,
           targetKey,
           variant,
-          args: { kind: "edit", messageId: e.messageId, text: e.text },
+          args: { kind: "edit", messageId: e.messageId, text: e.text, mentions: e.mentions ?? extractMentions(e.text) },
         });
       } else if (kind === "delete") {
         const d = withMsg as OutboxDeleteInput;

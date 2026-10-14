@@ -24,6 +24,8 @@ import {
 import type { OutboxEntry } from "@/lib/outbox-types";
 import { setOverlayBlobUrlListener } from "@/lib/outbox-overlay";
 import { uploadToStorage } from "@/lib/storage-upload";
+import { keyring, type Room } from "@/lib/e2ee";
+import { toConvexMentions } from "@/lib/mentions";
 
 /**
  * Drains the durable outbox to Convex.
@@ -119,6 +121,13 @@ export function OutboxFlusher() {
       const dm = entry.variant === "dm";
 
       if (args.kind === "send") {
+        const authorId = currentOutboxUser();
+        if (!authorId) throw new Error("Sign in before sending messages.");
+        const targetId = entry.targetKey.slice(entry.targetKey.indexOf(":") + 1);
+        const room: Room = dm
+          ? { scope: "conversation", conversationId: targetId as Id<"conversations"> }
+          : { scope: "channel", channelId: targetId as Id<"channels"> };
+        const encrypted = await keyring.encrypt(room, authorId as Id<"users">, { text: args.text });
         const attachments: {
           storageId?: Id<"_storage">;
           cdnKey?: string;
@@ -167,7 +176,8 @@ export function OutboxFlusher() {
         if (dm) {
           realId = await convex.mutation(api.messages.send, {
             conversationId: args.conversationId as Id<"conversations">,
-            text: args.text,
+            enc: encrypted.enc,
+            mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
             attachments: attachments.length ? attachments : undefined,
             birthdayWish: args.birthdayWish || undefined,
             replyToId: args.replyToId as Id<"messages"> | undefined,
@@ -177,7 +187,8 @@ export function OutboxFlusher() {
         } else {
           realId = await convex.mutation(api.channelMessages.send, {
             channelId: args.channelId as Id<"channels">,
-            text: args.text,
+            enc: encrypted.enc,
+            mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
             attachments: attachments.length ? attachments : undefined,
             replyToId: args.replyToId as Id<"channelMessages"> | undefined,
             pingReply: args.pingReply,
@@ -191,15 +202,24 @@ export function OutboxFlusher() {
       }
 
       if (args.kind === "edit") {
+        const authorId = currentOutboxUser();
+        if (!authorId) throw new Error("Sign in before editing messages.");
+        const targetId = entry.targetKey.slice(entry.targetKey.indexOf(":") + 1);
+        const room: Room = dm
+          ? { scope: "conversation", conversationId: targetId as Id<"conversations"> }
+          : { scope: "channel", channelId: targetId as Id<"channels"> };
+        const encrypted = await keyring.encrypt(room, authorId as Id<"users">, { text: args.text });
         if (dm) {
           await convex.mutation(api.messages.update, {
             messageId: args.messageId as Id<"messages">,
-            text: args.text,
+            enc: encrypted.enc,
+            mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
           });
         } else {
           await convex.mutation(api.channelMessages.update, {
             messageId: args.messageId as Id<"channelMessages">,
-            text: args.text,
+            enc: encrypted.enc,
+            mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
           });
         }
         return;

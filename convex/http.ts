@@ -2,6 +2,7 @@ import { verifyUploadTicket } from "./lib/uploadTicket";
 import { httpRouter } from "convex/server";
 
 import { internal } from "./_generated/api";
+import { auth } from "./auth";
 import { httpAction } from "./_generated/server";
 
 // --- CDN: Cloudflare R2 proxy + cache headers ---
@@ -10,6 +11,10 @@ import { httpAction } from "./_generated/server";
 // this route is inert and Convex storage is used instead.
 
 const http = httpRouter();
+
+// The public key Convex checks sign-in tokens against (`/.well-known/jwks.json`) and the matching
+// OpenID discovery document. Without these no signed-in request would be accepted.
+auth.addHttpRoutes(http);
 
 // The Bot API. One prefix route: botHttp.ts authenticates and dispatches, and botApi.ts decides
 // what a bot may do. Only the methods it uses are registered.

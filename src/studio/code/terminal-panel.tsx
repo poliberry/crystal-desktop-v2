@@ -13,16 +13,22 @@ export interface TerminalSession {
   key: number;
   title: string;
   exited: boolean;
+  /** Typed into the shell once it's open, as if the person had (a coding agent started from "Open in…"). */
+  command?: string;
 }
+
+/** A program name and nothing else: what may be typed into a terminal on the person's behalf. */
+const SAFE_COMMAND = /^[a-z][a-z0-9-]{0,30}$/;
 
 /** The terminals open in a workbench. State lives above the panel so VS Code's title-bar buttons (+, trash) can act on it. */
 export function useTerminals() {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [current, setCurrent] = useState<number | null>(null);
   const counter = useRef(0);
-  const add = useCallback(() => {
+  const add = useCallback((opts?: { command?: string }) => {
     const key = ++counter.current;
-    setSessions((s) => [...s, { key, title: process_name(), exited: false }]);
+    const command = typeof opts?.command === "string" && SAFE_COMMAND.test(opts.command) ? opts.command : undefined;
+    setSessions((s) => [...s, { key, title: command ?? process_name(), exited: false, command }]);
     setCurrent(key);
   }, []);
   const close = useCallback((key: number) => {
@@ -55,7 +61,7 @@ function terminalTheme(p: VscPalette) {
  * started in the project's folder (`electron/studioTerminal.ts` says what it is and isn't allowed
  * to do). It exists only because the person asked for a terminal, and ends when it is closed.
  */
-function TerminalView({ folder, active, onExit, onError }: { folder: () => Promise<string>; active: boolean; onExit: () => void; onError: (m: string) => void }) {
+function TerminalView({ folder, active, command, onExit, onError }: { folder: () => Promise<string>; active: boolean; command?: string; onExit: () => void; onError: (m: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const fitRef = useRef<{ fit(): void } | null>(null);
   const termRef = useRef<{ options: { theme?: unknown } } | null>(null);
@@ -117,6 +123,8 @@ function TerminalView({ folder, active, onExit, onError }: { folder: () => Promi
         id = opened;
         for (const e of early.splice(0)) if (e.id === id) term.write(e.data);
         term.focus();
+        // Typed-ahead input waits in the terminal until the shell has finished starting up and reads it.
+        if (command) setTimeout(() => !disposed && void api.write(opened, `${command}\r`), 150);
       } catch (e) {
         onError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']*': (Error: )?/, "") : "The terminal couldn't start.");
       }
@@ -156,7 +164,7 @@ export function TerminalPanel({ terminals, folder, visible, onError }: { termina
             No terminal is open. Use the + above to open one in this project&apos;s folder.
           </div>
         ) : (
-          sessions.map((s) => <TerminalView key={s.key} folder={folder} active={visible && s.key === current} onExit={() => terminals.markExited(s.key)} onError={onError} />)
+          sessions.map((s) => <TerminalView key={s.key} folder={folder} active={visible && s.key === current} command={s.command} onExit={() => terminals.markExited(s.key)} onError={onError} />)
         )}
       </div>
       {sessions.length > 1 && (

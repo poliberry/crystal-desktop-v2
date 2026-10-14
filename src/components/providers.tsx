@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { ClerkProvider, useAuth } from "@clerk/react";
-import { dark } from "@clerk/themes";
-import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithClerk } from "convex/react-clerk";
+import { ConvexAuthProvider } from "@convex-dev/auth/react";
 
-import { getDesktopAPI } from "@/lib/desktop";
+import { createConvexClient } from "@/lib/convex-client";
+import { StepUpDialog } from "@/components/auth/step-up-dialog";
+import { SessionEndedWatcher } from "@/components/auth/session-ended-watcher";
+import { useAuthUserId } from "@/components/auth/auth-state";
+
 import { warmSystemEmoji } from "@/lib/system-emoji";
 import { pruneExpired, setCacheNamespace } from "@/lib/persistent-cache";
 import { pruneAttachmentCache, pruneImageCache } from "@/lib/image-cache";
@@ -20,7 +20,6 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ThemePackProvider } from "@/components/theme-pack-provider";
 import { ExtensionsProvider } from "@/extensions/extensions-provider";
 import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
-import { AccountSuspendedGate } from "@/components/account-suspended-gate";
 import { AppLoadingGate } from "@/components/app-loading-gate";
 import { DataPreloader } from "@/components/data-preloader";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -29,34 +28,11 @@ import { CustomCssProvider } from "@/components/custom-css-provider";
 import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog";
 import { ProfilePageProvider } from "@/components/profile/profile-page";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { E2eeProvider } from "@/lib/e2ee";
 
-const CLERK_PUBLISHABLE_KEY =
-  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "";
 const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
 
-const convex = new ConvexReactClient(CONVEX_URL);
-
-// Listens for crystal://auth/callback IPC events from the main process and
-// navigates to the /auth/callback route so Clerk can complete the OAuth flow.
-function AuthCallbackHandler() {
-  const router = useRouter();
-
-  useEffect(() => {
-    const api = getDesktopAPI();
-    if (!api?.auth) return;
-    const unsub = api.auth.onCallback((url) => {
-      try {
-        const params = new URL(url).search;
-        router.push(`/auth/callback/${params}`);
-      } catch {
-        // malformed URL — ignore
-      }
-    });
-    return unsub;
-  }, [router]);
-
-  return null;
-}
+const convex = createConvexClient(CONVEX_URL);
 
 /**
  * Points the persistent cache at whoever is signed in, and clears out entries
@@ -105,7 +81,7 @@ function DeferredEmojiFont() {
 }
 
 function CacheScope() {
-  const { userId } = useAuth();
+  const userId = useAuthUserId();
   // Cache namespace is safe to set during render (idempotent string assign).
   setCacheNamespace(userId);
 
@@ -140,13 +116,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <UiPreferencesProvider>
           <AudioPreferencesProvider>
             <TooltipProvider>
-              <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
-                <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+              {/* `shouldHandleCode` off: a `?code=` in the address is somebody's invite or OAuth return, not ours. */}
+              <ConvexAuthProvider client={convex} shouldHandleCode={false}>
+                <E2eeProvider>
+                <>
                   <CacheScope />
                   <DeferredEmojiFont />
                   {/* Over everything while the app is starting or offline. */}
                   <AppLoadingGate />
-                  <AuthCallbackHandler />
+                  {/* A session ended on the server (banned, suspended, signed out elsewhere): leave, don't limp. */}
+                  <SessionEndedWatcher />
+                  {/* The code prompt that any administrative function can open. */}
+                  <StepUpDialog />
                   {/* Only warms caches and draws nothing, so if it fails the app carries on without it. */}
                   <ErrorBoundary silent label="Data preloader">
                     <DataPreloader />
@@ -154,7 +135,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
                   <OutboxFlusher />
                   <OutboxStatus />
                   <FileDropGuard />
-                  {/* All inside Convex/Clerk: each of these renders something
+                  {/* All inside Convex: each of these renders something
                       that queries the current user.
 
                       Settings, the profile editor and community settings are
@@ -162,16 +143,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
                       The CSS editor is still a dialog, and still has to be
                       above them: Settings is where it is opened from. */}
                   <CustomCssProviderDialog>
-                    <AccountSuspendedGate>
-                      <ThemePackProvider>
-                        <ExtensionsProvider>
-                          <ProfilePageProvider>{children}</ProfilePageProvider>
-                        </ExtensionsProvider>
-                      </ThemePackProvider>
-                    </AccountSuspendedGate>
+                    <ThemePackProvider>
+                      <ExtensionsProvider>
+                        <ProfilePageProvider>{children}</ProfilePageProvider>
+                      </ExtensionsProvider>
+                    </ThemePackProvider>
                   </CustomCssProviderDialog>
-                </ConvexProviderWithClerk>
-              </ClerkProvider>
+                </>
+                </E2eeProvider>
+              </ConvexAuthProvider>
             </TooltipProvider>
           </AudioPreferencesProvider>
         </UiPreferencesProvider>

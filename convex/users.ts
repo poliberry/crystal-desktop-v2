@@ -22,6 +22,9 @@ import {
   resolveProfileAsset,
 } from "./lib/profileCosmetics";
 import { abilityValidator, type Ability } from "./lib/abilities";
+import { requireNotGuestFor } from "./lib/guests";
+import { signedInIds } from "./lib/identity";
+import { revokeSessions } from "./lib/sessions";
 import { recordIp, isIpBanned, sealRequestIp } from "./lib/ipBans";
 import { activeBan, activeSuspension, requireAbility } from "./lib/moderation";
 import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
@@ -46,14 +49,13 @@ import {
 } from "./_generated/server";
 /** The signed-in account's row, banned or not. Only for the few places that have
  * to see a banned account (the screen that tells it so, leaving a call);
- * everything else goes through `getCurrentUserOrNull`. */
+ * everything else goes through `getCurrentUserOrNull`.
+ *
+ * Who is signed in comes from the session (see `signedInIds`), which is deleted the moment an
+ * account is banned or suspended: this stops answering for it at once, not when its token expires. */
 async function loadCurrentUser(ctx: QueryCtx): Promise<Doc<"users"> | null> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) return null;
-  return ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-    .unique();
+  const ids = await signedInIds(ctx);
+  return ids ? ctx.db.get(ids.userId) : null;
 }
 
 /** The signed-in account, or `null`. A banned or suspended account counts as
@@ -79,83 +81,66 @@ export async function getCurrentUserOrThrow(ctx: QueryCtx, ability?: Ability): P
     );
   }
   // A limited account carries on, minus the one thing this call is about.
-  if (ability) requireAbility(user, ability);
+  if (ability) {
+    requireAbility(user, ability);
+    requireNotGuestFor(user, ability);
+  }
   return user;
 }
 
-function deriveUsername(identity: { nickname?: string; email?: string; givenName?: string }): string {
-  const base = identity.nickname ?? identity.email?.split("@")[0] ?? identity.givenName ?? "user";
-  return base.toLowerCase().replace(/[^a-z0-9_.]/g, "");
-}
+/** An account this young, with no address on file yet, is new enough for its first address to count as its signup address. */
+const NEW_ACCOUNT_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Runs once per app start for the signed-in account: records the address the request came from
+ * and keeps the staff badge in step. The account itself already exists by now — signing in opens
+ * one for a new person (convex/authInternal.ts), so this never creates a row.
+ */
 export const ensureUser = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated.");
+    const ids = await signedInIds(ctx);
+    if (!ids) throw new Error("Not authenticated.");
+    const user = await ctx.db.get(ids.userId);
+    if (!user) throw new Error("Not authenticated.");
+    // Signing in refuses a banned account, so this is only reachable by one banned since; its
+    // sessions are deleted with the ban, and nothing here should touch it.
+    if (activeBan(user)) return user._id;
 
     // Where this request came from, sealed (encrypted + keyed hash) before it
     // goes anywhere near the database. Null when it can't be used; signing in
     // never fails because of it.
     const sealed = await sealRequestIp((await ctx.meta.getRequestMetadata()).ip);
-
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
-      .unique();
-    if (existing) {
-      if (activeBan(existing)) return existing._id;
-      if (sealed) await recordIp(ctx, existing._id, sealed);
-      await syncStaffBadge(ctx, existing._id, identity.email);
-      return existing._id;
-    }
-
-    const name = identity.name ?? identity.nickname ?? identity.email ?? "New user";
-    const imageUrl = typeof identity.pictureUrl === "string" ? identity.pictureUrl : undefined;
-
-    let username = deriveUsername(identity) || "user";
-    let suffix = 0;
-    while (
-      await ctx.db
-        .query("users")
-        .withIndex("by_username", (q) => q.eq("username", username))
-        .unique()
-    ) {
-      suffix += 1;
-      username = `${deriveUsername(identity) || "user"}${suffix}`;
-    }
-
-    const userId = await ctx.db.insert("users", {
-      clerkId: identity.subject,
-      name,
-      username,
-      imageUrl,
-    });
-
-    // A new account from an address that a banned account used is a banned
-    // account itself. Only *new* accounts are checked: somebody who already has
-    // one and shares that address (a household, a school) isn't touched.
     if (sealed) {
-      if (await isIpBanned(ctx, sealed.ipHash)) {
+      // A new account from an address that a banned account used is a banned account itself. Only
+      // *new* accounts are checked — one made in the last day that has never been seen anywhere —
+      // so somebody who already has an account and shares that address (a household, a school)
+      // isn't touched.
+      const seenBefore = await ctx.db.query("userIps").withIndex("by_user_seen", (q) => q.eq("userId", user._id)).first();
+      const isNew = !seenBefore && Date.now() - user._creationTime < NEW_ACCOUNT_MS;
+      if (isNew && (await isIpBanned(ctx, sealed.ipHash))) {
         const now = Date.now();
-        await ctx.db.patch(userId, {
+        await ctx.db.patch(user._id, {
           platformBannedAt: now,
           platformBanReason: "This account was created from a network that is banned from Crystal.",
         });
         await ctx.db.insert("platformModerationLog", {
-          userId,
+          userId: user._id,
           action: "ban",
           reason: "Created from a banned network.",
           createdAt: now,
         });
-        await recordIp(ctx, userId, sealed);
-        return userId;
+        await recordIp(ctx, user._id, sealed);
+        await revokeSessions(ctx, user._id);
+        return user._id;
       }
-      await recordIp(ctx, userId, sealed);
+      await recordIp(ctx, user._id, sealed);
     }
-    await syncStaffBadge(ctx, userId, identity.email);
 
-    return userId;
+    const address = await ctx.db.query("userEmails").withIndex("by_user", (q) => q.eq("userId", user._id)).first();
+    // Only an address its owner has proved: the badge is a claim about who works here.
+    await syncStaffBadge(ctx, user._id, address?.verifiedAt !== undefined ? address.email : undefined);
+    return user._id;
   },
 });
 
@@ -1142,6 +1127,17 @@ export const searchByUsername = query({
   },
 });
 
+/**
+ * What names a creator's folder on the CDN: their old Clerk id if they have one, otherwise their
+ * account id.
+ *
+ * Accounts that predate the move to Convex auth keep the key their artwork was uploaded under,
+ * so nothing has to be copied or re-linked; newer accounts never had a Clerk id.
+ */
+export function creatorKey(user: Pick<Doc<"users">, "_id" | "clerkId">): string {
+  return user.clerkId ?? user._id;
+}
+
 /** Lets an action (which can't read the database) ask whether the caller may do
  * something: it throws exactly what a mutation would. */
 export const assertAbility = internalQuery({
@@ -1149,6 +1145,30 @@ export const assertAbility = internalQuery({
   handler: async (ctx, { ability }) => {
     await getCurrentUserOrThrow(ctx, ability);
     return null;
+  },
+});
+
+/**
+ * Who is calling an action, or an error.
+ *
+ * Every action that needs the caller goes through here instead of reading the token itself, so a
+ * banned or suspended account is refused in actions exactly as it is in mutations (several actions
+ * used to check only that a token existed), and so does an account limited from `ability`.
+ */
+export const actionCaller = internalQuery({
+  args: { ability: v.optional(abilityValidator) },
+  handler: async (ctx, { ability }) => {
+    const user = await getCurrentUserOrThrow(ctx, ability);
+    // Everything an action does for a caller (uploads, payments, payouts) is for a full account.
+    if (user.isGuest) throw new Error("Create a free account to do that. Guest accounts are for looking around.");
+    const address = await ctx.db.query("userEmails").withIndex("by_user", (q) => q.eq("userId", user._id)).first();
+    return {
+      id: user._id,
+      name: user.name,
+      username: user.username,
+      creatorKey: creatorKey(user),
+      email: address?.verifiedAt !== undefined ? address.email : undefined,
+    };
   },
 });
 
@@ -1372,15 +1392,16 @@ const STAFF_EMAIL_DOMAIN = "@staff.poliberry.com";
  * Give (or keep) the Poliberry Staff badge to anyone signing in with a staff
  * email.
  *
- * Derived from the Clerk identity rather than granted by hand, so the badge
+ * Derived from the account's address rather than granted by hand, so the badge
  * can't drift from who actually works here — and re-checked on every
  * `ensureUser` rather than only at signup, so someone who joins later doesn't
- * need a migration. Clerk verifies the address before it reaches us, so the
- * domain is a claim we can trust.
+ * need a migration. Only an address its owner has proved with an emailed code
+ * counts (`ensureUser` passes nothing otherwise), so the domain is a claim we
+ * can trust.
  *
  * Deliberately grant-only: revoking is `setBadge` below, run by hand, because
- * a missing `email` claim (a JWT template that stops including one) would
- * otherwise strip the badge from every staff account at once.
+ * a missing address would otherwise strip the badge from every staff account
+ * at once.
  */
 async function syncStaffBadge(
   ctx: MutationCtx,

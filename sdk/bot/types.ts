@@ -75,7 +75,13 @@ export interface APIMessage {
   /** The message's id. */
   id: string;
   /** What it says. */
-  text: string;
+  /** Legacy plaintext body. Missing when `enc` is present. */
+  text?: string;
+  /** Ciphertext body. The SDK opens this when configured with its private E2EE identity. */
+  enc?: { keyId: string; iv: string; ct: string } | null;
+  /** Only the wrap addressed to this bot is included. */
+  keyWraps?: Record<string, string>;
+  mentions?: { users: string[]; roles: string[]; everyone: boolean; here: boolean } | null;
   /** When it was sent, in milliseconds. */
   createdAt: number;
   /** When it was last edited, if it was. */

@@ -1224,6 +1224,26 @@ export const SDK_REFERENCE: Record<"bot" | "extension", SdkReference> = {
     ],
     "members": [
      {
+      "name": "generateE2eeIdentity",
+      "kind": "method",
+      "static": true,
+      "optional": false,
+      "readonly": false,
+      "doc": {
+       "summary": "Generate a bot identity once, then keep the returned private key in your secret store.",
+       "tags": []
+      },
+      "signatures": [
+       {
+        "params": [],
+        "returns": "Promise<Identity>",
+        "text": "() => Promise<Identity>",
+        "returnsDoc": "",
+        "doc": "Generate a bot identity once, then keep the returned private key in your secret store."
+       }
+      ]
+     },
+     {
       "name": "rest",
       "doc": {
        "summary": "The HTTP layer, for anything the classes don't cover.",
@@ -1296,6 +1316,18 @@ export const SDK_REFERENCE: Record<"bot" | "extension", SdkReference> = {
       "static": false
      },
      {
+      "name": "hasE2eeIdentity",
+      "doc": {
+       "summary": "",
+       "tags": []
+      },
+      "optional": false,
+      "readonly": false,
+      "kind": "accessor",
+      "type": "boolean",
+      "static": false
+     },
+     {
       "name": "options",
       "doc": {
        "summary": "The options this client was made with.",
@@ -1305,6 +1337,97 @@ export const SDK_REFERENCE: Record<"bot" | "extension", SdkReference> = {
       "readonly": true,
       "kind": "property",
       "type": "ClientOptions",
+      "static": false
+     },
+     {
+      "name": "decryptMessage",
+      "doc": {
+       "summary": "Opens an encrypted channel message when this bot has a wrap for the message key.",
+       "tags": []
+      },
+      "optional": false,
+      "readonly": false,
+      "kind": "method",
+      "signatures": [
+       {
+        "params": [
+         {
+          "name": "channelId",
+          "type": "string",
+          "optional": false,
+          "rest": false,
+          "doc": ""
+         },
+         {
+          "name": "authorId",
+          "type": "string",
+          "optional": false,
+          "rest": false,
+          "doc": ""
+         },
+         {
+          "name": "envelope",
+          "type": "{ keyId: string; iv: string; ct: string; }",
+          "optional": false,
+          "rest": false,
+          "doc": ""
+         },
+         {
+          "name": "wrapped",
+          "type": "string | undefined",
+          "optional": true,
+          "rest": false,
+          "doc": ""
+         }
+        ],
+        "returns": "Promise<MessagePayload | null>",
+        "text": "(channelId: string, authorId: string, envelope: { keyId: string; iv: string; ct: string; }, wrapped?: string | undefined) => Promise<MessagePayload | null>",
+        "returnsDoc": "",
+        "doc": "Opens an encrypted channel message when this bot has a wrap for the message key."
+       }
+      ],
+      "static": false
+     },
+     {
+      "name": "encryptForChannel",
+      "doc": {
+       "summary": "",
+       "tags": []
+      },
+      "optional": false,
+      "readonly": false,
+      "kind": "method",
+      "signatures": [
+       {
+        "params": [
+         {
+          "name": "channelId",
+          "type": "string",
+          "optional": false,
+          "rest": false,
+          "doc": ""
+         },
+         {
+          "name": "authorId",
+          "type": "string",
+          "optional": false,
+          "rest": false,
+          "doc": ""
+         },
+         {
+          "name": "payload",
+          "type": "{ text?: string; embeds?: unknown[]; components?: unknown[]; }",
+          "optional": false,
+          "rest": false,
+          "doc": ""
+         }
+        ],
+        "returns": "Promise<Envelope>",
+        "text": "(channelId: string, authorId: string, payload: { text?: string; embeds?: unknown[]; components?: unknown[]; }) => Promise<Envelope>",
+        "returnsDoc": "",
+        "doc": ""
+       }
+      ],
       "static": false
      },
      {
@@ -3788,13 +3911,37 @@ export const SDK_REFERENCE: Record<"bot" | "extension", SdkReference> = {
      {
       "name": "content",
       "doc": {
-       "summary": "The text. Empty if it is only embeds or files.",
+       "summary": "Decrypted body when this bot has the room key; `undefined` while locked or without a wrap.",
+       "tags": []
+      },
+      "optional": false,
+      "readonly": false,
+      "kind": "property",
+      "type": "string | undefined",
+      "static": false
+     },
+     {
+      "name": "encrypted",
+      "doc": {
+       "summary": "True when Crystal sent ciphertext and this SDK could not open it.",
        "tags": []
       },
       "optional": false,
       "readonly": true,
       "kind": "property",
-      "type": "string",
+      "type": "boolean",
+      "static": false
+     },
+     {
+      "name": "ready",
+      "doc": {
+       "summary": "Resolves after the SDK has tried to decrypt this message.",
+       "tags": []
+      },
+      "optional": false,
+      "readonly": true,
+      "kind": "property",
+      "type": "Promise<void>",
       "static": false
      },
      {
@@ -6792,13 +6939,49 @@ export const SDK_REFERENCE: Record<"bot" | "extension", SdkReference> = {
      {
       "name": "text",
       "doc": {
-       "summary": "What it says.",
+       "summary": "Legacy plaintext body. Missing when `enc` is present.",
        "tags": []
       },
-      "optional": false,
+      "optional": true,
       "readonly": false,
       "kind": "property",
-      "type": "string",
+      "type": "string | undefined",
+      "static": false
+     },
+     {
+      "name": "enc",
+      "doc": {
+       "summary": "Ciphertext body. The SDK opens this when configured with its private E2EE identity.",
+       "tags": []
+      },
+      "optional": true,
+      "readonly": false,
+      "kind": "property",
+      "type": "{ keyId: string; iv: string; ct: string; } | null | undefined",
+      "static": false
+     },
+     {
+      "name": "keyWraps",
+      "doc": {
+       "summary": "Only the wrap addressed to this bot is included.",
+       "tags": []
+      },
+      "optional": true,
+      "readonly": false,
+      "kind": "property",
+      "type": "Record<string, string> | undefined",
+      "static": false
+     },
+     {
+      "name": "mentions",
+      "doc": {
+       "summary": "",
+       "tags": []
+      },
+      "optional": true,
+      "readonly": false,
+      "kind": "property",
+      "type": "{ users: string[]; roles: string[]; everyone: boolean; here: boolean; } | null | undefined",
       "static": false
      },
      {
@@ -7856,6 +8039,18 @@ export const SDK_REFERENCE: Record<"bot" | "extension", SdkReference> = {
       "readonly": false,
       "kind": "property",
       "type": "boolean | undefined",
+      "static": false
+     },
+     {
+      "name": "e2eeIdentity",
+      "doc": {
+       "summary": "Optional bot E2EE identity. Keep this private key in your bot's secret store.",
+       "tags": []
+      },
+      "optional": true,
+      "readonly": false,
+      "kind": "property",
+      "type": "{ publicKey: string; privateKey: string; } | undefined",
       "static": false
      },
      {

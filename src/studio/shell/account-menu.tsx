@@ -1,6 +1,6 @@
 "use client";
 
-import { SignOutButton, useUser } from "@clerk/react";
+import { SignOutButton } from "@/components/auth/auth-state";
 import { useQuery } from "convex/react";
 import { ExternalLink, LogOut, RefreshCw } from "lucide-react";
 import { useState } from "react";
@@ -14,8 +14,8 @@ import { UpdatesPanel } from "@/components/settings/tabs/updates-tab";
 import { openCrystal } from "@/studio/open-crystal";
 
 /**
- * Where Clerk sends you after signing out. Its default is `/`, which is Crystal's own home and login: Studio has to name
- * itself, or logging out of Studio lands you on Crystal's sign-in instead of Studio's.
+ * Where signing out sends you. The default is `/`, which is Crystal's own home and login: Studio has to name itself, or
+ * logging out of Studio lands you on Crystal's sign-in instead of Studio's.
  */
 const STUDIO_HOME = "/studio/";
 
@@ -27,11 +27,10 @@ const STUDIO_HOME = "/studio/";
  */
 export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
   const me = useQuery(api.users.getCurrentUser);
-  const { user } = useUser();
   const [confirming, setConfirming] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
-  const name = me?.name ?? user?.fullName ?? user?.username ?? "Your account";
-  const email = user?.primaryEmailAddress?.emailAddress;
+  const name = me?.name ?? "Your account";
+  const handle = me?.username;
 
   return (
     <>
@@ -45,7 +44,7 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
             className="flex w-10 shrink-0 items-center justify-center outline-none hover:bg-white/5 focus-visible:bg-white/10 data-[state=open]:bg-white/10"
           >
             <Avatar className="size-5 rounded-md">
-              <AvatarImage src={me?.imageUrl ?? user?.imageUrl} alt="" className="rounded-md" />
+              <AvatarImage src={me?.imageUrl} alt="" className="rounded-md" />
               <AvatarFallback className="rounded-md text-[10px]">{name.slice(0, 1).toUpperCase()}</AvatarFallback>
             </Avatar>
           </button>
@@ -53,7 +52,7 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
         <DropdownMenuContent align="end" className="min-w-56">
           <DropdownMenuLabel className="flex flex-col gap-0.5 font-normal">
             <span className="truncate text-sm font-medium text-foreground">{name}</span>
-            {email && <span className="truncate text-xs text-muted-foreground">{email}</span>}
+            {handle && <span className="truncate text-xs text-muted-foreground">@{handle}</span>}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => openCrystal()}>
@@ -84,7 +83,7 @@ export function AccountMenu({ hasUnsaved }: { hasUnsaved: () => boolean }) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* Clerk's own button does the signing out; this one is only ever clicked by the menu item above. */}
+      {/* This button does the signing out; it is only ever clicked by the menu item above. */}
       <SignOutButton redirectUrl={STUDIO_HOME}>
         <button id="studio-sign-out" type="button" hidden aria-hidden tabIndex={-1} />
       </SignOutButton>

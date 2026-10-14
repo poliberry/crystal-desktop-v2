@@ -39,6 +39,9 @@ import { launchConfetti } from "@/lib/confetti";
 import { inviteUrl } from "@/lib/invites";
 import { uploadImage } from "@/lib/cdn-upload";
 import { cn } from "@/lib/utils";
+import { useAuthUserId } from "@/components/auth/auth-state";
+import { keyring } from "@/lib/e2ee";
+import { extractMentions, toConvexMentions } from "@/lib/mentions";
 
 const COPY: Record<StepId, { title: string; description: string }> = {
   type: {
@@ -115,6 +118,7 @@ export function CreateCommunityPage() {
   const getOrCreateInviteCode = useMutation(api.communities.getOrCreateInviteCode);
   const getOrCreateDirect = useMutation(api.conversations.getOrCreateDirect);
   const sendMessage = useMutation(api.messages.send);
+  const userId = useAuthUserId();
   const nav = useNavigation();
   const { closePage } = usePage();
 
@@ -230,9 +234,13 @@ export function CreateCommunityPage() {
         for (const friendId of invited) {
           try {
             const conversationId = await getOrCreateDirect({ friendId });
+            if (!userId) continue;
+            const text = `Join me in ${name.trim()} on Crystal: ${inviteUrl(code)}`;
+            const { enc } = await keyring.encrypt({ scope: "conversation", conversationId }, userId as Id<"users">, { text });
             await sendMessage({
               conversationId,
-              text: `Join me in ${name.trim()} on Crystal: ${inviteUrl(code)}`,
+              enc,
+              mentions: toConvexMentions(extractMentions(text)),
             });
           } catch {
             // One friend who can't be messaged shouldn't stop the rest.

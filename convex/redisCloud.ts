@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
+import { channelPageKeys, dmPageKeys } from "./lib/messageCacheKeys";
 
 /**
  * Redis Cloud adapter (TCP/TLS via ioredis).
@@ -85,7 +86,7 @@ export const invalidateChannelCache = internalAction({
   handler: async (_ctx, { channelId }) => {
     if (!isEnabled()) return;
     const c = await getClient();
-    await c.del(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:meta`);
+    await c.del(...channelPageKeys(channelId), `channel:${channelId}:meta`);
   },
 });
 
@@ -94,6 +95,6 @@ export const invalidateDmCache = internalAction({
   handler: async (_ctx, { conversationId }) => {
     if (!isEnabled()) return;
     const c = await getClient();
-    await c.del(`dm:${conversationId}:messages:30`, `dm:${conversationId}:messages:50`);
+    await c.del(...dmPageKeys(conversationId));
   },
 });

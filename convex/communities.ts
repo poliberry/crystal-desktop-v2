@@ -25,6 +25,7 @@ import {
 import { sanitizeSetup, setupValidator } from "./lib/communitySetup";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
+import { factorSummary } from "./lib/secondFactor";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -495,6 +496,7 @@ export const get = query({
       isOwner: community.ownerId === me._id,
       createdAt: community.createdAt,
       inviteOnly: isInviteOnly(community),
+      requireTwoFactor: community.requireTwoFactor === true,
       themeStart: community.themeStart,
       themeEnd: community.themeEnd,
       kind: community.kind,
@@ -582,15 +584,27 @@ export const updateSettings = mutation({
     communityId: v.id("communities"),
     name: v.optional(v.string()),
     inviteOnly: v.optional(v.boolean()),
+    /** Members who manage this server must have two-step verification switched on. Only the owner may change it. */
+    requireTwoFactor: v.optional(v.boolean()),
     /** The theme gradient. Both set to change it, both an empty string to clear
      * it; one without the other is refused. */
     themeStart: v.optional(v.string()),
     themeEnd: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, name, inviteOnly, themeStart, themeEnd }) => {
+  handler: async (ctx, { communityId, name, inviteOnly, requireTwoFactor, themeStart, themeEnd }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
+
+    if (requireTwoFactor !== undefined && requireTwoFactor !== (community.requireTwoFactor ?? false)) {
+      // The owner sets the rule, since it applies to them too and to every admin they've appointed.
+      if (community.ownerId !== me._id) throw new Error("Only the server owner can change this.");
+      // And has to be able to meet it: otherwise turning it on locks the owner out of their own server.
+      if (requireTwoFactor && !(await factorSummary(ctx, me._id)).enrolled) {
+        throw new Error("Turn on two-step verification on your own account first, in Settings → Security.");
+      }
+      await ctx.db.patch(communityId, { requireTwoFactor });
+    }
 
     if (name !== undefined) {
       const trimmed = name.trim();

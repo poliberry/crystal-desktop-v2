@@ -1,6 +1,8 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { renderMentionsAsText } from "./lib/mentions";
+import { publicNotificationBody } from "./lib/e2eeEnforce";
+import { mentionKindOf } from "./lib/e2eePure";
 import { communityLevel, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull } from "./users";
@@ -29,7 +31,11 @@ type CommunityPreview =
       channelId: Id<"channels">;
       channelName: string;
       authorName: string;
+      /** Legacy plaintext rows only. Empty for an encrypted message: the client decrypts `enc`. */
       text: string;
+      /** The message's ciphertext as stored, for the client to open; null on a legacy row. */
+      enc: Doc<"channelMessages">["enc"] | null;
+      messageId: Id<"channelMessages">;
       /** The file's name, when the message was only a file. */
       attachmentName: string | null;
       createdAt: number;
@@ -41,7 +47,11 @@ type CommunityPreview =
       authorName: string;
       /** What pinged the caller: their own name, or the whole room. */
       mention: "you" | "everyone" | "here";
+      /** The notification's body: generic for an encrypted message, never its text. */
       text: string;
+      /** The mentioning message's ciphertext, for the client to open; null on a legacy row. */
+      enc: Doc<"channelMessages">["enc"] | null;
+      messageId: Id<"channelMessages"> | null;
       /** Whether the caller has yet to look at it. */
       unread: boolean;
       createdAt: number;
@@ -99,7 +109,10 @@ async function latestMessage(
       channelId: channel._id,
       channelName: channel.name,
       authorName: await displayNameIn(ctx, community._id, message.authorId),
-      text: await renderMentionsAsText(ctx, message.text ?? ""),
+      // An encrypted message has no text the server may read or render.
+      text: message.enc ? "" : await renderMentionsAsText(ctx, message.text ?? ""),
+      enc: message.enc ?? null,
+      messageId: message._id,
       attachmentName: attachments[0]?.fileName ?? null,
       createdAt: message._creationTime,
     };
@@ -118,8 +131,15 @@ function isMentionRow(row: Doc<"notifications">): boolean {
 }
 
 /** `@everyone` and `@here` get their own wording; everything else — the
- * caller's name, one of their roles — reads as "mentioned you". */
-function mentionKind(body: string | undefined): "you" | "everyone" | "here" {
+ * caller's name, one of their roles — reads as "mentioned you".
+ *
+ * Read from the message's mention metadata when it is encrypted (its notification body is generic,
+ * so there is nothing to scan); legacy rows keep scanning the body. */
+function mentionKind(
+  body: string | undefined,
+  message: Doc<"channelMessages"> | null
+): "you" | "everyone" | "here" {
+  if (message?.enc) return mentionKindOf(message.mentions);
   if (body && /@everyone\b/i.test(body)) return "everyone";
   if (body && /@here\b/i.test(body)) return "here";
   return "you";
@@ -175,13 +195,21 @@ export const communityPreviews = query({
         const channel = await ctx.db.get(row.channelId);
         if (!channel) return { ...base, preview: null };
 
+        const [actor, mentioning] = await Promise.all([
+          ctx.db.get(row.actorId),
+          row.channelMessageId ? ctx.db.get(row.channelMessageId) : null,
+        ]);
         const preview: CommunityPreview = {
           kind: "mention",
           channelId: channel._id,
           channelName: channel.name,
           authorName: await displayNameIn(ctx, community._id, row.actorId),
-          mention: mentionKind(row.body),
-          text: row.body ?? "",
+          mention: mentionKind(row.body, mentioning),
+          // Rows from before enforcement hold the message's text; once it is on they are served
+          // generic (system messages excepted).
+          text: publicNotificationBody(row, actor) ?? "",
+          enc: mentioning?.enc ?? null,
+          messageId: row.channelMessageId ?? null,
           unread: !row.read,
           createdAt: row.createdAt,
         };

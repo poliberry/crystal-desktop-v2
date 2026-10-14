@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
-import { Globe2, Search, ShieldCheck, UserRound } from "lucide-react";
+import { Globe2, LockKeyhole, Search, ShieldAlert, ShieldCheck, UserRound } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import { StaffProvider, StatusPill, useStaff } from "@/components/admin/admin-ui";
@@ -15,6 +15,7 @@ import { ExtensionRecord } from "@/components/admin/records/extension";
 import { SubmissionRecord } from "@/components/admin/records/submission";
 import { BotsSection } from "@/components/admin/sections/bots";
 import { ExtensionsSection } from "@/components/admin/sections/extensions";
+import { E2eeSection } from "@/components/admin/sections/e2ee";
 import { GuidesSection } from "@/components/admin/sections/guides";
 import { TicketRecord } from "@/components/admin/records/ticket";
 import { UserRecord } from "@/components/admin/records/user";
@@ -27,7 +28,9 @@ import { ReportsSection, SubmissionsSection, SupportSection } from "@/components
 import { SiteMap, useVisibleSiteMap } from "@/components/admin/site-map";
 import { SessionRail, TabStrip } from "@/components/admin/workspace";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { requestPrompt } from "@/lib/step-up";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { WindowControls } from "@/components/window-controls";
@@ -44,6 +47,7 @@ const SECTIONS: Record<string, () => React.JSX.Element> = {
   catalog: CatalogSection,
   submissions: SubmissionsSection,
   extensions: ExtensionsSection,
+  e2ee: E2eeSection,
   bots: BotsSection,
   guides: GuidesSection,
   categories: CategoriesSection,
@@ -345,12 +349,67 @@ export function AdminConsole() {
   }
 
   return (
-    <StaffProvider value={value}>
-      <ConsoleProvider userId={value.userId}>
-        <TooltipProvider delayDuration={200}>
-          <Shell />
-        </TooltipProvider>
-      </ConsoleProvider>
-    </StaffProvider>
+    <AdminGate gate={staff!.twoFactor.gate} unlockedUntil={staff!.twoFactor.unlockedUntil}>
+      <StaffProvider value={value}>
+        <ConsoleProvider userId={value.userId}>
+          <TooltipProvider delayDuration={200}>
+            <Shell />
+          </TooltipProvider>
+        </ConsoleProvider>
+      </StaffProvider>
+    </AdminGate>
+  );
+}
+
+/**
+ * Keeps the console shut until this session has entered a verification code, and shuts it again when
+ * that runs out.
+ *
+ * The server is what refuses everything (see `requireStaff`); this is so the screen says why instead
+ * of filling with errors, and so its queries stop running the moment the unlocked window ends — a
+ * query that is re-run after that would be refused, and a refused query has nowhere to show it.
+ * It locks a moment *before* the server would, to be on the safe side of a slightly different clock.
+ */
+function AdminGate({ gate, unlockedUntil, children }: { gate: "open" | "step_up" | "enroll"; unlockedUntil: number | null; children: React.ReactNode }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (gate !== "open" || unlockedUntil === null) return;
+    const wait = unlockedUntil - 1500 - Date.now();
+    if (wait <= 0) {
+      setNow(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => setNow(Date.now()), wait);
+    return () => window.clearTimeout(timer);
+  }, [gate, unlockedUntil]);
+
+  // An account without two-step verification has no window: `unlockedUntil` is null and the gate is `open` outright.
+  const expired = gate === "open" && unlockedUntil !== null && unlockedUntil - 1500 <= now;
+  const effective = expired ? "step_up" : gate;
+
+  // Ask straight away when it locks, rather than waiting to be clicked.
+  useEffect(() => {
+    if (effective === "step_up") void requestPrompt({ kind: "code" });
+  }, [effective]);
+
+  if (effective === "open") return <>{children}</>;
+  return (
+    <PlainWindow>
+      <div className="max-w-sm space-y-4 p-6 text-center">
+        {effective === "enroll" ? <ShieldAlert className="mx-auto size-10 text-amber-400" /> : <LockKeyhole className="mx-auto size-10 text-muted-foreground" />}
+        <h1 className="text-xl font-semibold">{effective === "enroll" ? "Two-step verification required" : "Admin console locked"}</h1>
+        <p className="text-sm text-muted-foreground">
+          {effective === "enroll"
+            ? "Crystal requires two-step verification on staff accounts. Open Crystal, go to Settings → Security, turn it on with an authenticator app or a passkey, then come back."
+            : "Enter a verification code to use the console. It stays unlocked for a few minutes."}
+        </p>
+        {effective === "step_up" && (
+          <Button onClick={() => void requestPrompt({ kind: "code" })}>
+            <LockKeyhole className="size-4" />
+            Enter code
+          </Button>
+        )}
+      </div>
+    </PlainWindow>
   );
 }

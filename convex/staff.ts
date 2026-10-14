@@ -1,8 +1,9 @@
 import { v } from "convex/values";
 
 import type { Id } from "./_generated/dataModel";
-import { internalMutation, mutation, query, type QueryCtx } from "./_generated/server";
-import { audit, getStaff, requireStaff } from "./lib/staff";
+import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
+import { assertStaffAssurance, audit, getStaff, requireStaff } from "./lib/staff";
+import { platformSecurity, stepUpState } from "./lib/stepUp";
 import { can, permissionsFor, STAFF_ROLES, type StaffRole } from "./lib/staffPermissions";
 
 const rolesValidator = v.array(
@@ -31,6 +32,18 @@ export const me = query({
   handler: async (ctx) => {
     const staff = await getStaff(ctx);
     if (!staff) return null;
+    // Whether the console may be shown yet, so it can ask for a code instead of failing on its first
+    // query: `open`, `step_up` (enter a code) or `enroll` (the platform requires two-step
+    // verification and this account hasn't turned it on). The server enforces it either way — see
+    // `requireStaff`; this is only so the screen can say so.
+    const [{ requireStaffTwoFactor }, state] = await Promise.all([platformSecurity(ctx), stepUpState(ctx, staff.user._id)]);
+    const gate = !state.enrolled
+      ? requireStaffTwoFactor
+        ? ("enroll" as const)
+        : ("open" as const)
+      : state.unlockedUntil !== null && state.unlockedUntil > Date.now()
+        ? ("open" as const)
+        : ("step_up" as const);
     return {
       userId: staff.user._id,
       name: staff.user.name,
@@ -38,7 +51,24 @@ export const me = query({
       imageUrl: staff.user.imageUrl,
       roles: staff.roles,
       permissions: [...permissionsFor(staff.roles)],
+      twoFactor: { gate, unlockedUntil: state.unlockedUntil, enrolled: state.enrolled },
     };
+  },
+});
+
+/**
+ * The caller's staff access for an action that has to check it itself (an action can't call
+ * `requireStaff`): throws unless they hold *every* permission named, and — like `requireStaff` —
+ * unless this session may do administrative things (a code entered recently, and two-step
+ * verification on where the platform requires it).
+ */
+export const requireForAction = internalQuery({
+  args: { permissions: v.array(v.string()) },
+  handler: async (ctx, { permissions }) => {
+    const staff = await getStaff(ctx);
+    if (!staff || !permissions.every((p) => can(staff.roles, p as Parameters<typeof can>[1]))) throw new Error("Not allowed.");
+    await assertStaffAssurance(ctx, staff);
+    return { userId: staff.user._id };
   },
 });
 

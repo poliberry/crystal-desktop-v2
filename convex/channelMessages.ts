@@ -12,6 +12,15 @@ import { getCurrentUserOrThrow } from "./users";
 import { unexpiredCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
+import { channelPageKey, channelPageKeys } from "./lib/messageCacheKeys";
+import {
+  assertPlaintextAllowed,
+  encValidator,
+  mentionsValidator,
+  validateEnvelope,
+  validateMentions,
+} from "./lib/e2eeEnforce";
+import { sameEnvelope } from "./lib/e2eePure";
 import { markChannelRead } from "./channels";
 import { isMessageHidden, windowsByTarget } from "./lib/blocking";
 import { describeMessage, dispatchMessageCreated, fireCommunityEvent } from "./lib/botEvents";
@@ -73,6 +82,7 @@ async function resolveReplyPreview(
       authorName: "Unknown",
       authorImageUrl: undefined as string | undefined,
       text: null as string | null,
+      enc: null as Doc<"channelMessages">["enc"] | null,
       hasAttachment: false,
       deleted: true,
     };
@@ -92,9 +102,12 @@ async function resolveReplyPreview(
     createdAt: target._creationTime as number | undefined,
     authorName: author?.name ?? "Unknown",
     authorImageUrl: author?.imageUrl,
-    text: target.text
-      ? (await renderMentionsAsText(ctx, target.text)).slice(0, REPLY_SNIPPET_MAX)
-      : null,
+    // See the twin in convex/messages.ts: no snippet is built from ciphertext.
+    text:
+      !target.enc && target.text
+        ? (await renderMentionsAsText(ctx, target.text)).slice(0, REPLY_SNIPPET_MAX)
+        : null,
+    enc: target.enc ?? null,
     hasAttachment: firstAttachment.length > 0,
     deleted: false,
   };
@@ -110,6 +123,7 @@ type PageMessage = {
     authorName: string;
     authorImageUrl?: string;
     text: string | null;
+    enc?: Doc<"channelMessages">["enc"] | null;
     hasAttachment: boolean;
     deleted: boolean;
     hidden?: boolean;
@@ -228,7 +242,7 @@ export const list = query({
 
     const hidden = await windowsByTarget(ctx, me._id);
     const isFirstPage = !paginationOpts.cursor;
-    const cacheKey = `channel:${channelId}:messages:${paginationOpts.numItems}`;
+    const cacheKey = channelPageKey(channelId, paginationOpts.numItems);
     if (isFirstPage) {
       try {
         const { cacheGetJson } = await import("./cache");
@@ -279,6 +293,11 @@ export const list = query({
         return {
           id: message._id,
           text: message.text ?? null,
+          /** End-to-end encrypted body (embeds and components included) and who
+           * it pings, exactly as stored — see the twin in convex/messages.ts. */
+          enc: message.enc ?? null,
+          mentions: message.mentions ?? null,
+          replyToId: message.replyToId ?? null,
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
@@ -370,6 +389,11 @@ const sendArgs = {
   /** Idempotency key from the durable send outbox — see convex/messages.ts
    * and src/lib/outbox.ts. */
   clientId: v.optional(v.string()),
+  /** The body, end-to-end encrypted, embeds and components inside (docs/E2EE.md). Replaces `text`;
+   * the two are never stored together. `text` stays accepted until E2EE_ENFORCE=1. */
+  enc: v.optional(encValidator),
+  /** Who the message pings, in the clear — the server can't read `enc`. Only kept with `enc`. */
+  mentions: v.optional(mentionsValidator),
 };
 export type SendArgs = ObjectType<typeof sendArgs>;
 
@@ -381,7 +405,7 @@ export type SendArgs = ObjectType<typeof sendArgs>;
 export async function sendChannelMessage(
   ctx: MutationCtx,
   me: Doc<"users">,
-  { channelId, text, attachments, replyToId, pingReply, clientId }: SendArgs,
+  { channelId, text, attachments, replyToId, pingReply, clientId, enc, mentions }: SendArgs,
   opts: { permissionChecked?: boolean; /** Already validated by `validateEmbeds`. Only the Bot API passes these. */ embeds?: Embed[]; /** Already validated by `validateComponents`. */ components?: ActionRow[] } = {}
 ): Promise<Id<"channelMessages">> {
   if (!opts.permissionChecked) await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
@@ -394,6 +418,13 @@ export async function sendChannelMessage(
     const channel = await ctx.db.get(channelId);
     if (channel) await requireCommunityOpen(ctx, channel.communityId, "post");
   }
+  // Embeds and components live inside `enc` for an encrypted message, so they count as plaintext
+  // here: a person and the Bot API are held to the same rule.
+  assertPlaintextAllowed({
+    author: me,
+    hasEnc: !!enc,
+    hasPlaintext: !!text?.trim() || !!opts.embeds?.length || !!opts.components?.length,
+  });
 
   if (clientId) {
     const existing = await ctx.db
@@ -404,9 +435,19 @@ export async function sendChannelMessage(
   }
 
   const trimmed = text?.trim();
-  if (!trimmed && (!attachments || attachments.length === 0) && !opts.embeds?.length && !opts.components?.length) {
+  // An encrypted body can't be checked for emptiness here; the sender's client does.
+  if (!enc && !trimmed && (!attachments || attachments.length === 0) && !opts.embeds?.length && !opts.components?.length) {
     throw new Error("Message needs text, an attachment, an embed or buttons.");
   }
+  if (enc) await validateEnvelope(ctx, enc, { scope: "channel", channelId }, "send");
+  const cleanMentions = enc
+    ? await validateMentions(
+        ctx,
+        mentions ?? { users: [], roles: [], everyone: false, here: false },
+        { scope: "channel", channelId },
+        me._id
+      )
+    : undefined;
 
   for (const attachment of attachments ?? []) {
     if (attachment.storageId) {
@@ -429,11 +470,13 @@ export async function sendChannelMessage(
   const messageId = await ctx.db.insert("channelMessages", {
     channelId,
     authorId: me._id,
-    text: trimmed || undefined,
+    // Never both: an encrypted row has no `text`, `embeds` or `components`.
+    text: enc ? undefined : trimmed || undefined,
     replyToId: validReplyToId,
     clientId: clientId || undefined,
-    ...(opts.embeds?.length ? { embeds: opts.embeds } : {}),
-    ...(opts.components?.length ? { components: opts.components } : {}),
+    ...(enc ? { enc, mentions: cleanMentions } : {}),
+    ...(!enc && opts.embeds?.length ? { embeds: opts.embeds } : {}),
+    ...(!enc && opts.components?.length ? { components: opts.components } : {}),
   });
 
   for (const attachment of attachments ?? []) {
@@ -447,12 +490,28 @@ export async function sendChannelMessage(
   // Having just written it, I've read it.
   if (channel) await markChannelRead(ctx, channelId, channel.communityId, me._id);
 
-  if (channel && trimmed) {
-    const mentioned = await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id);
+  // Who the message pings. An encrypted message is routed from its metadata, since the text isn't the
+  // server's to parse; only a legacy plaintext row is parsed.
+  const mentioned: Id<"users">[] = !channel
+    ? []
+    : enc
+      ? await resolveChannelMentions(
+          ctx,
+          channel.communityId,
+          cleanMentions ?? { users: [], roles: [], everyone: false, here: false },
+          me._id
+        )
+      : trimmed
+        ? await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id)
+        : [];
+
+  if (channel && (trimmed || enc)) {
     // Rendered once and shared by both notifications below — it's a plain
     // text body, so the `<@id>` tags have to become readable names here;
-    // nothing downstream of this renders them.
-    const bodyText = await renderMentionsAsText(ctx, trimmed);
+    // nothing downstream of this renders them. Never for an encrypted message:
+    // its notifications say only that something arrived (`notifyUsers` enforces
+    // the same once E2EE_ENFORCE=1).
+    const bodyText = enc ? undefined : await renderMentionsAsText(ctx, trimmed!);
 
     if (mentioned.length > 0) {
       await notifyUsers(ctx, {
@@ -465,6 +524,7 @@ export async function sendChannelMessage(
         title: `${me.name} mentioned you in #${channel.name}`,
         body: bodyText,
         isMention: true,
+        encrypted: !!enc,
       });
     }
 
@@ -507,6 +567,7 @@ export async function sendChannelMessage(
           title: `${me.name} in #${channel.name}`,
           body: bodyText,
           isMention: false,
+          encrypted: !!enc,
         });
       }
     }
@@ -517,11 +578,7 @@ export async function sendChannelMessage(
   // addressed to them). Skipped when they were also @-mentioned: that
   // notification is the more specific one.
   if (channel && replyPingUserId) {
-    const mentionedReplyTarget =
-      trimmed &&
-      (await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id)).includes(
-        replyPingUserId
-      );
+    const mentionedReplyTarget = mentioned.includes(replyPingUserId);
     if (!mentionedReplyTarget) {
       await notifyUsers(ctx, {
         userIds: [replyPingUserId],
@@ -531,14 +588,15 @@ export async function sendChannelMessage(
         communityId: channel.communityId,
         channelMessageId: messageId,
         title: `${me.name} replied to you in #${channel.name}`,
-        body: trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+        body: enc ? undefined : trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+        encrypted: !!enc,
       });
     }
   }
 
   try {
     const { cacheInvalidateKeys } = await import("./cache");
-    await cacheInvalidateKeys(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:messages:20`, `channel:${channelId}:messages:25`, `channel:${channelId}:meta`);
+    await cacheInvalidateKeys(...channelPageKeys(channelId), `channel:${channelId}:meta`);
   } catch {}
   try {
     const { internal } = await import("./_generated/api");
@@ -559,12 +617,53 @@ export const send = mutation({
   },
 });
 
-/** Rewrite a message's text and/or cards. Shared by a person's edit and a bot's. */
+/** Rewrite a message's text and/or cards, or replace its encrypted body. Shared by a person's edit
+ * and a bot's. */
 export async function editChannelMessage(
   ctx: MutationCtx,
   message: Doc<"channelMessages">,
-  change: { text?: string; embeds?: Embed[]; components?: ActionRow[] },
+  change: {
+    text?: string;
+    embeds?: Embed[];
+    components?: ActionRow[];
+    /** The new body, encrypted (embeds and components inside). Under any epoch of this channel. */
+    enc?: Doc<"channelMessages">["enc"];
+    mentions?: Doc<"channelMessages">["mentions"];
+  },
 ): Promise<void> {
+  const hasPlaintext = change.text !== undefined || change.embeds !== undefined || change.components !== undefined;
+  const author = await ctx.db.get(message.authorId);
+  // Whether the *edit* may carry plaintext. A text edit that only clears (empty string) still is one.
+  if (author) assertPlaintextAllowed({ author, hasEnc: !!change.enc, hasPlaintext });
+
+  if (change.enc) {
+    const room = { scope: "channel", channelId: message.channelId } as const;
+    await validateEnvelope(ctx, change.enc, room, "edit");
+    // Same ciphertext again: an outbox retry converges instead of bumping `editedAt`.
+    if (sameEnvelope(message.enc, change.enc)) return;
+    const cleanMentions = await validateMentions(
+      ctx,
+      change.mentions ?? { users: [], roles: [], everyone: false, here: false },
+      room,
+      message.authorId
+    );
+    // The plaintext fields are cleared so a legacy row that is edited moves wholly to ciphertext.
+    await ctx.db.patch(message._id, {
+      enc: change.enc,
+      mentions: cleanMentions,
+      text: undefined,
+      embeds: undefined,
+      components: undefined,
+      editedAt: Date.now(),
+    });
+    const channel = await ctx.db.get(message.channelId);
+    const fresh = await ctx.db.get(message._id);
+    if (channel && fresh) await fireCommunityEvent(ctx, channel.communityId, "message.updated", { channelId: channel._id, message: await describeMessage(ctx, fresh) }, { scope: "messages.read", channelId: channel._id, exceptUserId: message.authorId });
+    return;
+  }
+  // Writing plaintext over ciphertext would quietly undo the encryption and leave both on the row.
+  if (message.enc && hasPlaintext) throw new Error("This message is end-to-end encrypted. Edit it with an encrypted body.");
+
   const patch: Partial<Doc<"channelMessages">> = {};
   if (change.text !== undefined) {
     const t = change.text.trim();
@@ -583,13 +682,23 @@ export async function editChannelMessage(
 }
 
 export const update = mutation({
-  args: { messageId: v.id("channelMessages"), text: v.string() },
-  handler: async (ctx, { messageId, text }) => {
+  args: {
+    messageId: v.id("channelMessages"),
+    /** Legacy plaintext edit. Refused once E2EE_ENFORCE=1, and on a row that is already encrypted. */
+    text: v.optional(v.string()),
+    enc: v.optional(encValidator),
+    mentions: v.optional(mentionsValidator),
+  },
+  handler: async (ctx, { messageId, text, enc, mentions }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const message = await ctx.db.get(messageId);
     if (!message) return;
     if (message.authorId !== me._id) throw new Error("You can only edit your own messages.");
-    if (!text.trim()) throw new Error("Message can't be empty.");
+    if (enc) {
+      await editChannelMessage(ctx, message, { enc, mentions });
+      return;
+    }
+    if (text === undefined || !text.trim()) throw new Error("Message can't be empty.");
     await editChannelMessage(ctx, message, { text });
   },
 });
@@ -714,6 +823,9 @@ export const listPinned = query({
         return {
           id: message._id,
           text: message.text ?? null,
+          enc: message.enc ?? null,
+          mentions: message.mentions ?? null,
+          replyToId: message.replyToId ?? null,
           createdAt: message._creationTime,
           pinnedAt: message.pinnedAt ?? null,
           author: author

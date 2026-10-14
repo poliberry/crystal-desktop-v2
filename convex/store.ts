@@ -25,17 +25,6 @@ import { PERMISSIONS } from "./permissions";
  * not because the client does).
  */
 
-export const userByClerkId = internalQuery({
-  args: { clerkId: v.string() },
-  handler: async (ctx, { clerkId }) => {
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkId))
-      .unique();
-    return user ? { id: user._id, name: user.name, username: user.username } : null;
-  },
-});
-
 export const skuForSync = internalQuery({
   args: { skuId: v.id("skus") },
   handler: async (ctx, { skuId }) => ctx.db.get(skuId),

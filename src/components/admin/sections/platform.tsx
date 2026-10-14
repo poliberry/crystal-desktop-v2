@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Check, Loader2, Megaphone, ScrollText, Search, Send, Settings2, ShieldAlert, UserRoundPlus, Users, X } from "lucide-react";
+import { Check, Loader2, Megaphone, ScrollText, Search, Send, Settings2, ShieldAlert, ShieldCheck, UserRoundPlus, Users, X } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -23,6 +23,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/errors";
 import { formatDate, formatRelative } from "@/lib/money";
@@ -313,6 +314,40 @@ function GrantDialog({
   );
 }
 
+/**
+ * The platform's rule that staff must have two-step verification switched on to use the console.
+ * Staff who have it always enter a code to unlock the console; this decides whether having it is optional.
+ */
+function StaffSecurityPanel() {
+  const security = useQuery(api.platformSettings.security);
+  const set = useMutation(api.platformSettings.setRequireStaffTwoFactor);
+  const { run, busy } = useRun();
+  return (
+    <Panel title="Security">
+      <div className="flex items-start justify-between gap-6">
+        <div className="space-y-1">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <ShieldCheck className="size-4 text-primary" />
+            Require two-step verification for staff
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Staff without an authenticator app or passkey can't use the console, or any administrative function, until they set one up. Staff who have one are asked
+            for a code every few minutes either way. You need it on your own account before you can turn this on.
+          </p>
+        </div>
+        <Switch
+          checked={security?.requireStaffTwoFactor ?? false}
+          disabled={security === undefined || busy !== null}
+          onCheckedChange={(checked) =>
+            void run("staff-2sv", () => set({ required: checked }), checked ? "Staff must now use two-step verification." : "Two-step verification is no longer required for staff.")
+          }
+          aria-label="Require two-step verification for staff"
+        />
+      </div>
+    </Panel>
+  );
+}
+
 export function StaffSection() {
   const me = useStaff();
   const rows = useQuery(api.staff.list);
@@ -338,6 +373,8 @@ export function StaffSection() {
           </Button>
         }
       />
+
+      <StaffSecurityPanel />
 
       <Panel flush title={`${active.length} with access`}>
         {rows === undefined ? (

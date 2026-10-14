@@ -31,7 +31,7 @@ Studio checks every time you open the project. If the SDK that ships with Studio
 ## What each SDK is
 
 - **`@crystal/extension`** has `Extension` and `Panel`, the `ui` component builders, and `storage`, `http` and `notify` for the powers an extension can ask for. It has no dependencies and runs in the sandbox. Only what you import ends up in the built script.
-- **`@crystal/bot`** has `Client`, the classes it hands you (`Message`, `Channel`, `Community`, `Member`, `Role`…), the builders (`EmbedBuilder`, `ButtonBuilder`, `ActionRowBuilder`), permissions, presence and voice. It needs Node 18 or newer and nothing else; voice also uses the optional `@livekit/rtc-node`.
+- **`@crystal/bot`** has `Client`, the classes it hands you (`Message`, `Channel`, `Community`, `Member`, `Role`…), the builders (`EmbedBuilder`, `ButtonBuilder`, `ActionRowBuilder`), permissions and presence. It needs Node 18 or newer and nothing else. (Joining voice channels is unavailable for now; see [voice](doc:bots/voice).)
 
 ## The code editor
 

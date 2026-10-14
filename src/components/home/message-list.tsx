@@ -44,6 +44,8 @@ import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import type { ReplyDraft } from "@/lib/reply";
 import { cn } from "@/lib/utils";
 import { BotTag } from "@/components/bot-tag";
+import { useMessageContent } from "@/hooks/use-message-content";
+import type { Envelope } from "@/lib/e2ee";
 
 interface MessageListProps {
   conversationId: Id<"conversations">;
@@ -64,6 +66,8 @@ interface MessageDoc {
    * real one. */
   clientId?: string | null;
   text: string | null;
+  enc?: Envelope | null;
+  mentions?: { users?: string[]; roles?: string[]; everyone?: boolean; here?: boolean } | null;
   createdAt: number;
   editedAt: number | null;
   isMine: boolean;
@@ -112,6 +116,12 @@ const MessageRow = memo(function MessageRow({
 }) {
   // The time under the name is worded by the reader's region; a row is memoised, so it has to listen for a change itself.
   useLocale();
+  const readable = useMessageContent(
+    { scope: "conversation", conversationId },
+    message.author?.id,
+    { enc: message.enc, text: message.text },
+    !!message.__pending,
+  );
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
   const updateMessage = useOutboxMutation("edit", "dm");
@@ -119,7 +129,7 @@ const MessageRow = memo(function MessageRow({
   const toggleReaction = useOutboxMutation("react", "dm");
 
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(message.text ?? "");
+  const [draft, setDraft] = useState(readable.text ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reporting, setReporting] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -128,15 +138,19 @@ const MessageRow = memo(function MessageRow({
     if (editing) editRef.current?.focus();
   }, [editing]);
 
+  useEffect(() => {
+    if (!editing) setDraft(readable.text ?? "");
+  }, [editing, readable.text]);
+
   const startEdit = () => {
-    setDraft(message.text ?? "");
+    setDraft(readable.text ?? "");
     setEditing(true);
   };
 
   const saveEdit = async () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    if (trimmed !== message.text)
+    if (trimmed !== readable.text)
       await updateMessage({ conversationId, messageId: message.id, text: trimmed });
     setEditing(false);
   };
@@ -151,7 +165,7 @@ const MessageRow = memo(function MessageRow({
       id: message.id,
       authorName: message.author?.name ?? "Unknown",
       authorImageUrl: message.author?.imageUrl,
-      text: message.text,
+      text: readable.text ?? null,
       hasAttachment: message.attachments.length > 0,
     });
 
@@ -258,9 +272,11 @@ const MessageRow = memo(function MessageRow({
           </div>
         ) : (
           <>
-            {message.text && (
-              <MessageContent text={message.text} edited={!!message.editedAt} />
+            {readable.text && (
+              <MessageContent text={readable.text} edited={!!message.editedAt} />
             )}
+            {readable.state === "locked" && <p className="text-xs text-muted-foreground">Encrypted message. Unlock your account to read it.</p>}
+            {readable.state === "pending" && <p className="text-xs text-muted-foreground">Decrypting message…</p>}
             {message.attachments.map((attachment) => (
               <AttachmentView
                 key={attachment.id}
@@ -501,7 +517,7 @@ export function MessageList({ conversationId, onReply }: MessageListProps) {
                 message={message}
                 startsGroup={startsGroup}
                 mentionsMe={
-                  !!myUserId && mentionsUserDirectly(message.text ?? "", myUserId)
+                  !!myUserId && (message.mentions?.users?.includes(myUserId) ?? mentionsUserDirectly(message.text ?? "", myUserId))
                 }
                 highlighted={highlightId === message.id}
                 conversationId={conversationId}

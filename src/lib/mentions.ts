@@ -1,3 +1,5 @@
+import type { Id } from "../../convex/_generated/dataModel";
+
 /**
  * The mention grammar, shared by the composer, the renderer and (mirrored in
  * convex/lib/mentions.ts) the server.
@@ -73,6 +75,88 @@ export function parseMentions(text: string): MentionTarget[] {
   return found;
 }
 
+/** What the sender's client attaches to an encrypted message so the server can
+ * notify people without reading it (see docs/E2EE.md, "mentions"). */
+export interface ExtractedMentions {
+  users: string[];
+  roles: string[];
+  everyone: boolean;
+  here: boolean;
+}
+
+/** Preserve the string ids' runtime representation while branding them for Convex validators. */
+export function toConvexMentions(mentions: ExtractedMentions): {
+  users: Id<"users">[];
+  roles: Id<"roles">[];
+  everyone: boolean;
+  here: boolean;
+} {
+  return {
+    users: mentions.users as Id<"users">[],
+    roles: mentions.roles as Id<"roles">[],
+    everyone: mentions.everyone,
+    here: mentions.here,
+  };
+}
+
+/** What the composer already knows about who can be named. Bare `@handle`s are
+ * resolved against it; anything not in it is ignored rather than guessed. */
+export interface MentionContext {
+  members?: readonly { id: string; username: string }[];
+}
+
+/** Bare handle, the same alphabet convex/lib/mentions.ts accepts. The lookbehind
+ * keeps an email address (`a@b.co`) from reading as a mention of `b.co`. */
+const BARE_USERNAME_RE = /(?<![\w<@&.])@([a-z0-9_.]{3,32})/gi;
+
+/** More than this in one message is a mass ping dressed up as a list. */
+const MAX_MENTIONED_USERS = 100;
+
+/**
+ * The mentions in a message, as the structure the server stores next to the
+ * ciphertext. Grammar: `<@id>`, `<@&id>`, `@everyone`, `@here`, and a bare
+ * `@username` that matches a known member.
+ *
+ * The server checks the ids are members and enforces MENTION_EVERYONE, but it
+ * cannot check the text matches — this is the only place that ties the two.
+ */
+export function extractMentions(text: string, ctx: MentionContext = {}): ExtractedMentions {
+  const users = new Set<string>();
+  const roles = new Set<string>();
+  let everyone = false;
+  let here = false;
+
+  for (const target of parseMentions(text)) {
+    if (target.kind === "user") users.add(target.id);
+    else if (target.kind === "role") roles.add(target.id);
+    else if (target.kind === "everyone") everyone = true;
+    else here = true;
+  }
+
+  if (ctx.members?.length) {
+    const byUsername = new Map(ctx.members.map((m) => [m.username.toLowerCase(), m.id]));
+    // The structured forms are blanked first: `@everyone` also looks like a
+    // handle, and the id inside `<@id>` must not be read as one.
+    const remainder = text.replace(MENTION_RE, " ");
+    for (const match of remainder.matchAll(BARE_USERNAME_RE)) {
+      let handle = match[1].toLowerCase();
+      // "@bob." at the end of a sentence: the dot is punctuation, unless a
+      // member really is called "bob.".
+      while (handle.length >= 3) {
+        const id = byUsername.get(handle);
+        if (id) {
+          users.add(id);
+          break;
+        }
+        if (!handle.endsWith(".")) break;
+        handle = handle.slice(0, -1);
+      }
+    }
+  }
+
+  return { users: [...users].slice(0, MAX_MENTIONED_USERS), roles: [...roles], everyone, here };
+}
+
 /** Whether a message pings the given user directly (not via a role or
  * `@everyone`) — enough to decide whether to highlight it for them. */
 export function mentionsUserDirectly(text: string, userId: string): boolean {
@@ -120,6 +204,19 @@ export function substituteMentions(text: string, names: MentionNames): string {
     }
     const keyword = all?.toLowerCase() === "here" ? "here" : "everyone";
     return `[@${keyword}](${MENTION_LINK_SCHEME}${keyword}:)`;
+  });
+}
+
+/**
+ * Mentions as plain `@name`, for one-line previews (reply quotes, sidebar lines, notification
+ * text). The server used to do this when it built previews; it can't read the text any more.
+ * Unresolvable references read as `@unknown` rather than leaking an id into the line.
+ */
+export function renderMentionsAsPlain(text: string, names: Pick<MentionNames, "user" | "role">): string {
+  return text.replace(MENTION_RE, (match, roleId?: string, userId?: string) => {
+    if (roleId) return `@${names.role(roleId)?.name ?? "role"}`;
+    if (userId) return `@${names.user(userId) ?? "unknown"}`;
+    return match;
   });
 }
 

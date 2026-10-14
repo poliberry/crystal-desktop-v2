@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { action, internalAction, internalMutation, query } from "./_generated/server";
+import { channelPageKeys, dmPageKeys } from "./lib/messageCacheKeys";
 
 /**
  * Redis cache for hot chat paths (Upstash REST). Convex is source of truth;
@@ -11,8 +12,11 @@ import { action, internalAction, internalMutation, query } from "./_generated/se
  *   —or— for Redis Cloud, set REDIS_URL in `convex/redisCloud.ts`
  *
  * Cache keys / TTL (s):
- *   channel:{id}:messages:{limit} 30, dm:{id}:messages:{limit} 30,
+ *   channel:{id}:messages:{version}:{limit} 30, dm:{id}:messages:{version}:{limit} 30,
  *   channel:{id}:meta 120, community:{id}:channels 60, etc.
+ * Message pages hold the rows as stored: `enc` ciphertext for encrypted messages, never text the
+ * server decrypted or rendered (docs/E2EE.md). The version (convex/lib/messageCacheKeys.ts) keeps
+ * pages cached before E2EE, with plaintext in them, from being served.
  * Invalidation is explicit (see invalidate* helpers), not CDN — channel data is
  * permission-sensitive.
  */
@@ -151,20 +155,20 @@ export async function cacheInvalidateKeys(...keys: string[]): Promise<void> {
 export const onChannelMessageWrite = internalAction({
   args: { channelId: v.id("channels") },
   handler: async (_ctx, { channelId }) => {
-    await redisDel(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:meta`);
+    await redisDel(...channelPageKeys(channelId), `channel:${channelId}:meta`);
   },
 });
 
 export const invalidateChannelCache = internalAction({
   args: { channelId: v.id("channels") },
   handler: async (_ctx, { channelId }) => {
-    await redisDel(`channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`, `channel:${channelId}:meta`);
+    await redisDel(...channelPageKeys(channelId), `channel:${channelId}:meta`);
   },
 });
 
 export const invalidateDmCache = internalAction({
   args: { conversationId: v.id("conversations") },
   handler: async (_ctx, { conversationId }) => {
-    await redisDel(`dm:${conversationId}:messages:30`, `dm:${conversationId}:messages:50`);
+    await redisDel(...dmPageKeys(conversationId));
   },
 });

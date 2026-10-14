@@ -5,6 +5,15 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText } from "./lib/mentions";
+import { dmPageKey, dmPageKeys } from "./lib/messageCacheKeys";
+import {
+  assertPlaintextAllowed,
+  encValidator,
+  mentionsValidator,
+  validateEnvelope,
+  validateMentions,
+} from "./lib/e2eeEnforce";
+import { sameEnvelope } from "./lib/e2eePure";
 import { allowsReply, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { isMessageHidden, requireNotBlocked, windowsByTarget } from "./lib/blocking";
 import { notifyUsers } from "./notifications";
@@ -81,6 +90,7 @@ async function resolveReplyPreview(
       authorName: "Unknown",
       authorImageUrl: undefined as string | undefined,
       text: null as string | null,
+      enc: null as Doc<"messages">["enc"] | null,
       hasAttachment: false,
       deleted: true,
     };
@@ -101,9 +111,14 @@ async function resolveReplyPreview(
     createdAt: target._creationTime as number | undefined,
     authorName: author?.name ?? "Unknown",
     authorImageUrl: author?.imageUrl,
-    text: target.text
-      ? (await renderMentionsAsText(ctx, target.text)).slice(0, REPLY_SNIPPET_MAX)
-      : null,
+    // An encrypted target has no text the server may read or render: the
+    // snippet is built by the client from `enc`, which it can decrypt (the
+    // target is usually in the page already, but not always).
+    text:
+      !target.enc && target.text
+        ? (await renderMentionsAsText(ctx, target.text)).slice(0, REPLY_SNIPPET_MAX)
+        : null,
+    enc: target.enc ?? null,
     hasAttachment: firstAttachment.length > 0,
     deleted: false,
   };
@@ -119,6 +134,7 @@ type PageMessage = {
     authorName: string;
     authorImageUrl?: string;
     text: string | null;
+    enc?: Doc<"messages">["enc"] | null;
     hasAttachment: boolean;
     deleted: boolean;
     hidden?: boolean;
@@ -202,7 +218,7 @@ export const list = query({
 
     // Redis cache for first page only (hot path) — pagination cursor = null
     const isFirstPage = !paginationOpts.cursor;
-    const cacheKey = `dm:${conversationId}:messages:${paginationOpts.numItems}`;
+    const cacheKey = dmPageKey(conversationId, paginationOpts.numItems);
     if (isFirstPage) {
       try {
         const { cacheGetJson } = await import("./cache");
@@ -254,6 +270,12 @@ export const list = query({
         return {
           id: message._id,
           text: message.text ?? null,
+          /** End-to-end encrypted body and who it pings, exactly as stored.
+           * The server never decrypts: the client opens `enc` with the room
+           * key (docs/E2EE.md). Null on legacy plaintext rows. */
+          enc: message.enc ?? null,
+          mentions: message.mentions ?? null,
+          replyToId: message.replyToId ?? null,
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
           isMine: message.authorId === me._id,
@@ -328,16 +350,22 @@ export const send = mutation({
      * hand back its id rather than inserting a second copy. See
      * src/lib/outbox.ts. */
     clientId: v.optional(v.string()),
+    /** The message body, end-to-end encrypted (docs/E2EE.md). Replaces `text`; the two are never
+     * stored together. `text` stays accepted for old clients until E2EE_ENFORCE=1. */
+    enc: v.optional(encValidator),
+    /** Who the message pings, in the clear — the server can't read `enc`. Only kept with `enc`. */
+    mentions: v.optional(mentionsValidator),
   },
   handler: async (
     ctx,
-    { conversationId, text, attachments, birthdayWish, replyToId, pingReply, clientId },
+    { conversationId, text, attachments, birthdayWish, replyToId, pingReply, clientId, enc, mentions },
   ) => {
     const me = await getCurrentUserOrThrow(ctx, "send_messages");
     if (attachments?.length) requireAbility(me, "upload_media");
     if (me.clerkId === "system:crystal") throw new Error("The Crystal system account cannot compose messages.");
     const membership = await requireMembership(ctx, conversationId, me._id);
     await requireNoBlockInDirect(ctx, conversationId, me._id);
+    assertPlaintextAllowed({ author: me, hasEnc: !!enc, hasPlaintext: !!text?.trim() });
 
     if (clientId) {
       const existing = await ctx.db
@@ -348,9 +376,19 @@ export const send = mutation({
     }
 
     const trimmed = text?.trim();
-    if (!trimmed && (!attachments || attachments.length === 0)) {
+    // An encrypted body can't be checked for emptiness here; the sender's client does.
+    if (!enc && !trimmed && (!attachments || attachments.length === 0)) {
       throw new Error("Message needs text or an attachment.");
     }
+    if (enc) await validateEnvelope(ctx, enc, { scope: "conversation", conversationId }, "send");
+    const cleanMentions = enc
+      ? await validateMentions(
+          ctx,
+          mentions ?? { users: [], roles: [], everyone: false, here: false },
+          { scope: "conversation", conversationId },
+          me._id,
+        )
+      : undefined;
 
     for (const attachment of attachments ?? []) {
       if (attachment.storageId) {
@@ -391,7 +429,9 @@ export const send = mutation({
     const messageId = await ctx.db.insert("messages", {
       conversationId,
       authorId: me._id,
-      text: trimmed || undefined,
+      // Never both: an encrypted row has no `text`.
+      text: enc ? undefined : trimmed || undefined,
+      ...(enc ? { enc, mentions: cleanMentions } : {}),
       birthdayWish: isWish || undefined,
       replyToId: validReplyToId,
       clientId: clientId || undefined,
@@ -404,7 +444,10 @@ export const send = mutation({
     // I've obviously "read" up to the message I just sent.
     await ctx.db.patch(membership._id, { lastReadAt: Date.now() });
 
-    const body = trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment";
+    // An encrypted message has no text the server may put in a notification;
+    // `notifyUsers` swaps in the generic body for it (and for every plaintext
+    // write once enforced). The legacy body is only built for legacy rows.
+    const body = enc ? undefined : trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment";
 
     // The reply target gets the "replied to you" notification instead of a
     // plain DM one — but only if their settings actually let a reply through.
@@ -423,6 +466,7 @@ export const send = mutation({
       messageId,
       title: me.name,
       body,
+      encrypted: !!enc,
     });
 
     if (replyPingUserId && replyReachesTarget) {
@@ -434,13 +478,14 @@ export const send = mutation({
         messageId,
         title: `${me.name} replied to you`,
         body,
+        encrypted: !!enc,
       });
     }
 
     // Invalidate Redis cache for DMs (hot path) — messages, conversations
     try {
       const { cacheInvalidateKeys } = await import("./cache");
-      await cacheInvalidateKeys(`dm:${conversationId}:messages:30`, `dm:${conversationId}:messages:50`, `dm:${conversationId}:messages:20`, `dm:${conversationId}:messages:25`);
+      await cacheInvalidateKeys(...dmPageKeys(conversationId));
       await cacheInvalidateKeys(`user:${me._id}:conversations`);
     } catch {}
     // Also schedule internal invalidation for any prefix scan if needed
@@ -489,16 +534,44 @@ export const latestBirthdayWish = query({
 });
 
 export const update = mutation({
-  args: { messageId: v.id("messages"), text: v.string() },
-  handler: async (ctx, { messageId, text }) => {
+  args: {
+    messageId: v.id("messages"),
+    /** Legacy plaintext edit. Refused once E2EE_ENFORCE=1, and on a row that is already encrypted. */
+    text: v.optional(v.string()),
+    /** The new body, encrypted. Under any epoch of this conversation, not only the latest. */
+    enc: v.optional(encValidator),
+    mentions: v.optional(mentionsValidator),
+  },
+  handler: async (ctx, { messageId, text, enc, mentions }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const message = await ctx.db.get(messageId);
     if (!message) return;
     if (message.authorId !== me._id)
       throw new Error("You can only edit your own messages.");
 
-    const trimmed = text.trim();
+    const trimmed = text?.trim();
+    assertPlaintextAllowed({ author: me, hasEnc: !!enc, hasPlaintext: !!trimmed });
+
+    if (enc) {
+      const room = { scope: "conversation", conversationId: message.conversationId } as const;
+      await validateEnvelope(ctx, enc, room, "edit");
+      // Same ciphertext again: an outbox retry converges instead of bumping `editedAt`.
+      if (sameEnvelope(message.enc, enc)) return;
+      const cleanMentions = await validateMentions(
+        ctx,
+        mentions ?? { users: [], roles: [], everyone: false, here: false },
+        room,
+        me._id,
+      );
+      // `text: undefined` also moves a legacy plaintext row to ciphertext when its author edits it.
+      await ctx.db.patch(messageId, { enc, mentions: cleanMentions, text: undefined, editedAt: Date.now() });
+      return;
+    }
+
     if (!trimmed) throw new Error("Message can't be empty.");
+    // Writing plaintext over ciphertext would quietly undo the encryption (and leave both on the
+    // row), so an old client can't edit a message it couldn't read either.
+    if (message.enc) throw new Error("Update Crystal to edit this message.");
     // No-op when the text is already what we'd write — makes an outbox retry
     // of the same edit converge instead of bumping `editedAt` again.
     if (message.text === trimmed) return;
@@ -621,6 +694,9 @@ export const listPinned = query({
         return {
           id: message._id,
           text: message.text ?? null,
+          enc: message.enc ?? null,
+          mentions: message.mentions ?? null,
+          replyToId: message.replyToId ?? null,
           createdAt: message._creationTime,
           pinnedAt: message.pinnedAt ?? null,
           author: author

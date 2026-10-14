@@ -2,14 +2,20 @@
 
 import { UnsavedDialog } from "@/studio/shell/unsaved-dialog";
 import type * as Monaco from "monaco-editor";
-import { AlertTriangle, Bell, Check, ChevronRight, CircleX, Files, Loader2, Maximize2, Minimize2, Play, Plus, Search, Settings, TriangleAlert, Trash2, X, ChevronDown } from "lucide-react";
+import { AlertTriangle, Bell, Check, ChevronRight, CircleX, Files, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, Play, Plus, Search, Settings, TriangleAlert, Trash2, X, ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeMenuBar, EXPLORER_EVENT, type ExplorerRequest, type MenuDef } from "@/studio/code/code-menu-bar";
 import { FileTree } from "@/studio/code/file-tree";
+import { GitDiffView, type DiffTarget } from "@/studio/code/git-diff";
+import { BranchLabel, GitView } from "@/studio/code/git-view";
+import { OpenInMenu } from "@/studio/code/open-in-menu";
+import { PublishDialog } from "@/studio/code/publish-dialog";
 import { SearchView } from "@/studio/code/search-view";
 import { TerminalPanel, useTerminals } from "@/studio/code/terminal-panel";
 import type { CodeWorkbench as Workbench } from "@/studio/code/use-code-workbench";
+import { useGit, useOpenIn } from "@/studio/code/use-git";
+import type { OpenInTarget } from "../../../electron/gitTypes";
 import { EDITOR_FONT, EDITOR_FONT_SIZE, PaletteProvider, WORKBENCH_FONT, ctrlKey, modKey, paletteVars, shiftKey, useWorkbenchPalette, type VscPalette } from "@/studio/code/vscode-theme";
 import { FileGlyph, QuickPick, Sash, type PickItem } from "@/studio/code/vscode-ui";
 import { applyVscodeTheme } from "@/studio/code/monaco";
@@ -141,7 +147,7 @@ function Surface({ wb, palette, api, onCursor, onPalette, onQuickOpen }: { wb: W
   return <div ref={host} className="h-full w-full" />;
 }
 
-type ViewId = "explorer" | "search" | "run";
+type ViewId = "explorer" | "search" | "git" | "run";
 type PanelTab = "problems" | "output" | "terminal";
 
 export interface CodeWorkbenchViewProps {
@@ -210,6 +216,12 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
   const [files, setFiles] = useState<string[]>([]);
   const [cursor, setCursor] = useState<CursorInfo | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
+  // Source control: git's view of the folder, the change being compared (if any), and the publish dialog.
+  const git = useGit(wb);
+  const openIn = useOpenIn(wb);
+  const [diff, setDiff] = useState<DiffTarget | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const mod = modKey();
   const chrome = useStudioChrome();
   // View ▸ Appearance toggles that belong to the editor rather than to the layout.
@@ -230,10 +242,30 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
     }
   }, [runSignal]);
 
-  // Choosing a file leaves the settings tab.
+  // Choosing a file leaves the settings tab, and a comparison.
   useEffect(() => {
-    if (wb.active) setShowSettings(false);
+    if (wb.active) {
+      setShowSettings(false);
+      setDiff(null);
+    }
   }, [wb.active]);
+
+  // A comparison follows its file: staging moves it to the "staged" side, unstaging back, and once
+  // there is nothing left to compare (it was committed or discarded) the tab goes away.
+  const diffChange = diff ? git.byPath.get(diff.path) : undefined;
+  useEffect(() => {
+    if (!diff || !git.status) return;
+    if (!diffChange) return setDiff(null);
+    if (diff.mode === "unstaged" && !diffChange.unstaged && !diffChange.conflicted && diffChange.staged) setDiff({ ...diff, mode: "staged" });
+    else if (diff.mode === "staged" && !diffChange.staged && diffChange.unstaged) setDiff({ ...diff, mode: "unstaged" });
+  }, [diff, diffChange, git.status]);
+
+  // A line in the status bar saying what just happened fades after a while.
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 9000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   // A finished build shows its result, as a task's output does: a failure is the thing to look at.
   useEffect(() => {
@@ -247,6 +279,7 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
     async (file: string | undefined, line?: number, column?: number) => {
       if (!file) return;
       setShowSettings(false);
+      setDiff(null);
       await wb.openFile(file);
       if (line) {
         const reveal = () => {
@@ -274,6 +307,21 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
     setPanelTab(tab);
     setPanelOpen(true);
   }, []);
+
+  /** "Open in…": editors and apps are started by the main process; command-line agents get a terminal here, started on the project. */
+  const openTarget = useCallback(
+    async (t: OpenInTarget) => {
+      if (t.via === "terminal") {
+        openPanel("terminal");
+        terminals.add({ command: t.command });
+        return;
+      }
+      const r = await openIn.open(t.id);
+      if (!r.ok) setNotice(r.message);
+      else setNotice(r.value.message ?? `Opened in ${t.label}.`);
+    },
+    [openIn, openPanel, terminals],
+  );
   const toggleTerminal = useCallback(() => {
     if (panelOpen && panelTab === "terminal") return setPanelOpen(false);
     openPanel("terminal");
@@ -303,6 +351,7 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
     if ((m && e.shiftKey && k === "p") || e.key === "F1") return eat(() => void openQuick("commands"));
     if (m && e.shiftKey && k === "f") return eat(() => showView("search"));
     if (m && e.shiftKey && k === "e") return eat(() => showView("explorer"));
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && k === "g" && git.available) return eat(() => showView("git"));
     if (m && !e.shiftKey && k === "b") return eat(() => setSidebarOpen((o) => !o));
     if (m && !e.shiftKey && k === "j") return eat(() => setPanelOpen((o) => !o));
     if (m && e.shiftKey && k === "m") return eat(() => openPanel("problems"));
@@ -335,6 +384,20 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
     { id: "fold-all", label: "Fold All", run: action("editor.foldAll") },
     { id: "unfold-all", label: "Unfold All", run: action("editor.unfoldAll") },
     ...(run ? [{ id: "show-run", label: `View: Show ${runLabel}`, run: () => showView("run") }] : []),
+    ...(git.available
+      ? [
+          { id: "scm", label: "Source Control: Focus", hint: "Ctrl+Shift+G", run: () => showView("git") },
+          { id: "git-init", label: "Git: Initialize Repository", run: () => void git.init(), },
+          { id: "git-stage-all", label: "Git: Stage All Changes", run: () => void git.stageAll() },
+          { id: "git-unstage-all", label: "Git: Unstage All Changes", run: () => void git.unstageAll() },
+          { id: "git-commit", label: "Git: Commit…", run: () => showView("git") },
+          { id: "git-fetch", label: "Git: Fetch", run: () => void git.fetch() },
+          { id: "git-pull", label: "Git: Pull", run: () => void git.pull() },
+          { id: "git-push", label: "Git: Push", run: () => void git.push() },
+          { id: "git-publish", label: "Git: Publish to GitHub…", run: () => setPublishing(true) },
+        ]
+      : []),
+    ...openIn.targets.map((t) => ({ id: `open-in-${t.id}`, label: `Open Project in ${t.label}`, detail: t.via === "terminal" ? "in a terminal here" : undefined, run: () => void openTarget(t) })),
     ...commands,
   ];
   const fileItems: PickItem[] = files.map((f) => ({ id: f, label: f.includes("/") ? baseOf(f) : f, detail: f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : undefined, icon: <FileGlyph name={baseOf(f)} />, run: () => void go(f) }));
@@ -427,6 +490,7 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
         "-",
         { label: "Explorer", keys: `${shiftKey()}${mod}E`, run: () => showView("explorer"), checked: sidebarOpen && view === "explorer" },
         { label: "Search", keys: `${shiftKey()}${mod}F`, run: () => showView("search"), checked: sidebarOpen && view === "search" },
+        ...(git.available ? [{ label: "Source Control", keys: `${ctrlKey()}${shiftKey()}G`, run: () => showView("git"), checked: sidebarOpen && view === "git" }] : []),
         ...(run ? [{ label: runLabel, run: () => showView("run"), checked: sidebarOpen && view === "run" }] : []),
         "-",
         { label: "Primary Side Bar", keys: `${mod}B`, run: () => setSidebarOpen((o) => !o), checked: sidebarOpen },
@@ -457,6 +521,26 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
         { label: "Previous Problem", keys: "Shift+F8", run: at("editor.action.marker.prev"), disabled: noFile },
       ],
     },
+    ...(git.available
+      ? [
+          {
+            label: "Git",
+            items: [
+              { label: "Initialize Repository", run: () => void git.init(), disabled: !wb.ready || !!git.status?.isRepo || !!git.busy },
+              { label: "Source Control", keys: `${ctrlKey()}${shiftKey()}G`, run: () => showView("git") },
+              "-",
+              { label: "Stage All Changes", run: () => void git.stageAll(), disabled: !git.status?.isRepo || git.unstaged.length === 0 || !!git.busy },
+              { label: "Unstage All Changes", run: () => void git.unstageAll(), disabled: !git.status?.isRepo || git.staged.length === 0 || !!git.busy },
+              "-",
+              { label: "Fetch", run: () => void git.fetch(), disabled: !git.status?.remotes.length || !!git.busy },
+              { label: "Pull", run: () => void git.pull(), disabled: !git.status?.upstream || !!git.busy },
+              { label: "Push", run: () => void git.push(), disabled: !git.status?.remotes.length || !git.status?.hasCommits || !!git.busy },
+              "-",
+              { label: "Publish to GitHub…", run: () => setPublishing(true), disabled: !wb.ready || !!git.status?.remotes.length },
+            ] as MenuDef["items"],
+          },
+        ]
+      : []),
     {
       label: "Run",
       items: [
@@ -497,7 +581,7 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
     );
   }
 
-  const activityIcon = (id: ViewId, Icon: typeof Files, label: string, keys?: string) => {
+  const activityIcon = (id: ViewId, Icon: typeof Files, label: string, keys?: string, badge?: number) => {
     const on = sidebarOpen && view === id;
     return (
       <button
@@ -512,6 +596,11 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
       >
         {on && <span className="absolute inset-y-0 left-0 w-0.5" style={{ background: "var(--vsc-accent)" }} />}
         <Icon className="size-6" strokeWidth={1.5} />
+        {badge ? (
+          <span className="absolute right-1.5 bottom-1.5 min-w-4 rounded-full px-1 text-center text-[9px] leading-4 font-semibold" style={{ background: "var(--vsc-badge)", color: "var(--vsc-badge-fg)" }}>
+            {badge > 99 ? "99+" : badge}
+          </span>
+        ) : null}
       </button>
     );
   };
@@ -547,6 +636,7 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
           <div>
             {activityIcon("explorer", Files, "Explorer", `${shiftKey()}${mod}E`)}
             {activityIcon("search", Search, "Search", `${shiftKey()}${mod}F`)}
+            {git.available && activityIcon("git", GitBranch, "Source Control", `${ctrlKey()}${shiftKey()}G`, git.status?.changes.length)}
             {run && activityIcon("run", Play, runLabel)}
           </div>
           <div>
@@ -560,8 +650,17 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
         {sidebarOpen && (
           <>
             <aside className="shrink-0 overflow-hidden" style={{ width: sidebarWidth, background: "var(--vsc-sidebar)", color: "var(--vsc-sidebar-fg)" }}>
-              {wb.ready && view === "explorer" && <FileTree wb={wb} projectName={projectName} />}
+              {wb.ready && view === "explorer" && <FileTree wb={wb} projectName={projectName} git={git.available ? git : undefined} onActivateFile={() => setDiff(null)} />}
               {wb.ready && view === "search" && <SearchView wb={wb} onOpen={(p, l, c) => void go(p, l, c)} />}
+              {wb.ready && view === "git" && (
+                <GitView
+                  git={git}
+                  onOpenDiff={(t) => (setShowSettings(false), setDiff(t))}
+                  onOpenFile={(p) => void go(p)}
+                  onPublish={() => setPublishing(true)}
+                  onStatusChange={setNotice}
+                />
+              )}
               {view === "run" && (
                 <div className="flex h-full flex-col">
                   <div className="flex h-[35px] shrink-0 items-center pl-5 text-[11px] uppercase" style={{ color: "var(--vsc-sidebar-title-fg)" }}>{runLabel}</div>
@@ -582,26 +681,39 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
                   {showSettings && (
                     <Tab active label={settingsLabel} glyph={<Settings className="size-3.5" />} onSelect={() => undefined} onClose={() => setShowSettings(false)} />
                   )}
+                  {diff && !showSettings && (
+                    <Tab
+                      active
+                      label={`${baseOf(diff.path)} (${diff.mode === "staged" ? "Staged" : "Working Tree"})`}
+                      title={`${diff.path}: ${diff.mode === "staged" ? "HEAD ↔ staged" : "index ↔ working tree"}`}
+                      glyph={<GitCompare className="size-3.5" />}
+                      onSelect={() => undefined}
+                      onClose={() => setDiff(null)}
+                    />
+                  )}
                   {wb.open.map((path) => (
                     <Tab
                       key={path}
-                      active={!showSettings && wb.active === path}
+                      active={!showSettings && !diff && wb.active === path}
                       label={labelFor(path)}
                       title={path}
                       glyph={<FileGlyph name={baseOf(path)} />}
                       dirty={wb.dirty.has(path)}
                       conflict={wb.conflicts.has(path)}
                       muted={wb.missing.has(path)}
-                      onSelect={() => (setShowSettings(false), wb.setActive(path))}
+                      onSelect={() => (setShowSettings(false), setDiff(null), wb.setActive(path))}
                       onClose={() => wb.closeFile(path)}
                     />
                   ))}
                   <div className="flex-1 border-b" style={{ borderColor: "var(--vsc-border)" }} />
                 </div>
-                <div className="flex shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--vsc-border)" }}>{toolbar}</div>
+                <div className="flex shrink-0 items-center gap-1 border-b px-2" style={{ borderColor: "var(--vsc-border)" }}>
+                  {toolbar}
+                  {openIn.available && <OpenInMenu targets={openIn.targets} onOpen={(t) => void openTarget(t)} onOpening={() => void openIn.refresh()} vars={{ ...palette, ...scoped } as React.CSSProperties} />}
+                </div>
               </div>
 
-              {!showSettings && wb.active && (
+              {!showSettings && !diff && wb.active && (
                 <div className="flex h-[22px] shrink-0 items-center gap-0.5 overflow-hidden px-3 text-[13px]" style={{ background: "var(--vsc-editor)", color: "var(--vsc-breadcrumb)" }}>
                   {crumbs.map((c, i) => (
                     <span key={i} className="flex items-center gap-0.5" style={i === crumbs.length - 1 ? { color: "var(--vsc-breadcrumb-active)" } : undefined}>
@@ -650,6 +762,8 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
                     {!wb.active && <Watermark mod={mod} shift={shiftKey()} ctrl={ctrlKey()} />}
                   </>
                 )}
+                {/* A comparison covers the editor rather than replacing it, so the open file keeps its cursor, scroll and undo history. */}
+                {diff && !showSettings && wb.monaco && <GitDiffView key={`${diff.mode}:${diff.path}`} git={git} monaco={wb.monaco} target={diff} onOpenFile={(p) => void go(p)} />}
               </div>
             </>
           )}
@@ -723,6 +837,7 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
       </div>
 
       <UnsavedDialog name={wb.closeRequest ? baseOf(wb.closeRequest) : null} what="changes" onAnswer={(a) => wb.answerClose(a)} />
+      <PublishDialog open={publishing} onClose={() => setPublishing(false)} git={git} projectName={projectName} />
 
       {/* Status bar */}
       <footer className="flex h-[22px] shrink-0 items-center justify-between border-t px-1 text-[12px]" style={{ background: "var(--vsc-status-bar)", color: "var(--vsc-status-fg)", borderColor: "var(--vsc-border)" }}>
@@ -731,6 +846,12 @@ export function CodeWorkbenchView({ wb, projectName, settings, settingsLabel, ru
             <CircleX className="size-3.5" /> {errors} <TriangleAlert className="ml-1 size-3.5" /> {warnings}
           </StatusItem>
           {wb.dirty.size > 0 && <StatusItem title={`Unsaved: ${[...wb.dirty].map(baseOf).join(", ")}. ${mod}S saves.`} onClick={() => void wb.saveAll()}>{wb.dirty.size} unsaved</StatusItem>}
+          {git.status?.isRepo && (
+            <StatusItem title={git.status.upstream ? `${git.status.branch} → ${git.status.upstream}. Open Source Control.` : "Open Source Control"} onClick={() => showView("git")}>
+              <BranchLabel git={git} />
+            </StatusItem>
+          )}
+          {(notice || git.busy) && <span role="status" className="max-w-[520px] truncate px-2" title={notice ?? git.busy ?? undefined}>{git.busy ?? notice}</span>}
         </div>
         <div className="flex items-center">
           {cursor && wb.active && !showSettings && (

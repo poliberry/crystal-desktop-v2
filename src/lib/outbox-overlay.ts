@@ -67,8 +67,13 @@ export interface OverlayMessage {
     | null;
   attachments: OverlayAttachment[];
   reactions: OverlayReaction[];
-  /** The message this one replies to, if any. */
+  /** The message this one replies to, if any — only ever a locally kept snapshot, for a queued
+   * send. Server rows carry `replyToId` and the list resolves the quote from the decrypted target. */
   replyTo?: OverlayReplyPreview | null;
+  replyToId?: string | null;
+  /** Overlay-only. The text here was typed on this device (a queued send, or a queued edit laid
+   * over a server row): draw it as is, don't try to decrypt the row underneath. */
+  __local?: boolean;
   /** Overlay-only. A synthesised or not-yet-acked row. */
   __pending?: boolean;
   /** Overlay-only. The op backing this row has permanently failed. */
@@ -142,6 +147,8 @@ function syntheticRow(entry: OutboxEntry, me: OverlayMe): OverlayMessage {
     createdAt: entry.createdAt,
     editedAt: null,
     isMine: true,
+    replyToId: args.kind === "send" ? (args.replyToId ?? null) : null,
+    __local: true,
     replyTo:
       args.kind === "send" && args.replyToId && replyPreview
         ? {
@@ -213,7 +220,7 @@ export function applyOutboxOverlay<T extends OverlayMessage>(
       });
       if (!edit || edit.args.kind !== "edit") return row;
       if (row.text === edit.args.text) return row;
-      return { ...row, text: edit.args.text, editedAt: row.editedAt ?? Date.now() };
+      return { ...row, text: edit.args.text, editedAt: row.editedAt ?? Date.now(), __local: true };
     });
   }
 

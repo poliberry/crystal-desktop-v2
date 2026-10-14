@@ -24,6 +24,8 @@ import {
 } from "./structures";
 import type { APIChannel, APIMe, CrystalEvent } from "./types";
 import type { VoiceConnection } from "./voice";
+import { decryptMessage as decryptE2eeMessage, encryptMessage as encryptE2eeMessage, unwrapRoomKey, type MessagePayload } from "./e2ee-crypto";
+import { generateIdentity } from "./e2ee-crypto";
 
 /** The events a `Client` emits. Use these names with `client.on(...)`. */
 export const Events = {
@@ -108,6 +110,8 @@ export interface ClientOptions {
    * open app to do that). Default true. Turn off only if you manage presence yourself.
    */
   keepAlive?: boolean;
+  /** Optional bot E2EE identity. Keep this private key in your bot's secret store. */
+  e2eeIdentity?: { publicKey: string; privateKey: string };
   /**
    * How the bot hears about things. `"poll"` (the default): after `login()` the SDK asks Crystal for
    * events, so a bot works from anywhere, with no address of its own, and `listen()` isn't needed.
@@ -169,6 +173,8 @@ export class Client extends Emitter<ClientEvents> {
   private presence: PresenceOptions;
   private loggedIn = false;
   private polling: { stop: boolean; abort: AbortController } | null = null;
+  private e2eeIdentity: ClientOptions["e2eeIdentity"];
+  get hasE2eeIdentity(): boolean { return !!this.e2eeIdentity; }
 
   /** Make a client. The token and signing secret default to the `CRYSTAL_BOT_TOKEN` and `CRYSTAL_SIGNING_SECRET` environment variables. */
   constructor(
@@ -182,6 +188,33 @@ export class Client extends Emitter<ClientEvents> {
     this.signingSecret = options.signingSecret ?? process.env.CRYSTAL_SIGNING_SECRET;
     this.rest = new REST({ token, apiUrl });
     this.presence = options.presence ?? {};
+    this.e2eeIdentity = options.e2eeIdentity;
+  }
+
+  /** Generate a bot identity once, then keep the returned private key in your secret store. */
+  static generateE2eeIdentity() {
+    return generateIdentity();
+  }
+
+  /** Opens an encrypted channel message when this bot has a wrap for the message key. */
+  async decryptMessage(channelId: string, authorId: string, envelope: { keyId: string; iv: string; ct: string }, wrapped?: string): Promise<MessagePayload | null> {
+    const identity = this.e2eeIdentity;
+    if (!identity || !wrapped) return null;
+    try {
+      const roomKey = await unwrapRoomKey(wrapped, identity.privateKey, identity.publicKey);
+      return await decryptE2eeMessage(roomKey, envelope, { scope: "channel", targetId: channelId, keyId: envelope.keyId, authorId });
+    } catch {
+      return null;
+    }
+  }
+
+  async encryptForChannel(channelId: string, authorId: string, payload: { text?: string; embeds?: unknown[]; components?: unknown[] }) {
+    const identity = this.e2eeIdentity;
+    if (!identity) throw new CrystalError("This bot has no E2EE identity key configured.");
+    const current = await this.rest.get<{ keyId: string; myWrap?: string | null } | null>(`/channels/${channelId}/e2ee-key`);
+    if (!current?.keyId || !current.myWrap) throw new CrystalError("This bot has no wrap for the current channel key. Ask a member to open the channel after installing the bot.");
+    const roomKey = await unwrapRoomKey(current.myWrap, identity.privateKey, identity.publicKey);
+    return encryptE2eeMessage(roomKey, payload, { scope: "channel", targetId: channelId, keyId: current.keyId, authorId });
   }
 
   protected override onError(error: unknown, event: string): void {
@@ -208,6 +241,7 @@ export class Client extends Emitter<ClientEvents> {
     const me = await this.rest.get<APIMe>("/me");
     this.botId = me.id;
     this.user = new User(this, { id: me.userId, username: me.username, name: me.name, isBot: true });
+    if (this.e2eeIdentity) await this.rest.put("/me/e2ee-key", { publicKey: this.e2eeIdentity.publicKey });
     this.communities.clear();
     for (const c of me.communities) {
       const community = new Community(this, c.id, c.name);

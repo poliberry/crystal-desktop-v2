@@ -15,7 +15,7 @@ import {
   type Capability,
 } from "./lib/extensionManifest";
 import { assertPanelUrl } from "./lib/panelClient";
-import { audit, getStaff, requireStaff } from "./lib/staff";
+import { assertStaffAssurance, audit, getStaff, requireStaff } from "./lib/staff";
 import { systemUser } from "./systemMessages";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -47,15 +47,20 @@ const isCapability = (c: string): c is Capability => (CAPABILITIES as readonly s
 
 // --- Who may publish ---------------------------------------------------------------------
 
-async function canPublish(ctx: QueryCtx): Promise<boolean> {
+async function canPublish(ctx: QueryCtx, options: { enforce: boolean }): Promise<boolean> {
   if (process.env.EXTENSIONS_PUBLIC === "1") return !!(await getCurrentUserOrNull(ctx));
   const staff = await getStaff(ctx);
-  return !!staff && staff.roles.some((r) => r === "owner" || r === "admin");
+  if (!staff || !staff.roles.some((r) => r === "owner" || r === "admin")) return false;
+  // Publishing as staff is an administrative function: the one that does it asks for the code.
+  // The query that only decides whether to *show* the option doesn't, or the option would vanish
+  // the moment the unlocked window ended instead of asking.
+  if (options.enforce) await assertStaffAssurance(ctx, staff);
+  return true;
 }
 
 export const publishingAllowed = query({
   args: {},
-  handler: async (ctx) => ({ allowed: await canPublish(ctx), open: process.env.EXTENSIONS_PUBLIC === "1" }),
+  handler: async (ctx) => ({ allowed: await canPublish(ctx, { enforce: false }), open: process.env.EXTENSIONS_PUBLIC === "1" }),
 });
 
 // --- Submitting --------------------------------------------------------------------------
@@ -71,7 +76,7 @@ export const submitVersion = mutation({
   },
   handler: async (ctx, { slug, manifest: rawManifest, source, replacePending }): Promise<Id<"extensionVersions">> => {
     const me = await getCurrentUserOrThrow(ctx);
-    if (!(await canPublish(ctx))) throw new Error("Publishing extensions isn't open yet.");
+    if (!(await canPublish(ctx, { enforce: true }))) throw new Error("Publishing extensions isn't open yet.");
     if (!SLUG.test(slug) || slug.length > 40) throw new Error("The id can use lowercase letters, numbers and hyphens.");
     const manifest = normalizeManifest(rawManifest);
 

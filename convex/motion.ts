@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 
+import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import { normalizeMotionSpec, type MotionSpec } from "./lib/motion";
 import { canonicalJson, MAX_MOTION_BYTES, MOTION_FOLDER } from "./lib/motionAddress";
@@ -30,12 +31,12 @@ async function sha256Hex(text: string): Promise<string> {
 export const publish = action({
   args: { spec: v.any() },
   handler: async (ctx, { spec }): Promise<{ url: string; bytes: number; spec: MotionSpec }> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
+    // Refuses a signed-out caller, and a banned or suspended one.
+    const caller = await ctx.runQuery(internal.users.actionCaller, { ability: "upload_media" });
     if (!isR2Enabled()) throw new Error("Creator uploads need the CDN, which isn't set up here.");
 
     // Pictures go through the same check as every other creator upload: ours, and in this creator's own folder.
-    const checked = normalizeMotionSpec(spec, (url) => creationArtworkUrl(url, identity.subject));
+    const checked = normalizeMotionSpec(spec, (url) => creationArtworkUrl(url, caller.creatorKey));
     const text = canonicalJson(checked);
     const bytes = new TextEncoder().encode(text).byteLength;
     if (bytes > MAX_MOTION_BYTES) throw new Error(`That design is too large (${Math.ceil(bytes / 1024)} KB; the limit is ${MAX_MOTION_BYTES / 1024} KB). Use fewer clips or keyframes.`);

@@ -41,6 +41,8 @@ import { Popover, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
+import { useMessageContent } from "@/hooks/use-message-content";
+import type { Envelope } from "@/lib/e2ee";
 import {
   AttachmentView,
   type AttachmentSummary,
@@ -91,6 +93,8 @@ interface MessageDoc {
    * one. */
   clientId?: string | null;
   text: string | null;
+  enc?: Envelope | null;
+  mentions?: { users?: string[]; roles?: string[]; everyone?: boolean; here?: boolean } | null;
   createdAt: number;
   editedAt: number | null;
   isMine: boolean;
@@ -148,6 +152,12 @@ const MessageRow = memo(function MessageRow({
 }) {
   // The time under the name is worded by the reader's region; a row is memoised, so it has to listen for a change itself.
   useLocale();
+  const readable = useMessageContent(
+    { scope: "channel", channelId },
+    message.author?.id,
+    { enc: message.enc, text: message.text, embeds: message.embeds, components: message.components },
+    !!message.__pending,
+  );
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
   const updateMessage = useOutboxMutation("edit", "channel");
@@ -158,7 +168,7 @@ const MessageRow = memo(function MessageRow({
   const pressComponent = useMutation(api.bots.pressButton);
 
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(message.text ?? "");
+  const [draft, setDraft] = useState(readable.text ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reporting, setReporting] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
@@ -168,15 +178,19 @@ const MessageRow = memo(function MessageRow({
     if (editing) editRef.current?.focus();
   }, [editing]);
 
+  useEffect(() => {
+    if (!editing) setDraft(readable.text ?? "");
+  }, [editing, readable.text]);
+
   const startEdit = () => {
-    setDraft(message.text ?? "");
+    setDraft(readable.text ?? "");
     setEditing(true);
   };
 
   const saveEdit = async () => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    if (trimmed !== message.text)
+    if (trimmed !== readable.text)
       await updateMessage({ channelId, messageId: message.id, text: trimmed });
     setEditing(false);
   };
@@ -191,7 +205,7 @@ const MessageRow = memo(function MessageRow({
       id: message.id,
       authorName: message.author?.name ?? "Unknown",
       authorImageUrl: message.author?.imageUrl,
-      text: message.text,
+      text: readable.text ?? null,
       hasAttachment: message.attachments.length > 0,
     });
 
@@ -305,15 +319,17 @@ const MessageRow = memo(function MessageRow({
           </div>
         ) : (
           <>
-            {message.text && (
+            {readable.text && (
               <MessageContent
-                text={message.text}
+                text={readable.text}
                 communityId={communityId}
                 edited={!!message.editedAt}
               />
             )}
-            <MessageEmbeds embeds={message.embeds} />
-            <MessageComponents rows={message.components} onPress={(customId) => pressComponent({ messageId: message.id, customId }).then(() => undefined)} />
+            {readable.state === "locked" && <p className="text-xs text-muted-foreground">Encrypted message. Unlock your account to read it.</p>}
+            {readable.state === "pending" && <p className="text-xs text-muted-foreground">Decrypting message…</p>}
+            <MessageEmbeds embeds={readable.embeds} />
+            <MessageComponents rows={readable.components} onPress={(customId) => pressComponent({ messageId: message.id, customId }).then(() => undefined)} />
             {message.attachments.map((attachment) => (
               <AttachmentView
                 key={attachment.id}
@@ -570,7 +586,7 @@ export function ChannelMessageList({
                 message={message}
                 startsGroup={startsGroup}
                 mentionsMe={
-                  !!myUserId && mentionsUserDirectly(message.text ?? "", myUserId)
+                  !!myUserId && (message.mentions?.users?.includes(myUserId) ?? mentionsUserDirectly(message.text ?? "", myUserId))
                 }
                 highlighted={highlightId === message.id}
                 canManageMessages={canManageMessages}

@@ -17,7 +17,7 @@ const MAX_BODY = 256 * 1024;
 const HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" };
 
 const respond = (status: number, body: unknown, extra: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { ...HEADERS, ...extra } });
-const problem = (status: number, message: string, extra: Record<string, string> = {}) => respond(status, { error: { status, message } }, status === 429 ? { "retry-after": "30", ...extra } : extra);
+const problem = (status: number, message: string, extra: Record<string, string> = {}, code?: string) => respond(status, { error: { status, message, ...(code ? { code } : {}) } }, status === 429 ? { "retry-after": "30", ...extra } : extra);
 
 export const handle = httpAction(async (ctx, request) => {
   const url = new URL(request.url);
@@ -70,10 +70,10 @@ export const handle = httpAction(async (ctx, request) => {
       }
       return respond(200, { mode: "poll", events: [], cursor });
     }
-    if (route.op === "voice.join") result = await ctx.runAction(internal.botVoice.join, args);
-    else if (route.op === "voice.leave") result = await ctx.runAction(internal.botVoice.leave, args);
-    else result = await ctx.runMutation(internal.botOps.execute, { ...args, op: route.op, body, query });
-    return result.ok ? respond(result.status, result.data) : problem(result.status, result.message);
+    // voice.join / voice.leave need no action of their own: bot voice is switched off, so joining is a
+    // plain refusal and leaving only drops a row (see `VOICE_UNSUPPORTED` in lib/botAccess.ts).
+    result = await ctx.runMutation(internal.botOps.execute, { ...args, op: route.op, body, query });
+    return result.ok ? respond(result.status, result.data) : problem(result.status, result.message, {}, result.code);
   } catch (e) {
     // Many requests from one bot at once all touch its request counter; the ones that lose the race
     // are over its limit in spirit, so they are told to slow down rather than that we failed.

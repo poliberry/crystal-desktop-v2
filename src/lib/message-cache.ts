@@ -43,23 +43,55 @@ export function conversationMessagesKey(conversationId: string): string {
   return `dm:${conversationId}`;
 }
 
+/**
+ * Storage namespace. Bumped when messages became end-to-end encrypted: before that, pages were
+ * stored with their plaintext in them, and those must never be read back (or stay on disk longer
+ * than their TTL). Anything under the old `messages.` prefix is simply never looked at again.
+ *
+ * What this cache holds is what the server sent — ciphertext (`enc`) for a message, plus routing
+ * data. Decrypted text lives only in memory, in the component that rendered it.
+ */
+const STORAGE_PREFIX = "messages.e2ee1.";
+
+/**
+ * Defence in depth: a row that is encrypted carries no readable body, and nothing the UI adds
+ * locally (`__pending`, an optimistic edit, …) is a server row. Callers pass `results` straight
+ * from the query, so this normally changes nothing.
+ */
+function asServerRow(row: unknown): unknown {
+  if (typeof row !== "object" || row === null) return row;
+  const source = row as Record<string, unknown>;
+  const encrypted = source.enc != null;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (name.startsWith("__") || (encrypted && (name === "text" || name === "embeds" || name === "components"))) {
+      changed = true;
+      continue;
+    }
+    out[name] = value;
+  }
+  return changed ? out : row;
+}
+
 export function rememberFirstPage(key: string, page: readonly unknown[]): void {
+  const clean = page.map(asServerRow);
   // Re-insert so a key that's still being used moves to the back of the
   // eviction order rather than ageing out while in active use.
   pages.delete(key);
-  pages.set(key, page);
+  pages.set(key, clean);
   while (pages.size > MAX_ENTRIES) {
     const oldest = pages.keys().next().value;
     if (oldest === undefined) break;
     pages.delete(oldest);
   }
-  writeCache(`messages.${key}`, page);
+  writeCache(`${STORAGE_PREFIX}${key}`, clean);
 }
 
 export function recallFirstPage<T>(key: string): readonly T[] | undefined {
   const inMemory = pages.get(key) as readonly T[] | undefined;
   if (inMemory) return inMemory;
-  const persisted = readCache<readonly T[]>(`messages.${key}`);
+  const persisted = readCache<readonly T[]>(`${STORAGE_PREFIX}${key}`);
   // Promote it, so the rest of this session answers from memory and a view
   // that mounts repeatedly doesn't re-parse the same JSON each time.
   if (persisted) pages.set(key, persisted);
@@ -79,7 +111,7 @@ export function useCachedFirstPage<T>(
   loading: boolean
 ): readonly T[] {
   // Re-renders this once IndexedDB hydration lands, or this view's own page first appears — see persistent-cache.ts.
-  useCacheHydration(`messages.${key}`);
+  useCacheHydration(`${STORAGE_PREFIX}${key}`);
 
   useEffect(() => {
     if (!loading) rememberFirstPage(key, results);

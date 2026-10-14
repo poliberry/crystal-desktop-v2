@@ -74,6 +74,7 @@ export function CommunitySettingsGeneralTab({
 
   const [name, setName] = useState("");
   const [inviteOnly, setInviteOnly] = useState(true);
+  const [requireTwoFactor, setRequireTwoFactor] = useState(false);
   const [themeStart, setThemeStart] = useState("");
   const [themeEnd, setThemeEnd] = useState("");
   const [iconFile, setIconFile] = useState<File | null>(null);
@@ -90,6 +91,7 @@ export function CommunitySettingsGeneralTab({
     if (!community) return;
     setName(community.name);
     setInviteOnly(community.inviteOnly);
+    setRequireTwoFactor(community.requireTwoFactor);
     setThemeStart(community.themeStart ?? "");
     setThemeEnd(community.themeEnd ?? "");
     setIconFile(null);
@@ -112,6 +114,7 @@ export function CommunitySettingsGeneralTab({
   const changed = {
     name: !!community && name.trim() !== community.name,
     inviteOnly: !!community && inviteOnly !== community.inviteOnly,
+    requireTwoFactor: !!community && requireTwoFactor !== community.requireTwoFactor,
     theme: !!community && themeChanged,
     icon: !!iconFile,
     banner: bannerChanged,
@@ -136,11 +139,12 @@ export function CommunitySettingsGeneralTab({
       } else if (bannerRemoved) {
         await removeBanner({ communityId });
       }
-      if (changed.name || changed.inviteOnly || changed.theme) {
+      if (changed.name || changed.inviteOnly || changed.requireTwoFactor || changed.theme) {
         await updateSettings({
           communityId,
           ...(changed.name ? { name } : {}),
           ...(changed.inviteOnly ? { inviteOnly } : {}),
+          ...(changed.requireTwoFactor ? { requireTwoFactor } : {}),
           ...(changed.theme ? { themeStart, themeEnd } : {}),
         });
       }
@@ -303,6 +307,18 @@ export function CommunitySettingsGeneralTab({
               checked={inviteOnly}
               onCheckedChange={setInviteOnly}
               disabled={!canManage}
+            />
+          </SettingRow>
+          <SettingRow
+            title="Require two-step verification for admins"
+            description="Members who can manage this server — roles, channels, kicks, bans, settings — must have two-step verification switched on to do it. Those who have it are asked for a code every few minutes. Only the owner can change this, and needs it on their own account first."
+          >
+            <Switch
+              id="community-settings-require-2sv"
+              aria-label="Require two-step verification for admins"
+              checked={requireTwoFactor}
+              onCheckedChange={setRequireTwoFactor}
+              disabled={!canManage || !community?.isOwner}
             />
           </SettingRow>
         </SettingsGroup>

@@ -1,7 +1,7 @@
 "use client";
 
 import { editorsToMount } from "@/studio/shell/mounted-editors";
-import { Show } from "@clerk/react";
+import { Show } from "@/components/auth/auth-state";
 import { useQuery } from "convex/react";
 import { AlertTriangle, BookOpen, Compass, FolderOpen, Save, FolderTree, Loader2, PanelLeftClose, PanelLeftOpen, Send, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

@@ -3,6 +3,8 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery, mutation } from "./_generated/server";
 import { getCurrentUserOrThrow } from "./users";
+import { e2eeEnforced } from "./lib/e2eeEnforce";
+import { genericNotificationBody, isMessageNotification, mustGenericize } from "./lib/e2eePure";
 
 /**
  * Expo push tokens for the current user's devices. A device re-registers its
@@ -77,9 +79,19 @@ export const sendExpoPush = internalAction({
     data: v.optional(v.record(v.string(), v.any())),
     authorImgUrl: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, title, body, data, authorImgUrl }) => {
+  handler: async (ctx, { userId, title, body: scheduledBody, data, authorImgUrl }) => {
     const tokens: string[] = await ctx.runQuery(internal.push.getTokensForUser, { userId });
     if (tokens.length === 0) return;
+
+    // A push payload goes through Expo and Apple/Google, so it is the last place message text
+    // should be. `notifyUsers` already hands over a generic body for encrypted messages; this is
+    // the backstop for a caller that didn't, once E2EE_ENFORCE=1 (system messages excepted).
+    const type = typeof data?.type === "string" ? data.type : "";
+    const body =
+      isMessageNotification(type) &&
+      mustGenericize({ systemAuthored: data?.systemAuthored === true, enforced: e2eeEnforced() })
+        ? genericNotificationBody(type, data?.isMention !== false)
+        : scheduledBody;
 
     // `richContent.image` renders as the notification's leading avatar.
     // Android shows it out of the box; iOS only invokes a notification

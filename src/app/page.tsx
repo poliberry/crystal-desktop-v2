@@ -14,8 +14,11 @@ import { WindowControls } from "@/components/window-controls";
 import { WindowControlsDock } from "@/components/window-controls-dock";
 import AuthFlow from "@/components/auth/auth-flow";
 import { SignInBackdrop } from "@/components/auth/sign-in-backdrop";
-import { Show } from "@clerk/react";
+import { Show } from "@/components/auth/auth-state";
+import { SecurityOpener } from "@/components/auth/security-opener";
+import { motion } from "framer-motion";
 import { Google_Sans_Flex } from "next/font/google";
+import { useState } from "react";
 import { BirthdayProvider } from "@/components/home/birthday-provider";
 import { RightSidebarHost, RightSidebarProvider } from "@/components/sidebar/right-sidebar";
 import { ResizableSidebarProvider } from "@/components/sidebar/resizable-sidebar";
@@ -27,6 +30,9 @@ const googleSansFlex = Google_Sans_Flex({
 });
 
 export default function HomePage() {
+  // Making an account takes over the whole window (the form and a live preview of the profile); everything
+  // else about signing in is the narrow panel beside the artwork.
+  const [wide, setWide] = useState(false);
   return (
     <main className="h-full dark">
       <Show when="signed-out">
@@ -37,7 +43,7 @@ export default function HomePage() {
           >
             <WindowControls className="ml-1 z-[999] pointer-events-auto border-none" />
           </header>
-          <div className="flex flex-row w-full h-full">
+          <div className="relative flex flex-row w-full h-full">
             <div className="relative h-full w-full overflow-hidden bg-[#06080c]">
               <SignInBackdrop />
               <div className="absolute top-9 left-2 z-10 flex w-[60%] flex-col gap-7 pl-6">
@@ -51,10 +57,14 @@ export default function HomePage() {
                 </h1>
               </div>
             </div>
-            <div className="h-full w-1/2 bg-background z-[50]">
-              <AuthFlow />
-            </div>
-            {/* <SignIn forceRedirectUrl="crystal://auth/callback" fallbackRedirectUrl="crystal://auth/callback" oauthFlow="popup" /> */}
+            <motion.div
+              layout
+              animate={{ width: wide ? "100%" : "50%" }}
+              transition={{ type: "spring", stiffness: 260, damping: 32 }}
+              className={`h-full bg-background z-[50] ${wide ? "absolute inset-0" : "relative"}`}
+            >
+              <AuthFlow onWideChange={setWide} />
+            </motion.div>
           </div>
         </div>
       </Show>
@@ -70,6 +80,7 @@ export default function HomePage() {
                 {/* Inside NavigationProvider: accepting an invite jumps
                     straight into the server it was for. */}
                 <InviteDeepLinkHandler />
+                <SecurityOpener />
                 <InstallDeepLinkHandler />
                 <VerifyMembershipHost />
                 {/* Both halves of a page — its menu in the sidebar, its

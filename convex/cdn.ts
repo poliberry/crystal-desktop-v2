@@ -167,16 +167,13 @@ export const createUploadUrl = action({
     layerId: v.optional(v.string()),
   },
   handler: async (ctx, { kind, fileName, contentType, contentHash, ownerId, ext, layerId }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
-    // Refuses a banned or suspended account, and one staff have stopped uploading.
-    await ctx.runQuery(internal.users.assertAbility, { ability: "upload_media" });
+    // Refuses a signed-out caller, a banned or suspended account, and one staff have stopped uploading.
+    const caller = await ctx.runQuery(internal.users.actionCaller, { ability: "upload_media" });
     // Marketplace artwork goes to a folder the app never cleans up (see
     // `PROTECTED_PREFIX`), so only the people who manage the catalogue may put
     // anything there.
     if (kind === "marketplace") {
-      const staff = await ctx.runQuery(api.staff.me, {});
-      if (!staff?.permissions.includes("catalog.write")) throw new Error("Not allowed.");
+      await ctx.runQuery(internal.staff.requireForAction, { permissions: ["catalog.write"] });
     }
     // Creator artwork is shown to other people, so it has to be a picture or a
     // short clip — never a file a browser would run.
@@ -190,10 +187,10 @@ export const createUploadUrl = action({
       return { mode: "convex" as const, uploadUrl };
     }
 
-    const identifier = contentHash ?? identity.subject ?? "anon";
+    const identifier = contentHash ?? caller.creatorKey;
     // A creation's folder is the uploader's own id, not whatever the client says.
     const key = buildKey(kind, identifier, fileName, {
-      ownerId: kind === "creations" ? identity.subject : ownerId,
+      ownerId: kind === "creations" ? caller.creatorKey : ownerId,
       hash: contentHash,
       ext: creationExt ?? ext,
     });

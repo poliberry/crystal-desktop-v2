@@ -173,6 +173,7 @@ export function enqueue(input: EnqueueInput): OutboxEntry | null {
     );
     if (pendingSend && pendingSend.args.kind === "send") {
       pendingSend.args.text = args.text;
+      pendingSend.args.mentions = args.mentions;
       persist(pendingSend);
       notify();
       requestFlush();
@@ -187,6 +188,7 @@ export function enqueue(input: EnqueueInput): OutboxEntry | null {
     );
     if (priorEdit && priorEdit.args.kind === "edit") {
       priorEdit.args.text = args.text;
+      priorEdit.args.mentions = args.mentions;
       priorEdit.status = "pending";
       priorEdit.attempts = 0;
       priorEdit.nextAttemptAt = 0;

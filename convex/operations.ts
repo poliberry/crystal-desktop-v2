@@ -7,7 +7,8 @@ import { abilityValidator, normalizeAbilities } from "./lib/abilities";
 import { banAddressesOf, countAddressBansOf, liftAddressBansOf } from "./lib/ipBans";
 import { ipProtectionConfigured } from "./lib/ip";
 import { activeBan, activeLimits, activeSuspension, effectiveCommunityStatus, INDEFINITE } from "./lib/moderation";
-import { audit, getStaff, requireStaff } from "./lib/staff";
+import { revokeSessions } from "./lib/sessions";
+import { assertStaffAssurance, audit, getStaff, requireStaff } from "./lib/staff";
 import { can } from "./lib/staffPermissions";
 import { badgeByIdMap, badgeView } from "./badges";
 import { ensureBadgeDefinition } from "./badges";
@@ -30,6 +31,7 @@ export const overview = query({
   handler: async (ctx) => {
     const staff = await getStaff(ctx);
     if (!staff) return null;
+    await assertStaffAssurance(ctx, staff);
     const has = (permission: Parameters<typeof can>[1]) => can(staff.roles, permission);
     const count = async <T,>(rows: Promise<T[]>) => (await rows).length;
 
@@ -249,6 +251,9 @@ export const suspendUser = mutation({
     const until = days === undefined ? INDEFINITE : Date.now() + Math.round(days * 24 * 60 * 60 * 1000);
 
     await ctx.db.patch(userId, { platformSuspendedUntil: until, platformSuspensionReason: why });
+    // Signed out now, everywhere, rather than whenever their token happens to run out. They can't
+    // sign back in until it ends: the sign-in screen tells them why instead.
+    await revokeSessions(ctx, userId);
     await ctx.db.insert("platformModerationLog", {
       userId,
       actorId: staff.user._id,
@@ -380,6 +385,7 @@ export const banUser = mutation({
     const now = Date.now();
 
     await ctx.db.patch(userId, { platformBannedAt: now, platformBanReason: why });
+    await revokeSessions(ctx, userId);
     const networks = includeNetwork === false ? 0 : await banAddressesOf(ctx, userId, staff.user._id, why);
     await ctx.db.insert("platformModerationLog", {
       userId,
@@ -609,7 +615,9 @@ export const search = query({
           .withIndex("by_username", (q) => q.gte("username", needle).lt("username", `${needle}￿`))
           .take(6)
       : [];
-    const mayReadCommunities = (await getStaff(ctx))?.roles.some((role) => can([role], "communities.read"));
+    // Through `requireStaff`, not `getStaff`: this branch has to stop answering for a session that
+    // hasn't entered its code, exactly like the users branch above.
+    const mayReadCommunities = !!(await requireStaff(ctx, "communities.read").catch(() => null));
     const foundCommunities = mayReadCommunities
       ? await ctx.db.query("communities").withSearchIndex("search_name", (q) => q.search("name", needle)).take(6)
       : [];

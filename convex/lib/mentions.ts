@@ -1,6 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { PERMISSIONS, can, getBasePermissions } from "../permissions";
+import type { MentionMeta } from "./e2eePure";
 
 /**
  * Working out who a message pings.
@@ -75,10 +76,22 @@ function parse(text: string): ParsedMentions {
 export async function resolveChannelMentions(
   ctx: QueryCtx,
   communityId: Id<"communities">,
-  text: string,
+  /** Plain text to parse (legacy rows), or the `mentions` metadata of an encrypted message, which
+   * is all the server has of it. Metadata is trusted only as far as `validateMentions` already cut
+   * it down at send; membership and the MENTION_EVERYONE check below still apply to both. */
+  source: string | MentionMeta,
   authorId: Id<"users">
 ): Promise<Id<"users">[]> {
-  const parsed = parse(text);
+  const parsed: ParsedMentions =
+    typeof source === "string"
+      ? parse(source)
+      : {
+          userIds: source.users,
+          roleIds: source.roles,
+          usernames: [],
+          everyone: source.everyone,
+          here: source.here,
+        };
   if (
     parsed.userIds.length === 0 &&
     parsed.roleIds.length === 0 &&
@@ -176,6 +189,9 @@ export async function resolveChannelMentions(
  * A name is preferred over a nickname deliberately: `serverProfiles` overrides
  * would make the same message read differently per community, and the point of
  * this string is to be recognisable, not per-server-correct.
+ *
+ * Only for legacy plaintext rows. An encrypted message has no text the server may read, so nothing
+ * on the E2EE paths calls this (docs/E2EE.md: notification bodies are generic).
  */
 /** `db.get` rejects an id that isn't well-formed for the table — and these
  * ids come out of message text, so "well-formed" is not a given. Anything

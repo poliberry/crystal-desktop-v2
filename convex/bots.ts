@@ -25,7 +25,7 @@ import { creationFolder } from "./lib/r2";
 import { encryptSecret } from "./lib/secrets";
 import { PERMISSIONS, getBasePermissions, getChannelPermissions } from "./permissions";
 import { audit as staffAudit, requireStaff } from "./lib/staff";
-import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { creatorKey, getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 /**
  * Bots, from the point of view of people: an author making and managing their bot, and a
@@ -163,11 +163,11 @@ export const create = mutation({
     const visibility = "private" as const;
     const request = validateRequest(args.permissions ?? 0, args.scopes ?? []);
     const commands = validateCommands(args.commands ?? []);
-    const imageUrl = args.imageUrl ? botImageUrl(args.imageUrl, me.clerkId) : undefined;
+    const imageUrl = args.imageUrl ? botImageUrl(args.imageUrl, creatorKey(me)) : undefined;
     const url = args.endpointUrl ? endpoint(args.endpointUrl) : undefined;
     const description = checkDescription(args.description ?? "", wantsPublic ? "public" : "private");
     const bio = checkBio(args.bio ?? "");
-    const bannerUrl = args.bannerUrl ? botImageUrl(args.bannerUrl, me.clerkId) : undefined;
+    const bannerUrl = args.bannerUrl ? botImageUrl(args.bannerUrl, creatorKey(me)) : undefined;
 
     const now = Date.now();
     const userId = await ctx.db.insert("users", {
@@ -221,9 +221,9 @@ export const update = mutation({
       {
         name: args.name === undefined ? undefined : validateBotName(args.name),
         description: args.description?.trim(),
-        imageUrl: args.imageUrl === undefined ? undefined : args.imageUrl ? botImageUrl(args.imageUrl, me.clerkId) : null,
+        imageUrl: args.imageUrl === undefined ? undefined : args.imageUrl ? botImageUrl(args.imageUrl, creatorKey(me)) : null,
         bio: args.bio === undefined ? undefined : checkBio(args.bio),
-        bannerUrl: args.bannerUrl === undefined ? undefined : args.bannerUrl ? botImageUrl(args.bannerUrl, me.clerkId) : null,
+        bannerUrl: args.bannerUrl === undefined ? undefined : args.bannerUrl ? botImageUrl(args.bannerUrl, creatorKey(me)) : null,
         visibility: args.visibility,
       },
     );

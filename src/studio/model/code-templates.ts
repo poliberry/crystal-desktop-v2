@@ -207,15 +207,13 @@ export function scaffoldFiles(project: Project, siteUrl: string): Record<string,
       type: "module",
       scripts: { start: "tsx --env-file=.env src/index.ts", dev: "tsx watch --env-file=.env src/index.ts", check: "tsc -p ." },
       devDependencies: { "@types/node": "^22.0.0", tsx: "^4.19.0", typescript: "^5.6.0" },
-      // Only needed to join voice channels.
-      optionalDependencies: { "@livekit/rtc-node": "^0.13.0" },
     }),
     "tsconfig.json": json({
       compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "Bundler", lib: ["ES2022"], types: ["node"], strict: true, noEmit: true, skipLibCheck: true, paths: { [SDK_PACKAGE.bot]: [`./${sdkDirFor("bot")}/index.ts`] } },
       include: ["src", `${sdkDirFor("bot")}/*.ts`],
     }),
     ".env.example": `# Copy to .env (which is not committed) and fill in. The token and signing secret are shown once, when the bot is registered.\nCRYSTAL_BOT_TOKEN=\nCRYSTAL_SIGNING_SECRET=\n# Crystal's API address. This is the default, so you can leave it out.\n# CRYSTAL_API_URL=https://api.usecrystal.app/bot/v1\nPORT=3000\n`,
-    "README.md": `# ${project.name}\n\nA Crystal bot, written with the SDK in \`.crystal/sdk/bot\` (Studio keeps that folder up to date; don't edit it). It runs on your own computer or server and talks to Crystal over the Bot API.\n\n\`\`\`sh\nnpm install\ncp .env.example .env   # then fill in the token and signing secret\nnpm start\n\`\`\`\n\n## Where things are\n\n- \`src/index.ts\` creates the client and logs in.\n- \`src/events/\` one file per event the bot reacts to; \`src/commands/\` one per slash command; \`src/buttons/\` one per button. Each exports a handler made with \`defineEvent\`, \`defineCommand\` or \`defineButton\`, and \`client.loadHandlers()\` finds them. A file starting with \`_\` is skipped, so helpers can sit beside them.\n\nAfter \`login()\` the bot asks Crystal for events itself, so it works from anywhere with no public address. (If you set an Endpoint in the project settings, Crystal calls that instead, and you use \`client.listen()\`.) To join voice channels, \`npm install @livekit/rtc-node\` too.\n`,
+    "README.md": `# ${project.name}\n\nA Crystal bot, written with the SDK in \`.crystal/sdk/bot\` (Studio keeps that folder up to date; don't edit it). It runs on your own computer or server and talks to Crystal over the Bot API.\n\n\`\`\`sh\nnpm install\ncp .env.example .env   # then fill in the token and signing secret\nnpm start\n\`\`\`\n\n## Where things are\n\n- \`src/index.ts\` creates the client and logs in.\n- \`src/events/\` one file per event the bot reacts to; \`src/commands/\` one per slash command; \`src/buttons/\` one per button. Each exports a handler made with \`defineEvent\`, \`defineCommand\` or \`defineButton\`, and \`client.loadHandlers()\` finds them. A file starting with \`_\` is skipped, so helpers can sit beside them.\n\nAfter \`login()\` the bot asks Crystal for events itself, so it works from anywhere with no public address. (If you set an Endpoint in the project settings, Crystal calls that instead, and you use \`client.listen()\`.) Bots can't join voice channels for now (see the voice guide in Studio's docs).\n`,
     ".gitignore": "node_modules\n.env\ndist\n",
   };
 }

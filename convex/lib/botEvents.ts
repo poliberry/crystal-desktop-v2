@@ -42,6 +42,15 @@ export const POLL_ALIVE_MS = 90_000;
 export const QUEUE_KEEP_MS = 5 * 60_000;
 export const QUEUE_MAX = 500;
 
+/** Only the addressed bot's room-key wraps may accompany an encrypted message. */
+async function wrapsForBot(ctx: MutationCtx, botId: Id<"bots">, keyId: Id<"e2eeKeys">) {
+  const wrap = await ctx.db
+    .query("e2eeKeyWraps")
+    .withIndex("by_key_bot", (q) => q.eq("keyId", keyId).eq("botId", botId))
+    .unique();
+  return wrap ? { [keyId]: wrap.wrapped } : {};
+}
+
 export async function sendToBot(ctx: MutationCtx, botId: Id<"bots">, event: BotEvent, opts: { attempts?: number } = {}): Promise<void> {
   const bot = await ctx.db.get(botId);
   if (!bot) return;
@@ -78,6 +87,7 @@ export async function dispatchMessageCreated(ctx: MutationCtx, channel: Doc<"cha
         if (!install.scopes.includes("messages.read")) continue;
         const acting = await loadActing(ctx, install.botId, channel.communityId);
         if (!holds(await permissionsIn(ctx, acting, channel._id), PERMISSIONS.VIEW_CHANNELS)) continue;
+        const keyWraps = message.enc ? await wrapsForBot(ctx, bot._id, message.enc.keyId) : undefined;
         await sendToBot(
           ctx,
           bot._id,
@@ -86,7 +96,11 @@ export async function dispatchMessageCreated(ctx: MutationCtx, channel: Doc<"cha
             channelId: channel._id,
             message: {
               id: message._id,
-              text: message.text ?? "",
+              // Encrypted bodies are opened by the bot SDK. The server never includes a
+              // plaintext shadow alongside `enc`.
+              ...(message.enc
+                ? { enc: message.enc, mentions: message.mentions ?? null, keyWraps }
+                : { text: message.text ?? "" }),
               replyToId: message.replyToId ?? null,
               createdAt: message._creationTime,
               author: { id: author._id, username: author.username, name: author.name, isBot: !!author.isBot },
@@ -137,7 +151,16 @@ export async function fireCommunityEvent(ctx: MutationCtx, communityId: Id<"comm
           const acting = await loadActing(ctx, install.botId, communityId);
           if (!holds(await permissionsIn(ctx, acting, opts.channelId), PERMISSIONS.VIEW_CHANNELS)) continue;
         }
-        await sendToBot(ctx, bot._id, event);
+        let recipientEvent = event;
+        const payloadMessage = data.message as { enc?: { keyId: Id<"e2eeKeys"> } } | undefined;
+        if (opts.scope === "messages.read" && payloadMessage?.enc) {
+          const keyWraps = await wrapsForBot(ctx, bot._id, payloadMessage.enc.keyId);
+          recipientEvent = {
+            ...event,
+            message: { ...payloadMessage, keyWraps },
+          };
+        }
+        await sendToBot(ctx, bot._id, recipientEvent);
       } catch (e) {
         // A bot that has lost its authority (or whose install is half-removed) just isn't told.
         if (!(e instanceof BotApiError)) console.warn("[bots] couldn't dispatch an event:", e);
@@ -149,18 +172,24 @@ export async function fireCommunityEvent(ctx: MutationCtx, communityId: Id<"comm
 }
 
 /** The pieces of a message that events and API answers share. */
-export async function describeMessage(ctx: MutationCtx, message: Doc<"channelMessages">) {
+export async function describeMessage(ctx: MutationCtx, message: Doc<"channelMessages">, botId?: Id<"bots">) {
   const author = await ctx.db.get(message.authorId);
   const files = await ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect();
   return {
     id: message._id,
-    text: message.text ?? "",
+    ...(message.enc
+      ? {
+          enc: message.enc,
+          mentions: message.mentions ?? null,
+          keyWraps: botId ? await wrapsForBot(ctx, botId, message.enc.keyId) : {},
+        }
+      : { text: message.text ?? "" }),
     replyToId: message.replyToId ?? null,
     createdAt: message._creationTime,
     editedAt: message.editedAt ?? null,
     pinned: message.pinnedAt !== undefined,
-    embeds: message.embeds ?? [],
-    components: message.components ?? [],
+    embeds: message.enc ? [] : message.embeds ?? [],
+    components: message.enc ? [] : message.components ?? [],
     author: author ? { id: author._id, username: author.username, name: author.name, isBot: !!author.isBot } : null,
     attachments: await Promise.all(files.map(async (f) => ({ fileName: f.fileName, fileType: effectiveFileType(f.fileType, f.fileName), fileSize: f.fileSize, url: f.cdnUrl ?? (f.storageId ? await ctx.storage.getUrl(f.storageId) : null) }))),
   };

@@ -14,6 +14,12 @@ const api = {
     path: () => ipcRenderer.invoke("custom-css:path"),
     reveal: () => ipcRenderer.invoke("custom-css:reveal"),
   },
+  e2ee: {
+    available: () => ipcRenderer.invoke("e2ee:store:available"),
+    get: (userId: string) => ipcRenderer.invoke("e2ee:store:get", userId),
+    set: (userId: string, value: string) => ipcRenderer.invoke("e2ee:store:set", userId, value),
+    clear: (userId: string) => ipcRenderer.invoke("e2ee:store:clear", userId),
+  },
   system: {
     accentColor: () => ipcRenderer.invoke("system:accent-color"),
     onAccentColorChange: (cb: (color: string | null) => void) => {
@@ -203,6 +209,35 @@ const api = {
     /** Bundle an extension project's src/ into dist/extension.js. */
     build: {
       extension: (folder: string) => ipcRenderer.invoke("studio:build:extension", folder),
+    },
+    /** Git in a project folder, and publishing it to GitHub. Every call answers `{ ok, value | message }`. */
+    git: {
+      status: (folder: string) => ipcRenderer.invoke("studio:git:status", folder),
+      init: (folder: string) => ipcRenderer.invoke("studio:git:init", folder),
+      diff: (folder: string, req: unknown) => ipcRenderer.invoke("studio:git:diff", folder, req),
+      stage: (folder: string, paths: string[]) => ipcRenderer.invoke("studio:git:stage", folder, paths),
+      stageAll: (folder: string) => ipcRenderer.invoke("studio:git:stageAll", folder),
+      unstage: (folder: string, paths: string[]) => ipcRenderer.invoke("studio:git:unstage", folder, paths),
+      unstageAll: (folder: string) => ipcRenderer.invoke("studio:git:unstageAll", folder),
+      discard: (folder: string, paths: string[]) => ipcRenderer.invoke("studio:git:discard", folder, paths),
+      commit: (folder: string, message: string, identity?: { name: string; email: string }) => ipcRenderer.invoke("studio:git:commit", folder, message, identity),
+      push: (folder: string) => ipcRenderer.invoke("studio:git:push", folder),
+      pull: (folder: string) => ipcRenderer.invoke("studio:git:pull", folder),
+      fetch: (folder: string) => ipcRenderer.invoke("studio:git:fetch", folder),
+      setRemote: (folder: string, url: string) => ipcRenderer.invoke("studio:git:setRemote", folder, url),
+      branches: (folder: string) => ipcRenderer.invoke("studio:git:branches", folder),
+      checkout: (folder: string, branch: string, create: boolean) => ipcRenderer.invoke("studio:git:checkout", folder, branch, create),
+      github: {
+        account: () => ipcRenderer.invoke("studio:github:account"),
+        connect: (token: string) => ipcRenderer.invoke("studio:github:connect", token),
+        disconnect: () => ipcRenderer.invoke("studio:github:disconnect"),
+        publish: (folder: string, req: unknown) => ipcRenderer.invoke("studio:github:publish", folder, req),
+      },
+    },
+    /** Programs on this computer that can open a project folder. */
+    openIn: {
+      list: () => ipcRenderer.invoke("studio:openIn:list"),
+      open: (folder: string, id: string) => ipcRenderer.invoke("studio:openIn:open", folder, id),
     },
   },
   admin: {

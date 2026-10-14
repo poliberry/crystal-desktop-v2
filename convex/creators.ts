@@ -24,11 +24,8 @@ function stripeClient(): Stripe {
 }
 
 async function requireUserId(ctx: ActionCtx): Promise<Id<"users">> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Not signed in.");
-  const user = await ctx.runQuery(internal.store.userByClerkId, { clerkId: identity.subject });
-  if (!user) throw new Error("Your account isn't ready yet.");
-  return user.id;
+  // Refuses a signed-out caller, and a banned or suspended one.
+  return (await ctx.runQuery(internal.users.actionCaller, {})).id;
 }
 
 /** Where Stripe sends a creator back to. The app is a desktop window, so this is
@@ -276,8 +273,7 @@ export const reverseForOrder = internalAction({
 export const retryPayout = action({
   args: { orderId: v.id("orders") },
   handler: async (ctx, { orderId }): Promise<{ status: string }> => {
-    const staff = await ctx.runQuery(api.staff.me, {});
-    if (!staff?.permissions.includes("finance.payout")) throw new Error("Not allowed.");
+    const staff = await ctx.runQuery(internal.staff.requireForAction, { permissions: ["finance.payout"] });
     const result = await ctx.runAction(internal.creators.transferForOrder, { orderId });
     await ctx.runMutation(internal.store.logFinanceAction, {
       actorId: staff.userId,

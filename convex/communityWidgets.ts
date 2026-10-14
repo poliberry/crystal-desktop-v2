@@ -320,7 +320,7 @@ export const listOverview = query({
             const author = await ctx.db.get(message.authorId);
             return {
               id: message._id,
-              text: message.text ?? "",
+              text: message.enc ? "[Encrypted message]" : message.text ?? "",
               createdAt: message._creationTime,
               authorName: author?.name ?? "Unknown",
               authorImageUrl: author?.imageUrl,

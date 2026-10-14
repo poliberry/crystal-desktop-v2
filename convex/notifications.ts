@@ -2,7 +2,7 @@ import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
   allowsCallActivity,
@@ -16,6 +16,14 @@ import {
   type NotificationPolicy,
 } from "./lib/notificationPolicy";
 import { renderMentionsAsText } from "./lib/mentions";
+import { e2eeEnforced, publicNotificationBody } from "./lib/e2eeEnforce";
+import {
+  genericNotificationBody,
+  isMessageNotification,
+  isSystemAuthor,
+  mentionsMe as metadataMentionsMe,
+  mustGenericize,
+} from "./lib/e2eePure";
 import { hasBlocked, isMessageHidden, isSuppressing, windowsByTarget } from "./lib/blocking";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
@@ -92,11 +100,26 @@ export async function notifyUsers(
      * traffic, which each recipient's per-server setting has to have opted
      * into. Defaults to true, so every existing caller is unaffected. */
     isMention?: boolean;
+    /** The message this is about is end-to-end encrypted. The body is then replaced by a generic
+     * one whatever the caller passed: a notification (inbox row, OS toast, push payload) must not
+     * carry message text the server isn't allowed to read. */
+    encrypted?: boolean;
   }
 ): Promise<void> {
-  const { userIds, actorId, isMention = true, ...rest } = params;
+  const { userIds, actorId, isMention = true, encrypted, ...rest } = params;
   const recipients = Array.from(new Set(userIds)).filter((id) => id !== actorId);
   const actorUser = await ctx.db.get("users", actorId as Id<"users">);
+
+  // Once enforced, nothing but a system message (plaintext by design) may put text in a
+  // notification, so a caller that forgot to say `encrypted` (the Bot API's DM send, say) can't leak
+  // a body through here.
+  const systemAuthored = !!actorUser && isSystemAuthor(actorUser);
+  if (
+    isMessageNotification(rest.type) &&
+    mustGenericize({ encrypted, systemAuthored, enforced: e2eeEnforced() })
+  ) {
+    rest.body = genericNotificationBody(rest.type, isMention);
+  }
 
   for (const userId of recipients) {
     // Checked per recipient rather than once: everyone in a channel has their
@@ -145,9 +168,35 @@ export async function notifyUsers(
         requestId: rest.requestId,
         senderId: actorId,
         senderName: actorUser?.name,
+        // So push.ts can apply the same body rule on its own (see `sendExpoPush`).
+        systemAuthored,
+        isMention,
       },
     });
   }
+}
+
+/**
+ * Every role `userId` holds in a community, including @everyone's: a message that pings the
+ * @everyone role pings them. Only needed to read a role mention off an encrypted message's metadata.
+ */
+async function myRoleIds(
+  ctx: QueryCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">
+): Promise<string[]> {
+  const [assigned, everyone] = await Promise.all([
+    ctx.db
+      .query("memberRoles")
+      .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId))
+      .collect(),
+    ctx.db
+      .query("roles")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .filter((q) => q.eq(q.field("isEveryone"), true))
+      .unique(),
+  ]);
+  return [...assigned.map((m) => m.roleId as string), ...(everyone ? [everyone._id as string] : [])];
 }
 
 /** What a message carried, for a toast that has to say so in one line. */
@@ -263,10 +312,18 @@ export const feed = query({
             // For the desktop toast's icon — a notification is easier to
             // place at a glance from a face than from a name.
             authorImageUrl: author?.imageUrl,
-            // Readable rather than stored: a toast has nowhere to draw a
-            // custom emoji, so `<:jeff:id>` becomes `:jeff:` — the same
-            // flattening every notification body gets.
-            text: await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+            // Legacy rows: readable rather than stored — a toast has nowhere
+            // to draw a custom emoji, so `<:jeff:id>` becomes `:jeff:`. An
+            // encrypted row has no text the server may read, so a client that
+            // can't decrypt gets the generic line and one that can uses `enc`.
+            text: lastMessage.enc
+              ? genericNotificationBody("dm_message")
+              : await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+            enc: lastMessage.enc ?? null,
+            replyToId: lastMessage.replyToId ?? null,
+            mentionsMe: lastMessage.enc
+              ? metadataMentionsMe(lastMessage.mentions, me._id)
+              : (lastMessage.text ?? "").includes(`<@${me._id}>`),
             attachment: await attachmentSummary(ctx, "messageAttachments", lastMessage._id),
             createdAt: lastMessage._creationTime,
           };
@@ -289,6 +346,10 @@ export const feed = query({
       authorName: string;
       authorImageUrl?: string;
       text: string;
+      /** Ciphertext of the last message, for the client to decrypt; null for legacy rows. */
+      enc: Doc<"channelMessages">["enc"] | null;
+      replyToId: Id<"channelMessages"> | null;
+      mentionsMe: boolean;
       attachment: AttachmentSummary;
       createdAt: number;
     }[] = [];
@@ -314,7 +375,15 @@ export const feed = query({
         if (!lastMessage) continue;
         if (isMessageHidden(hidden, lastMessage.authorId, lastMessage._creationTime)) continue;
 
-        const mentionsMe = (lastMessage.text ?? "").includes(`<@${me._id}>`);
+        // An encrypted row is routed from its mention metadata (the text is
+        // not the server's to parse); a legacy row keeps the old scan.
+        const mentionsMe = lastMessage.enc
+          ? metadataMentionsMe(
+              lastMessage.mentions,
+              me._id,
+              lastMessage.mentions?.roles.length ? await myRoleIds(ctx, community._id, me._id) : []
+            )
+          : (lastMessage.text ?? "").includes(`<@${me._id}>`);
         if (!allowsChannelMessage(policy, community._id, mentionsMe)) continue;
 
         const author = await ctx.db.get(lastMessage.authorId);
@@ -328,7 +397,12 @@ export const feed = query({
           authorId: lastMessage.authorId,
           authorName: author?.name ?? "Someone",
           authorImageUrl: author?.imageUrl,
-          text: await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+          text: lastMessage.enc
+            ? genericNotificationBody("channel_mention", mentionsMe)
+            : await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+          enc: lastMessage.enc ?? null,
+          replyToId: lastMessage.replyToId ?? null,
+          mentionsMe,
           attachment: await attachmentSummary(
             ctx,
             "channelMessageAttachments",
@@ -394,7 +468,9 @@ export const list = query({
           id: n._id,
           type: n.type,
           title: n.title,
-          body: n.body ?? null,
+          // Rows written before enforcement hold the message's text; once it is
+          // on they are served generic (system messages excepted).
+          body: publicNotificationBody(n, actor),
           read: n.read,
           createdAt: n.createdAt,
           actor: actor ? { id: actor._id, name: actor.name, imageUrl: actor.imageUrl } : null,

@@ -29,7 +29,7 @@ export class REST {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal,
       });
-      const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } } & Record<string, unknown>;
+      const json = (await res.json().catch(() => ({}))) as { error?: { message?: string; code?: string } } & Record<string, unknown>;
       if (res.ok) return json as T;
       if (res.status === 429 && attempt < retries) {
         const wait = Math.max(0, Number(res.headers.get("retry-after") ?? 1)) * 1000;
@@ -38,7 +38,7 @@ export class REST {
           continue;
         }
       }
-      throw new CrystalAPIError(res.status, json.error?.message ?? res.statusText, method, path);
+      throw new CrystalAPIError(res.status, json.error?.message ?? res.statusText, method, path, json.error?.code);
     }
   }
   /** GET a path under the Bot API. */

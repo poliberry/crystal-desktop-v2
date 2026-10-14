@@ -1,6 +1,5 @@
 "use client";
 
-import { useAuth } from "@clerk/react";
 import { useConvexAuth, useConvexConnectionState, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ExternalLink, Lightbulb, WifiOff } from "lucide-react";
@@ -28,11 +27,9 @@ const DROP_GRACE_MS = 4000;
  * servers being down for more than a few seconds. It goes as soon as the app
  * can be used, and comes back if the connection is lost.
  *
- * Lives inside the Clerk and Convex providers, because "is the app ready" is a
- * question those answer.
+ * Lives inside the Convex provider, because "is the app ready" is a question it answers.
  */
 export function AppLoadingGate() {
-  const { isLoaded, isSignedIn } = useAuth();
   const { isLoading: convexAuthLoading, isAuthenticated } = useConvexAuth();
   const connection = useConvexConnectionState();
   const online = useIsOnline();
@@ -53,8 +50,7 @@ export function AppLoadingGate() {
     return () => window.clearTimeout(timer);
   }, [socketUp, connection.hasEverConnected]);
 
-  const starting =
-    !isLoaded || (isSignedIn === true && (convexAuthLoading || (isAuthenticated && user === undefined)));
+  const starting = convexAuthLoading || (isAuthenticated && user === undefined);
   const offline = !online || dropped;
   const visible = starting || offline;
 

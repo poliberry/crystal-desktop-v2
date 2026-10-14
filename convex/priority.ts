@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { renderMentionsAsText } from "./lib/mentions";
+import { publicNotificationBody } from "./lib/e2eeEnforce";
 import { allowsFriendRequest, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
@@ -153,7 +154,10 @@ export const list = query({
 
         let last: {
           authorName: string;
+          /** Legacy plaintext rows only. Empty for an encrypted message: the client decrypts `enc`. */
           text: string;
+          enc: Doc<"channelMessages">["enc"] | null;
+          messageId: Id<"channelMessages">;
           attachmentName: string | null;
           createdAt: number;
         } | null = null;
@@ -167,7 +171,10 @@ export const list = query({
           ]);
           last = {
             authorName: author?.name ?? "Someone",
-            text: await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+            // An encrypted message has no text the server may read or render.
+            text: lastMessage.enc ? "" : await renderMentionsAsText(ctx, lastMessage.text ?? ""),
+            enc: lastMessage.enc ?? null,
+            messageId: lastMessage._id,
             attachmentName: attachments[0]?.fileName ?? null,
             createdAt: lastMessage._creationTime,
           };
@@ -283,7 +290,7 @@ export const alerts = query({
         id: n._id,
         kind,
         title: n.title,
-        body: n.body ?? null,
+        body: publicNotificationBody(n, actor),
         actorName: actor?.name ?? null,
         actorImageUrl: actor?.imageUrl ?? null,
         createdAt: n.createdAt,

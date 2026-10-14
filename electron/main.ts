@@ -11,8 +11,10 @@ import { isAppLink, parseDeepLink, parseStudioLink, STUDIO_PROTOCOL, type DeepLi
 import { LinkQueue, startsNewDocument } from "./linkQueue";
 import richPresence from "./richPresence";
 import systemAudio from "./systemAudio";
+import { registerE2eeStore } from "./e2eeStore";
 import { registerStudioBuild } from "./studioBuild";
 import { registerStudioFs } from "./studioFs";
+import { registerStudioGit } from "./studioGit";
 import { registerStudioTerminal } from "./studioTerminal";
 import updater from "./updater";
 
@@ -1158,6 +1160,9 @@ app.whenReady().then(async () => {
   /** Where that file lives, so the UI can tell the user where to look. */
   ipcMain.handle("custom-css:path", () => customCssPath());
 
+  // The end-to-end encryption identity key, sealed with the OS keystore (see e2eeStore.ts).
+  registerE2eeStore();
+
   ipcMain.handle("custom-css:reveal", async () => {
     const file = customCssPath();
     if (!fs.existsSync(file)) {
@@ -1220,6 +1225,8 @@ app.whenReady().then(async () => {
     // The code workbench: a terminal in the project folder, and the build that bundles an extension.
     const studioTerminals = registerStudioTerminal((rel) => studioFs.dirPath(rel), isStudioSender);
     registerStudioBuild((rel) => studioFs.dirPath(rel), (rel, text) => studioFs.writeText(rel, text), isStudioSender);
+    // Source control (git, publishing to GitHub) and "Open in…", both on the project's own folder.
+    registerStudioGit((rel) => studioFs.dirPath(rel), isStudioSender);
     app.on("before-quit", () => studioTerminals.closeAll());
   }
   ipcMain.handle("admin:open", () => {

@@ -4,6 +4,18 @@
  * `window.desktopAPI` object exposed via the context bridge.
  */
 
+import type {
+  GitDiffRequest,
+  GitDiffSides,
+  GitResult,
+  GitStatus,
+  GithubAccount,
+  GithubCreateRepoRequest,
+  GithubCreateRepoResult,
+  OpenInResult,
+  OpenInTarget,
+} from "../../electron/gitTypes";
+
 export interface SystemAudioState {
   /** Whether PulseAudio + pactl are usable on this machine. */
   available: boolean;
@@ -231,6 +243,18 @@ export interface DesktopAPI {
     path(): Promise<string>;
     reveal(): Promise<boolean>;
   };
+  /**
+   * The end-to-end encryption identity key, sealed with the OS keystore in the main process. Optional: an older preload
+   * has none, and the renderer then keeps the key in memory only.
+   */
+  e2ee?: {
+    /** False where there is no keystore to use (some Linux setups); nothing is saved then. */
+    available(): Promise<boolean>;
+    get(userId: string): Promise<string | null>;
+    /** False when nothing was saved. */
+    set(userId: string, value: string): Promise<boolean>;
+    clear(userId: string): Promise<void>;
+  };
   /** What the operating system says about its appearance that the page can't
    * see for itself. Optional for the same reason as the rest of the late
    * additions: an older preload has none of it. */
@@ -415,6 +439,40 @@ export interface DesktopAPI {
         | { ok: true; code: string; bytes: number; files: number }
         | { ok: false; errors: { file?: string; line?: number; column?: number; text: string }[] }
       >;
+    };
+    /**
+     * Git in a project folder (`folder` is the project's folder name under Studio's), and publishing
+     * to GitHub. Optional: an older preload has none. Every call answers a `GitResult`.
+     */
+    git?: {
+      status(folder: string): Promise<GitResult<GitStatus>>;
+      init(folder: string): Promise<GitResult<void>>;
+      diff(folder: string, req: GitDiffRequest): Promise<GitResult<GitDiffSides>>;
+      stage(folder: string, paths: string[]): Promise<GitResult<void>>;
+      /** Stages everything except new files that look like secrets; answers the paths it held back. */
+      stageAll(folder: string): Promise<GitResult<string[]>>;
+      unstage(folder: string, paths: string[]): Promise<GitResult<void>>;
+      unstageAll(folder: string): Promise<GitResult<void>>;
+      discard(folder: string, paths: string[]): Promise<GitResult<void>>;
+      commit(folder: string, message: string, identity?: { name: string; email: string }): Promise<GitResult<{ hash: string; summary: string }>>;
+      push(folder: string): Promise<GitResult<void>>;
+      pull(folder: string): Promise<GitResult<void>>;
+      fetch(folder: string): Promise<GitResult<void>>;
+      setRemote(folder: string, url: string): Promise<GitResult<void>>;
+      branches(folder: string): Promise<GitResult<string[]>>;
+      checkout(folder: string, branch: string, create: boolean): Promise<GitResult<void>>;
+      github: {
+        /** Who Studio is signed in to GitHub as, or null. The token itself never reaches the page. */
+        account(): Promise<GitResult<GithubAccount | null>>;
+        connect(token: string): Promise<GitResult<GithubAccount>>;
+        disconnect(): Promise<GitResult<void>>;
+        publish(folder: string, req: GithubCreateRepoRequest): Promise<GitResult<GithubCreateRepoResult>>;
+      };
+    };
+    /** Programs on this computer that can open a project folder. Optional: an older preload has none. */
+    openIn?: {
+      list(): Promise<GitResult<OpenInTarget[]>>;
+      open(folder: string, id: string): Promise<GitResult<OpenInResult>>;
     };
   };
   /** Opens the staff-only administration console in its own window. */

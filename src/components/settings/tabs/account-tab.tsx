@@ -1,8 +1,6 @@
 "use client";
 
-import { useReverification, useUser } from "@clerk/react";
-import type { EmailAddressResource } from "@clerk/shared/types";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -11,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CodeInput, FieldError, PasswordField, StrengthMeter } from "@/components/auth/auth-ui";
+import { errorMessage } from "@/lib/auth-errors";
 
 /**
  * Username and date of birth.
@@ -142,40 +142,10 @@ function AccountDetailsCard() {
 }
 
 export function AccountTab() {
-  const { user, isLoaded } = useUser();
-  // useReverification wraps one specific fetcher and returns an "enhanced"
-  // version of that same fetcher (not a generic reverify-anything helper) —
-  // one call per sensitive action. `user` can still be null/undefined here
-  // (before the isLoaded/user guard below), so each closure re-checks it;
-  // by the time these are actually invoked from the handlers below, the
-  // guard has already passed and user is guaranteed non-null.
-  const createEmailAddress = useReverification((email: string) => {
-    if (!user) throw new Error("Not signed in.");
-    return user.createEmailAddress({ email });
-  });
-  const updatePassword = useReverification(
-    (params: { newPassword: string; currentPassword?: string }) => {
-      if (!user) throw new Error("Not signed in.");
-      return user.updatePassword(params);
-    }
-  );
+  const security = useQuery(api.twoFactor.overview);
+  const me = useQuery(api.users.getCurrentUser);
 
-  const [newEmail, setNewEmail] = useState("");
-  const [pendingEmail, setPendingEmail] = useState<EmailAddressResource | null>(null);
-  const [pendingEmailId, setPendingEmailId] = useState<string | null>(null);
-  const [code, setCode] = useState("");
-  const [emailBusy, setEmailBusy] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailSuccess, setEmailSuccess] = useState(false);
-
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordBusy, setPasswordBusy] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [passwordSuccess, setPasswordSuccess] = useState(false);
-
-  if (!isLoaded || !user) {
+  if (security === undefined || me === undefined) {
     return (
       <div className="flex h-32 items-center justify-center text-muted-foreground">
         <Loader2 className="size-5 animate-spin" />
@@ -183,220 +153,187 @@ export function AccountTab() {
     );
   }
 
-  const handleSendCode = async () => {
-    const trimmed = newEmail.trim();
-    if (!trimmed) return;
-    setEmailBusy(true);
-    setEmailError(null);
-    setEmailSuccess(false);
+  return (
+    <div className="w-full space-y-6">
+      <AccountDetailsCard />
+      {me?.isGuest ? (
+        <GuestCard expiresAt={me.guestExpiresAt} />
+      ) : (
+        <>
+          <EmailCard email={security?.email ?? null} verified={security?.emailVerified ?? false} />
+          <PasswordCard hasPassword={security?.hasPassword ?? false} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function GuestCard({ expiresAt }: { expiresAt?: number }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Guest account</CardTitle>
+        <CardDescription>
+          You're trying Crystal as a guest.{" "}
+          {expiresAt ? `This account is wiped on ${new Date(expiresAt).toLocaleString()}.` : "This account has expired."} Guests can't
+          start communities, upload files or send friend requests. Sign out and create a free account to keep going.
+        </CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
+function EmailCard({ email, verified }: { email: string | null; verified: boolean }) {
+  const request = useAction(api.authFlow.requestEmailChange);
+  const confirm = useAction(api.authFlow.confirmEmailChange);
+  const [newEmail, setNewEmail] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const send = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(false);
     try {
-      const email = await createEmailAddress(trimmed);
-      // Set as soon as the address exists (not after prepareVerification
-      // succeeds) so a failure below — or the user hitting Cancel — can
-      // still find and destroy it instead of leaking an unverified address
-      // on the Clerk account.
-      setPendingEmail(email);
-      setPendingEmailId(email.id);
-      try {
-        await email.prepareVerification({ strategy: "email_code" });
-      } catch (err) {
-        await email.destroy().catch(() => {});
-        setPendingEmail(null);
-        setPendingEmailId(null);
-        throw err;
+      const result = await request({ email: newEmail });
+      if (!result.ok) setError(result.message);
+      else {
+        setPending(newEmail.trim().toLowerCase());
+        setCode("");
       }
-    } catch (err) {
-      setEmailError(err instanceof Error ? err.message : "Failed to send verification code.");
+    } catch (cause) {
+      setError(errorMessage(cause, "Couldn't send a code."));
     } finally {
-      setEmailBusy(false);
+      setBusy(false);
     }
   };
 
-  const handleVerifyCode = async () => {
-    if (!pendingEmailId) return;
-    setEmailBusy(true);
-    setEmailError(null);
+  const verify = async (value: string) => {
+    if (!pending) return;
+    setBusy(true);
+    setError(null);
     try {
-      if (!pendingEmail) throw new Error("Verification session expired — start again.");
-      await pendingEmail.attemptVerification({ code: code.trim() });
-      await user.update({ primaryEmailAddressId: pendingEmail.id });
-
-      // Keep the account down to a single email address, matching what the
-      // old <UserProfile /> flow presented. Not caught per-address: if a
-      // stale address fails to delete, the account isn't actually down to
-      // one email yet, so that should surface as an error, not a false
-      // "Email address updated."
-      const stale = user.emailAddresses.filter((e) => e.id !== pendingEmail.id);
-      await Promise.all(stale.map((e) => e.destroy()));
-
-      setPendingEmail(null);
-      setPendingEmailId(null);
-      setNewEmail("");
-      setCode("");
-      setEmailSuccess(true);
-    } catch (err) {
-      setEmailError(err instanceof Error ? err.message : "Invalid or expired code.");
+      const result = await confirm({ email: pending, code: value });
+      if (!result.ok) {
+        setCode("");
+        setError(result.message);
+      } else {
+        setPending(null);
+        setNewEmail("");
+        setDone(true);
+      }
+    } catch (cause) {
+      setError(errorMessage(cause, "Couldn't change your email."));
     } finally {
-      setEmailBusy(false);
-    }
-  };
-
-  const handleCancelEmailChange = () => {
-    // Best-effort: the unverified address created by handleSendCode
-    // shouldn't linger on the account just because the user gave up.
-    const email = pendingEmail;
-    setPendingEmail(null);
-    setPendingEmailId(null);
-    setCode("");
-    setEmailError(null);
-    void email?.destroy().catch(() => {});
-  };
-
-  const handleChangePassword = async () => {
-    setPasswordError(null);
-    setPasswordSuccess(false);
-    if (newPassword.length < 8) {
-      setPasswordError("New password must be at least 8 characters.");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPasswordError("Passwords don't match.");
-      return;
-    }
-    setPasswordBusy(true);
-    try {
-      await updatePassword({
-        newPassword,
-        currentPassword: user.passwordEnabled ? currentPassword : undefined,
-      });
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setPasswordSuccess(true);
-    } catch (err) {
-      setPasswordError(err instanceof Error ? err.message : "Failed to update password.");
-    } finally {
-      setPasswordBusy(false);
+      setBusy(false);
     }
   };
 
   return (
-    <div className="w-full space-y-6">
-      <AccountDetailsCard />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Email address</CardTitle>
-          <CardDescription>
-            Current:{" "}
-            <span className="font-medium text-foreground">
-              {user.primaryEmailAddress?.emailAddress ?? "None"}
-            </span>
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {!pendingEmailId ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="account-email">New email address</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="account-email"
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="you@example.com"
-                />
-                <Button onClick={() => void handleSendCode()} disabled={!newEmail.trim() || emailBusy}>
-                  {emailBusy ? <Loader2 className="size-4 animate-spin" /> : "Send code"}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="account-email-code">Enter the code sent to {newEmail}</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="account-email-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="123456"
-                />
-                <Button onClick={() => void handleVerifyCode()} disabled={!code.trim() || emailBusy}>
-                  {emailBusy ? <Loader2 className="size-4 animate-spin" /> : "Verify"}
-                </Button>
-                <Button variant="ghost" onClick={handleCancelEmailChange} disabled={emailBusy}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-          {emailError && <p className="text-sm text-destructive">{emailError}</p>}
-          {emailSuccess && !pendingEmailId && (
-            <p className="text-sm text-muted-foreground">Email address updated.</p>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{user.passwordEnabled ? "Change password" : "Set a password"}</CardTitle>
-          <CardDescription>
-            {user.passwordEnabled
-              ? "Requires your current password."
-              : "Your account doesn't have a password yet."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {user.passwordEnabled && (
-            <div className="space-y-1.5">
-              <Label htmlFor="account-current-password">Current password</Label>
-              <Input
-                id="account-current-password"
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="account-new-password">New password</Label>
-            <Input
-              id="account-new-password"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="account-confirm-password">Confirm new password</Label>
-            <Input
-              id="account-confirm-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </div>
-          {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-          {passwordSuccess && <p className="text-sm text-muted-foreground">Password updated.</p>}
-          <Button
-            onClick={() => void handleChangePassword()}
-            disabled={
-              passwordBusy || !newPassword || !confirmPassword || (user.passwordEnabled && !currentPassword)
-            }
+    <Card>
+      <CardHeader>
+        <CardTitle>Email address</CardTitle>
+        <CardDescription>
+          Current: <span className="font-medium text-foreground">{email ?? "None"}</span>
+          {email && !verified && " (not confirmed yet — it's confirmed when you next choose a password)"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!pending ? (
+          <form
+            className="space-y-1.5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!busy && newEmail.trim()) void send();
+            }}
           >
-            {passwordBusy ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : user.passwordEnabled ? (
-              "Update password"
-            ) : (
-              "Set password"
-            )}
-          </Button>
-        </CardContent>
+            <Label htmlFor="account-email">New email address</Label>
+            <div className="flex gap-2">
+              <Input id="account-email" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="you@example.com" />
+              <Button type="submit" disabled={!newEmail.trim() || busy}>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : "Send code"}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-3">
+            <Label>Enter the code sent to {pending}</Label>
+            <CodeInput value={code} onChange={setCode} onComplete={verify} length={8} disabled={busy} invalid={!!error} label="Email code" />
+            <Button variant="ghost" onClick={() => { setPending(null); setError(null); }} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        )}
+        <FieldError message={error} />
+        {done && <p className="text-sm text-muted-foreground">Email address updated.</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PasswordCard({ hasPassword }: { hasPassword: boolean }) {
+  const change = useAction(api.authFlow.changePassword);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  if (!hasPassword) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Password</CardTitle>
+          <CardDescription>Your account doesn&apos;t have a password yet. Sign out and sign in again — you&apos;ll be asked to set one with a code sent to your email.</CardDescription>
+        </CardHeader>
       </Card>
-    </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Change password</CardTitle>
+        <CardDescription>Requires your current password. This signs you out of your other devices.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          className="space-y-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError(null);
+            setDone(false);
+            try {
+              const result = await change({ currentPassword, newPassword });
+              if (!result.ok) setError(result.message);
+              else {
+                setCurrentPassword("");
+                setNewPassword("");
+                setDone(true);
+              }
+            } catch (cause) {
+              setError(errorMessage(cause, "Couldn't change your password."));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <PasswordField id="account-current-password" label="Current password" value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" disabled={busy} />
+          <div className="space-y-2">
+            <PasswordField id="account-new-password" label="New password" value={newPassword} onChange={setNewPassword} autoComplete="new-password" disabled={busy} />
+            <StrengthMeter password={newPassword} />
+          </div>
+          <FieldError message={error} />
+          {done && <p className="text-sm text-muted-foreground">Password updated.</p>}
+          <Button type="submit" disabled={busy || !currentPassword || newPassword.length < 10}>
+            {busy ? <Loader2 className="size-4 animate-spin" /> : "Update password"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

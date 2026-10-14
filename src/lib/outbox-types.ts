@@ -39,10 +39,22 @@ export interface OutboxAttachmentInput {
   previewUrl?: string;
 }
 
+/** Who a message pings, sent in the clear next to the ciphertext (docs/E2EE.md). */
+export interface OutboxMentions {
+  users: string[];
+  roles: string[];
+  everyone: boolean;
+  here: boolean;
+}
+
 export interface SendArgs {
   conversationId?: string;
   channelId?: string;
+  /** Plaintext, in memory only. On disk it lives sealed with the device key (see outbox-db.ts); the
+   * flusher encrypts it with the room key just before the mutation. */
   text?: string;
+  /** Computed by the composer from `text`; not secret from the server by design. */
+  mentions?: OutboxMentions;
   birthdayWish?: boolean;
   /** The message this send is a reply to. */
   replyToId?: string;
@@ -63,7 +75,9 @@ export interface SendArgs {
 export interface EditArgs {
   /** A real message id, or the `clientId` of a still-pending send. */
   messageId: string;
+  /** Plaintext in memory; sealed at rest like `SendArgs.text`. */
   text: string;
+  mentions?: OutboxMentions;
 }
 
 export interface DeleteArgs {

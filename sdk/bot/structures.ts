@@ -159,6 +159,8 @@ export class Channel {
     if (o.content !== undefined) body.content = o.content;
     if (o.embeds?.length) body.embeds = o.embeds.map((e) => toJSON<APIEmbed>(e));
     if (o.components?.length) body.components = o.components.map((r) => toJSON<APIActionRow>(r));
+    const localEmbeds = body.embeds as APIEmbed[] | undefined;
+    const localComponents = body.components as APIActionRow[] | undefined;
     if (o.replyTo) body.replyToId = typeof o.replyTo === "string" ? o.replyTo : o.replyTo.id;
     if (o.pingReply === false) body.pingReply = false;
     if (o.files?.length) {
@@ -168,17 +170,28 @@ export class Channel {
         (body.files as unknown[]).push({ storageId: await this.client.rest.upload(file.bytes, file.contentType), fileName: file.name });
       }
     }
+    if (this.client.hasE2eeIdentity && this.client.user) {
+      body.enc = await this.client.encryptForChannel(this.id, this.client.user.id, {
+        text: o.content,
+        ...(o.embeds?.length ? { embeds: body.embeds as APIEmbed[] } : {}),
+        ...(o.components?.length ? { components: body.components as APIActionRow[] } : {}),
+      });
+      delete body.content;
+      delete body.embeds;
+      delete body.components;
+    }
     const { id } = await this.client.rest.post<{ id: string }>(`/channels/${this.id}/messages`, body);
     const me = this.client.user;
     return new Message(this.client, this, {
       id,
-      text: o.content ?? "",
+      text: this.client.hasE2eeIdentity ? undefined : o.content ?? "",
+      enc: body.enc as APIMessage["enc"],
       createdAt: Date.now(),
       replyToId: body.replyToId ? String(body.replyToId) : null,
       author: { id: me?.id ?? "", username: me?.username ?? "", name: me?.name ?? "", isBot: true },
       attachments: [],
-      embeds: body.embeds as APIEmbed[] | undefined,
-      components: body.components as APIActionRow[] | undefined,
+      embeds: localEmbeds,
+      components: localComponents,
     });
   }
   /** The latest messages, newest first. Needs the "Read messages" access. */
@@ -288,8 +301,12 @@ export class Reaction {
 export class Message {
   /** The message's id. */
   readonly id: string;
-  /** The text. Empty if it is only embeds or files. */
-  readonly content: string;
+  /** Decrypted body when this bot has the room key; `undefined` while locked or without a wrap. */
+  content: string | undefined;
+  /** True when Crystal sent ciphertext and this SDK could not open it. */
+  readonly encrypted: boolean;
+  /** Resolves after the SDK has tried to decrypt this message. */
+  readonly ready: Promise<void>;
   /** When it was sent. */
   readonly createdAt: Date;
   /** When it was last edited, or `null`. */
@@ -313,7 +330,9 @@ export class Message {
    */
   constructor(readonly client: Client, readonly channel: Channel, data: APIMessage) {
     this.id = data.id;
+    this.encrypted = !!data.enc;
     this.content = data.text;
+    this.ready = this.decrypt(data);
     this.createdAt = new Date(data.createdAt);
     this.editedAt = data.editedAt ? new Date(data.editedAt) : null;
     this.replyToId = data.replyToId;
@@ -322,6 +341,14 @@ export class Message {
     this.embeds = data.embeds ?? [];
     this.components = data.components ?? [];
     this.pinned = !!data.pinned;
+  }
+  private async decrypt(data: APIMessage): Promise<void> {
+    if (!data.enc) return;
+    const payload = await this.client.decryptMessage(this.channel.id, data.author?.id ?? "", data.enc, data.keyWraps?.[data.enc.keyId]);
+    if (!payload) return;
+    this.content = payload.text;
+    if (payload.embeds) this.embeds.splice(0, this.embeds.length, ...(payload.embeds as APIEmbed[]));
+    if (payload.components) this.components.splice(0, this.components.length, ...(payload.components as APIActionRow[]));
   }
   /** The community it is in, if known. */
   get communityId() {
@@ -346,6 +373,16 @@ export class Message {
     if (changes.content !== undefined) body.content = changes.content;
     if (changes.embeds) body.embeds = changes.embeds.map((e) => toJSON<APIEmbed>(e));
     if (changes.components) body.components = changes.components.map((r) => toJSON<APIActionRow>(r));
+    if (this.client.hasE2eeIdentity && this.client.user) {
+      body.enc = await this.client.encryptForChannel(this.channel.id, this.client.user.id, {
+        text: changes.content,
+        ...(changes.embeds ? { embeds: body.embeds as APIEmbed[] } : {}),
+        ...(changes.components ? { components: body.components as APIActionRow[] } : {}),
+      });
+      delete body.content;
+      delete body.embeds;
+      delete body.components;
+    }
     await this.client.rest.patch(`/channels/${this.channel.id}/messages/${this.id}`, body);
   }
   /** Needs "Manage messages" unless the bot wrote it. */

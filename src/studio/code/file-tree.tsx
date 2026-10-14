@@ -2,13 +2,15 @@
 
 import { EditorActiveContext } from "@/studio/shell/chrome";
 import { ChevronDown, ChevronRight, FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, useContext } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useContext } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EXPLORER_EVENT, type ExplorerRequest } from "@/studio/code/code-menu-bar";
+import { decorationFor, foldersWithChanges } from "@/studio/code/git-decor";
 import type { CodeWorkbench } from "@/studio/code/use-code-workbench";
+import type { GitState } from "@/studio/code/use-git";
 import { FileGlyph } from "@/studio/code/vscode-ui";
 import { baseOf, parentOf, type FileInfo } from "@/studio/storage/workspace";
 import { cn } from "@/lib/utils";
@@ -54,8 +56,10 @@ function NameInput({ initial = "", onSubmit, onCancel }: { initial?: string; onS
  * every couple of seconds, so a file made by `npm init` in the terminal or by another editor
  * shows up without anyone asking.
  */
-export function FileTree({ wb, projectName }: { wb: CodeWorkbench; projectName: string }) {
+export function FileTree({ wb, projectName, git, onActivateFile }: { wb: CodeWorkbench; projectName: string; git?: GitState; /** A file was clicked: the workbench leaves whatever it was showing (a diff) for the file. */ onActivateFile?: () => void }) {
   const ws = wb.ws;
+  // Files git has changed are coloured and lettered, and so are the folders they're in.
+  const changedFolders = useMemo(() => foldersWithChanges(git?.status?.changes ?? []), [git?.status]);
   const [children, setChildren] = useState<Record<string, FileInfo[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["src"]));
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -155,6 +159,9 @@ export function FileTree({ wb, projectName }: { wb: CodeWorkbench; projectName: 
     const collapsedAlways = e.isDir && COLLAPSED_ALWAYS.has(e.name);
     const active = selected === e.path;
     const unsaved = wb.dirty.has(e.path);
+    const change = e.isDir ? undefined : git?.byPath.get(e.path);
+    const mark = change ? decorationFor(change) : null;
+    const folderChanged = e.isDir && changedFolders.has(e.path);
     return (
       <div key={e.path}>
         <ContextMenu>
@@ -169,7 +176,10 @@ export function FileTree({ wb, projectName }: { wb: CodeWorkbench; projectName: 
                 setSelected(e.path);
                 if (e.isDir) {
                   if (!collapsedAlways) toggle(e.path);
-                } else void wb.openFile(e.path);
+                } else {
+                  onActivateFile?.();
+                  void wb.openFile(e.path);
+                }
               }}
             >
               {/* The guide line down an open folder, drawn at each ancestor's indent. */}
@@ -193,11 +203,13 @@ export function FileTree({ wb, projectName }: { wb: CodeWorkbench; projectName: 
                   }}
                 />
               ) : (
-                <span className="min-w-0 flex-1 truncate" style={collapsedAlways ? { color: "var(--vsc-muted)" } : undefined}>
+                <span className="min-w-0 flex-1 truncate" style={collapsedAlways ? { color: "var(--vsc-muted)" } : mark ? { color: mark.color } : folderChanged ? { color: "var(--vsc-warning)" } : undefined}>
                   {e.name}
                 </span>
               )}
               {unsaved && <span className="size-2 shrink-0 rounded-full" style={{ background: "var(--vsc-editor-fg)" }} aria-label="Unsaved changes" />}
+              {mark && <span className="w-3 shrink-0 text-center text-[12px] font-medium" style={{ color: mark.color }} title={mark.title}>{mark.letter}</span>}
+              {folderChanged && !isOpen && <span className="size-1.5 shrink-0 rounded-full" style={{ background: "var(--vsc-warning)" }} aria-label="Contains changes" />}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="min-w-52 text-[13px]">

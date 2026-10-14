@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Show } from "@clerk/react";
+import { Show } from "@/components/auth/auth-state";
 import { Loader2 } from "lucide-react";
 
 import AuthFlow from "@/components/auth/auth-flow";

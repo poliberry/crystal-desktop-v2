@@ -2,6 +2,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { getCurrentUserOrNull } from "../users";
 import { can, type StaffPermission, type StaffRole } from "./staffPermissions";
+import { platformSecurity, requireAdminAssurance } from "./stepUp";
 
 /**
  * Server-side checks for the admin console.
@@ -42,7 +43,26 @@ export async function requireStaff(
 ): Promise<StaffContext> {
   const staff = await getStaff(ctx);
   if (!staff || !can(staff.roles, permission)) throw new Error("Not allowed.");
+  await assertStaffAssurance(ctx, staff);
   return staff;
+}
+
+/**
+ * The two-step rules for staff: refuses unless this session may do administrative things.
+ *
+ * Every administrative function goes through `requireStaff`, so this is the one place the
+ * platform's rules are enforced: staff whose account has two-step verification enter a code before
+ * the console does anything (it unlocks the session for a few minutes), and when the platform
+ * requires it, staff without it are turned away until they set it up.
+ *
+ * Called only once the caller is known to be staff with the permission: the refusals say things
+ * ("turn on two-step verification", "enter your code") that aren't for anybody else to hear.
+ * The few functions that use `getStaff` directly to decide what to *show* call it themselves
+ * before returning anything an administrator would see.
+ */
+export async function assertStaffAssurance(ctx: QueryCtx, staff: StaffContext): Promise<void> {
+  const { requireStaffTwoFactor } = await platformSecurity(ctx);
+  await requireAdminAssurance(ctx, staff.user._id, { mustEnroll: requireStaffTwoFactor, why: "platform" });
 }
 
 /** Record what a staff member did. Call it in the same mutation as the change,

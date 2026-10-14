@@ -1,3 +1,4 @@
+import { authTables } from "@convex-dev/auth/server";
 import { setupValidator } from "./lib/communitySetup";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
@@ -295,12 +296,40 @@ const profileCosmetics = {
   profileCss: v.optional(v.string()),
 };
 
+/** An end-to-end encrypted message body. See docs/E2EE.md for the wire format. */
+const e2eeEnvelopeValidator = v.object({
+  keyId: v.id("e2eeKeys"),
+  iv: v.string(),
+  ct: v.string(),
+});
+
+/** Who a message pings. Sent in the clear by the sender; the server cannot read the text. */
+const e2eeMentionsValidator = v.object({
+  users: v.array(v.id("users")),
+  roles: v.array(v.id("roles")),
+  everyone: v.boolean(),
+  here: v.boolean(),
+});
+
 export default defineSchema({
+  // The auth library's tables (sessions, refresh tokens…). Its `users` table is replaced by ours below;
+  // the library never inserts into it, because accounts are made by convex/authInternal.ts.
+  ...authTables,
+
   users: defineTable({
-    clerkId: v.string(),
+    /** The Clerk user id this account was created under. Only accounts that predate the move to Convex
+     * auth have a real one; it is kept so those accounts can be matched up and for the audit trail, and
+     * nothing signs in with it. Bots and the system account carry a placeholder (`bot:…`, `system:…`). */
+    clerkId: v.optional(v.string()),
     /** This account is a bot's: it has no person behind it and no way to sign in. Its `clerkId` is
      * a placeholder (`bot:…`). Set once when the bot is created and never changed. */
     isBot: v.optional(v.boolean()),
+    /** A temporary account made with just a username, to try the app (see convex/lib/guests.ts). It has no
+     * address or password, stops working at `guestExpiresAt`, and is then wiped down to an anonymous
+     * placeholder (`guestExpiredAt`) so what it left behind still points at someone. */
+    isGuest: v.optional(v.boolean()),
+    guestExpiresAt: v.optional(v.number()),
+    guestExpiredAt: v.optional(v.number()),
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
@@ -415,8 +444,178 @@ export default defineSchema({
     platformLimitReason: v.optional(v.string()),
   })
     .index("by_clerk_id", ["clerkId"])
+    .index("by_guest_expiry", ["guestExpiresAt"])
     .index("by_username", ["username"])
     .searchIndex("search_name", { searchField: "name" }),
+
+  /**
+   * The address each account signs in with, lowercased.
+   *
+   * A table of its own rather than a field on `users` on purpose: a dozen queries hand user rows
+   * to other people, and an address is the one field none of them may ever carry. Here, nothing
+   * reads it but the sign-in code and its owner's own security page.
+   *
+   * Filled from Clerk by `clerkMigration:backfillEmails` for everyone who signed up before the
+   * move, and by the sign-up flow after it. `verifiedAt` is set for an address Clerk had already
+   * verified or one proved here with an emailed code. Either way, choosing a password always asks
+   * for a fresh code: a copied-over address is where the code goes, not proof on its own.
+   */
+  userEmails: defineTable({
+    userId: v.id("users"),
+    email: v.string(),
+    verifiedAt: v.optional(v.number()),
+    source: v.union(v.literal("clerk"), v.literal("signup"), v.literal("change")),
+  })
+    .index("by_email", ["email"])
+    .index("by_user", ["userId"]),
+
+  // --- Sign-in ---------------------------------------------------------------------------------
+  // The auth library owns sessions, JWTs and refresh tokens (`authTables` above) and nothing
+  // else: it never sees a password. Everything that decides *whether* a session may start is
+  // ours (convex/authFlow.ts), and lives in these tables. The library is handed a single-use
+  // ticket at the very end, and only then makes a session.
+
+  /** An account's password, as a salted scrypt hash. One row per account; no row means the account
+   * has no password yet (it came over from Clerk and hasn't set one). */
+  authCredentials: defineTable({
+    userId: v.id("users"),
+    passwordHash: v.string(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
+
+  /**
+   * Codes emailed to prove an address: to open an account, to set a password on one that came
+   * over from Clerk, and to reset a forgotten one. Only a keyed hash of the code is kept, it
+   * stops working after a few wrong guesses, and a new request replaces the old one.
+   */
+  authEmailCodes: defineTable({
+    email: v.string(),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    attempts: v.number(),
+    createdAt: v.number(),
+  }).index("by_email", ["email", "createdAt"]),
+
+  /**
+   * "This address was proved a moment ago": handed out when an emailed code is entered correctly, and
+   * what the last step of sign-up or of choosing a password presents instead of the code. It lets the
+   * code be entered on its own screen and the rest done after, without the code's ten minutes running
+   * out mid-way. Single use, and short-lived. Kept as a hash.
+   */
+  authEmailProofs: defineTable({
+    email: v.string(),
+    proofHash: v.string(),
+    expiresAt: v.number(),
+  }).index("by_hash", ["proofHash"]),
+
+  /**
+   * What stands between "every check passed" and "a session exists". Whoever has checked a
+   * password, a code, a second step or a passkey is handed one of these; the library's sign-in
+   * accepts only that, once, within a couple of minutes. Kept as a hash.
+   */
+  authTickets: defineTable({
+    userId: v.id("users"),
+    ticketHash: v.string(),
+    expiresAt: v.number(),
+  }).index("by_hash", ["ticketHash"]),
+
+  /**
+   * The password (or a reset code) was right and the account has a second step: this is the open
+   * question. The browser holds the token and only its hash is kept.
+   */
+  authSecondFactorChallenges: defineTable({
+    userId: v.id("users"),
+    tokenHash: v.string(),
+    expiresAt: v.number(),
+    /** A new password (as a hash) that was chosen with an emailed code and is waiting on this
+     * second step: it is only applied when the step is passed. */
+    pendingPasswordHash: v.optional(v.string()),
+  }).index("by_hash", ["tokenHash"]),
+
+  /** Failed attempts at something guessable (a password, a code), per thing being guessed. */
+  securityRateLimits: defineTable({
+    key: v.string(),
+    failures: v.number(),
+    windowStart: v.number(),
+    lockedUntil: v.optional(v.number()),
+  }).index("by_key", ["key"]),
+
+  /**
+   * An account's authenticator app, if it has one. The secret is encrypted (see lib/secrets.ts)
+   * and only the server ever reads it back. `pendingSecret` is a new one that hasn't been
+   * proved yet: it only replaces `secret` when the user types a working code from it.
+   */
+  userTwoFactor: defineTable({
+    userId: v.id("users"),
+    secret: v.optional(v.string()),
+    pendingSecret: v.optional(v.string()),
+    enabledAt: v.optional(v.number()),
+    /** The newest TOTP step accepted, so a code can't be used twice. */
+    lastStep: v.optional(v.number()),
+  }).index("by_user", ["userId"]),
+
+  /** Single-use codes for when the authenticator is lost. Kept as keyed hashes. */
+  twoFactorBackupCodes: defineTable({
+    userId: v.id("users"),
+    codeHash: v.string(),
+    usedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_hash", ["userId", "codeHash"]),
+
+  /** A registered passkey (WebAuthn credential). The private half never leaves the device. */
+  passkeys: defineTable({
+    userId: v.id("users"),
+    /** base64url. */
+    credentialId: v.string(),
+    /** The COSE public key, base64url. */
+    publicKey: v.string(),
+    counter: v.number(),
+    transports: v.optional(v.array(v.string())),
+    deviceType: v.string(),
+    backedUp: v.boolean(),
+    name: v.string(),
+    rpId: v.string(),
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_credential_id", ["credentialId"]),
+
+  /** A challenge a passkey ceremony has to answer. Single use, and short-lived. */
+  webauthnChallenges: defineTable({
+    challenge: v.string(),
+    kind: v.union(v.literal("register"), v.literal("authenticate")),
+    /** Who is registering, or who is stepping up. Absent when signing in. */
+    userId: v.optional(v.id("users")),
+    rpId: v.string(),
+    expiresAt: v.number(),
+  }).index("by_challenge", ["challenge"]),
+
+  /**
+   * "I just proved it's me": a two-step code (or passkey) was accepted on this session, so
+   * administrative functions stay unlocked on it until `expiresAt`. Per session, so a
+   * second device or a stolen session token doesn't inherit it.
+   */
+  stepUpGrants: defineTable({
+    sessionId: v.id("authSessions"),
+    userId: v.id("users"),
+    /** `password` only unlocks changing security settings on an account that has no second step yet;
+     * it never unlocks administrative functions. */
+    method: v.union(v.literal("password"), v.literal("totp"), v.literal("backup_code"), v.literal("passkey")),
+    expiresAt: v.number(),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_user", ["userId"]),
+
+  /** Settings for the whole platform, one row per `key`. Today just `security`. */
+  platformSettings: defineTable({
+    key: v.string(),
+    /** Staff must have two-step verification switched on before they can use the console. */
+    requireStaffTwoFactor: v.boolean(),
+    updatedBy: v.optional(v.id("users")),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
 
   /**
    * What each badge looks like and means — the catalogue the ids in
@@ -674,6 +873,13 @@ export default defineSchema({
      * already inserted instead of a duplicate. Also what the optimistic
      * overlay matches a pending send against once the real row lands. */
     clientId: v.optional(v.string()),
+    /** End-to-end encrypted body (docs/E2EE.md). When present, `text` is unset: the
+     * plaintext is `{ v: 1, text }` encrypted under the room key `keyId`. Legacy rows and
+     * `system:crystal` rows have `text` and no `enc`. */
+    enc: v.optional(e2eeEnvelopeValidator),
+    /** Who the message pings, in the clear, because the server must route notifications
+     * without reading the text. Sent by the sender's client. */
+    mentions: v.optional(e2eeMentionsValidator),
   })
     .index("by_conversation", ["conversationId"])
     .index("by_client_id", ["clientId"])
@@ -683,6 +889,91 @@ export default defineSchema({
       searchField: "text",
       filterFields: ["conversationId"],
     }),
+
+  // --- End-to-end encryption (docs/E2EE.md) ---------------------------------------------------
+
+  /** A user's public identity key. The private half lives on their devices and, wrapped under
+   * their recovery secret, in `backup`. At most one row per user has no `supersededAt`. */
+  e2eeIdentities: defineTable({
+    userId: v.id("users"),
+    /** ECDH P-256, SPKI, base64url. */
+    publicKey: v.string(),
+    /** Short hex digest of the public key, for people to compare out of band. */
+    fingerprint: v.string(),
+    /** The PKCS8 private key under HKDF(recovery secret). The server cannot open it. */
+    backup: v.optional(v.object({ salt: v.string(), iv: v.string(), ct: v.string() })),
+    createdAt: v.number(),
+    supersededAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_active", ["userId", "supersededAt"]),
+
+  /** One row per room key epoch. A conversation or a channel (exactly one id is set). */
+  e2eeKeys: defineTable({
+    scope: v.union(v.literal("conversation"), v.literal("channel")),
+    conversationId: v.optional(v.id("conversations")),
+    channelId: v.optional(v.id("channels")),
+    epoch: v.number(),
+    /** `client`: made by a member's device. `migration`: a transitional escrowed key used while
+     * converting legacy plaintext. `onboarding`: a transitional key made for an unprovisioned member. */
+    origin: v.union(v.literal("client"), v.literal("migration"), v.literal("onboarding")),
+    /** The server holds an escrow wrap of this key and can read what it protects. */
+    escrowed: v.boolean(),
+    createdAt: v.number(),
+    createdBy: v.optional(v.id("users")),
+    supersededAt: v.optional(v.number()),
+  })
+    .index("by_conversation", ["conversationId", "epoch"])
+    .index("by_channel", ["channelId", "epoch"])
+    .index("by_escrowed", ["escrowed"]),
+
+  /** A room key wrapped to one recipient. `w1.…` for users and bots, `w1.…` to the escrow public
+   * key for `escrow`. */
+  e2eeKeyWraps: defineTable({
+    keyId: v.id("e2eeKeys"),
+    kind: v.union(v.literal("user"), v.literal("bot"), v.literal("escrow")),
+    userId: v.optional(v.id("users")),
+    botId: v.optional(v.id("bots")),
+    wrapped: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_key", ["keyId"])
+    .index("by_key_user", ["keyId", "userId"])
+    .index("by_key_bot", ["keyId", "botId"])
+    .index("by_user", ["userId"])
+    .index("by_bot", ["botId"]),
+
+  /** Whether the next sender must start a new epoch (someone left, or a room went private). */
+  e2eeRoomState: defineTable({
+    scope: v.union(v.literal("conversation"), v.literal("channel")),
+    conversationId: v.optional(v.id("conversations")),
+    channelId: v.optional(v.id("channels")),
+    needsRotation: v.boolean(),
+    updatedAt: v.number(),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_channel", ["channelId"]),
+
+  /** Someone (a new member, or a bot just installed) who needs the keys of a room, waiting for a
+   * member who has them to wrap them. */
+  e2eeWrapRequests: defineTable({
+    keyId: v.id("e2eeKeys"),
+    userId: v.optional(v.id("users")),
+    botId: v.optional(v.id("bots")),
+    createdAt: v.number(),
+  })
+    .index("by_key", ["keyId"])
+    .index("by_created", ["createdAt"]),
+
+  /** Durable operator controlled backfill across every conversation and channel. */
+  e2eeMigrationJobs: defineTable({
+    status: v.union(v.literal("running"), v.literal("completed"), v.literal("cancelled"), v.literal("failed")),
+    phase: v.union(v.literal("conversation"), v.literal("channel"), v.literal("done")),
+    batchSize: v.number(), roomCursor: v.optional(v.string()), roomScanDone: v.boolean(), messageCursor: v.optional(v.string()),
+    activeTargetId: v.optional(v.string()), migrated: v.number(), skipped: v.number(), batches: v.number(),
+    startedAt: v.number(), updatedAt: v.number(), finishedAt: v.optional(v.number()),
+    error: v.optional(v.string()), startedBy: v.id("users"),
+  }).index("by_status", ["status"]),
 
   messageAttachments: defineTable({
     messageId: v.id("messages"),
@@ -803,6 +1094,9 @@ export default defineSchema({
     /** A creator community's home platform and who may join. */
     creatorPlatform: v.optional(v.union(v.literal("twitch"), v.literal("youtube"), v.literal("tiktok"))),
     creatorAudience: v.optional(v.union(v.literal("public"), v.literal("members"))),
+    /** Members who can manage this server (kick, ban, roles, channels, settings…) must have
+     * two-step verification switched on to do so. Absent means off. */
+    requireTwoFactor: v.optional(v.boolean()),
   })
     .index("by_owner", ["ownerId"])
     .searchIndex("search_name", { searchField: "name" })
@@ -1003,6 +1297,11 @@ export default defineSchema({
     tokenPrefix: v.string(),
     tokenHash: v.string(),
     tokenRotatedAt: v.number(),
+    /** The bot's end-to-end encryption public key (ECDH P-256, SPKI base64url). Room keys are
+     * wrapped to it so the bot can read the channels it is installed in. The private half
+     * stays with the bot. See docs/E2EE.md. */
+    e2eePublicKey: v.optional(v.string()),
+    e2eeFingerprint: v.optional(v.string()),
     /** Encrypted. Signs the events Crystal sends to the bot. */
     signingSecret: v.string(),
     /** Where events and slash commands are delivered. https only; see `assertPanelUrl`. */
@@ -1563,6 +1862,11 @@ export default defineSchema({
         }),
       ),
     ),
+    /** End-to-end encrypted body, including embeds and components (docs/E2EE.md). When
+     * present, `text`, `embeds` and `components` are unset. */
+    enc: v.optional(e2eeEnvelopeValidator),
+    /** Who the message pings, in the clear. See the twin on `messages`. */
+    mentions: v.optional(e2eeMentionsValidator),
   })
     .index("by_channel", ["channelId"])
     .index("by_client_id", ["clientId"])

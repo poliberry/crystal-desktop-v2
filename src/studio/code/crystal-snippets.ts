@@ -136,12 +136,6 @@ export const BOT_SNIPPETS: Snippet[] = [
     body: 'await message.channel.community?.${1|ban,kick,timeout|}(${2:userId}${3:, "reason"});',
   },
   {
-    label: "voice-join",
-    detail: "Join a voice channel and play a sound",
-    documentation: "Needs “Join voice channels” and `npm install @livekit/rtc-node`. Bots can speak and use the soundboard; they can't stream video or share a screen.",
-    body: "const voice = await ${1:channel}.join();\nawait voice.playSound(\"${2|ping,boop,pop,chime,buzz,zap,horn,drumroll|}\");\n$0",
-  },
-  {
     label: "presence",
     detail: "Set what the bot is doing",
     documentation: "Shown on the bot's profile. The SDK keeps the bot online with a heartbeat.",

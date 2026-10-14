@@ -35,11 +35,9 @@ function stripeClient(): Stripe {
 
 /** The signed-in user's id in our database, or an error. */
 async function requireUserId(ctx: ActionCtx): Promise<{ userId: Id<"users">; email?: string; name?: string }> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Not signed in.");
-  const user = await ctx.runQuery(internal.store.userByClerkId, { clerkId: identity.subject });
-  if (!user) throw new Error("Your account isn't ready yet.");
-  return { userId: user.id, email: identity.email ?? undefined, name: user.name };
+  // Refuses a signed-out caller, and a banned or suspended one.
+  const user = await ctx.runQuery(internal.users.actionCaller, {});
+  return { userId: user.id, email: user.email, name: user.name };
 }
 
 /** The Stripe customer for a user, made on first need. */
@@ -513,8 +511,7 @@ export const receiptUrl = action({
 export const refundOrder = action({
   args: { orderId: v.id("orders"), reason: v.string() },
   handler: async (ctx, { orderId, reason }): Promise<{ refundedCents: number }> => {
-    const staff = await ctx.runQuery(api.staff.me, {});
-    if (!staff?.permissions.includes("finance.refund")) throw new Error("Not allowed.");
+    const staff = await ctx.runQuery(internal.staff.requireForAction, { permissions: ["finance.refund"] });
     const note = reason.trim();
     if (note.length < 3) throw new Error("Say why this is being refunded.");
 
@@ -785,8 +782,7 @@ async function removeFromStripe(stripe: Stripe, ids: { productId?: string; price
 export const adminDeleteSku = action({
   args: { skuId: v.id("skus"), reason: v.string(), acknowledgeOwners: v.optional(v.boolean()) },
   handler: async (ctx, { skuId, reason, acknowledgeOwners }): Promise<{ stripe: string }> => {
-    const staff = await ctx.runQuery(api.staff.me, {});
-    if (!staff?.permissions.includes("catalog.write") || !staff.permissions.includes("pricing.write")) throw new Error("Not allowed.");
+    const staff = await ctx.runQuery(internal.staff.requireForAction, { permissions: ["catalog.write", "pricing.write"] });
     const note = reason.trim();
     if (note.length < 3) throw new Error("Say why this is being deleted.");
 

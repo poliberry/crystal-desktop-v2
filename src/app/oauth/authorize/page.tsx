@@ -1,6 +1,6 @@
 "use client";
 
-import { Show } from "@clerk/react";
+import { Show } from "@/components/auth/auth-state";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 

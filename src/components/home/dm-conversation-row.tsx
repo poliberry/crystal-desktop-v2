@@ -40,6 +40,9 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { MessagePreview } from "@/components/message-preview";
+import { useAuthUserId } from "@/components/auth/auth-state";
+import { keyring } from "@/lib/e2ee";
+import { extractMentions, toConvexMentions } from "@/lib/mentions";
 import { PresenceDot } from "@/components/presence-dot";
 import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
 import { STATUS_LABEL, type FriendStatus } from "@/lib/presence";
@@ -92,6 +95,7 @@ function DmConversationMenu({
   const setClosed = useMutation(api.conversations.setClosed);
   const removeFriend = useMutation(api.friends.removeFriend);
   const sendMessage = useMutation(api.messages.send);
+  const userId = useAuthUserId();
   const getOrCreateInviteCode = useMutation(
     api.communities.getOrCreateInviteCode,
   );
@@ -103,7 +107,10 @@ function DmConversationMenu({
   const inviteToServer = async (communityId: Id<"communities">) => {
     try {
       const code = await getOrCreateInviteCode({ communityId });
-      await sendMessage({ conversationId, text: inviteUrl(code) });
+      if (!userId) throw new Error("Sign in before sending an invite.");
+      const text = inviteUrl(code);
+      const { enc } = await keyring.encrypt({ scope: "conversation", conversationId }, userId as Id<"users">, { text });
+      await sendMessage({ conversationId, enc, mentions: toConvexMentions(extractMentions(text)) });
       onOpen();
     } catch {
       // Missing the Create Invite permission in that server, most likely —
