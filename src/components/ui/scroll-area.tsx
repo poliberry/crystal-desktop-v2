@@ -40,7 +40,18 @@ function ScrollArea({
         // the root's max-height gives the viewport a definite ceiling to
         // overflow against, and is a no-op for the `h-full`/`flex-1` callers,
         // where max-height is `none`.
-        className="focus-visible:ring-ring/50 size-full max-h-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+        //
+        // Radix wraps the children in a `display: table; min-width: 100%`
+        // div so horizontal content can size the scroller. A table grows to
+        // fit its widest line, so in a vertical-only area a long status or
+        // name pushed the row past the box instead of truncating (the member
+        // list ran off the right edge). Unless sideways scrolling was asked
+        // for, make that wrapper a plain block so it is exactly as wide as
+        // the viewport and `truncate` inside it works.
+        className={cn(
+          "focus-visible:ring-ring/50 size-full max-h-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1",
+          !horizontal && "[&>div]:!block"
+        )}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

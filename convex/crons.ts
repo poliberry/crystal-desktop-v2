@@ -12,6 +12,7 @@ crons.interval("clear out stale sign-in records", { hours: 1 }, internal.guests.
 
 crons.interval("update creator feeds", { minutes: 10 }, internal.creatorCommunities.syncAll);
 crons.interval("re-check creator memberships", { hours: 6 }, internal.creatorCommunities.resyncMemberships);
+crons.interval("count people for the landing page", { minutes: 5 }, internal.publicStats.refresh);
 crons.interval("finish E2EE escrow onboarding", { minutes: 5 }, internal.e2eeOnboard.dropCompletedEscrows);
 
 export default crons;

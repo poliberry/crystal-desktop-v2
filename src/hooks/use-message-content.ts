@@ -67,23 +67,37 @@ export function useMessageContent(
  */
 export function useIndexMessage(
   room: Room,
-  doc: { id: string; authorId?: string; authorName?: string; createdAt: number; communityId?: string; channelName?: string },
+  doc: {
+    id: string;
+    authorId?: string;
+    authorName?: string;
+    createdAt: number;
+    communityId?: string;
+    channelName?: string;
+    attachments?: { fileName: string; fileType: string }[];
+  },
   content: MessageContentValue,
   skip = false,
 ): void {
   const key = roomKeyOf(room);
-  const indexable = !skip && (content.state === "decrypted" || content.state === "plain") ? content.text : undefined;
+  const canIndex = !skip && (content.state === "decrypted" || content.state === "plain");
+  const indexable = canIndex ? content.text : undefined;
+  const attachmentKey = JSON.stringify(doc.attachments ?? []);
   useEffect(() => {
-    if (!indexable) return;
+    if (!canIndex || (indexable === undefined && !doc.attachments?.length)) return;
     getSearchIndex().add({
       id: doc.id,
       room: key,
       authorId: doc.authorId ?? "",
       authorName: doc.authorName,
       createdAt: doc.createdAt,
-      text: indexable,
+      text: indexable ?? "",
+      attachments: doc.attachments,
       communityId: doc.communityId,
       channelName: doc.channelName,
     });
-  }, [key, doc.id, doc.authorId, doc.authorName, doc.createdAt, doc.communityId, doc.channelName, indexable]);
+  // The serialized key makes this stable when a row rerenders with an
+  // equivalent attachment array from a live query.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, doc.id, doc.authorId, doc.authorName, doc.createdAt, doc.communityId, doc.channelName, attachmentKey, indexable, canIndex]);
 }

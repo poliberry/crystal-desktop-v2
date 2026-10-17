@@ -315,7 +315,7 @@ export function EmojiTextInput({
       onPaste={handlePaste}
       onBlur={onBlur}
       className={cn(
-        "max-h-40 min-h-8 flex-1 overflow-y-auto px-1 py-1.5 text-sm outline-none",
+        "max-h-40 min-h-8 flex-1 overflow-y-auto px-1 py-1.5 text-base outline-none md:text-sm",
         "whitespace-pre-wrap break-words",
         // Placeholder — contenteditable has no native one.
         "empty:before:pointer-events-none empty:before:text-muted-foreground empty:before:content-[attr(data-placeholder)]",

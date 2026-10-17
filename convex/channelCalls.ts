@@ -5,7 +5,7 @@ import { AccessToken } from "livekit-server-sdk";
 
 import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
-import { closeRoomIfEmpty, ensureRoom } from "./lib/liveKitAdmin";
+import { closeRoomIfEmpty, ensureRoom, mintScreenToken } from "./lib/liveKitAdmin";
 
 /** Same shape as callTokens.ts's join/leave, but for a community voice
  * channel instead of a DM — see that file for why this needs "use node". */
@@ -35,6 +35,16 @@ export const join = action({
     });
 
     return { token: await at.toJwt(), url, roomName };
+  },
+});
+
+/** Screen-share companion token for a voice channel — see callTokens.joinScreen. Same permission check
+ * as `join`, but no recordVoiceJoin: the companion isn't a voice participant in the DB. */
+export const joinScreen = action({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }): Promise<{ token: string; url: string; roomName: string }> => {
+    const { userId, name } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
+    return mintScreenToken(`channel-${channelId}`, userId, name);
   },
 });
 

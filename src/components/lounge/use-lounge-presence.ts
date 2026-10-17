@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RoomEvent, type Room, type RemoteParticipant } from "livekit-client";
 
+import { isCompanion } from "@/lib/companion";
 import type { ResolvedScene } from "@/lib/lounge-scenes";
 
 /**
@@ -300,7 +301,11 @@ export function useLoungePresence(room: Room, scene: ResolvedScene, enabled: boo
     };
 
     // Somebody arrived: tell them where we are, at once.
-    const onJoined = (participant: RemoteParticipant) => publish(true, participant.identity);
+    const onJoined = (participant: RemoteParticipant) => {
+      // A screen-share companion (src/lib/companion.ts) has no place in the room and can't receive data.
+      if (isCompanion(participant)) return;
+      publish(true, participant.identity);
+    };
     const onLeft = (participant: RemoteParticipant) => {
       setSpots((prev) => {
         if (!prev.has(participant.identity)) return prev;

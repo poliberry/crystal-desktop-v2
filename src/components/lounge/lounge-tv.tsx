@@ -8,6 +8,7 @@ import { ChevronDown, ChevronUp, Maximize2, Minimize2, Power, Radio, Tv, Volume2
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
+import { screenSharePublication, useCompanion } from "@/lib/companion";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
 
@@ -77,6 +78,8 @@ export function TvScreen({
   const volumeRef = useRef(muted ? 0 : volume);
   volumeRef.current = muted ? 0 : volume;
   const identity = channel?.identity ?? null;
+  // A mobile sharer's screen and device audio come from a companion connection — see src/lib/companion.ts.
+  const companion = useCompanion(room, identity);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -103,7 +106,7 @@ export function TvScreen({
     };
     const attachAudio = () => {
       host?.replaceChildren();
-      const track = participant.getTrackPublication(Track.Source.ScreenShareAudio)?.track;
+      const track = screenSharePublication(participant, companion, Track.Source.ScreenShareAudio)?.track;
       if (!track || track.kind !== Track.Kind.Audio || !host) return;
       const el = track.attach();
       el.style.display = "none";
@@ -112,7 +115,7 @@ export function TvScreen({
       void routeElementToPlayback(el);
     };
     const refresh = () => {
-      attach(participant.getTrackPublication(Track.Source.ScreenShare));
+      attach(screenSharePublication(participant, companion, Track.Source.ScreenShare));
       attachAudio();
     };
     const onSub = (track: { source?: Track.Source }) => {
@@ -129,12 +132,12 @@ export function TvScreen({
       room.off(RoomEvent.TrackUnsubscribed, refresh);
       room.off(RoomEvent.TrackMuted, refresh);
       room.off(RoomEvent.TrackUnmuted, refresh);
-      const track = participant.getTrackPublication(Track.Source.ScreenShare)?.track;
+      const track = screenSharePublication(participant, companion, Track.Source.ScreenShare)?.track;
       if (video && track) track.detach(video);
       if (video) video.srcObject = null;
       host?.replaceChildren();
     };
-  }, [room, identity]);
+  }, [room, identity, companion]);
 
   // Volume follows the slider on whatever is already playing.
   useEffect(() => {

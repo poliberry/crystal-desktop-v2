@@ -14,6 +14,13 @@
  *   https://usecrystal.app/oauth/authorize?client_id=…   add a bot (to a community) or an
  *   crystal://oauth/authorize?client_id=…                extension (to your account)
  *
+ *   https://usecrystal.app/app/#/dm/<id>              a place in the app: a DM, a channel, Friends,
+ *   crystal://dm/<id>                                 or a call to join (what notifications open).
+ *   crystal://channel/<communityId>/<channelId>       The web app reads the same routes from its hash;
+ *   crystal://call/dm/<id>                            see `appRouteFor` and src/components/home/
+ *   crystal://call/channel/<communityId>/<channelId>  tabs-context.tsx.
+ *   crystal://friends
+ *
  * `crystal://auth/callback?…` finishes a sign-in and is *only* accepted in its `crystal://` form: a
  * web page must never be able to make the app treat an https link as a sign-in.
  *
@@ -38,7 +45,9 @@ export type DeepLink =
   | { kind: "open" }
   | { kind: "invite"; code: string }
   /** Add a bot or an extension. `search` is the query string, validated later by the page that uses it. */
-  | { kind: "authorize"; search: string };
+  | { kind: "authorize"; search: string }
+  /** A place in the app, as the web app's hash route (`#/dm/<id>`, `#/call/channel/<c>/<ch>`…). */
+  | { kind: "route"; hash: string };
 
 const INVITE = /^\/invite\/([a-zA-Z0-9]{4,32})\/?$/;
 const AUTHORIZE = /^\/oauth\/authorize\/?$/;
@@ -71,6 +80,36 @@ export function parseDeepLink(raw: string): DeepLink | null {
   const invite = INVITE.exec(path);
   if (invite) return { kind: "invite", code: invite[1] };
   if (AUTHORIZE.test(path) && url.search.length <= MAX_SEARCH) return { kind: "authorize", search: url.search };
+  // https://usecrystal.app/app/#/dm/<id>: the route is the hash.
+  if (!viaScheme && /^\/app\/?$/.test(path)) {
+    const route = routeFromPath(url.hash.replace(/^#/, ""));
+    if (route) return { kind: "route", hash: route };
+  }
+  // crystal://dm/<id> and friends: the route is the path.
+  if (viaScheme) {
+    const route = routeFromPath(path);
+    if (route) return { kind: "route", hash: route };
+  }
+  return null;
+}
+
+const ID = "[a-z0-9]{10,40}";
+const ROUTES: [RegExp, (m: RegExpExecArray) => string][] = [
+  [new RegExp(`^/dm/(${ID})/?$`), (m) => `#/dm/${m[1]}`],
+  [new RegExp(`^/(?:channel|community)/(${ID})/(${ID})/?$`), (m) => `#/community/${m[1]}/${m[2]}`],
+  [new RegExp(`^/call/dm/(${ID})/?$`), (m) => `#/call/dm/${m[1]}`],
+  [new RegExp(`^/call/channel/(${ID})/(${ID})/?$`), (m) => `#/call/channel/${m[1]}/${m[2]}`],
+  [/^\/friends\/?$/, () => "#/friends"],
+];
+
+/** A path like `/dm/<id>` as the app's hash route, or null if it isn't a place the app has. Ids are
+ * checked for shape here, so nothing but these exact routes can reach the renderer. */
+export function routeFromPath(path: string): string | null {
+  const clean = path.split("?")[0].toLowerCase();
+  for (const [re, toHash] of ROUTES) {
+    const m = re.exec(clean);
+    if (m) return toHash(m);
+  }
   return null;
 }
 

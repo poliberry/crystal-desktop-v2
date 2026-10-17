@@ -12,6 +12,7 @@ import { PERMISSIONS, requireCommunityPermission } from "./permissions";
 import { MAX_ATTACHMENT_BYTES } from "./uploadLimits";
 import { requireCommunityOpen } from "./lib/moderation";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { releaseFile } from "./lib/files";
 
 /**
  * A lounge's chat, topic and scene.
@@ -318,8 +319,9 @@ export const reset = internalMutation({
       .withIndex("by_channel", (q) => q.eq("channelId", channelId))
       .take(PURGE_BATCH);
     for (const message of batch) {
-      if (message.image?.storageId) await ctx.storage.delete(message.image.storageId).catch(() => {});
       await ctx.db.delete(message._id);
+      // Either store: lounge pictures uploaded to R2 used to stay behind.
+      await releaseFile(ctx, message.image);
     }
     if (batch.length === PURGE_BATCH) {
       await ctx.scheduler.runAfter(0, internal.lounge.reset, { channelId });

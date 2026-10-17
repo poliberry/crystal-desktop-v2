@@ -1,4 +1,5 @@
 import { internalMutation } from "./_generated/server";
+import { wipeProfile } from "./lib/accountWipe";
 import { revokeSessions } from "./lib/sessions";
 
 /**
@@ -33,19 +34,13 @@ export const sweepExpired = internalMutation({
       for (const p of await ctx.db.query("presence").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(p._id);
       for (const p of await ctx.db.query("presenceSessions").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(p._id);
       for (const t of await ctx.db.query("devicePushTokens").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(t._id);
+      for (const s of await ctx.db.query("savedMessages").withIndex("by_user_created", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(s._id);
 
-      await ctx.db.patch(user._id, {
+      await ctx.db.patch(user._id, { guestExpiresAt: undefined, guestExpiredAt: now });
+      // The name, pictures and the rest of the profile, files included.
+      await wipeProfile(ctx, user, {
         name: "Expired guest",
         username: `guest.${user._id.slice(-10).toLowerCase().replace(/[^a-z0-9]/g, "x")}`,
-        guestExpiresAt: undefined,
-        guestExpiredAt: now,
-        imageUrl: undefined,
-        bannerUrl: undefined,
-        bio: undefined,
-        dob: undefined,
-        customStatus: undefined,
-        avatarStorageId: undefined,
-        bannerStorageId: undefined,
       });
     }
     return due.length;

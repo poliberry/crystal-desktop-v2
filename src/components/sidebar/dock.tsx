@@ -190,7 +190,19 @@ function CallCard({ spread }: { spread: boolean }) {
   );
 
   return (
-    <div className={cn(GLASS_BASE, GLASS_DARK, "px-3.5 py-3")}>
+    <div
+      // Anywhere on the card goes back to the call screen. Its own controls (the status, an avatar,
+      // the call buttons) keep doing their thing; the title button is the keyboard route.
+      onClick={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest("button, a, input, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]")) return;
+        if (!event.currentTarget.contains(target)) return; // a portal (popover) bubbling through React
+        event.stopPropagation(); // opening the call, not locking the stack (see SidebarDock)
+        expand();
+      }}
+      title="Open call"
+      className={cn(GLASS_BASE, GLASS_DARK, "cursor-pointer px-3.5 py-3")}
+    >
       <div className="flex min-w-0 items-center gap-1.5 text-xs">
         {/* The status opens the connection panel; the name goes back to the
             call. Two targets on one line rather than one target that does
@@ -611,8 +623,9 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={!hasMicrophone ? "No microphone detected" : muted ? "Unmute" : "Mute"}
                   className={cn(
-                    "size-7 shrink-0 hover:bg-foreground/10",
+                    "size-7 shrink-0 hover:bg-foreground/10 max-md:size-10",
                     muted && "text-destructive hover:bg-destructive/20",
                   )}
                   disabled={!hasMicrophone}
@@ -635,8 +648,9 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={deafened ? "Undeafen" : "Deafen"}
                   className={cn(
-                    "size-7 shrink-0 hover:bg-foreground/10",
+                    "size-7 shrink-0 hover:bg-foreground/10 max-md:size-10",
                     deafened && "text-destructive hover:bg-destructive/20",
                   )}
                   onClick={toggleDeafened}
@@ -656,7 +670,7 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
               size="icon"
               aria-label="Audio devices"
               aria-expanded={devicesOpen}
-              className="size-7 shrink-0 hover:bg-foreground/10"
+              className="size-7 shrink-0 hover:bg-foreground/10 max-md:size-10"
               onClick={() => setDevicesOpen((open) => !open)}
             >
               <ChevronUpIcon
@@ -668,7 +682,8 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
             <Button
               variant="ghost"
               size="icon"
-              className="size-7 shrink-0 hover:bg-foreground/10"
+              aria-label="Settings"
+              className="size-7 shrink-0 hover:bg-foreground/10 max-md:size-10"
               onClick={() => openSettings()}
             >
               <SettingsIcon duration={0.8} className="size-4" />
@@ -767,6 +782,10 @@ export function SidebarDock({
   const { activeCall, controller } = useCall();
   const { activities } = useMyPresence();
   const [hovered, setHovered] = useState(false);
+  // Clicked open: stays spread whatever the pointer does, until a click outside (on the catcher
+  // below) or Escape. Hover alone is fiddly to keep open on the way to a button, and on a touch
+  // screen there is no hover at all.
+  const [locked, setLocked] = useState(false);
   const [pins, setPins] = useState(0);
   const pin = useCallback((delta: number) => setPins((n) => n + delta), []);
 
@@ -806,7 +825,7 @@ export function SidebarDock({
   // The user card is always in the pile, so one card above it is already a
   // stack worth spreading.
   const piled = !!front;
-  const expanded = (hovered || pins > 0) && piled;
+  const expanded = (hovered || pins > 0 || locked) && piled;
   const sheets = Math.min(rest.length, MAX_STACK_SHEETS);
 
   // The folded pile stays hidden from the moment the list opens until the list
@@ -820,8 +839,26 @@ export function SidebarDock({
   // the hover would otherwise be remembered and the next card to arrive would
   // open the stack on its own.
   useEffect(() => {
-    if (!piled) setHovered(false);
+    if (!piled) {
+      setHovered(false);
+      setLocked(false);
+    }
   }, [piled]);
+
+  useEffect(() => {
+    if (!locked) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLocked(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [locked]);
+
+  const unlock = () => {
+    setLocked(false);
+    // The pointer is wherever the closing click was, which is not on the dock.
+    setHovered(false);
+  };
 
   useEffect(() => {
     onExpandedChange(expanded);
@@ -829,10 +866,30 @@ export function SidebarDock({
 
   return (
     <DockPinContext.Provider value={pin}>
+    {/* While locked open, everything behind the blur is frozen: this takes the click, so nothing
+        under it fires, and the click only closes the stack. */}
+    {locked && expanded && (
+      <div
+        aria-hidden
+        data-mobile-stay
+        className="fixed inset-0 z-40"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={unlock}
+      />
+    )}
     <div
-      className="relative flex flex-col p-2"
+      className={cn("relative flex flex-col p-2", locked && expanded && "z-50")}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onClick={(event) => {
+        if (!piled) return;
+        const target = event.target as HTMLElement;
+        // Its buttons do their own thing; a portal (a menu or popover opened from a card) bubbles
+        // through React but isn't part of the stack.
+        if (!event.currentTarget.contains(target)) return;
+        if (target.closest("button, a, input, [role='button'], [role='menuitem']")) return;
+        setLocked((on) => !on);
+      }}
     >
       {/* The folded pile. Its size and position never change — the dock is
           anchored to the bottom, so anything here that moved on hover would
@@ -936,5 +993,18 @@ export function SidebarDock({
       </AnimatePresence>
     </div>
     </DockPinContext.Provider>
+  );
+}
+
+/**
+ * Discord's "You bar" for phones: the user card on its own along the bottom of the chats list, in place
+ * of a tab bar. Avatar opens your profile, the name sets your status, and mute, deafen, audio devices
+ * and Settings are one tap away. (The desktop pile around it is a hover affair, and phones don't hover.)
+ */
+export function MobileYouBar() {
+  return (
+    <div className="shrink-0 border-t border-border/60 bg-background px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+      <IdentityCard underlap={0} inset={false} />
+    </div>
   );
 }

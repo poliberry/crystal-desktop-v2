@@ -9,6 +9,7 @@ import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { clearConversationPriority } from "./priority";
 import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import { releaseUrl } from "./lib/files";
 
 async function areFriends(ctx: QueryCtx, a: Id<"users">, b: Id<"users">) {
   const row = await ctx.db
@@ -196,6 +197,11 @@ export const listMine = query({
           imageUrl: conversation.imageUrl,
           members: await otherMembers(ctx, conversation._id, me._id),
           lastMessageText: lastMessage?.text ?? null,
+          /** The last message's ciphertext as stored (null on a legacy plaintext row), with the
+           * author id its associated data binds, so the client can decrypt the preview line. The
+           * server never sees or returns the plaintext. */
+          lastMessageEnc: lastMessage?.enc ?? null,
+          lastMessageAuthorId: lastMessage?.authorId ?? null,
           /**
            * What the last message carried, if anything.
            *
@@ -390,9 +396,8 @@ export const removeGroupIcon = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const conversation = await requireGroupMembership(ctx, conversationId, me._id);
     await ctx.db.patch(conversationId, { imageUrl: undefined, iconStorageId: undefined });
-    if (conversation.iconStorageId) {
-      await ctx.storage.delete(conversation.iconStorageId).catch(() => {});
-    }
+    // R2 as well as Convex storage: an icon uploaded to the CDN used to stay there.
+    await releaseUrl(ctx, conversation.imageUrl, conversation.iconStorageId);
   },
 });
 
@@ -710,8 +715,7 @@ export const setConversationBackground = mutation({
         backgroundStorageId: undefined,
         backgroundOpacity: undefined,
       });
-      if (previousUrl) await dropR2Url(ctx, previousUrl);
-      if (previous) await ctx.storage.delete(previous).catch(() => {});
+      await releaseUrl(ctx, previousUrl, previous);
       return;
     }
 
@@ -741,11 +745,10 @@ export const setConversationBackground = mutation({
     const previous = conversation.backgroundStorageId;
     const previousUrl = (conversation as unknown as { backgroundUrl?: string }).backgroundUrl;
     await ctx.db.patch(conversationId, patch);
-    if ((cdnKey || cdnUrl) && previousUrl) await dropR2Url(ctx, previousUrl);
-    if (storageId && previous && previous !== storageId) {
-      await ctx.storage.delete(previous).catch(() => {});
-    }
-    if (cdnKey && previous && !cdnUrl) await ctx.storage.delete(previous).catch(() => {});
+    // Release the old picture from whichever store it was in, if it was actually replaced (an
+    // opacity-only change keeps it).
+    const replaced = (patch.backgroundUrl !== undefined && patch.backgroundUrl !== previousUrl) || (patch.backgroundStorageId !== undefined && patch.backgroundStorageId !== previous);
+    if (replaced) await releaseUrl(ctx, previousUrl, previous);
   },
 });
 

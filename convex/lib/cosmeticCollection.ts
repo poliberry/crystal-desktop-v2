@@ -368,6 +368,27 @@ const stormChaser: CollectionDesign = {
   ],
 };
 
+/** A lighter, low-cost profile-card take on Storm Chaser. Transparent sky keeps profile text legible. */
+const stormChaserEffect: CollectionDesign = {
+  slug: "storm-chaser-effect",
+  name: "Storm Chaser",
+  kind: "effect",
+  description: "A bright, gentle storm over your profile: drifting clouds, a light shower and one soft lightning flash that leaves your profile easy to read.",
+  priceCents: 399,
+  colors: ["#8099b5", "#bacde0", "#e3effb", "#f8fbff"],
+  duration: 7,
+  intro: 1.2,
+  build: (c) => [
+    make(c, "Storm glow", grad(c, 90, [[0, "#6f8dad00"], [0.34, "#829fbd14"], [0.72, "#bacde01f"], [1, "#edf6ff0a"]]), { ramp: false }),
+    make(c, "Cloud bank", puff(EW * 1.1, 200, "#c8d8e8"), { blend: "screen", transform: tf({ y: -EH * 0.4, opacity: 0.17 }) }),
+    crossing(c, "Passing cloud", puff(EW * 0.85, 180, "#8fa9c4"), { from: -EW * 0.4, to: EW * 0.4, y: -EH * 0.18, a: 0.12, phase: 0.4, blend: "screen", sy: 0.24 }),
+    make(c, "Fine rain", part(c, { shape: "dot", w: EW * 1.1, h: 10, count: cnt(c, 22), life: fit(c, 2.2), speed: 190, angle: 100, spread: 4, size: 2.5, sizeEnd: 1, colors: ["#dbeafe"], fadeIn: 0.1, fadeOut: 0.45, seed: c.seed + 5 }), { transform: tf({ y: -EH / 2, opacity: 0.32 }) }),
+    make(c, "Rain", part(c, { shape: "dot", w: EW * 0.9, h: 10, count: cnt(c, 14), life: fit(c, 1.4), speed: 290, angle: 100, spread: 4, size: 3, sizeEnd: 1, colors: ["#f0f7ff"], fadeIn: 0.08, fadeOut: 0.45, seed: c.seed + 11 }), { transform: tf({ y: -EH / 2, opacity: 0.34 }) }),
+    ...bolt(c, "Distant lightning", [EW * 0.34, -EH * 0.45], [EW * 0.25, -EH * 0.08], strike(c, 0.62), { seed: 17, jag: 10, n: 4, width: 2, color: "#f8fbff", halo: "#bfdbfe" }),
+    make(c, "Lightning glow", { type: "solid", w: EW, h: EH, color: "#eaf4ff" }, { blend: "screen", transform: tf({ opacity: cycle(c, c.idle, [[0, 0, "out"], [0.62, 0, "out"], [0.625, 0.1, "out"], [0.67, 0, "out"]]) }) }),
+  ],
+};
+
 const runeCircle: CollectionDesign = {
   slug: "rune-circle-nameplate",
   name: "Rune Circle",
@@ -828,7 +849,7 @@ const crystalBloom: CollectionDesign = {
 };
 
 export const COLLECTION_NAMEPLATES: readonly CollectionDesign[] = [lofiRooftop, stormChaser, runeCircle, treasureVault, goldenGroove, mischiefNight, pizzazz, crystalCavern, lsdTrip];
-export const COLLECTION_EFFECTS: readonly CollectionDesign[] = [lightningFrame, summoningCircle, treasureRain, starlitNight, confettiPop, mischiefSmoke, crystalBloom];
+export const COLLECTION_EFFECTS: readonly CollectionDesign[] = [lightningFrame, summoningCircle, treasureRain, starlitNight, stormChaserEffect, confettiPop, mischiefSmoke, crystalBloom];
 export const COLLECTION_DESIGNS: readonly CollectionDesign[] = [...COLLECTION_NAMEPLATES, ...COLLECTION_EFFECTS];
 
 /**

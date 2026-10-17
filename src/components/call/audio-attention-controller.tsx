@@ -15,6 +15,7 @@ import {
   subscribeAttentionOverrides,
   targetGain,
 } from "@/lib/audio-attention";
+import { isCompanion } from "@/lib/companion";
 
 /**
  * Drives Audio Attention for the call you are in (see src/lib/audio-attention.ts for what it does and why it fades the
@@ -48,9 +49,12 @@ export function AudioAttentionController({ room, watchedShares }: { room: Room; 
     let last = performance.now();
     let speaking = 0;
 
-    // Other people only: your own voice doesn't turn the stream down.
+    // Other people only: your own voice doesn't turn the stream down, and nor does a stream's own audio
+    // (a mobile share's device audio comes from its companion connection — src/lib/companion.ts).
     const readSpeakers = () => {
-      speaking = room.activeSpeakers.filter((p) => p.identity !== room.localParticipant.identity).length;
+      speaking = room.activeSpeakers.filter(
+        (p) => p.identity !== room.localParticipant.identity && !isCompanion(p)
+      ).length;
     };
     readSpeakers();
 

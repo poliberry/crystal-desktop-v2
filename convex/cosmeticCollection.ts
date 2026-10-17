@@ -26,8 +26,9 @@ import { audit } from "./lib/staff";
  *  2. Writes each as `marketplace/motion/<sha256>.json` (the same place and name `motion.publish` uses, so it is content-addressed,
  *     immutable and never deleted by the clean-up paths). The same design is the same address, so running this again is harmless.
  *  3. Creates the SKUs, **as drafts**. A draft is not for sale and is not sent to Stripe; someone with `pricing.write` reviews the
- *     suggested price and publishes it from the console. Running it again refreshes a SKU that is still a draft and leaves anything
- *     that has been published or archived exactly as it is, because people may own it.
+ *     suggested price and publishes it from the console. Running it again refreshes a SKU that is still a draft. The Storm Chaser
+ *     effect is the one exception: its rendering was too costly and too dark, so its existing listing and owners receive the updated
+ *     design while its price and sale status stay as they are.
  */
 
 const ONE_PRICE_NOTE = "suggested price";
@@ -307,11 +308,22 @@ export const seed = internalMutation({
     for (const [index, item] of items.entries()) {
       const categoryId = categories.get(item.category)!;
       const grants = [{ kind: item.kind, payload: item.payload, label: item.name }];
-      const existing = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", item.slug)).unique();
+      let existing = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", item.slug)).unique();
+      // The original Storm Chaser effect predates the collection slug. Reuse that published listing by kind and name so existing
+      // owners get the lighter design instead of receiving a duplicate marketplace item.
+      if (!existing && item.slug === "storm-chaser-effect") {
+        existing = (await ctx.db.query("skus").withIndex("by_category", (q) => q.eq("categoryId", categoryId)).collect()).find(
+          (sku) => sku.name.toLowerCase() === "storm chaser" && sku.grants.some((grant) => grant.kind === "profileEffect")
+        ) ?? null;
+      }
       if (existing) {
-        // Only a draft is ours to rewrite. Anything published or archived may be owned by people, so it stays as it is.
-        if (existing.status !== "draft") { left++; continue; }
+        // Published collections are left alone, except Storm Chaser: this targeted artwork fix preserves the listing's price/status
+        // and refreshes existing owners so the performance and brightness improvements reach the cosmetic they already equipped.
+        if (existing.status !== "draft" && item.slug !== "storm-chaser-effect") { left++; continue; }
         await ctx.db.patch(existing._id, { name: item.name, description: item.description, categoryId, grants, updatedAt: now });
+        if (item.slug === "storm-chaser-effect" && existing.status !== "draft") {
+          await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId: existing._id, after: null });
+        }
         refreshed++;
         continue;
       }

@@ -204,10 +204,12 @@ export function MemberList({ communityId }: MemberListProps) {
                             </Avatar>
                             <div className="min-w-0 flex-1">
                               <p
-                                className="truncate text-sm leading-tight flex flex-row items-center gap-1"
+                                className="flex min-w-0 flex-row items-center gap-1 text-sm leading-tight"
                                 style={colorRole?.color ? { color: colorRole.color } : undefined}
                               >
-                                  {member.name} {member.isBot && <BotTag />} {member.isOwner ? <Crown size={12} className="text-yellow-400" /> : ""}
+                                <span className="truncate">{member.name}</span>
+                                {member.isBot && <BotTag />}
+                                {member.isOwner && <Crown size={12} className="shrink-0 text-yellow-400" />}
                               </p>
                               {/* What they are doing and what they say they
                                   are doing, on one line — see

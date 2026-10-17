@@ -1,0 +1,48 @@
+/* The live site's look (src/components/marketing), as plain CSS for the marketing renders. */
+@font-face { font-family: "Google Sans Flex"; src: url("assets/fonts/google-sans-flex-latin.woff2") format("woff2"); font-weight: 1 1000; }
+@font-face { font-family: "Caveat"; src: url("assets/fonts/caveat-latin.woff2") format("woff2"); font-weight: 400 700; }
+@font-face { font-family: "Blu Sans"; src: url("assets/fonts/BluSans-VariableFont_wght.ttf") format("truetype"); font-weight: 100 900; }
+
+:root {
+  --bg: #0b0d12;
+  --emerald-200: #a7f3d0;
+  --emerald-300: #6ee7b7;
+  --teal-300: #5eead4;
+  --sky-200: #bae6fd;
+  --sky-400: #38bdf8;
+  --amber-100: #fef3c7;
+  --amber-200: #fde68a;
+  --rose-200: #fecdd3;
+  --violet-200: #ddd6fe;
+  --violet-300: #c4b5fd;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: #fff; font-family: "Blu Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+.display { font-family: "Google Sans Flex", "Blu Sans", sans-serif; font-weight: 900; letter-spacing: -0.045em; line-height: 0.95; }
+.bold { font-family: "Google Sans Flex", "Blu Sans", sans-serif; font-weight: 700; letter-spacing: -0.035em; }
+.hand { font-family: "Caveat", cursive; font-weight: 700; line-height: 1.05; }
+.gradient { background: linear-gradient(90deg, var(--emerald-300), var(--teal-300), var(--sky-400)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.muted { color: rgb(255 255 255 / 0.6); }
+
+/* Two soft lights, the same green-to-blue as the site. */
+.lights {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 55% at 18% 0%, rgb(52 211 153 / 0.16), transparent),
+    radial-gradient(ellipse 50% 50% at 85% 8%, rgb(96 165 250 / 0.14), transparent);
+}
+
+.shot { border-radius: 18px; border: 1px solid rgb(255 255 255 / 0.1); background: #0f1116; padding: 7px; box-shadow: 0 50px 100px -30px rgb(0 0 0 / 0.85); }
+.shot img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.card-img { display: block; border-radius: 20px; border: 1px solid rgb(255 255 255 / 0.1); box-shadow: 0 40px 80px -25px rgb(0 0 0 / 0.95); }
+
+.pill { display: inline-flex; align-items: center; gap: 12px; border-radius: 999px; border: 1px solid rgb(255 255 255 / 0.1); background: #16191f; box-shadow: 0 20px 40px -20px rgb(0 0 0 / 0.8); white-space: nowrap; }
+.chip { display: inline-block; border-radius: 999px; border: 1px solid rgb(255 255 255 / 0.09); background: #14171d; color: rgb(255 255 255 / 0.85); white-space: nowrap; }
+.badge { display: inline-flex; align-items: center; gap: 10px; border-radius: 999px; border: 1px solid rgb(253 230 138 / 0.25); background: rgb(253 230 138 / 0.1); color: var(--amber-100); font-weight: 600; }
+.cta { display: inline-flex; align-items: center; gap: 12px; border-radius: 18px; background: var(--emerald-300); color: #06110c; font-weight: 800; }
+.tile { border-radius: 26px; border: 1px solid rgb(255 255 255 / 0.08); background: rgb(255 255 255 / 0.03); }
+.icon { display: inline-flex; align-items: center; justify-content: center; border-radius: 16px; }
+.icon svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }

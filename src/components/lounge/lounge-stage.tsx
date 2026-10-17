@@ -27,6 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import type { RoomController } from "@/hooks/use-room";
+import { screenShareCarrier } from "@/lib/companion";
 import { resolveScene } from "@/lib/lounge-scenes";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
@@ -410,7 +411,8 @@ export function LoungeStage({ roomName, controller, onLeave, channelId, communit
   // --- the TV ------------------------------------------------------------------------
   const channels: TvChannel[] = everyone
     .filter((p) => {
-      const pub = p.getTrackPublication(Track.Source.ScreenShare);
+      // A mobile sharer publishes from a companion connection — see src/lib/companion.ts.
+      const pub = screenShareCarrier(room, p).getTrackPublication(Track.Source.ScreenShare);
       return screenShares.includes(p.identity) && !!pub && !pub.isMuted;
     })
     .map((p) => ({ identity: p.identity, name: `${profiles.get(p.identity)?.name ?? "Someone"}'s screen` }));

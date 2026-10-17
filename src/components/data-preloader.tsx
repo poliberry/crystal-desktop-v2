@@ -13,6 +13,8 @@ import {
 } from "@/lib/message-cache";
 import { ownDecorationState } from "@/lib/avatar-decorations";
 import { preloadAttachmentIntoCache } from "@/lib/image-cache";
+import { getSearchIndex } from "@/lib/e2ee/search-index";
+import { keyring, useE2eeSnapshot, type Room, type Envelope } from "@/lib/e2ee";
 import { usePreloadedCosmetics } from "@/hooks/use-preloaded-cosmetics";
 import { usePreloadedEmojis } from "@/hooks/use-preloaded-emojis";
 import {
@@ -59,6 +61,72 @@ const PRELOAD_PAGE = { numItems: 30, cursor: null };
  * speculative IndexedDB warming across all background message preloads.
  */
 const MAX_BACKGROUND_ATTACHMENT_PRELOADS = 12;
+
+/**
+ * The paginated message views are intentionally mounted only for the current
+ * working set. Indexing exclusively in visible rows therefore misses pages
+ * that the app has already fetched into its message cache. Index those bounded
+ * preloads too, decrypting on-device and never sending plaintext to Convex.
+ */
+function useIndexPreloadedMessages(
+  messages: readonly unknown[] | undefined,
+  room: Room,
+  communityId?: Id<"communities">,
+): void {
+  const { status } = useE2eeSnapshot();
+  const roomScope = room.scope;
+  const roomId = room.scope === "conversation" ? room.conversationId : room.channelId;
+  const decryptRoom: Room = roomScope === "conversation"
+    ? { scope: "conversation", conversationId: roomId as Id<"conversations"> }
+    : { scope: "channel", channelId: roomId as Id<"channels"> };
+
+  useEffect(() => {
+    if (!messages || status !== "ready") return;
+    let cancelled = false;
+    const indexPage = async () => {
+      const index = getSearchIndex();
+      for (let offset = 0; offset < messages.length && !cancelled; offset += 4) {
+        await Promise.all(messages.slice(offset, offset + 4).map(async (value) => {
+          const message = value as {
+            id?: string;
+            author?: { id?: string; name?: string } | null;
+            authorId?: string;
+            createdAt?: number;
+            text?: string | null;
+            enc?: Envelope | null;
+            attachments?: { fileName: string; fileType: string }[];
+          };
+          const authorId = message.author?.id ?? message.authorId;
+          if (cancelled || !message.id || !authorId || typeof message.createdAt !== "number") return;
+          const payload = message.enc
+            ? await keyring.decrypt(
+              decryptRoom,
+                authorId as Id<"users">,
+                message.enc,
+              )
+            : null;
+          if (cancelled) return;
+          if (message.enc && !payload) return;
+          const text = payload?.text ?? (!message.enc ? message.text ?? "" : "");
+          const attachments = message.attachments?.map(({ fileName, fileType }) => ({ fileName, fileType }));
+          if (!text.trim() && !attachments?.length) return;
+          index.add({
+            id: message.id,
+            room: roomScope === "conversation" ? `dm:${roomId}` : `channel:${roomId}`,
+            authorId,
+            authorName: message.author?.name,
+            createdAt: message.createdAt,
+            text,
+            attachments,
+            communityId: communityId as string | undefined,
+          });
+        }));
+      }
+    };
+    void indexPage();
+    return () => { cancelled = true; };
+  }, [messages, roomScope, roomId, communityId, status]);
+}
 const backgroundAttachmentPreloads = new Set<string>();
 
 /** Warm the attachment blob cache for the image attachments on a just-loaded
@@ -94,11 +162,12 @@ const MESSAGE_PRELOAD_BUDGET = 12;
  * through the message cache instead, which is what the lists read from while
  * their own paginated query resolves (see src/lib/message-cache.ts).
  */
-function ChannelMessagesPreloader({ channelId }: { channelId: Id<"channels"> }) {
+function ChannelMessagesPreloader({ channelId, communityId }: { channelId: Id<"channels">; communityId: Id<"communities"> }) {
   const result = useQuery(api.channelMessages.list, {
     channelId,
     paginationOpts: PRELOAD_PAGE,
   });
+  useIndexPreloadedMessages(result?.page, { scope: "channel", channelId }, communityId);
   useEffect(() => {
     if (!result) return;
     rememberFirstPage(channelMessagesKey(channelId), result.page);
@@ -113,6 +182,7 @@ function ConversationMessagesPreloader({
   conversationId: Id<"conversations">;
 }) {
   const result = useQuery(api.messages.list, { conversationId, paginationOpts: PRELOAD_PAGE });
+  useIndexPreloadedMessages(result?.page, { scope: "conversation", conversationId });
   useEffect(() => {
     if (!result) return;
     rememberFirstPage(conversationMessagesKey(conversationId), result.page);
@@ -205,15 +275,73 @@ export function DataPreloader() {
  * own queries to land; short enough that a click on a second server is still instant. */
 const PRELOAD_DELAY_MS = 1500;
 
-/** `true` once `ready` has been true for `ms`. Stays true after that: it is a start gate, not a debounce. */
+/** Past the delay, how long warming waits for the main thread to go idle before starting anyway. */
+const IDLE_TIMEOUT_MS = 3000;
+
+/**
+ * `true` once `ready` has been true for `ms`, the window has been visible at least once, and the
+ * main thread has had an idle moment (or `IDLE_TIMEOUT_MS` passed). Stays true after that: it is a
+ * start gate, not a debounce.
+ *
+ * Visible, because an app launched straight to the tray has nobody about to navigate it — the
+ * background notifier in the main process doesn't need any of this. Idle, because a delay alone
+ * still lands dozens of subscriptions in the middle of first-screen rendering on a slow machine.
+ */
 function useSettledAfter(ready: boolean, ms: number): boolean {
   const [settled, setSettled] = useState(false);
+  const visible = useDocumentVisible();
   useEffect(() => {
-    if (!ready || settled) return;
-    const timer = window.setTimeout(() => setSettled(true), ms);
-    return () => window.clearTimeout(timer);
-  }, [ready, settled, ms]);
+    if (!ready || settled || !visible) return;
+    let idle: number | null = null;
+    const timer = window.setTimeout(() => {
+      if (typeof window.requestIdleCallback === "function") {
+        idle = window.requestIdleCallback(() => setSettled(true), { timeout: IDLE_TIMEOUT_MS });
+      } else {
+        setSettled(true);
+      }
+    }, ms);
+    return () => {
+      window.clearTimeout(timer);
+      if (idle !== null) window.cancelIdleCallback(idle);
+    };
+  }, [ready, settled, visible, ms]);
   return settled;
+}
+
+function subscribeVisibility(listener: () => void): () => void {
+  document.addEventListener("visibilitychange", listener);
+  return () => document.removeEventListener("visibilitychange", listener);
+}
+
+/** Visible, not focused: a window on a second monitor is still being looked at. */
+function useDocumentVisible(): boolean {
+  return useSyncExternalStore(
+    subscribeVisibility,
+    () => document.visibilityState === "visible",
+    () => true,
+  );
+}
+
+/**
+ * How long the window has to stay hidden (minimised, closed to the tray) before speculative message
+ * history stops being kept live. Short absences keep everything warm; a long one shouldn't keep a
+ * dozen message subscriptions re-rendering for nobody.
+ */
+const HIDDEN_RELEASE_MS = 10 * 60_000;
+
+/** `true` while the window has been hidden for at least `ms`; false again the moment it is shown. */
+function useHiddenFor(ms: number): boolean {
+  const visible = useDocumentVisible();
+  const [longHidden, setLongHidden] = useState(false);
+  useEffect(() => {
+    if (visible) {
+      setLongHidden(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setLongHidden(true), ms);
+    return () => window.clearTimeout(timer);
+  }, [visible, ms]);
+  return longHidden;
 }
 
 /** Cap on how many community structures stay warm at once. Was unbounded
@@ -229,6 +357,10 @@ function PreloadEverything() {
   const listConversations = useQuery(api.conversations.listMine);
   const conversations = listConversations ?? [];
   const recent = useRecentViews();
+  // Long in the background: message history is the heavy, speculative part, so it is let go until
+  // the window comes back. The last page of each stays in the message cache, so a view opened on
+  // return still paints from it while its own subscription catches up. Structure stays warm.
+  const releaseMessages = useHiddenFor(HIDDEN_RELEASE_MS);
 
   // Same guard as `memberIds`, for DMs: a recent view or pinned tab can hold an id that was never one of this
   // account's conversations (a stale hint, a bad deep link), and subscribing to its messages throws a validation error
@@ -360,14 +492,14 @@ function PreloadEverything() {
         </ErrorBoundary>
       ))}
 
-      {messageTargets.map((target) =>
+      {!releaseMessages && messageTargets.map((target) =>
         target.type === "dm" ? (
           <ErrorBoundary silent key={`dm:${target.conversationId}`} label="Message preload">
             <ConversationMessagesPreloader conversationId={target.conversationId as Id<"conversations">} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary silent key={`channel:${target.channelId}`} label="Message preload">
-            <ChannelMessagesPreloader channelId={target.channelId as Id<"channels">} />
+            <ChannelMessagesPreloader channelId={target.channelId as Id<"channels">} communityId={target.communityId as Id<"communities">} />
           </ErrorBoundary>
         )
       )}

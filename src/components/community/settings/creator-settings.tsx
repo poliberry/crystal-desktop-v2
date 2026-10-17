@@ -11,6 +11,7 @@ import { SettingRow, SettingsGroup } from "@/components/settings/settings-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CREATOR_PLATFORM_LIST } from "@/lib/community-kinds";
+import { CREATOR_CONNECTIONS_PAUSED, CREATOR_PAUSED_MESSAGE } from "@/lib/feature-flags";
 import { formatDateTime } from "@/lib/locale";
 
 const errorText = (e: unknown, fallback: string) =>
@@ -61,8 +62,10 @@ export function CreatorSettings({ communityId }: { communityId: Id<"communities"
                   : linked
                     ? "This community is centred on this channel."
                     : account
-                      ? account.lastError ?? (p.supportsTiers && !account.canReadMembers ? "Connected, but not allowed to see your members yet." : "Connected.")
-                      : `Connect your ${p.label} account to show your streams and match your members.`
+                      ? account.lastError ?? (p.supportsTiers && !account.canReadMembers ? (CREATOR_CONNECTIONS_PAUSED ? "Connected." : "Connected, but not allowed to see your members yet.") : "Connected.")
+                      : CREATOR_CONNECTIONS_PAUSED
+                        ? CREATOR_PAUSED_MESSAGE
+                        : `Connect your ${p.label} account to show your streams and match your members.`
               }
             >
               {!available ? null : account ? (
@@ -72,7 +75,7 @@ export function CreatorSettings({ communityId }: { communityId: Id<"communities"
                       Use this channel
                     </Button>
                   )}
-                  {p.supportsTiers && !account.canReadMembers && (
+                  {p.supportsTiers && !account.canReadMembers && !CREATOR_CONNECTIONS_PAUSED && (
                     <Button
                       size="sm"
                       variant="secondary"
@@ -85,7 +88,7 @@ export function CreatorSettings({ communityId }: { communityId: Id<"communities"
                     <Unlink className="size-4" />
                   </Button>
                 </>
-              ) : (
+              ) : CREATOR_CONNECTIONS_PAUSED ? null : (
                 <Button
                   size="sm"
                   disabled={busy === `auth-${p.id}`}

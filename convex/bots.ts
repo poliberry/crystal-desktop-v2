@@ -26,6 +26,7 @@ import { encryptSecret } from "./lib/secrets";
 import { PERMISSIONS, getBasePermissions, getChannelPermissions } from "./permissions";
 import { audit as staffAudit, requireStaff } from "./lib/staff";
 import { creatorKey, getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { releaseUrl } from "./lib/files";
 
 /**
  * Bots, from the point of view of people: an author making and managing their bot, and a
@@ -301,8 +302,13 @@ export const remove = mutation({
     for (const install of await ctx.db.query("botInstalls").withIndex("by_bot", (q) => q.eq("botId", botId)).collect()) {
       await removeInstall(ctx, install, bot.userId);
     }
-    // Its messages stay, written by an account that now says what it is.
-    await ctx.db.patch(bot.userId, { name: "Deleted bot", imageUrl: undefined });
+    // Its messages stay, written by an account that now says what it is. Its pictures go.
+    const account = await ctx.db.get(bot.userId);
+    await ctx.db.patch(bot.userId, { name: "Deleted bot", imageUrl: undefined, avatarStorageId: undefined, bannerUrl: undefined, bannerStorageId: undefined });
+    if (account) {
+      await releaseUrl(ctx, account.imageUrl, account.avatarStorageId);
+      await releaseUrl(ctx, account.bannerUrl, account.bannerStorageId);
+    }
     for (const row of await ctx.db.query("botRate").withIndex("by_bot", (q) => q.eq("botId", botId)).collect()) await ctx.db.delete(row._id);
     await ctx.db.delete(botId);
   },

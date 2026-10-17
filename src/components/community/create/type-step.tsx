@@ -2,6 +2,7 @@
 
 import { Check, Shield, Sparkles, Users } from "lucide-react";
 
+import { CREATOR_CONNECTIONS_PAUSED } from "@/lib/feature-flags";
 import { cn } from "@/lib/utils";
 
 export type CommunityKindChoice = "standard" | "creator" | "clan";
@@ -34,7 +35,7 @@ const KINDS: { id: CommunityKindChoice; title: string; description: string; icon
 export function TypeStep({ value, onChange }: { value: CommunityKindChoice; onChange: (kind: CommunityKindChoice) => void }) {
   return (
     <div className="grid gap-3">
-      {KINDS.map((kind) => {
+      {KINDS.filter((kind) => !(CREATOR_CONNECTIONS_PAUSED && kind.id === "creator")).map((kind) => {
         const selected = value === kind.id;
         return (
           <button

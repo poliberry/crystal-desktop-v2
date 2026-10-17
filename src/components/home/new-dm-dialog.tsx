@@ -101,7 +101,7 @@ export function NewDmDialog({ onCreated }: NewDmDialogProps) {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-7">
+        <Button variant="ghost" size="icon" aria-label="New message" className="size-7 max-md:-my-1.5 max-md:size-10">
           <MessageSquarePlusIcon duration={0.8} className="size-4" />
         </Button>
       </DialogTrigger>

@@ -5,7 +5,8 @@ import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
+import { releaseFile, releaseUrl } from "./lib/files";
+import { r2PublicUrlForKey } from "./lib/r2";
 import {
   DEFAULT_EVERYONE_PERMISSIONS,
   PERMISSIONS,
@@ -26,6 +27,7 @@ import { sanitizeSetup, setupValidator } from "./lib/communitySetup";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { factorSummary } from "./lib/secondFactor";
+import { forgetProfileImages, releaseWornImages } from "./profileImages";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -655,9 +657,7 @@ export const setIcon = mutation({
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
     let url: string | null = null;
-    let isR2 = false;
     if (cdnKey || cdnUrl) {
-      isR2 = true;
       url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
       if (!url) throw new Error("Icon upload failed.");
     } else {
@@ -668,8 +668,8 @@ export const setIcon = mutation({
     const previous = community.iconStorageId;
     const previousUrl = community.imageUrl;
     await ctx.db.patch(communityId, { imageUrl: url, iconStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
-    else if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    // From whichever store it was in: an icon or banner moving between R2 and Convex storage used to leave the old one.
+    if (previousUrl !== url || previous !== storageId) await releaseUrl(ctx, previousUrl !== url ? previousUrl : undefined, previous !== storageId ? previous : undefined);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
       await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
@@ -692,9 +692,7 @@ export const setBanner = mutation({
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_COMMUNITY);
     let url: string | null = null;
-    let isR2 = false;
     if (cdnKey || cdnUrl) {
-      isR2 = true;
       url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
       if (!url) throw new Error("Banner upload failed.");
     } else {
@@ -705,8 +703,8 @@ export const setBanner = mutation({
     const previous = community.bannerStorageId;
     const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: url, bannerStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
-    else if (previous && previous !== storageId) await ctx.storage.delete(previous).catch(() => {});
+    // From whichever store it was in: an icon or banner moving between R2 and Convex storage used to leave the old one.
+    if (previousUrl !== url || previous !== storageId) await releaseUrl(ctx, previousUrl !== url ? previousUrl : undefined, previous !== storageId ? previous : undefined);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
       await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
@@ -724,8 +722,7 @@ export const removeBanner = mutation({
     const previous = community.bannerStorageId;
     const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: undefined, bannerStorageId: undefined });
-    if (previousUrl) await dropR2Url(ctx, previousUrl);
-    if (previous) await ctx.storage.delete(previous).catch(() => {});
+    await releaseUrl(ctx, previousUrl, previous);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
       await cacheInvalidateKeys(`user:${me._id}:communities`, `community:${communityId}:user:${me._id}:data`);
@@ -777,16 +774,51 @@ export const remove = mutation({
           .collect(),
       ]);
       for (const message of messages) {
-        const attachments = await ctx.db
-          .query("channelMessageAttachments")
-          .withIndex("by_message", (q) => q.eq("messageId", message._id))
-          .collect();
-        for (const attachment of attachments) await ctx.db.delete(attachment._id);
+        const [attachments, reactions] = await Promise.all([
+          ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect(),
+          ctx.db.query("channelMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect(),
+        ]);
+        for (const attachment of attachments) {
+          await ctx.db.delete(attachment._id);
+          await releaseFile(ctx, attachment);
+        }
+        for (const reaction of reactions) await ctx.db.delete(reaction._id);
         await ctx.db.delete(message._id);
       }
+      for (const row of await ctx.db.query("loungeMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).collect()) {
+        await ctx.db.delete(row._id);
+        await releaseFile(ctx, row.image);
+      }
       for (const overwrite of overwrites) await ctx.db.delete(overwrite._id);
-      for (const participant of voiceParticipants) await ctx.db.delete(participant._id);
+      for (const participant of voiceParticipants) {
+        await ctx.db.delete(participant._id);
+        await releaseUrl(ctx, participant.streamThumbnailUrl, participant.streamThumbnailStorageId);
+      }
+      await releaseUrl(ctx, channel.backgroundUrl, channel.backgroundStorageId);
+      await releaseUrl(ctx, channel.bannerUrl, channel.bannerStorageId);
       await ctx.db.delete(channel._id);
+    }
+
+    // The community's own uploads: emoji, sounds and overview pictures.
+    for (const emoji of await ctx.db.query("communityEmojis").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
+      await ctx.db.delete(emoji._id);
+      await releaseUrl(ctx, emoji.imageUrl, emoji.storageId);
+    }
+    for (const sound of await ctx.db.query("communitySounds").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
+      await ctx.db.delete(sound._id);
+      await releaseUrl(ctx, sound.soundUrl, sound.storageId);
+    }
+    for (const widget of await ctx.db.query("communityWidgets").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
+      await ctx.db.delete(widget._id);
+      if (widget.config.kind === "banner") await releaseUrl(ctx, widget.config.imageUrl, widget.config.imageStorageId);
+    }
+    // Everyone's profile for this server, and the pictures they kept for it.
+    for (const profile of await ctx.db.query("serverProfiles").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
+      await ctx.db.delete(profile._id);
+      await releaseWornImages(ctx, profile.userId, profile);
+      await forgetProfileImages(ctx, profile.userId, { communityId });
+      await releaseUrl(ctx, undefined, profile.profileEffectStorageId);
+      await releaseUrl(ctx, undefined, profile.profileFrameStorageId);
     }
 
     for (const role of roles) {
@@ -800,9 +832,8 @@ export const remove = mutation({
 
     for (const member of members) await ctx.db.delete(member._id);
 
-    if (community.iconStorageId) await ctx.storage.delete(community.iconStorageId).catch(() => {});
-    if (community.imageUrl) await dropR2Url(ctx, community.imageUrl).catch(() => {});
-    if (community.bannerUrl) await dropR2Url(ctx, community.bannerUrl).catch(() => {});
+    await releaseUrl(ctx, community.imageUrl, community.iconStorageId);
+    await releaseUrl(ctx, community.bannerUrl, community.bannerStorageId);
     await ctx.db.delete(communityId);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -885,6 +916,22 @@ export const listMembers = query({
             .withIndex("by_user", (q) => q.eq("userId", member.userId))
             .unique(),
         ]);
+        const nameplateUrl = serverProfile?.nameplateUrl ?? user?.nameplateUrl;
+        let nameplateFallbackUrl: string | undefined;
+        if (nameplateUrl) {
+          const entitlements = await ctx.db
+            .query("entitlements")
+            .withIndex("by_user", (q) => q.eq("userId", member.userId))
+            .order("desc")
+            .take(300);
+          const entitlement = entitlements.find(
+            (row) => row.kind === "nameplate" && row.payload === nameplateUrl && row.revokedAt === undefined && (row.expiresAt === undefined || row.expiresAt > Date.now())
+          );
+          if (entitlement) {
+            const sku = await ctx.db.get(entitlement.skuId);
+            nameplateFallbackUrl = sku?.imageUrl;
+          }
+        }
         const roleIds = memberRoles.filter((mr) => mr.userId === member.userId).map((mr) => mr.roleId);
         const activities = visibleActivities(presence, user);
         const stream =
@@ -903,7 +950,8 @@ export const listMembers = query({
             presence?.effective ?? "offline",
             serverProfile?.customStatus
           ),
-          nameplateUrl: serverProfile?.nameplateUrl ?? user?.nameplateUrl,
+          nameplateUrl,
+          nameplateFallbackUrl,
           // Not merged with the server profile: a decoration and a birthday
           // belong to the account, not to one server identity.
           avatarDecoration: effectiveDecoration(user),

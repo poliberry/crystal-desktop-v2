@@ -207,6 +207,16 @@ export type NavigateTarget =
   | { kind: "conversation"; conversationId: string }
   | { kind: "channel"; communityId: string; channelId: string };
 
+/** An encrypted message the background notifier wants a preview of. Ciphertext and ids only. */
+export interface NotificationDecryptRequest {
+  /** The account the notifier is watching. */
+  userId: string;
+  scope: "conversation" | "channel";
+  targetId: string;
+  authorId: string;
+  enc: { keyId: string; iv: string; ct: string };
+}
+
 /** Whether hardware (GPU) acceleration is on — see electron/diagnostics.ts. */
 export interface GpuSettings {
   /** Turned off in settings, for the next launch. */
@@ -329,6 +339,10 @@ export interface DesktopAPI {
     configure(url: string, token: string | null, userId: string | null): Promise<void>;
     setActiveView(view: ActiveNotificationView): Promise<void>;
     onNavigate(cb: (target: NavigateTarget) => void): () => void;
+    /** The background notifier asking this renderer (which alone holds E2EE keys) for a one-line
+     * preview of an encrypted message, for an OS toast. Resolve null to fall back to a generic
+     * line. Optional: an older preload has none, and its toasts stay generic. */
+    onDecryptRequest?(cb: (request: NotificationDecryptRequest) => Promise<string | null>): () => void;
   };
   /** The unread count on the dock or taskbar icon. Optional so an older
    * preload simply never gets asked. */
@@ -351,6 +365,10 @@ export interface DesktopAPI {
   /** Links to add a bot or an extension (`…/oauth/authorize?…`), handed over with their query string. */
   installs?: {
     onOpen(cb: (search: string) => void): () => void;
+  };
+  /** A link to a place in the app (crystal://dm/<id>…) arrived; `hash` is the route, e.g. `#/dm/<id>`. */
+  routes?: {
+    onOpen(cb: (hash: string) => void): () => void;
   };
   /**
    * "Pop out" a video tile into a real, separate always-on-top

@@ -27,6 +27,7 @@ import { signedInIds } from "./lib/identity";
 import { revokeSessions } from "./lib/sessions";
 import { recordIp, isIpBanned, sealRequestIp } from "./lib/ipBans";
 import { activeBan, activeSuspension, requireAbility } from "./lib/moderation";
+import { releaseUrl } from "./lib/files";
 import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import {
   dropUnusedLayerAssets,
@@ -403,8 +404,9 @@ export const removeNameplate = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.nameplateStorageId;
+    const previousUrl = me.nameplateUrl;
     await ctx.db.patch(me._id, { nameplateUrl: undefined, nameplateStorageId: undefined });
-    if (previous) await ctx.storage.delete(previous);
+    await releaseUrl(ctx, previousUrl, previous);
   },
 });
 
@@ -508,9 +510,7 @@ export const setProfileEffect = mutation({
   handler: async (ctx, { storageId, cdnKey, cdnUrl }) => {
     const me = await getCurrentUserOrThrow(ctx);
     let url: string | null = null;
-    let isR2 = false;
     if (cdnKey || cdnUrl) {
-      isR2 = true;
       url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
       if (!url) throw new Error("Profile effect upload failed.");
     } else {
@@ -520,8 +520,9 @@ export const setProfileEffect = mutation({
     const previous = me.profileEffectStorageId;
     const previousUrl = me.profileEffect as string | undefined;
     await ctx.db.patch(me._id, { profileEffect: url, profileEffectStorageId: storageId ?? undefined });
-    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
-    else await dropProfileAsset(ctx, previous, storageId!);
+    // Whichever store the old one was in, and whichever the new one is: an R2 effect replaced by a
+    // Convex-storage one used to stay in the bucket.
+    if (previousUrl !== url || previous !== storageId) await releaseUrl(ctx, previousUrl, previous !== storageId ? previous : undefined);
     return url;
   },
 });
@@ -533,8 +534,7 @@ export const removeProfileEffect = mutation({
     const previous = me.profileEffectStorageId;
     const previousUrl = me.profileEffect as string | undefined;
     await ctx.db.patch(me._id, { profileEffect: undefined, profileEffectStorageId: undefined });
-    if (previousUrl) await dropR2Url(ctx, previousUrl);
-    await dropProfileAsset(ctx, previous);
+    await releaseUrl(ctx, previousUrl, previous);
   },
 });
 
@@ -551,9 +551,7 @@ export const setProfileFrame = mutation({
   handler: async (ctx, { storageId, cdnKey, cdnUrl, mode }) => {
     const me = await getCurrentUserOrThrow(ctx);
     let url: string | null = null;
-    let isR2 = false;
     if (cdnKey || cdnUrl) {
-      isR2 = true;
       url = cdnUrl ?? r2PublicUrlForKey(cdnKey!);
       if (!url) throw new Error("Profile frame upload failed.");
     } else {
@@ -563,8 +561,7 @@ export const setProfileFrame = mutation({
     const previous = me.profileFrameStorageId;
     const previousUrl = me.profileFrame as string | undefined;
     await ctx.db.patch(me._id, { profileFrame: url, profileFrameStorageId: storageId ?? undefined, profileFrameMode: mode ?? me.profileFrameMode ?? "wrap" });
-    if (isR2 && previousUrl) await dropR2Url(ctx, previousUrl);
-    else await dropProfileAsset(ctx, previous, storageId!);
+    if (previousUrl !== url || previous !== storageId) await releaseUrl(ctx, previousUrl, previous !== storageId ? previous : undefined);
     return url;
   },
 });
@@ -721,12 +718,14 @@ export const removeProfileFrame = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.profileFrameStorageId;
+    const previousUrl = me.profileFrame as string | undefined;
     await ctx.db.patch(me._id, {
       profileFrame: undefined,
       profileFrameStorageId: undefined,
       profileFrameMode: undefined,
     });
-    await dropProfileAsset(ctx, previous);
+    // An uploaded frame can be on R2 as well as in Convex storage; this used to delete only the latter.
+    await releaseUrl(ctx, previousUrl, previous);
   },
 });
 
@@ -892,15 +891,15 @@ export const removeAvatar = mutation({
   handler: async (ctx) => {
     const me = await getCurrentUserOrThrow(ctx);
     const previous = me.avatarStorageId;
+    const previousUrl = me.imageUrl;
     await ctx.db.patch(me._id, {
       imageUrl: undefined,
       avatarStorageId: undefined,
       avatarAccent: undefined,
       avatarAccentUrl: undefined,
     });
-    if (previous && !(await isReferencedByAttachment(ctx, previous))) {
-      await ctx.storage.delete(previous);
-    }
+    // releaseUrl checks attachments still using the file itself (lib/files.ts), and covers R2 too.
+    await releaseUrl(ctx, previousUrl, previous);
   },
 });
 

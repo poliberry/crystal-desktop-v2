@@ -1,8 +1,9 @@
 "use client";
 
-import { Flag, Pencil, Reply, Smile, Trash2 } from "lucide-react";
+import { Flag, Forward, Pencil, Reply, Smile, Trash2 } from "lucide-react";
 
 import { ReactionPickerContent } from "@/components/home/reaction-picker-content";
+import { SaveMessageMenuItems, type SaveTarget } from "@/components/home/save-message-menu";
 import { formatCustomEmoji } from "@/lib/custom-emoji";
 import {
   ContextMenu,
@@ -24,11 +25,14 @@ interface MessageContextMenuProps {
   communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
   onReply?: () => void;
+  onForward?: () => void;
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
   onDelete: (shiftKey: boolean) => void;
   /** Offered only for other people's messages. */
   onReport?: () => void;
+  /** Offers "Save for me" and reminders: private to the viewer, unlike pins. */
+  saveTarget?: SaveTarget;
 }
 
 /** Right-click equivalent of MessageHoverActions — same actions. */
@@ -39,9 +43,11 @@ export function MessageContextMenu({
   communityId,
   onReact,
   onReply,
+  onForward,
   onEdit,
   onDelete,
   onReport,
+  saveTarget,
 }: MessageContextMenuProps) {
   return (
     <ContextMenu>
@@ -65,6 +71,15 @@ export function MessageContextMenu({
             Reply
           </ContextMenuItem>
         )}
+
+        {onForward && (
+          <ContextMenuItem onClick={onForward}>
+            <Forward className="size-4" />
+            Forward message
+          </ContextMenuItem>
+        )}
+
+        {saveTarget && <SaveMessageMenuItems target={saveTarget} />}
 
         {(canEdit || canDelete) && <ContextMenuSeparator />}
 

@@ -22,6 +22,9 @@ import { creatorKey, getCurrentUserOrNull, getCurrentUserOrThrow } from "./users
 import { audit, requireStaff } from "./lib/staff";
 import { COMMUNITY_CREATION_KINDS, MAX_CREATION_CENTS, MAX_PACK_ITEMS, MIN_PAID_CENTS, checkCreationShape, slugFromName, uniqueSlug } from "./lib/creationRules";
 import { listingPatch, refreshedGrant, sameKinds, updateBlocker } from "./lib/listingUpdate";
+import { releaseUrl } from "./lib/files";
+import { releaseUnlessKept } from "./profileImages";
+import { filesOf, releaseCreationFiles } from "./creationFiles";
 
 /**
  * What a buyer sees and does with what they own.
@@ -574,6 +577,8 @@ export const withdrawSubmission = mutation({
     if (!row || row.creatorId !== me._id) throw new Error("That isn't yours.");
     if (row.status !== "pending") throw new Error("It has already been reviewed.");
     await ctx.db.delete(submissionId);
+    // Never went on sale, so nobody owns it: its artwork goes (unless another of their items uses the same file).
+    await releaseCreationFiles(ctx, row.creatorId, filesOf(row));
   },
 });
 
@@ -585,6 +590,8 @@ export const retireCreation = mutation({
     const sku = await ctx.db.get(skuId);
     if (!sku || sku.creatorId !== me._id) throw new Error("That isn't yours.");
     if (sku.status === "active") await ctx.db.patch(skuId, { status: "archived", updatedAt: Date.now() });
+    // Buyers keep theirs, so the files only go if nobody bought it.
+    await releaseCreationFiles(ctx, sku.creatorId, filesOf(sku), [skuId]);
   },
 });
 
@@ -728,6 +735,8 @@ export const adminRejectSubmission = mutation({
     const reason = note.trim().slice(0, 500);
     if (reason.length < 3) throw new Error("Tell the creator why, so they can fix it.");
     await ctx.db.patch(submissionId, { status: "rejected", reviewNote: reason, updatedAt: Date.now() });
+    // A rejected submission is never sold. The creator resubmits by uploading again.
+    await releaseCreationFiles(ctx, row.creatorId, filesOf(row));
     await audit(ctx, staff.user._id, "catalog.submission.reject", { type: "submission", id: submissionId }, reason);
   },
 });
@@ -760,7 +769,8 @@ export async function approveUpdate(ctx: MutationCtx, staffId: Id<"users">, row:
   await ctx.db.patch(row._id, { status: "approved", skuId, updatedAt: now });
   await audit(ctx, staffId, "catalog.submission.approve", { type: "submission", id: row._id }, `Update to SKU ${sku.slug}${price !== sku.priceCents ? ` · price ${sku.priceCents} → ${price}` : ""}`);
   // People who already own it get the new artwork. What they have equipped is a copy they may have adjusted, so
-  // that stays as it is until they equip again.
+  // that stays as it is until they equip again. That copy is also why the old artwork is NOT deleted here:
+  // equipped values live on user rows, which can't be searched for it (see creationFiles.ts).
   await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId, after: null });
   if (price > 0 || sku.priceCents > 0) await ctx.scheduler.runAfter(0, internal.payments.syncSku, { skuId });
   return skuId;
@@ -936,8 +946,7 @@ export const equip = mutation({
         const previousStorage = me.profileEffectStorageId;
         const previousUrl = me.profileEffect as string | undefined;
         await ctx.db.patch(me._id, { profileEffect: url, profileEffectStorageId: undefined });
-        if (previousStorage) await ctx.storage.delete(previousStorage).catch(() => {});
-        if (previousUrl && previousUrl !== url) await dropR2Url(ctx, previousUrl);
+        if (previousUrl !== url) await releaseUrl(ctx, previousUrl, previousStorage);
         return { applied: true };
       }
 
@@ -947,8 +956,9 @@ export const equip = mutation({
         const previousStorage = me.nameplateStorageId;
         const previousUrl = me.nameplateUrl;
         await ctx.db.patch(me._id, { nameplateUrl: url, nameplateStorageId: undefined });
-        if (previousStorage) await ctx.storage.delete(previousStorage).catch(() => {});
-        if (previousUrl && previousUrl !== url) await dropR2Url(ctx, previousUrl);
+        // An uploaded nameplate stays in the saved-pictures list after a purchased one replaces it, so
+        // only delete it if that list doesn't have it.
+        if (previousUrl !== url) await releaseUnlessKept(ctx, me._id, { url: previousUrl, storageId: previousStorage });
         return { applied: true };
       }
 

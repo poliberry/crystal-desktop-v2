@@ -865,3 +865,29 @@ html {
   66% { transform: translate(2%, -3%); }
   100% { transform: translate(-1%, 3%); }
 }
+
+/* --- Phones and the installed web app ------------------------------------------------------------------
+ * iOS zooms the page into any field whose text is smaller than 16px; 16px everywhere on small screens
+ * stops it. The app shell must not rubber-band or pull-to-refresh. Long-pressing a message opens its
+ * menu (Radix ContextMenu does this on touch), so the system's own text-selection callout is turned off
+ * on message rows, where it would compete with it. */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select,
+  [contenteditable="true"] {
+    font-size: max(16px, 1rem);
+  }
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+}
+@media (hover: none) {
+  .group\/message,
+  [data-message-row] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}

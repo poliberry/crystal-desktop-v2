@@ -52,6 +52,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { MobileBackButton } from "@/components/mobile/mobile-shell";
 
 /**
  * How recent a birthday wish has to be for the cakes to fall for it.
@@ -158,7 +159,9 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <div className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex h-14 shrink-0 items-center justify-between border-b backdrop-blur-xl bg-accent/40 px-4">
+        <div className="flex h-14 shrink-0 items-center justify-between gap-1 border-b backdrop-blur-xl bg-accent/40 px-4 max-md:px-2">
+          <MobileBackButton />
+          <div className="flex min-w-0 flex-1 items-center">
           {isGroup ? (
             <button
               type="button"
@@ -195,7 +198,7 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                   />
                 )}
               </Avatar>
-              <div className="min-w-0 flex flex-row gap-2 items-center">
+              <div className="min-w-0 flex flex-row gap-2 items-center max-md:flex-col max-md:items-start max-md:gap-0">
                 <p className="truncate text-sm font-semibold leading-tight">
                   {title}
                 </p>
@@ -212,8 +215,9 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
               </div>
             </div>
           )}
+          </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             {/* A group reaches this through its settings dialog, where the
                 icon and name already live. A one-to-one DM has no such dialog,
                 so the wallpaper gets its own button. */}
@@ -247,11 +251,13 @@ export function ChatView({ conversationId, onStartCall }: ChatViewProps) {
                 : joinGesture((e) => onStartCall({ silent: e.shiftKey })))}
             >
               <PhoneCall className="size-4" />
-              {isActiveCall
-                ? "Return to call"
-                : callParticipants.length > 0
-                  ? `Join call (${callParticipants.length})`
-                  : "Call"}
+              <span className="max-md:sr-only">
+                {isActiveCall
+                  ? "Return to call"
+                  : callParticipants.length > 0
+                    ? `Join call (${callParticipants.length})`
+                    : "Call"}
+              </span>
             </Button>}
 
             <TooltipProvider>

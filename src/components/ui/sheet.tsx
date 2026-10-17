@@ -49,13 +49,16 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  forceMount,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
 }) {
   return (
-    <SheetPortal>
+    // `forceMount` keeps the whole sheet (portal included) mounted while closed, for a sheet that hosts
+    // something that must keep running, like the phone layout's content screen.
+    <SheetPortal forceMount={forceMount}>
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
@@ -71,6 +74,7 @@ function SheetContent({
             "inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
           className
         )}
+        forceMount={forceMount}
         {...props}
       >
         {children}

@@ -173,7 +173,10 @@ export function FriendActionButton({
             variant={config.variant}
             disabled={busy}
             onClick={() => void config.onClick()}
-            className={config.className ? config.className : "w-full"}
+            // `flex-1`, not `w-full`: the row also holds the friends tick and
+            // the ⋯ menu, and a 100%-wide button beside them pushed the menu
+            // past the edge of the profile card.
+            className={config.className ? config.className : "min-w-0 flex-1"}
             title={
               relationship.kind === "outgoing"
                 ? "Cancel friend request"

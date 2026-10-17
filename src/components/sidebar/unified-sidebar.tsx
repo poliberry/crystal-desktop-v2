@@ -2,8 +2,8 @@
 
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ShoppingBag, Sparkles, Users } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Gem, ShoppingBag, Sparkles, Users } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { useCall } from "@/components/call/call-provider";
@@ -17,6 +17,7 @@ import { PageSidebarSlot } from "@/components/pages/page-sidebar";
 import { CommunitiesSection } from "@/components/sidebar/communities-section";
 import { useTrafficLightsInset } from "@/hooks/use-window-controls";
 import { SidebarDock } from "@/components/sidebar/dock";
+import { useHomeSurface } from "@/components/home/home-surface";
 import { SidebarResizeHandle } from "@/components/sidebar/resizable-sidebar";
 import { DmSection } from "@/components/sidebar/dm-section";
 import { PrioritySection } from "@/components/sidebar/priority-section";
@@ -25,6 +26,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { FOCUS_MESSAGE_SEARCH_EVENT } from "@/lib/command-events";
+import { SHEET_PAGES, useMobileShell } from "@/components/mobile/mobile-shell";
 
 function NavButton({
   icon: Icon,
@@ -46,7 +49,7 @@ function NavButton({
       disabled={soon}
       onClick={onClick}
       className={cn(
-        "relative flex flex-1 flex-col items-center gap-1 rounded-xl border border-transparent px-1 py-2 text-xs font-medium transition-colors",
+        "relative flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl border border-transparent px-1 py-2 text-[11px] font-medium transition-colors",
         soon
           ? "cursor-not-allowed text-muted-foreground/60"
           : "text-muted-foreground hover:bg-white/10 hover:text-foreground",
@@ -54,7 +57,7 @@ function NavButton({
       )}
     >
       <Icon className="size-4" />
-      {label}
+      <span className="max-w-full truncate">{label}</span>
       {soon && (
         <Badge
           variant="outline"
@@ -85,8 +88,10 @@ function PageTitle({ page }: { page: AppPage }) {
         : page.type === "create-community"
           ? "New community"
           : page.type === "marketplace"
-            ? "Marketplace"
-          : (community?.name ?? "Community settings");
+          ? "Marketplace"
+          : page.type === "search"
+            ? "Search"
+            : (community?.name ?? "Community settings");
   const subtitle = page.type === "community-settings" ? "Community settings" : null;
 
   return (
@@ -116,18 +121,57 @@ export function UnifiedSidebar() {
   // Set by the dock while its stack is spread open. Everything else is blurred
   // so the spread list is the only thing in focus.
   const [dockExpanded, setDockExpanded] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchOverlayRef = useRef<HTMLDivElement>(null);
   const { page, closePage } = usePage();
+  const homeSurface = useHomeSurface();
+  const shell = useMobileShell();
+  const showContentRef = useRef(shell.showContent);
+  showContentRef.current = shell.mobile ? shell.showContent : () => {};
+  const pageMenuRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    node.addEventListener(
+      "click",
+      (event) => {
+        const hit = (event.target as HTMLElement).closest("button, a, [role=menuitem], [role=tab], [role=option]");
+        if (hit && !hit.closest("[data-mobile-stay]") && !hit.matches("[aria-expanded]")) window.setTimeout(() => showContentRef.current(), 0);
+      },
+      true,
+    );
+  }, []);
   const openMarketplace = useOpenMarketplace();
   const openSettings = useOpenSettings();
   const { activeCall, expanded } = useCall();
   // A page the call screen is covering isn't on screen, so its menu has no
   // business being either.
-  const pageMenu = page && !(expanded && activeCall) ? page : null;
+  // Search is a main-content page, but the sidebar should keep its normal
+  // navigation context while results are open.
+  // On a phone, Settings and the other menu pages open in their own bottom sheet (see app-home), with
+  // the menu inside it; the sidebar stays on chats underneath.
+  const pageMenu =
+    page && page.type !== "search" && !(expanded && activeCall) && !(shell.mobile && SHEET_PAGES.has(page.type)) ? page : null;
   // The system's window buttons sit in this sidebar's top-left corner. Both
   // menus start underneath them rather than beside them.
   const trafficLights = useTrafficLightsInset();
   const topPadding = trafficLights ? "pt-12" : "pt-3";
   const blurred = dockExpanded && "pointer-events-none opacity-60 blur-sm select-none";
+  const activateSearch = useCallback(() => setSearchOpen(true), []);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+
+  useEffect(() => {
+    const focusSearch = () => setSearchOpen(true);
+    window.addEventListener(FOCUS_MESSAGE_SEARCH_EVENT, focusSearch);
+    return () => window.removeEventListener(FOCUS_MESSAGE_SEARCH_EVENT, focusSearch);
+  }, []);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      searchOverlayRef.current?.querySelector<HTMLInputElement>("[data-sidebar-message-search]")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [searchOpen]);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -164,8 +208,16 @@ export function UnifiedSidebar() {
               </Button>
               <PageTitle page={pageMenu} />
             </div>
-            {/* Filled by the page itself — see `PageSidebar`. */}
-            <PageSidebarSlot className="flex min-h-0 flex-1 flex-col" />
+            <div className="px-3">
+              <SidebarSearch value={searchQuery} onChange={setSearchQuery} onActivate={activateSearch} onClose={closeSearch} />
+            </div>
+            {/* Filled by the page itself — see `PageSidebar`. On a phone, the menu is a screen of its own:
+                picking an entry (a button or link in it) shows that entry's content. */}
+            {/* A native listener, not React's onClick: the page puts its menu here through a portal, and React
+                sends a portal's events up through the component that rendered it, not through this element. */}
+            <div className="flex min-h-0 flex-1 flex-col" ref={pageMenuRef}>
+              <PageSidebarSlot className="flex min-h-0 flex-1 flex-col" />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -194,17 +246,25 @@ export function UnifiedSidebar() {
             </div>
           </div>
 
-          <SidebarSearch />
+          <SidebarSearch value={searchQuery} onChange={setSearchQuery} onActivate={activateSearch} onClose={closeSearch} />
 
+          {/* My Crystal and Friends are separate places; Settings → Appearance → Home page only picks
+              which one Crystal opens on. */}
           <div className="flex gap-1">
-            <NavButton icon={ShoppingBag} label="Marketplace" active={page?.type === "marketplace"} onClick={openMarketplace} />
-            <NavButton icon={Sparkles} label="Subscriptions" onClick={() => openSettings("subscriptions")} />
+            <NavButton
+              icon={Sparkles}
+              label="My Crystal"
+              active={!page && activeTab.target.type === "home" && homeSurface === "my-crystal"}
+              onClick={nav.openMyCrystal}
+            />
             <NavButton
               icon={Users}
               label="Friends"
-              active={activeTab.target.type === "home"}
-              onClick={nav.goHome}
+              active={!page && activeTab.target.type === "home" && homeSurface === "friends"}
+              onClick={nav.openFriends}
             />
+            <NavButton icon={ShoppingBag} label="Marketplace" active={page?.type === "marketplace"} onClick={openMarketplace} />
+            <NavButton icon={Gem} label="Subscriptions" onClick={() => openSettings("subscriptions")} />
           </div>
         </div>
 
@@ -223,7 +283,27 @@ export function UnifiedSidebar() {
       </motion.div>
       </div>
 
-      <SidebarDock onExpandedChange={setDockExpanded} />
+      {/* Phones have the You tab for the user card and a call bar for the call (see MobileCallBar). */}
+      {!shell.mobile && <SidebarDock onExpandedChange={setDockExpanded} />}
+      {searchOpen && (
+        <div className="absolute inset-0 z-50">
+          <button
+            type="button"
+            aria-label="Close message search"
+            className="absolute inset-0 bg-background/45 backdrop-blur-md"
+            onClick={closeSearch}
+          />
+          <div ref={searchOverlayRef} className={cn("absolute inset-x-0 px-3", topPadding)}>
+            <SidebarSearch
+              value={searchQuery}
+              onChange={setSearchQuery}
+              onActivate={activateSearch}
+              onClose={closeSearch}
+              autoFocus
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

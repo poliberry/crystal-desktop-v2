@@ -5,7 +5,7 @@ import { AccessToken } from "livekit-server-sdk";
 
 import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
-import { closeRoomIfEmpty, ensureRoom } from "./lib/liveKitAdmin";
+import { closeRoomIfEmpty, ensureRoom, mintScreenToken } from "./lib/liveKitAdmin";
 
 /**
  * Mints a LiveKit join token for a conversation's call room. Runs in the Node
@@ -40,6 +40,22 @@ export const join = action({
     });
 
     return { token: await at.toJwt(), url, roomName };
+  },
+});
+
+/**
+ * Mints a token for a screen-share *companion* connection (see
+ * convex/lib/companion.ts): identity `<userId>:screen`, allowed to publish only
+ * ScreenShare + ScreenShareAudio and to subscribe to nothing. Same membership
+ * check as `join`, but deliberately no recordJoin / clearRingForJoin — the
+ * companion isn't a call participant in the DB.
+ */
+export const joinScreen = action({
+  args: { conversationId: v.id("conversations") },
+  handler: async (ctx, { conversationId }): Promise<{ token: string; url: string; roomName: string }> => {
+    const { userId, name } = await ctx.runQuery(internal.calls.getJoinContext, { conversationId });
+    const roomName = `dm-${conversationId}`;
+    return mintScreenToken(roomName, userId, name);
   },
 });
 

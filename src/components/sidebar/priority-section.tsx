@@ -33,6 +33,12 @@ import {
 } from "@/components/ui/context-menu";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { cn } from "@/lib/utils";
+import {
+  ENCRYPTED_PREVIEW_FALLBACK,
+  NEW_ENCRYPTED_MESSAGE,
+  encryptedSource,
+  useEncryptedPreview,
+} from "@/lib/e2ee/preview";
 
 type Alert = NonNullable<ReturnType<typeof useQuery<typeof api.priority.alerts>>>[number];
 
@@ -53,6 +59,23 @@ function AlertRow({ alert }: { alert: Alert }) {
   const nav = useNavigation();
   const markRead = useMutation(api.notifications.markRead);
   const Icon = ALERT_ICON[alert.kind];
+  // A mention or reply in an encrypted room: the server's body is generic, so open the message here.
+  const encrypted = useEncryptedPreview(
+    alert.message
+      ? encryptedSource(
+          alert.conversationId ? "conversation" : "channel",
+          alert.conversationId ?? alert.channelId,
+          alert.message.authorId,
+          alert.message.enc,
+        )
+      : null,
+  );
+  const body =
+    encrypted.state === "none"
+      ? alert.body
+      : encrypted.state === "decrypted"
+        ? (encrypted.text ?? alert.body)
+        : NEW_ENCRYPTED_MESSAGE;
 
   const dismiss = () => {
     if (alert.notificationId) void markRead({ notificationId: alert.notificationId });
@@ -94,9 +117,9 @@ function AlertRow({ alert }: { alert: Alert }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-semibold">{alert.title}</p>
-        {alert.body && (
+        {body && (
           <p className="flex truncate text-[11px] text-muted-foreground">
-            <MessagePreview text={alert.body} />
+            <MessagePreview text={body} />
           </p>
         )}
       </div>
@@ -143,10 +166,17 @@ function PriorityConversation({
   const title = isGroup
     ? conversation.name || conversation.members.map((m: any) => m.name).join(", ")
     : (other?.name ?? "Unknown");
+  const encrypted = useEncryptedPreview(
+    encryptedSource("conversation", conversationId, conversation.lastMessageAuthorId, conversation.lastMessageEnc),
+    { user: (id) => conversation.members.find((m: any) => m.id === id)?.name },
+  );
+  const lastText =
+    encrypted.state === "none" ? (conversation.lastMessageText ?? null) : encrypted.text;
   const attachment = conversation.lastMessageAttachment;
   const body =
-    conversation.lastMessageText ??
-    (attachment ? (attachment.count > 1 ? `${attachment.count} files` : attachment.fileName) : null);
+    lastText ??
+    (attachment ? (attachment.count > 1 ? `${attachment.count} files` : attachment.fileName) : null) ??
+    (encrypted.state === "pending" || encrypted.state === "locked" ? ENCRYPTED_PREVIEW_FALLBACK : null);
   const active =
     activeTab.target.type === "dm" && activeTab.target.conversationId === conversationId;
 
@@ -203,6 +233,26 @@ type PriorityChannel = Extract<
   { kind: "channel" }
 >;
 
+/** A channel's newest message as one line: decrypted here when it's encrypted and the key is on
+ * this device, its file when it was only a file, and "Encrypted message" otherwise. */
+function ChannelLastLine({
+  channelId,
+  last,
+}: {
+  channelId: string;
+  last: NonNullable<PriorityChannel["last"]>;
+}) {
+  const encrypted = useEncryptedPreview(encryptedSource("channel", channelId, last.authorId, last.enc));
+  const text = encrypted.state === "none" ? last.text || null : encrypted.text;
+  if (text) return <MessagePreview text={text} prefix={`${last.authorName}:`} />;
+  if (last.attachmentName) return <MessagePreview text={last.attachmentName} prefix={`${last.authorName}: 📎`} />;
+  return (
+    <span className="truncate">
+      {last.authorName}: {encrypted.state === "none" ? "" : ENCRYPTED_PREVIEW_FALLBACK}
+    </span>
+  );
+}
+
 function PriorityChannelRow({ item }: { item: PriorityChannel }) {
   const { activeTab } = useTabs();
   const openChannel = useOpenChannel();
@@ -242,10 +292,7 @@ function PriorityChannelRow({ item }: { item: PriorityChannel }) {
             </p>
             <p className="flex w-full truncate text-xs text-muted-foreground">
               {item.last ? (
-                <MessagePreview
-                  text={item.last.text || item.last.attachmentName || ""}
-                  prefix={`${item.last.authorName}:${item.last.text ? "" : " 📎"}`}
-                />
+                <ChannelLastLine channelId={item.channelId} last={item.last} />
               ) : (
                 <span className="truncate">{item.communityName}</span>
               )}

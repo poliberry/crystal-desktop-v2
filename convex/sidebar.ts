@@ -31,6 +31,8 @@ type CommunityPreview =
       channelId: Id<"channels">;
       channelName: string;
       authorName: string;
+      /** Bound into the ciphertext's associated data, so the client needs it to decrypt `enc`. */
+      authorId: Id<"users">;
       /** Legacy plaintext rows only. Empty for an encrypted message: the client decrypts `enc`. */
       text: string;
       /** The message's ciphertext as stored, for the client to open; null on a legacy row. */
@@ -45,6 +47,8 @@ type CommunityPreview =
       channelId: Id<"channels">;
       channelName: string;
       authorName: string;
+      /** The mentioning message's author, needed to decrypt `enc`. */
+      authorId: Id<"users">;
       /** What pinged the caller: their own name, or the whole room. */
       mention: "you" | "everyone" | "here";
       /** The notification's body: generic for an encrypted message, never its text. */
@@ -109,6 +113,7 @@ async function latestMessage(
       channelId: channel._id,
       channelName: channel.name,
       authorName: await displayNameIn(ctx, community._id, message.authorId),
+      authorId: message.authorId,
       // An encrypted message has no text the server may read or render.
       text: message.enc ? "" : await renderMentionsAsText(ctx, message.text ?? ""),
       enc: message.enc ?? null,
@@ -204,6 +209,7 @@ export const communityPreviews = query({
           channelId: channel._id,
           channelName: channel.name,
           authorName: await displayNameIn(ctx, community._id, row.actorId),
+          authorId: mentioning?.authorId ?? row.actorId,
           mention: mentionKind(row.body, mentioning),
           // Rows from before enforcement hold the message's text; once it is on they are served
           // generic (system messages excepted).

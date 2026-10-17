@@ -36,6 +36,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMyPresence } from "@/hooks/use-presence";
 import { useProfileScope } from "@/hooks/use-profile-scope";
 import { useTabs } from "@/components/home/tabs-context";
+import { useMobileShell } from "@/components/mobile/mobile-shell";
+import { useOpenMarketplace } from "@/components/pages/page-context";
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { displayNameStyleClass } from "@/lib/profile-cosmetics";
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -273,6 +276,11 @@ export function ProfileEditor({
   const values = scope.values;
 
   const [tab, setTab] = useState<"board" | "activity">("board");
+  // Phones: decorations and stickers are placed on a canvas that needs a pointer and room, so they point
+  // to the shop (ready-made ones) or the desktop app instead.
+  const shell = useMobileShell();
+  const openMarketplace = useOpenMarketplace();
+  const [desktopOnly, setDesktopOnly] = useState<null | "decoration" | "stickers">(null);
   const [dialog, setDialog] = useState<
     | null
     | "images"
@@ -379,13 +387,14 @@ export function ProfileEditor({
     <motion.div
       animate={exitAttempted ? { x: [0, -3, 3, -2, 2, 0] } : { x: 0 }}
       transition={{ duration: 0.28, ease: "easeInOut" }}
-      className={cn("relative flex h-full min-h-0 overflow-hidden bg-background", className)}
+      // On a phone the card and the board stack in one scrolling column; side by side they don't fit.
+      className={cn("relative flex h-full min-h-0 overflow-hidden bg-background max-md:flex-col max-md:overflow-y-auto", className)}
     >
       {/* ---------------------------------------------------------------- */}
       {/* Left rail — drawn in the unified sidebar, see `PageSidebar`        */}
       {/* ---------------------------------------------------------------- */}
       <PageSidebar>
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col" data-mobile-stay>
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
           <ScopeMenu
             communityId={scopeId}
@@ -422,7 +431,7 @@ export function ProfileEditor({
                   />
                 </RailTile>
                 <RailTile
-                  onClick={() => setDialog("decoration")}
+                  onClick={() => (shell.mobile ? setDesktopOnly("decoration") : setDialog("decoration"))}
                   label="Change avatar decoration"
                   filled
                 >
@@ -504,7 +513,7 @@ export function ProfileEditor({
                   <CosmeticMedia src={values.profileEffect} />
                 </RailTile>
                 <RailTile
-                  onClick={() => setDialog("stickers")}
+                  onClick={() => (shell.mobile ? setDesktopOnly("stickers") : setDialog("stickers"))}
                   label="Edit profile stickers"
                   filled={!!values.profileFrame || (values.profileFrameLayers?.length ?? 0) > 0}
                 >
@@ -517,6 +526,12 @@ export function ProfileEditor({
                 </RailTile>
               </div>
             </RailSection>
+
+            {shell.mobile && (
+              <Button variant="secondary" className="w-full" onClick={shell.showContent}>
+                Preview your card and board
+              </Button>
+            )}
 
             <RailSection label="Profile CSS" badge={<NewBadge />}>
               <button
@@ -546,11 +561,11 @@ export function ProfileEditor({
       {/* ---------------------------------------------------------------- */}
       {/* Live card                                                         */}
       {/* ---------------------------------------------------------------- */}
-      <div className="min-h-0 shrink-0 p-4">
-        <ScrollArea className="h-full">
+      <div className="min-h-0 shrink-0 p-4 max-md:flex max-md:justify-center max-md:px-3 max-md:pb-0">
+        <ScrollArea className="h-full max-md:h-auto max-md:w-full max-md:max-w-[360px]">
           {/* The card reserves its own room for the frame — see
               MemberProfileCard. This only has to be wide enough. */}
-          <div className="w-[360px] px-4">
+          <div className="w-[360px] px-4 max-md:w-full max-md:px-0">
             <MemberProfileCard
               expandable={false}
               expanded
@@ -600,7 +615,7 @@ export function ProfileEditor({
       {/* `relative z-10`: a frame or effect on the preview card hangs outside
           it by design, and this pane must stay clickable underneath none of
           it. */}
-      <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col p-4 pt-4">
+      <div className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col p-4 pt-4 max-md:flex-none max-md:px-3">
         <div className="relative mb-3 flex items-center gap-4 border-b border-border/40">
           {(["board", "activity"] as const).map((value) => (
             <button
@@ -630,8 +645,8 @@ export function ProfileEditor({
           )}
         </div>
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="pr-3 pb-4">
+        <ScrollArea className="min-h-0 flex-1 max-md:flex-none">
+          <div className="pr-3 pb-4 max-md:pr-0 max-md:pb-[calc(1rem+env(safe-area-inset-bottom))]">
             {tab === "board" ? (
               <BoardEditor communityId={scopeId} scopeLabel={scope.label} />
             ) : activities.length === 0 ? (
@@ -709,6 +724,32 @@ export function ProfileEditor({
         }}
         onSave={() => void saveProfile()}
       />
+      <Drawer open={desktopOnly !== null} onOpenChange={(open) => !open && setDesktopOnly(null)}>
+        <DrawerContent className="gap-0 rounded-t-2xl px-5 pt-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+          <DrawerTitle className="text-lg">{desktopOnly === "stickers" ? "Profile stickers" : "Avatar decorations"}</DrawerTitle>
+          <DrawerDescription className="mt-1.5 text-sm leading-6">
+            {desktopOnly === "stickers"
+              ? "Placing stickers on your card needs a bigger screen. Pick up ready-made ones in the Marketplace, or arrange your own in the desktop app."
+              : "Designing a decoration needs a bigger screen. Pick up a ready-made one in the Marketplace, or build your own in the desktop app."}
+          </DrawerDescription>
+          <div className="mt-5 flex flex-col gap-2">
+            <Button
+              onClick={() => {
+                const section = desktopOnly === "stickers" ? "profileSticker" : "avatarDecoration";
+                setDesktopOnly(null);
+                openMarketplace(section);
+                // Straight to that shelf, not the shop's menu.
+                window.setTimeout(shell.showContent, 0);
+              }}
+            >
+              Browse the Marketplace
+            </Button>
+            <Button variant="outline" asChild>
+              <a href="/download/" target="_blank" rel="noreferrer">Get the desktop app</a>
+            </Button>
+          </div>
+        </DrawerContent>
+      </Drawer>
     </motion.div>
   );
 }

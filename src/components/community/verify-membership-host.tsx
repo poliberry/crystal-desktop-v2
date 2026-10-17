@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CREATOR_PLATFORM_LIST } from "@/lib/community-kinds";
 import { VERIFY_EVENT, type VerifyRequest } from "@/lib/members-only";
+import { CREATOR_CONNECTIONS_PAUSED, CREATOR_PAUSED_MESSAGE } from "@/lib/feature-flags";
 
 /**
  * The step between "this invite is members-only" and being in: connect the
@@ -48,7 +49,9 @@ export function VerifyMembershipHost() {
 
   const platform = CREATOR_PLATFORM_LIST.find((p) => p.id === need?.platform);
   const connected = accounts?.accounts.find((a) => a.provider === platform?.id);
-  const available = !!platform && accounts?.available.includes(platform.id);
+  // While new connections are paused, someone not yet connected has no way to prove membership, so the
+  // dialog says so instead of offering a Connect button. Already-connected members can still check.
+  const available = !!platform && accounts?.available.includes(platform.id) && !CREATOR_CONNECTIONS_PAUSED;
 
   const check = async () => {
     if (!request) return;
@@ -78,12 +81,18 @@ export function VerifyMembershipHost() {
           <DialogTitle>{need ? `${need.communityName} is for members` : "Members only"}</DialogTitle>
           <DialogDescription>
             {platform
-              ? `You need to be a ${platform.label} member of this channel. Connect your ${platform.label} account and Crystal will check — it never sees your password.`
+              ? connected || !CREATOR_CONNECTIONS_PAUSED
+                ? `You need to be a ${platform.label} member of this channel. Connect your ${platform.label} account and Crystal will check — it never sees your password.`
+                : `You need to be a ${platform.label} member of this channel to join.`
               : "This community is for members of its channel."}
           </DialogDescription>
         </DialogHeader>
         {message && <p className="text-sm text-destructive">{message}</p>}
-        {platform && !available && <p className="text-sm text-muted-foreground">{platform.label} can&apos;t be connected on this version of Crystal yet.</p>}
+        {platform && !available && !connected && (
+          <p className="text-sm text-muted-foreground">
+            {CREATOR_CONNECTIONS_PAUSED ? CREATOR_PAUSED_MESSAGE : `${platform.label} can't be connected on this version of Crystal yet.`}
+          </p>
+        )}
         <DialogFooter>
           {platform && available && !connected && (
             <Button

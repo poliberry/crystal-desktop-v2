@@ -23,6 +23,7 @@ import { evictBotFromVoice } from "./lib/botAccess";
 import { fireChannelEvent, fireVoiceEvent } from "./lib/botEvents";
 import { notifyUsers } from "./notifications";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import { releaseFile, releaseUrl } from "./lib/files";
 import { requireCommunityOpen } from "./lib/moderation";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -181,12 +182,26 @@ export async function deleteChannelCascade(ctx: MutationCtx, channel: Doc<"chann
   ]);
   for (const message of messages) {
     const attachments = await ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect();
-    for (const attachment of attachments) await ctx.db.delete(attachment._id);
+    for (const attachment of attachments) {
+      await ctx.db.delete(attachment._id);
+      await releaseFile(ctx, attachment);
+    }
     for (const reaction of await ctx.db.query("channelMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect()) await ctx.db.delete(reaction._id);
     await ctx.db.delete(message._id);
   }
+  // A lounge's chat and its pictures.
+  for (const row of await ctx.db.query("loungeMessages").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect()) {
+    await ctx.db.delete(row._id);
+    await releaseFile(ctx, row.image);
+  }
   for (const overwrite of overwrites) await ctx.db.delete(overwrite._id);
-  for (const participant of voiceParticipants) await ctx.db.delete(participant._id);
+  for (const participant of voiceParticipants) {
+    await ctx.db.delete(participant._id);
+    await releaseUrl(ctx, participant.streamThumbnailUrl, participant.streamThumbnailStorageId);
+  }
+  // The channel's own pictures.
+  await releaseUrl(ctx, channel.backgroundUrl, channel.backgroundStorageId);
+  await releaseUrl(ctx, channel.bannerUrl, channel.bannerStorageId);
   // Told before it goes, while the bots can still be checked against it.
   await fireChannelEvent(ctx, "channel.deleted", channel);
   await ctx.db.delete(channelId);
@@ -670,6 +685,7 @@ export const recordVoiceLeave = internalMutation({
       .unique();
     if (row && (joinedBefore === undefined || row.joinedAt <= joinedBefore)) {
       await ctx.db.delete(row._id);
+      await releaseUrl(ctx, row.streamThumbnailUrl, row.streamThumbnailStorageId);
       await fireVoiceEvent(ctx, channelId, userId, "left");
     }
 
@@ -843,14 +859,14 @@ export const clearStreamThumbnail = mutation({
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
       .unique();
-    if (!row?.streamThumbnailStorageId) return;
-    const previous = row.streamThumbnailStorageId;
+    // Either store: a thumbnail can be on R2 (no storage id) as well as in Convex storage.
+    if (!row || (!row.streamThumbnailStorageId && !row.streamThumbnailUrl)) return;
     await ctx.db.patch(row._id, {
       streamThumbnailUrl: undefined,
       streamThumbnailStorageId: undefined,
       streamThumbnailAt: undefined,
     });
-    await ctx.storage.delete(previous);
+    await releaseUrl(ctx, row.streamThumbnailUrl, row.streamThumbnailStorageId);
   },
 });
 
@@ -947,13 +963,10 @@ export const setBackground = mutation({
     const previous = channel.backgroundStorageId;
     const previousUrl = channel.backgroundUrl;
     await ctx.db.patch(channelId, patch);
-    // Delete old R2 file if we just replaced it with a new R2 upload
-    if ((cdnKey || cdnUrl) && previousUrl) await dropR2Url(ctx, previousUrl);
-    if (storageId && previous && previous !== storageId) {
-      await ctx.storage.delete(previous).catch(() => {});
-    }
-    // If we switched from R2 to Convex or vice versa, clean the other store's old file too
-    if (cdnKey && previous && !cdnUrl) await ctx.storage.delete(previous).catch(() => {});
+    // Whatever the new picture is (R2, Convex storage, or the same one with only the opacity changed),
+    // release the old one if it was actually replaced, from whichever store it was in.
+    const replaced = (patch.backgroundUrl !== undefined && patch.backgroundUrl !== previousUrl) || (patch.backgroundStorageId !== undefined && patch.backgroundStorageId !== previous);
+    if (replaced) await releaseUrl(ctx, previousUrl, previous);
   },
 });
 

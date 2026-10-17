@@ -23,3 +23,7 @@ native/**/.build
 public/monaco
 public/studio-sdk
 public/studio-library
+
+# Marketing render scratch (marketing/src/render.ts)
+marketing/video/.frames/
+marketing/video/stills/

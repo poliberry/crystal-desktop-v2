@@ -20,6 +20,7 @@ import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { action, mutation, query } from "./_generated/server";
 import { getCurrentUserOrThrow } from "./users";
+import { releaseFile } from "./lib/files";
 import { creationFolder } from "./lib/r2";
 import { signUploadTicket } from "./lib/uploadTicket";
 
@@ -294,6 +295,22 @@ export const confirmUpload = mutation({
       await ctx.db.patch(existing._id, { size: fileSize, contentType: fileType });
     }
     return { publicUrl: publicUrlFor(key), key };
+  },
+});
+
+/**
+ * An attachment uploaded in the composer and then removed before sending: delete it rather than leave
+ * it on the CDN with nothing pointing at it. Only the person who uploaded the file can discard it, and
+ * `releaseFile` still won't delete it if any message (anyone's) uses the same bytes.
+ */
+export const discardUpload = mutation({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!key.startsWith("attachments/")) return;
+    const asset = await ctx.db.query("r2Assets").withIndex("by_key", (q) => q.eq("key", key)).unique();
+    if (!asset || asset.userId !== me._id) return;
+    await releaseFile(ctx, { cdnKey: key });
   },
 });
 

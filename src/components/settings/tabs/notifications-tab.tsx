@@ -23,6 +23,9 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { STATUS_LABEL } from "@/lib/presence";
+import { getDesktopAPI } from "@/lib/desktop";
+import { useEncryptedNotificationPreviews } from "@/lib/notification-previews";
+import { WebAppSettings } from "@/components/pwa/web-app-settings";
 
 const LEVELS = [
   { value: "all", label: "All messages" },
@@ -62,6 +65,9 @@ export function NotificationsTab() {
   const settings = useQuery(api.notificationSettings.get);
   const update = useMutation(api.notificationSettings.update);
   const setCommunityLevel = useMutation(api.notificationSettings.setCommunityLevel);
+  const [encryptedPreviews, setEncryptedPreviews] = useEncryptedNotificationPreviews();
+  // Only the desktop app pops OS notifications from here; on the web there is nothing to set.
+  const isDesktop = typeof window !== "undefined" && !!getDesktopAPI();
 
   if (!settings) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -69,6 +75,8 @@ export function NotificationsTab() {
 
   return (
     <div className="space-y-6">
+      {/* The web: push notifications on this device and "install as an app". */}
+      {!isDesktop && <WebAppSettings />}
       {/* Two statuses suppress, and they are different sentences: naming the
           one that is actually on is the difference between an explanation and
           a puzzle. */}
@@ -129,6 +137,28 @@ export function NotificationsTab() {
           />
         </CardContent>
       </Card>
+
+      {(
+        <Card>
+          <CardHeader>
+            <CardTitle>On this device</CardTitle>
+            <CardDescription>
+              Messages are end-to-end encrypted, so only this device can read them for a
+              notification. Nothing you choose here is sent to Crystal&apos;s servers.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ToggleRow
+              id="notify-encrypted-previews"
+              label={isDesktop ? "Show message text in desktop notifications" : "Show message text in push notifications"}
+              description="Decrypted on this device when the notification arrives. Off, notifications say who wrote and where, but not what. Your system keeps its own history of notifications."
+              checked={encryptedPreviews}
+              disabled={false}
+              onChange={setEncryptedPreviews}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

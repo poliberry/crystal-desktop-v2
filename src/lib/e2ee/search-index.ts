@@ -23,6 +23,7 @@ export interface IndexedDoc {
   authorName?: string;
   createdAt: number;
   text: string;
+  attachments?: { fileName: string; fileType: string }[];
   /** Where a result should open. Optional: only what navigation needs. */
   communityId?: string;
   channelName?: string;
@@ -78,7 +79,8 @@ class RoomIndex {
 
   add(doc: IndexedDoc): void {
     if (this.docs.has(doc.id)) this.remove(doc.id);
-    const tokens = [...new Set(tokenize(doc.text))];
+    const searchableText = `${doc.text} ${(doc.attachments ?? []).map((item) => item.fileName).join(" ")}`;
+    const tokens = [...new Set(tokenize(searchableText))];
     this.docs.set(doc.id, doc);
     this.tokensOf.set(doc.id, tokens);
     for (const token of tokens) {
@@ -205,15 +207,25 @@ export class SearchIndex {
 
   add(doc: IndexedDoc): void {
     const text = doc.text.trim().slice(0, MAX_TEXT_LENGTH);
-    if (!text) {
+    const attachments = doc.attachments?.map((item) => ({
+      fileName: item.fileName.slice(0, 240),
+      fileType: item.fileType.slice(0, 120),
+    }));
+    if (!text && !attachments?.length) {
       this.remove(doc.room, doc.id);
       return;
     }
     const index = this.roomIndex(doc.room);
     const prior = index.docs.get(doc.id);
     // The lists call this on every render pass that decrypts a row; skip the no-op.
-    if (prior && prior.text === text && prior.authorName === doc.authorName && prior.channelName === doc.channelName) return;
-    index.add({ ...doc, text });
+    if (
+      prior &&
+      prior.text === text &&
+      prior.authorName === doc.authorName &&
+      prior.channelName === doc.channelName &&
+      JSON.stringify(prior.attachments ?? []) === JSON.stringify(attachments ?? [])
+    ) return;
+    index.add({ ...doc, text, attachments });
     this.touch(doc.room, true);
   }
 
@@ -262,16 +274,30 @@ export class SearchIndex {
    * Newest first. Every word in the query has to match the start of some word in the message.
    * `room` limits the search to one room; omitted, it covers everything loaded.
    */
-  search(query: string, opts: { room?: RoomKey; limit?: number } = {}): SearchHit[] {
+  search(
+    query: string,
+    opts: {
+      room?: RoomKey;
+      limit?: number;
+      authorId?: string;
+      attachment?: "images" | "attachments";
+    } = {},
+  ): SearchHit[] {
     const terms = [...new Set(tokenize(query))];
-    if (terms.length === 0) return [];
+    if (terms.length === 0 && !opts.attachment && !opts.authorId) return [];
     const limit = opts.limit ?? 40;
     const hits: SearchHit[] = [];
     const scopes = opts.room ? [this.rooms.get(opts.room)].filter((r): r is RoomIndex => !!r) : [...this.rooms.values()];
     for (const index of scopes) {
-      for (const [id, matched] of index.match(terms)) {
+      const candidates = terms.length
+        ? index.match(terms)
+        : new Map([...index.docs.keys()].map((id) => [id, new Set<string>()] as const));
+      for (const [id, matched] of candidates) {
         const doc = index.docs.get(id);
-        if (doc) hits.push({ ...doc, matched: [...matched] });
+        if (!doc || (opts.authorId && doc.authorId !== opts.authorId)) continue;
+        if (opts.attachment === "images" && !doc.attachments?.some((item) => item.fileType.startsWith("image/"))) continue;
+        if (opts.attachment === "attachments" && !doc.attachments?.length) continue;
+        hits.push({ ...doc, matched: [...matched] });
       }
     }
     hits.sort((a, b) => b.createdAt - a.createdAt);

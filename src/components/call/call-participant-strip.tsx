@@ -16,6 +16,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSoundboardActivity } from "@/hooks/use-soundboard-activity";
+import { realRemoteParticipants } from "@/lib/companion";
 import { cn } from "@/lib/utils";
 
 interface ParticipantMeta {
@@ -137,7 +138,8 @@ export function useCallRoster() {
     const refresh = () =>
       setParticipants([
         room.localParticipant,
-        ...Array.from(room.remoteParticipants.values()),
+        // Screen-share companions aren't people — see src/lib/companion.ts.
+        ...realRemoteParticipants(room),
       ]);
     const speakersChanged = () => setSpeakerTick((n) => n + 1);
     refresh();

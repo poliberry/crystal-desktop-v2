@@ -17,6 +17,7 @@ import { useRoom, type RoomController } from "@/hooks/use-room";
 import { useStreamThumbnail } from "@/hooks/use-stream-thumbnail";
 import type { SystemAudioChoice } from "@/lib/audio-prefs";
 import { needsSwitchConfirmation } from "@/lib/call-switch";
+import { useCompanion } from "@/lib/companion";
 import { isElectron } from "@/lib/desktop";
 
 export type ActiveCall =
@@ -293,8 +294,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     if (gone) closePopOut();
   }, [poppedOut, poppedOutParticipant, screenShares, closePopOut]);
 
+  // A mobile sharer's screen is published by their companion connection (src/lib/companion.ts), so
+  // that's where a popped-out screen's frames come from.
+  const poppedOutCompanion = useCompanion(
+    controller.room,
+    poppedOut?.kind === "screen" ? poppedOut.identity : null
+  );
+
   usePipFrameStream({
-    participant: poppedOutParticipant,
+    participant:
+      poppedOut?.kind === "screen" && poppedOutParticipant
+        ? (poppedOutCompanion ?? poppedOutParticipant)
+        : poppedOutParticipant,
     kind: poppedOut?.kind ?? "camera",
     enabled: !!poppedOut,
     size: pip.size,

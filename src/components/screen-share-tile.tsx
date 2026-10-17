@@ -12,12 +12,17 @@ import { Eye, EyeOff, MonitorUp, Plus } from "lucide-react";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { subscribeAttentionGain, subscribeAttentionOverrides, streamVolume } from "@/lib/audio-attention";
 import { useWindowFocus } from "@/hooks/use-window-focus";
+import { screenSharePublication } from "@/lib/companion";
 import { routeElementToPlayback } from "@/lib/system-audio";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
 interface ScreenShareTileProps {
   participant: Participant;
+  /** The owner's screen-share companion connection (mobile shares from one —
+   * see src/lib/companion.ts). Its ScreenShare / ScreenShareAudio tracks are
+   * shown as `participant`'s. */
+  companion?: Participant | null;
   isLocal?: boolean;
   /** Community-resolved display name, falling back to the token name. */
   name?: string;
@@ -36,6 +41,7 @@ interface ScreenShareTileProps {
 
 export function ScreenShareTile({
   participant,
+  companion,
   isLocal = false,
   name: resolvedName,
   fill = false,
@@ -134,7 +140,8 @@ export function ScreenShareTile({
       }
     };
 
-    const refresh = () => attachVideo(participant.getTrackPublication(Track.Source.ScreenShare));
+    const refresh = () =>
+      attachVideo(screenSharePublication(participant, companion, Track.Source.ScreenShare));
 
     const onTrackSubscribed = (track: { source?: Track.Source }) => {
       if (track.source === Track.Source.ScreenShare) refresh();
@@ -149,27 +156,32 @@ export function ScreenShareTile({
     };
 
     refresh();
-    participant
-      .on(RoomEvent.TrackSubscribed, onTrackSubscribed)
-      .on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed)
-      .on(RoomEvent.LocalTrackPublished, onLocalTrackPublished)
-      .on(RoomEvent.LocalTrackUnpublished, onLocalTrackPublished)
-      .on(RoomEvent.TrackMuted, onTrackMuted)
-      .on(RoomEvent.TrackUnmuted, onTrackUnmuted);
+    const sources = companion ? [participant, companion] : [participant];
+    for (const source of sources) {
+      source
+        .on(RoomEvent.TrackSubscribed, onTrackSubscribed)
+        .on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed)
+        .on(RoomEvent.LocalTrackPublished, onLocalTrackPublished)
+        .on(RoomEvent.LocalTrackUnpublished, onLocalTrackPublished)
+        .on(RoomEvent.TrackMuted, onTrackMuted)
+        .on(RoomEvent.TrackUnmuted, onTrackUnmuted);
+    }
 
     return () => {
-      participant
-        .off(RoomEvent.TrackSubscribed, onTrackSubscribed)
-        .off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed)
-        .off(RoomEvent.LocalTrackPublished, onLocalTrackPublished)
-        .off(RoomEvent.LocalTrackUnpublished, onLocalTrackPublished)
-        .off(RoomEvent.TrackMuted, onTrackMuted)
-        .off(RoomEvent.TrackUnmuted, onTrackUnmuted);
-      const track = participant.getTrackPublication(Track.Source.ScreenShare)?.track;
+      for (const source of sources) {
+        source
+          .off(RoomEvent.TrackSubscribed, onTrackSubscribed)
+          .off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed)
+          .off(RoomEvent.LocalTrackPublished, onLocalTrackPublished)
+          .off(RoomEvent.LocalTrackUnpublished, onLocalTrackPublished)
+          .off(RoomEvent.TrackMuted, onTrackMuted)
+          .off(RoomEvent.TrackUnmuted, onTrackUnmuted);
+      }
+      const track = screenSharePublication(participant, companion, Track.Source.ScreenShare)?.track;
       if (el && track) track.detach(el);
       if (el) el.srcObject = null;
     };
-  }, [participant, isLocal, canWatch, watching, previewLive]);
+  }, [participant, companion, isLocal, canWatch, watching, previewLive]);
 
   // --- Audio effect (re-runs when audioEnabled changes to attach/detach) ---
   useEffect(() => {
@@ -189,26 +201,35 @@ export function ScreenShareTile({
 
     const refresh = () => {
       clear();
-      attachAudio(participant.getTrackPublication(Track.Source.ScreenShareAudio));
+      attachAudio(screenSharePublication(participant, companion, Track.Source.ScreenShareAudio));
     };
 
     const onTrackSubscribed = (track: { source?: Track.Source }) => {
       if (track.source === Track.Source.ScreenShareAudio) refresh();
     };
-    const onTrackUnsubscribed = () => clear();
+    // Only the share's audio going away matters here — with a companion, the
+    // owner's own (mic) unsubscribes arrive on this listener too.
+    const onTrackUnsubscribed = (track: { source?: Track.Source }) => {
+      if (track.source === Track.Source.ScreenShareAudio) clear();
+    };
 
     refresh();
-    participant
-      .on(RoomEvent.TrackSubscribed, onTrackSubscribed)
-      .on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+    const sources = companion ? [participant, companion] : [participant];
+    for (const source of sources) {
+      source
+        .on(RoomEvent.TrackSubscribed, onTrackSubscribed)
+        .on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+    }
 
     return () => {
-      participant
-        .off(RoomEvent.TrackSubscribed, onTrackSubscribed)
-        .off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+      for (const source of sources) {
+        source
+          .off(RoomEvent.TrackSubscribed, onTrackSubscribed)
+          .off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+      }
       clear();
     };
-  }, [participant, isLocal, audioEnabled, identity]);
+  }, [participant, companion, isLocal, audioEnabled, identity]);
 
   // --- Volume / mute updates applied live to existing audio elements ---
   useEffect(() => {

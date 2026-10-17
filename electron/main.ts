@@ -425,6 +425,7 @@ const links = new LinkQueue<DeepLink>((link) => {
   if (!win || win.isDestroyed()) return;
   if (link.kind === "invite") win.webContents.send("invite:open", link.code);
   else if (link.kind === "authorize") win.webContents.send("install:open", link.search);
+  else if (link.kind === "route") win.webContents.send("route:open", link.hash);
 });
 
 function sendDeepLink(win: BrowserWindow, link: DeepLink): void {
@@ -520,10 +521,10 @@ function createWindow(): void {
   win.once("closed", () => clearTimeout(showFallback));
 
   if (isDev) {
-    void win.loadURL(process.env.ELECTRON_START_URL as string);
+    void win.loadURL(`${process.env.ELECTRON_START_URL as string}/app`);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void win.loadURL("http://crystal.localhost/");
+    void win.loadURL("http://crystal.localhost/app/");
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {

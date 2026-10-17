@@ -330,6 +330,9 @@ export default defineSchema({
     isGuest: v.optional(v.boolean()),
     guestExpiresAt: v.optional(v.number()),
     guestExpiredAt: v.optional(v.number()),
+    /** Set when the person deleted their account (convex/accountDeletion.ts). The row stays, wiped to
+     * "Deleted user", because messages others can still see and records we must keep point at it. */
+    deletedAt: v.optional(v.number()),
     name: v.string(),
     username: v.string(),
     imageUrl: v.optional(v.string()),
@@ -759,6 +762,52 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_last_heartbeat", ["lastHeartbeat"]),
 
+  /** Browsers that asked for Web Push notifications (the installed web app, or a desktop browser tab).
+   * One row per browser per account. `endpoint` is the push service's URL for that browser; `p256dh` and
+   * `auth` are the browser's public keys, used to encrypt each payload so the push service can't read it. */
+  webPushSubscriptions: defineTable({
+    userId: v.id("users"),
+    endpoint: v.string(),
+    p256dh: v.string(),
+    auth: v.string(),
+    userAgent: v.optional(v.string()),
+    createdAt: v.number(),
+    lastSuccessAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_endpoint", ["endpoint"]),
+
+  /** Files that must outlive whatever first pointed at them: report evidence, so that deleting a
+   * reported message doesn't destroy what staff need to review. `lib/files.ts` never deletes a held file. */
+  fileHolds: defineTable({
+    cdnKey: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")),
+    reason: v.literal("report"),
+    reportId: v.optional(v.id("reports")),
+    createdAt: v.number(),
+  })
+    .index("by_cdn_key", ["cdnKey"])
+    .index("by_storage", ["storageId"])
+    .index("by_report", ["reportId"]),
+
+  /** Self-serve account deletion in progress (see convex/accountDeletion.ts). One row per account, kept
+   * after the job finishes as the record that it ran. Holds no personal data. */
+  accountDeletions: defineTable({
+    userId: v.id("users"),
+    requestedAt: v.number(),
+    step: v.number(),
+    finishedAt: v.optional(v.number()),
+  }).index("by_user", ["userId"]),
+
+  /** The landing page's headline numbers, recounted by a cron (see convex/publicStats.ts) so that
+   * anonymous visitors only ever read this one row. */
+  publicStats: defineTable({
+    key: v.string(),
+    members: v.number(),
+    online: v.number(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   /**
    * One row per signed-in device, so "is this user online" becomes a question
    * about their devices rather than about a single shared counter.
@@ -887,6 +936,8 @@ export default defineSchema({
   })
     .index("by_conversation", ["conversationId"])
     .index("by_client_id", ["clientId"])
+    // Finding everything one person wrote: their data export and account deletion.
+    .index("by_author", ["authorId"])
     // Scoped search — see convex/search.ts. The filter field is what lets a
     // search mean "in this conversation" without scanning every message.
     .searchIndex("search_text", {
@@ -987,7 +1038,11 @@ export default defineSchema({
     fileName: v.string(),
     fileType: v.string(),
     fileSize: v.number(),
-  }).index("by_message", ["messageId"]),
+  })
+    .index("by_message", ["messageId"])
+    // Identical uploads share one CDN object, so a file is only deleted once nothing refers to it (lib/files.ts).
+    .index("by_cdn_key", ["cdnKey"])
+    .index("by_storage", ["storageId"]),
 
   messageReactions: defineTable({
     messageId: v.id("messages"),
@@ -996,6 +1051,31 @@ export default defineSchema({
   })
     .index("by_message", ["messageId"])
     .index("by_message_user_emoji", ["messageId", "userId", "emoji"]),
+
+  /** "Saved for me": one person's private bookmarks on DM or channel messages, with an optional
+   * reminder. Distinct from pins (`pinnedAt`), which everyone in the room sees. Holds references and
+   * times only — never message text, so it adds nothing readable for encrypted rooms (docs/E2EE.md
+   * treats which message someone interacts with as metadata, like reactions). Reminders fire in the
+   * signed-in client; the server only stores when. See convex/savedMessages.ts. */
+  savedMessages: defineTable({
+    userId: v.id("users"),
+    scope: v.union(v.literal("conversation"), v.literal("channel")),
+    /** The message id as a string, whichever table it's in: one index answers "did I save this?". */
+    messageKey: v.string(),
+    messageId: v.optional(v.id("messages")),
+    channelMessageId: v.optional(v.id("channelMessages")),
+    conversationId: v.optional(v.id("conversations")),
+    channelId: v.optional(v.id("channels")),
+    communityId: v.optional(v.id("communities")),
+    remindAt: v.optional(v.number()),
+    /** Set (and `remindAt` cleared) once a reminder has been claimed for display, so it shows on one
+     * device and once. */
+    remindedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_user_created", ["userId", "createdAt"])
+    .index("by_user_message", ["userId", "messageKey"])
+    .index("by_user_remind", ["userId", "remindAt"]),
 
   callParticipants: defineTable({
     conversationId: v.id("conversations"),
@@ -1788,7 +1868,10 @@ export default defineSchema({
       }),
     ),
     createdAt: v.number(),
-  }).index("by_channel", ["channelId", "createdAt"]),
+  })
+    .index("by_channel", ["channelId", "createdAt"])
+    .index("by_image_key", ["image.cdnKey"])
+    .index("by_image_storage", ["image.storageId"]),
 
   /**
    * How far a member has read in a channel.
@@ -1873,6 +1956,7 @@ export default defineSchema({
     mentions: v.optional(e2eeMentionsValidator),
   })
     .index("by_channel", ["channelId"])
+    .index("by_author", ["authorId"])
     .index("by_client_id", ["clientId"])
     // Scoped search — see convex/search.ts. Filtered by channel rather than
     // community because these rows carry no community id; a server-wide search
@@ -1891,7 +1975,10 @@ export default defineSchema({
     fileName: v.string(),
     fileType: v.string(),
     fileSize: v.number(),
-  }).index("by_message", ["messageId"]),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_cdn_key", ["cdnKey"])
+    .index("by_storage", ["storageId"]),
 
   channelMessageReactions: defineTable({
     messageId: v.id("channelMessages"),

@@ -4,8 +4,10 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 
 const STORAGE_KEY_NAV_STYLE = "crystal-community-nav-style";
 const STORAGE_KEY_TABS_ENABLED = "crystal-tabs-enabled";
+const STORAGE_KEY_HOME_LANDING = "crystal-home-landing";
 
 export type CommunityNavStyle = "rail" | "popover";
+export type HomeLanding = "my-crystal" | "friends";
 
 interface UiPreferencesContextValue {
   /** Whether communities are switched via a persistent left-edge icon rail
@@ -16,6 +18,8 @@ interface UiPreferencesContextValue {
    * classic single-view behavior (clicking one replaces the current view). */
   tabsEnabled: boolean;
   setTabsEnabled: (enabled: boolean) => void;
+  homeLanding: HomeLanding;
+  setHomeLanding: (landing: HomeLanding) => void;
 }
 
 const DEFAULTS: UiPreferencesContextValue = {
@@ -23,6 +27,8 @@ const DEFAULTS: UiPreferencesContextValue = {
   setCommunityNavStyle: () => {},
   tabsEnabled: true,
   setTabsEnabled: () => {},
+  homeLanding: "my-crystal",
+  setHomeLanding: () => {},
 };
 
 const UiPreferencesContext = createContext<UiPreferencesContextValue>(DEFAULTS);
@@ -34,12 +40,15 @@ const UiPreferencesContext = createContext<UiPreferencesContextValue>(DEFAULTS);
 export function UiPreferencesProvider({ children }: { children: React.ReactNode }) {
   const [communityNavStyle, setNavStyleState] = useState<CommunityNavStyle>(DEFAULTS.communityNavStyle);
   const [tabsEnabled, setTabsEnabledState] = useState(DEFAULTS.tabsEnabled);
+  const [homeLanding, setHomeLandingState] = useState<HomeLanding>(DEFAULTS.homeLanding);
 
   useEffect(() => {
     const storedStyle = localStorage.getItem(STORAGE_KEY_NAV_STYLE);
     if (storedStyle === "rail" || storedStyle === "popover") setNavStyleState(storedStyle);
     const storedTabs = localStorage.getItem(STORAGE_KEY_TABS_ENABLED);
     if (storedTabs === "true" || storedTabs === "false") setTabsEnabledState(storedTabs === "true");
+    const storedLanding = localStorage.getItem(STORAGE_KEY_HOME_LANDING);
+    if (storedLanding === "my-crystal" || storedLanding === "friends") setHomeLandingState(storedLanding);
   }, []);
 
   useEffect(() => {
@@ -49,6 +58,9 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
       }
       if (e.key === STORAGE_KEY_TABS_ENABLED && (e.newValue === "true" || e.newValue === "false")) {
         setTabsEnabledState(e.newValue === "true");
+      }
+      if (e.key === STORAGE_KEY_HOME_LANDING && (e.newValue === "my-crystal" || e.newValue === "friends")) {
+        setHomeLandingState(e.newValue);
       }
     };
     window.addEventListener("storage", onStorage);
@@ -65,9 +77,14 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
     localStorage.setItem(STORAGE_KEY_TABS_ENABLED, String(next));
   }, []);
 
+  const setHomeLanding = useCallback((next: HomeLanding) => {
+    setHomeLandingState(next);
+    localStorage.setItem(STORAGE_KEY_HOME_LANDING, next);
+  }, []);
+
   return (
     <UiPreferencesContext.Provider
-      value={{ communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled }}
+      value={{ communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled, homeLanding, setHomeLanding }}
     >
       {children}
     </UiPreferencesContext.Provider>

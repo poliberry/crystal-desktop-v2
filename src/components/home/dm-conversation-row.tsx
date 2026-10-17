@@ -42,6 +42,11 @@ import {
 import { MessagePreview } from "@/components/message-preview";
 import { useAuthUserId } from "@/components/auth/auth-state";
 import { keyring } from "@/lib/e2ee";
+import {
+  ENCRYPTED_PREVIEW_FALLBACK,
+  encryptedSource,
+  useEncryptedPreview,
+} from "@/lib/e2ee/preview";
 import { extractMentions, toConvexMentions } from "@/lib/mentions";
 import { PresenceDot } from "@/components/presence-dot";
 import { presenceHeadline, topActivity } from "@/components/rich-presence-card";
@@ -275,14 +280,39 @@ export function DmConversationRow({
    * too they are what the line is for, so the clip just precedes
    * them.
    */
+  // An encrypted last message has no `lastMessageText` (the server can't read it): it is opened
+  // here with this device's keys, and says it's encrypted when they aren't available.
+  const encrypted = useEncryptedPreview(
+    encryptedSource(
+      "conversation",
+      conversation.id,
+      conversation.lastMessageAuthorId,
+      conversation.lastMessageEnc,
+    ),
+    {
+      user: (id) =>
+        conversation.members.find((m: any) => m.id === id)?.name,
+    },
+  );
+  const lastText =
+    encrypted.state === "none"
+      ? (conversation.lastMessageText ?? null)
+      : encrypted.state === "decrypted"
+        ? encrypted.text
+        : null;
   const attachment = conversation.lastMessageAttachment;
   const attachmentText =
-    attachment && !conversation.lastMessageText
+    attachment && !lastText
       ? attachment.count > 1
         ? `${attachment.count} files`
         : attachment.fileName
       : null;
-  const body = conversation.lastMessageText ?? attachmentText;
+  const body =
+    lastText ??
+    attachmentText ??
+    (encrypted.state === "pending" || encrypted.state === "locked"
+      ? ENCRYPTED_PREVIEW_FALLBACK
+      : null);
   // A day-old conversation is still better described by what the
   // other person is up to than by a stale line of chat, exactly as
   // before — the preview only speaks when the presence line
@@ -419,7 +449,7 @@ export function DmConversationRow({
           <button
             type="button"
             aria-label={`Close ${title}`}
-            className="absolute top-1/2 right-1.5 z-10 -translate-y-1/2 rounded bg-accent/80 p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover/dm:opacity-100 group-focus-within/dm:opacity-100"
+            className="absolute top-1/2 right-1.5 z-10 -translate-y-1/2 rounded bg-accent/80 p-1 max-md:hidden text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover/dm:opacity-100 group-focus-within/dm:opacity-100"
             onClick={(e) => {
               e.stopPropagation();
               void setClosed({ conversationId: conversation.id });

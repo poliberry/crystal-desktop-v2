@@ -10,7 +10,7 @@ import { useAuthUserId } from "@/components/auth/auth-state";
 import { keyring, type Room } from "./keyring";
 import type { MessagePayload } from "./crypto";
 
-export { keyring, getE2ee } from "./keyring";
+export { keyring, getE2ee, forgetAllRecoveryKeys } from "./keyring";
 export type { Room, E2eeStatus, MessagePayload, Envelope } from "./keyring";
 
 export function E2eeProvider({ children }: { children: React.ReactNode }) {

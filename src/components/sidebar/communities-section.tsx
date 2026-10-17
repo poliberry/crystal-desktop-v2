@@ -61,6 +61,12 @@ import { useNavigation } from "@/components/home/navigation-context";
 import { useTabs } from "@/components/home/tabs-context";
 import { useOpenCreateCommunity } from "@/components/pages/page-context";
 import { MessagePreview } from "@/components/message-preview";
+import {
+  ENCRYPTED_PREVIEW_FALLBACK,
+  NEW_ENCRYPTED_MESSAGE,
+  encryptedSource,
+  useEncryptedPreview,
+} from "@/lib/e2ee/preview";
 import { GLASS_BASE, GLASS_NEUTRAL } from "@/components/sidebar/glass";
 import { CountBadge, SidebarSectionHeader } from "@/components/sidebar/sidebar-section";
 import { useOpenChannel } from "@/components/sidebar/use-open-channel";
@@ -84,6 +90,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { useMobileShell } from "@/components/mobile/mobile-shell";
 
 type Preview = NonNullable<
   NonNullable<ReturnType<typeof useQuery<typeof api.sidebar.communityPreviews>>>[number]["preview"]
@@ -182,7 +189,14 @@ function liveHalf(
  * pinged you. Two lines, both truncated; the community's name is above them.
  */
 function PreviewLines({ preview }: { preview: Preview }) {
+  // The server sends ciphertext for an encrypted message (it can't read it); it is opened here with
+  // this device's keys. Without them the line says the message is encrypted, never shows `enc`.
+  const encrypted = useEncryptedPreview(
+    encryptedSource("channel", preview.channelId, preview.authorId, preview.enc),
+  );
+
   if (preview.kind === "message") {
+    const text = encrypted.state === "none" ? preview.text || null : encrypted.text;
     return (
       <>
         <p className="flex items-center gap-0.5 truncate text-[11px] text-muted-foreground/80">
@@ -190,18 +204,29 @@ function PreviewLines({ preview }: { preview: Preview }) {
           <span className="truncate">{preview.channelName}</span>
         </p>
         <p className="flex w-full truncate text-xs text-muted-foreground">
-          {preview.text ? (
-            <MessagePreview text={preview.text} prefix={`${preview.authorName}:`} />
-          ) : (
+          {text ? (
+            <MessagePreview text={text} prefix={`${preview.authorName}:`} />
+          ) : preview.attachmentName || encrypted.state === "none" ? (
             // A message that was only a file: the file's name is the content.
             <span className="truncate">
               {preview.authorName}: 📎 {preview.attachmentName ?? "Attachment"}
+            </span>
+          ) : (
+            <span className="truncate">
+              {preview.authorName}: {ENCRYPTED_PREVIEW_FALLBACK}
             </span>
           )}
         </p>
       </>
     );
   }
+
+  const mentionText =
+    encrypted.state === "none"
+      ? preview.text
+      : encrypted.state === "decrypted"
+        ? (encrypted.text ?? preview.text)
+        : NEW_ENCRYPTED_MESSAGE;
 
   const target =
     preview.mention === "everyone" ? "@everyone" : preview.mention === "here" ? "@here" : null;
@@ -220,7 +245,7 @@ function PreviewLines({ preview }: { preview: Preview }) {
         </span>
       </p>
       <p className="flex w-full truncate text-xs text-muted-foreground">
-        <MessagePreview text={preview.text} />
+        <MessagePreview text={mentionText} />
       </p>
     </>
   );
@@ -946,7 +971,7 @@ function CommunityCard({
                   variant="ghost"
                   size="icon"
                   aria-label="Community settings"
-                  className="size-7 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
+                  className="size-7 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white max-md:size-9"
                 >
                   <Settings className="size-4" />
                 </Button>
@@ -974,7 +999,7 @@ function CommunityCard({
               size="icon"
               aria-label="Collapse"
               onClick={onCollapse}
-              className="size-7 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white"
+              className="size-7 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white max-md:size-9"
             >
               <ChevronUp className="size-4" />
             </Button>
@@ -1170,9 +1195,13 @@ function SortableCommunity({
   row,
   card,
   overInfo,
+  onExpand,
 }: {
   community: CommunitySummary;
   expanded: boolean;
+  /** Phones only: the button that unfolds the card, in place of the drag grip (there's no hover to find a
+   * grip with, and dragging a list you're trying to scroll is a trap). */
+  onExpand?: () => void;
   row: React.ReactNode;
   card: React.ReactNode;
   overInfo: { id: string; isBefore: boolean } | null;
@@ -1217,6 +1246,19 @@ function SortableCommunity({
               measurement the expanded height, skipping the morph. */}
           <CommunityItem expanded={expanded} row={row} card={card} />
         </div>
+        {onExpand ? (
+          !expanded && (
+            <button
+              type="button"
+              onClick={onExpand}
+              aria-label={`Show ${community.name}'s channels`}
+              aria-expanded={false}
+              className="my-1 flex w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground active:bg-white/10"
+            >
+              <ChevronDown className="size-5" />
+            </button>
+          )
+        ) : (
         <div
           {...listeners}
           role="button"
@@ -1232,6 +1274,7 @@ function SortableCommunity({
         >
           <GripVertical className="size-3.5" />
         </div>
+        )}
       </div>
       {isDropTarget && !overInfo.isBefore && <DropLine position="bottom" />}
     </div>
@@ -1242,6 +1285,7 @@ export function CommunitiesSection() {
   const nav = useNavigation();
   const { activeTab } = useTabs();
   const [expandedId, setExpandedId] = useState<Id<"communities"> | null>(null);
+  const shell = useMobileShell();
   const openCreateCommunity = useOpenCreateCommunity();
   const reorderSidebar = useMutation(api.communities.reorderSidebar);
 
@@ -1422,7 +1466,7 @@ export function CommunitiesSection() {
             size="icon"
             aria-label="Create a community"
             title="Create a community"
-            className="size-6 text-muted-foreground"
+            className="size-6 text-muted-foreground max-md:-my-2 max-md:size-10"
             onClick={openCreateCommunity}
           >
             <Plus className="size-4" />
@@ -1462,6 +1506,7 @@ export function CommunitiesSection() {
                     community={community}
                     expanded={expanded}
                     overInfo={communityOver}
+                    onExpand={shell.mobile ? () => setExpandedId(community.id) : undefined}
                     row={
                       <CommunityRow
                         community={community}
@@ -1473,7 +1518,9 @@ export function CommunitiesSection() {
                         selected={activeCommunityId === community.id}
                         onClick={() => {
                           setExpandedId(community.id);
-                          nav.openCommunity(community.id);
+                          // On a phone, tapping a community unfolds its channels here, in the list; opening one
+                          // of them is what switches screens. On a desktop it opens the community beside.
+                          if (!shell.mobile) nav.openCommunity(community.id);
                         }}
                       />
                     }

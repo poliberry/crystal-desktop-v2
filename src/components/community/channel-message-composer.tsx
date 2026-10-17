@@ -336,7 +336,7 @@ export function ChannelMessageComposer({
   // and the box is the same 58px tall (the card's 56px row plus its two 1px
   // border edges), so the two share a top and a bottom edge.
   return (
-    <div ref={dropZoneRef} data-pack-panel="clear" className="relative shrink-0 bg-background p-2 pb-[17px]">
+    <div ref={dropZoneRef} data-pack-panel="clear" className="relative shrink-0 bg-background p-2 pb-[17px] max-md:pb-2">
       <ComposerDropOverlay active={isDraggingOver} />
       {commandMatches.length > 0 && (
         <div className="absolute bottom-full left-3 mb-1 flex max-h-56 w-72 flex-col overflow-y-auto rounded-md border bg-popover p-1 shadow-md">

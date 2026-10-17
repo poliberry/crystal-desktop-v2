@@ -89,3 +89,16 @@ export const deleteR2Object = internalAction({
     await r2DeleteByKey(key);
   },
 });
+
+/**
+ * Delete a creator's marketplace artwork. Only ever scheduled by `creationFiles.releaseIfUnused`, which
+ * has already made sure nothing uses it, and only for files in a creator's own creations folder.
+ */
+export const deleteCreationObject = internalAction({
+  args: { key: v.string() },
+  handler: async (_ctx, { key }) => {
+    if (!key.startsWith("marketplace/creations/")) return;
+    const { r2DeleteByKey } = await import("./lib/r2");
+    await r2DeleteByKey(key, { allowProtected: true });
+  },
+});

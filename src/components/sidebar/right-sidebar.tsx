@@ -7,6 +7,8 @@ import { createPortal } from "react-dom";
 import { useStoredWidth, WidthHandle } from "@/components/sidebar/resizable-sidebar";
 import { useReservesWindowControls, WINDOW_CONTROLS_HEIGHT } from "@/components/window-controls-dock";
 import { cn } from "@/lib/utils";
+import { useMobileShell } from "@/components/mobile/mobile-shell";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 /**
  * The right-hand counterpart of the unified sidebar: the same floating card —
@@ -45,7 +47,9 @@ interface RightSidebarContextValue {
 const RightSidebarContext = createContext<RightSidebarContextValue | null>(null);
 
 export function RightSidebarProvider({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(true);
+  // Open beside the content on a desktop window; on a phone it's a sheet over the conversation, so it
+  // starts closed and opens from the view's header button.
+  const [open, setOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
   const [claims, setClaims] = useState(0);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
@@ -108,7 +112,20 @@ export function RightSidebarHost() {
   // On Windows and Linux the window's buttons are fixed to the corner above this column (see WindowControlsDock), so the
   // card starts below them rather than under them.
   const reserve = useReservesWindowControls();
+  const { mobile } = useMobileShell();
   if (!ctx) return null;
+
+  if (mobile) {
+    return (
+      <Sheet open={ctx.available && ctx.open} onOpenChange={(next) => next !== ctx.open && ctx.toggle()}>
+        <SheetContent side="right" className="w-[86vw] max-w-sm gap-0 border-sidebar-border bg-sidebar p-0 pt-[env(safe-area-inset-top)] text-sidebar-foreground [&>button]:hidden">
+          <SheetTitle className="sr-only">Details</SheetTitle>
+          {/* Filled by the view — see `RightSidebarContent`. */}
+          <div ref={ctx.setSlot} className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]" />
+        </SheetContent>
+      </Sheet>
+    );
+  }
 
   return (
     <AnimatePresence initial={false}>

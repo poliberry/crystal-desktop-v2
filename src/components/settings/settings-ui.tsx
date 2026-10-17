@@ -32,7 +32,7 @@ export function SettingsPageLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto w-3/4 min-w-0 space-y-6 pt-8 pb-12">
+    <div className="mx-auto w-3/4 min-w-0 space-y-6 pt-8 pb-12 max-md:w-full max-md:px-4 max-md:pt-5">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && <p className="text-sm text-muted-foreground">{description}</p>}

@@ -1,0 +1,149 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="brand.css" />
+<script src="icons.js"></script>
+<style>
+  body { width: 1600px; padding: 0; display: flex; flex-direction: column; gap: 40px; background: #000; }
+  .card { position: relative; width: 1600px; height: 900px; overflow: hidden; background: var(--bg); }
+  .inner { position: absolute; inset: 0; }
+  .foot { position: absolute; left: 80px; right: 80px; bottom: 54px; display: flex; justify-content: space-between; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 14px; font-size: 30px; }
+  .brand img { width: 40px; }
+  .url { font-size: 24px; color: rgb(255 255 255 / 0.55); }
+  .h { position: absolute; }
+  .row { display: flex; gap: 18px; align-items: flex-start; }
+  .row img { width: 48px; height: 48px; border-radius: 999px; }
+</style>
+</head>
+<body>
+
+<!-- 1. Launch -->
+<div class="card" data-card="01-launch">
+  <div class="lights"></div>
+  <div class="inner">
+    <span class="badge h" style="left:80px; top:96px; padding:10px 22px; font-size:22px; transform:rotate(-2deg);">✦ Free, and still in beta</span>
+    <h1 class="display h" style="left:80px; top:170px; width:700px; font-size:104px;">Your group chat deserves a <span style="position:relative; white-space:nowrap;"><span class="gradient">real home.</span>
+      <svg viewBox="0 0 300 24" preserveAspectRatio="none" style="position:absolute; left:0; bottom:-22px; width:100%; height:26px; color:var(--emerald-300);"><path fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" d="M4 16c38-7 81-11 128-9 39 2 75 7 108 4 18-2 36-5 56-9M30 20c52-5 109-6 170-2" /></svg></span></h1>
+    <p class="h muted" style="left:80px; top:570px; width:600px; font-size:28px; line-height:1.5;">Chat, voice, DMs and statuses that actually say what everyone’s up to.</p>
+    <div class="shot h" style="left:820px; top:120px; width:760px; transform:rotate(1.5deg);"><img src="assets/shots/hero-general.webp" /></div>
+    <div class="pill h" style="left:1130px; top:84px; padding:8px 22px 8px 8px; font-size:22px; transform:rotate(3deg);">
+      <img src="assets/avatars/maya.svg" style="width:40px; height:40px; border-radius:999px;" /><span style="color:rgb(255 255 255/0.85)">Maya is playing <b style="color:#fff">Stardew Valley</b></span>
+    </div>
+  </div>
+  <div class="foot"><span class="brand bold"><img src="assets/logo.svg" />Crystal</span><span class="url">usecrystal.app</span></div>
+</div>
+
+<!-- 2. Statuses -->
+<div class="card" data-card="02-statuses">
+  <div class="lights"></div>
+  <div class="inner">
+    <div class="hand h" style="left:80px; top:110px; font-size:42px; color:var(--sky-200); transform:rotate(-2deg);">a bit more than a green dot</div>
+    <h1 class="display h" style="left:80px; top:175px; width:780px; font-size:100px;">See what<br />everyone’s<br /><span class="gradient">up to.</span></h1>
+    <div class="h" style="left:80px; top:525px; width:760px; display:flex; flex-wrap:wrap; gap:14px;">
+      <span class="chip" style="padding:12px 22px; font-size:24px;">🌱 Watering the crops</span>
+      <span class="chip" style="padding:12px 22px; font-size:24px;">☕ Back in 10, making coffee</span>
+      <span class="chip" style="padding:12px 22px; font-size:24px;">🎲 Planning Friday’s game night</span>
+      <span class="chip" style="padding:12px 22px; font-size:24px;">🎧 Stardew Valley Overture</span>
+    </div>
+    <img class="card-img h" src="assets/shots/profile-sam.webp" style="left:880px; top:90px; width:330px; transform:rotate(-3deg);" />
+    <img class="card-img h" src="assets/shots/profile-jordan.webp" style="left:1240px; top:150px; width:300px; transform:rotate(2.5deg);" />
+  </div>
+  <div class="foot"><span class="brand bold"><img src="assets/logo.svg" />Crystal</span><span class="url">usecrystal.app</span></div>
+</div>
+
+<!-- 3. Privacy -->
+<div class="card" data-card="03-privacy">
+  <div class="lights"></div>
+  <div class="inner">
+    <span class="icon h" id="lock" style="left:757px; top:90px; width:86px; height:86px; border-radius:24px; background:rgb(110 231 183/0.1); color:var(--emerald-200);"></span>
+    <h1 class="display h" style="left:0; right:0; top:210px; text-align:center; font-size:92px;">Locked before it leaves<br /><span class="gradient">your device.</span></h1>
+    <div class="h" style="left:220px; right:220px; top:470px; padding:22px 28px; border-radius:20px; border:1px solid rgb(255 255 255/0.08); background:rgb(0 0 0/0.35);">
+      <div class="mono" style="font-size:15px; letter-spacing:0.16em; text-transform:uppercase; color:rgb(255 255 255/0.32); margin-bottom:8px;">What the server sees</div>
+      <div class="mono" style="font-size:21px; color:rgb(255 255 255/0.4); white-space:nowrap; overflow:hidden;">5VDmbayV26pk3FOcMETt8qdYnOBbCJYQy80W_XqxcYvgZvucC_QMDT0cm4gLKGY7wZe7VD8YtY0k7OmAJLLAQEz9</div>
+    </div>
+    <div class="h" style="left:220px; right:220px; top:610px; padding:22px 28px; border-radius:20px; border:1px solid rgb(167 243 208/0.18); background:rgb(110 231 183/0.06);">
+      <div class="mono" style="font-size:15px; letter-spacing:0.16em; text-transform:uppercase; color:rgb(167 243 208/0.65); margin-bottom:8px;">What Alex sees</div>
+      <div style="font-size:30px; color:rgb(255 255 255/0.92);">jordan doesn’t know about the fish thing yet, don’t tell him 🤫</div>
+    </div>
+  </div>
+  <div class="foot"><span class="brand bold"><img src="assets/logo.svg" />Crystal</span><span class="url">End-to-end encrypted DMs and communities</span></div>
+</div>
+
+<!-- 4. Gaming -->
+<div class="card" data-card="04-gaming">
+  <div class="lights"></div>
+  <div class="inner">
+    <div class="hand h" style="left:80px; top:80px; font-size:42px; color:var(--violet-200); transform:rotate(-2deg);">for game night</div>
+    <h1 class="display h" style="left:80px; top:130px; font-size:100px;">Built to <span class="gradient">play.</span></h1>
+    <div class="h" id="grid" style="left:80px; right:80px; top:290px; display:grid; grid-template-columns:repeat(3,1fr); gap:22px;"></div>
+  </div>
+  <div class="foot"><span class="brand bold"><img src="assets/logo.svg" />Crystal</span><span class="url">usecrystal.app</span></div>
+</div>
+
+<!-- 5. Group chat -->
+<div class="card" data-card="05-the-greenhouse">
+  <div class="lights"></div>
+  <div class="inner">
+    <div class="hand h" style="left:80px; top:150px; font-size:42px; color:var(--emerald-200); transform:rotate(-2deg);">meet the greenhouse ↓</div>
+    <h1 class="display h" style="left:80px; top:210px; width:640px; font-size:100px;">Four friends.<br />One farm.<br /><span class="gradient">Too many fish.</span></h1>
+    <div class="tile h" id="chat" style="left:780px; top:150px; width:740px; padding:28px 32px; background:#121419;"></div>
+  </div>
+  <div class="foot"><span class="brand bold"><img src="assets/logo.svg" />Crystal</span><span class="url">usecrystal.app</span></div>
+</div>
+
+<!-- 6. Makers -->
+<div class="card" data-card="06-makers">
+  <div class="lights"></div>
+  <div class="inner">
+    <div class="hand h" style="left:80px; top:130px; font-size:42px; color:var(--amber-200); transform:rotate(-2deg);">for the tinkerers</div>
+    <h1 class="display h" style="left:80px; top:190px; width:620px; font-size:84px;">Build the bot your group keeps <span class="gradient">joking about.</span></h1>
+    <p class="h muted" style="left:80px; top:560px; width:560px; font-size:26px; line-height:1.5;">Crystal Studio: the SDK, docs and a place to test, all in one app.</p>
+    <div class="shot h" style="left:740px; top:150px; width:780px; padding:0; background:#0e1116; transform:rotate(1deg);">
+      <div class="mono" style="padding:18px 26px; border-bottom:1px solid rgb(255 255 255/0.07); color:rgb(255 255 255/0.45); font-size:20px; display:flex; gap:10px; align-items:center;"><span id="code-icon" style="color:var(--amber-200); display:inline-flex;"></span> fish-alarm.ts</div>
+      <pre class="mono" style="padding:28px 32px; font-size:22px; line-height:1.7; color:rgb(255 255 255/0.82);"><span style="color:var(--violet-300)">import</span> { Client, Events } <span style="color:var(--violet-300)">from</span> <span style="color:var(--emerald-200)">"@crystal/bot"</span>;
+
+<span style="color:var(--violet-300)">const</span> client = <span style="color:var(--violet-300)">new</span> <span style="color:var(--sky-200)">Client</span>();
+
+<span style="color:rgb(255 255 255/0.35)">// Someone mentioned the fish again.</span>
+client.<span style="color:var(--sky-200)">on</span>(Events.MessageCreate, <span style="color:var(--violet-300)">async</span> (message) =&gt; {
+  <span style="color:var(--violet-300)">if</span> (message.fromBot) <span style="color:var(--violet-300)">return</span>;
+  <span style="color:var(--violet-300)">if</span> (message.content.<span style="color:var(--sky-200)">includes</span>(<span style="color:var(--emerald-200)">"fish"</span>)) {
+    <span style="color:var(--violet-300)">await</span> message.<span style="color:var(--sky-200)">react</span>(<span style="color:var(--emerald-200)">"🐟"</span>);
+  }
+});</pre>
+    </div>
+  </div>
+  <div class="foot"><span class="brand bold"><img src="assets/logo.svg" />Crystal</span><span class="url">usecrystal.app/makers</span></div>
+</div>
+
+<script>
+const icon = (name, size) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${window.ICONS[name]}</svg>`;
+document.getElementById("lock").innerHTML = icon("lock", 40);
+document.getElementById("code-icon").innerHTML = icon("code-xml", 22);
+document.getElementById("grid").innerHTML = [
+  ["gamepad-2", "Game detection", "Shows what you’re playing, automatically."],
+  ["swords", "Clans", "Rosters, ranks and roles for your squad."],
+  ["users", "Looking for group", "Open a slot. Friends join in one tap."],
+  ["calendar-days", "Scrims & events", "RSVPs, lineups and a cap on numbers."],
+  ["sparkles", "Lounges", "Hang out in a little 2D room together."],
+  ["monitor-up", "1080p60 screen share", "With native system audio on every desktop."],
+].map(([ic, t, c]) => `<div class="tile" style="padding:22px 26px 24px;">
+  <span class="icon" style="width:48px; height:48px; background:rgb(196 181 253/0.12); color:var(--violet-200);">${icon(ic, 26)}</span>
+  <div class="bold" style="font-size:28px; margin-top:14px;">${t}</div>
+  <div style="font-size:19px; line-height:1.35; color:rgb(255 255 255/0.55); margin-top:6px;">${c}</div></div>`).join("");
+const P = { maya: ["Maya Chen", "maya", "var(--rose-200)"], jordan: ["Jordan Lee", "jordan", "var(--violet-200)"], sam: ["Sam Patel", "sam", "var(--emerald-200)"], alex: ["Alex Rivera", "alex", "var(--sky-200)"] };
+document.getElementById("chat").innerHTML = `<div style="display:flex; align-items:center; gap:12px; font-size:22px; padding-bottom:18px; border-bottom:1px solid rgb(255 255 255/0.07); margin-bottom:6px;">
+  <img src="assets/avatars/greenhouse.svg" style="width:32px; height:32px; border-radius:9px;" /><b style="color:rgb(255 255 255/0.9)">The Greenhouse</b><span style="color:rgb(255 255 255/0.3)">/</span><span class="muted"># game-chat</span></div>` +
+  [["maya", "finally finished the greenhouse in stardew!! 🍇"], ["jordan", "wait how. we've been broke for two seasons"], ["maya", "I may have sold all of your fish 🙃"], ["jordan", "MAYA. the legend was in there"], ["alex", "screenshot or it didn't happen 👀"]]
+    .map(([w, t]) => `<div class="row" style="margin-top:22px;"><img src="assets/avatars/${P[w][1]}.svg" /><div><div style="font-size:20px; font-weight:700; color:${P[w][2]};">${P[w][0]}</div><div style="font-size:25px; color:rgb(255 255 255/0.85);">${t}</div></div></div>`).join("");
+
+window.ready = (async () => {
+  await document.fonts.ready;
+  await Promise.all([...document.images].map((img) => (img.complete ? null : new Promise((r) => { img.onload = img.onerror = r; }))));
+  return true;
+})();
+</script>
+</body>
+</html>

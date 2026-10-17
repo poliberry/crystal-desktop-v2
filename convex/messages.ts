@@ -2,7 +2,7 @@ import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText } from "./lib/mentions";
 import { dmPageKey, dmPageKeys } from "./lib/messageCacheKeys";
@@ -21,6 +21,7 @@ import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { requireAbility } from "./lib/moderation";
 import { getCurrentUserOrThrow } from "./users";
 import { isAcceptableAttachmentSource } from "./lib/klipy";
+import { releaseFile } from "./lib/files";
 import { effectiveFileType } from "./lib/mediaType";
 
 function r2UrlForKey(key: string): string | null {
@@ -235,9 +236,27 @@ export const list = query({
       .order("desc")
       .paginate(paginationOpts);
 
+    // A page is usually a handful of people talking: look each author (and their presence) up once
+    // rather than once per message.
+    const authors = new Map<Id<"users">, Promise<readonly [Doc<"users"> | null, Doc<"presence"> | null]>>();
+    const authorOf = (authorId: Id<"users">) => {
+      let found = authors.get(authorId);
+      if (!found) {
+        found = Promise.all([
+          ctx.db.get(authorId),
+          ctx.db
+            .query("presence")
+            .withIndex("by_user", (q) => q.eq("userId", authorId))
+            .first(),
+        ] as const);
+        authors.set(authorId, found);
+      }
+      return found;
+    };
+
     const messages = await Promise.all(
       page.page.map(async (message) => {
-        const author = await ctx.db.get(message.authorId);
+        const [author, authorPresence] = await authorOf(message.authorId);
         const attachmentRows = await ctx.db
           .query("messageAttachments")
           .withIndex("by_message", (q) => q.eq("messageId", message._id))
@@ -261,12 +280,6 @@ export const list = query({
             };
           }),
         );
-        const authorPresence = await ctx.db
-          .query("presence")
-          .withIndex("by_user", (q) =>
-            q.eq("userId", author?._id as Id<"users">),
-          )
-          .first();
         return {
           id: message._id,
           text: message.text ?? null,
@@ -587,22 +600,23 @@ export const remove = mutation({
     if (!message) return;
     if (message.authorId !== me._id)
       throw new Error("You can only delete your own messages.");
-
-    const [attachments, reactions] = await Promise.all([
-      ctx.db
-        .query("messageAttachments")
-        .withIndex("by_message", (q) => q.eq("messageId", messageId))
-        .collect(),
-      ctx.db
-        .query("messageReactions")
-        .withIndex("by_message", (q) => q.eq("messageId", messageId))
-        .collect(),
-    ]);
-    for (const attachment of attachments) await ctx.db.delete(attachment._id);
-    for (const reaction of reactions) await ctx.db.delete(reaction._id);
-    await ctx.db.delete(messageId);
+    await deleteDmMessage(ctx, messageId);
   },
 });
+
+/** Delete a DM message, its reactions and its attachments, files included. Shared with account deletion. */
+export async function deleteDmMessage(ctx: MutationCtx, messageId: Id<"messages">): Promise<void> {
+  const [attachments, reactions] = await Promise.all([
+    ctx.db.query("messageAttachments").withIndex("by_message", (q) => q.eq("messageId", messageId)).collect(),
+    ctx.db.query("messageReactions").withIndex("by_message", (q) => q.eq("messageId", messageId)).collect(),
+  ]);
+  for (const attachment of attachments) {
+    await ctx.db.delete(attachment._id);
+    await releaseFile(ctx, attachment);
+  }
+  for (const reaction of reactions) await ctx.db.delete(reaction._id);
+  await ctx.db.delete(messageId);
+}
 
 export const toggleReaction = mutation({
   args: {

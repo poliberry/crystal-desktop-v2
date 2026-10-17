@@ -10,6 +10,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { hasBlocked, isSuppressing, requireNotBlocked } from "./lib/blocking";
+import { releaseUrl } from "./lib/files";
 import { notifyUsers } from "./notifications";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -66,7 +67,11 @@ export const recordLeave = internalMutation({
         q.eq("conversationId", conversationId).eq("userId", userId)
       )
       .unique();
-    if (row && (joinedBefore === undefined || row.joinedAt <= joinedBefore)) await ctx.db.delete(row._id);
+    if (row && (joinedBefore === undefined || row.joinedAt <= joinedBefore)) {
+      await ctx.db.delete(row._id);
+      // The last frame of their screen share, if they were sharing.
+      await releaseUrl(ctx, row.streamThumbnailUrl, row.streamThumbnailStorageId);
+    }
 
     const remaining = await ctx.db
       .query("callParticipants")

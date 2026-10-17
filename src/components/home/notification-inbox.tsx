@@ -15,6 +15,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import moment from "moment";
+import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -35,6 +36,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
+import { useIsMobile } from "@/hooks/use-mobile";
+import type { Envelope } from "@/lib/e2ee";
+import { encryptedSource, NEW_ENCRYPTED_MESSAGE, useEncryptedPreview } from "@/lib/e2ee/preview";
 
 /** Enough to fill the panel twice over without paying for a long history
  * nobody scrolls. */
@@ -66,6 +71,45 @@ const TYPE_ICON: Record<NotificationType, React.ComponentType<{ className?: stri
 };
 
 /**
+ * A notification's second line. For an encrypted message the server only has a generic body
+ * ("New message"), so the message itself is opened here with this device's keys; when they aren't
+ * available the line says it's encrypted rather than pretending to be the content.
+ */
+function NotificationBody({
+  notification,
+}: {
+  notification: {
+    body: string | null;
+    conversationId: string | null;
+    channelId: string | null;
+    actor: { id: string; name: string } | null;
+    message?: { authorId: string; enc: Envelope } | null;
+  };
+}) {
+  const source = notification.message
+    ? encryptedSource(
+        notification.conversationId ? "conversation" : "channel",
+        notification.conversationId ?? notification.channelId,
+        notification.message.authorId,
+        notification.message.enc,
+      )
+    : null;
+  const actor = notification.actor;
+  const preview = useEncryptedPreview(source, {
+    user: (id) => (actor && id === actor.id ? actor.name : undefined),
+  });
+
+  const text =
+    preview.state === "decrypted"
+      ? (preview.text ?? notification.body)
+      : preview.state === "none"
+        ? notification.body
+        : NEW_ENCRYPTED_MESSAGE;
+  if (!text) return null;
+  return <MessagePreview text={text} className="block text-xs text-muted-foreground" />;
+}
+
+/**
  * The inbox: everything that happened while you weren't looking, newest first.
  *
  * Reads the notification rows the server already writes for OS notifications
@@ -74,7 +118,8 @@ const TYPE_ICON: Record<NotificationType, React.ComponentType<{ className?: stri
  * Disturb and per-server rules that decided whether anything was written at
  * all.
  */
-export function NotificationInbox() {
+/** The inbox's contents: the desktop's popover and the phone's Notifications sheet both show this. */
+export function InboxPanel({ fill = false, onOpened }: { fill?: boolean; onOpened?: () => void }) {
   const unreadCount = useQuery(api.notifications.unreadCount) ?? 0;
   const markRead = useMutation(api.notifications.markRead);
   const markAllRead = useMutation(api.notifications.markAllRead);
@@ -98,36 +143,7 @@ export function NotificationInbox() {
   };
 
   return (
-    <Popover>
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-                className="pointer-events-auto relative flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent/60 hover:opacity-100"
-                aria-label={
-                  unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"
-                }
-              >
-                <Bell className="size-4" />
-                {unreadCount > 0 && (
-                  <span className="absolute -top-0.5 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-white">
-                    {unreadCount > BADGE_CAP ? `${BADGE_CAP}+` : unreadCount}
-                  </span>
-                )}
-              </button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Inbox</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-
-      {/* To the side rather than below: the bell is in the sidebar, at the
-          window's left edge, and a panel this wide hung from it would run off
-          the screen. */}
-      <PopoverContent side="right" align="start" sideOffset={10} className="w-88 p-0">
+    <div className={cn("flex flex-col", fill && "h-full min-h-0")}>
         <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
           <p className="mr-auto text-sm font-semibold">Inbox</p>
           {unreadCount > 0 && (
@@ -154,7 +170,7 @@ export function NotificationInbox() {
           )}
         </div>
 
-        <ScrollArea className="max-h-96">
+        <ScrollArea className={fill ? "min-h-0 flex-1" : "max-h-96"}>
           <div className="flex flex-col p-1">
             {status === "LoadingFirstPage" && (
               <p className="px-3 py-8 text-center text-sm text-muted-foreground">Loading…</p>
@@ -186,7 +202,10 @@ export function NotificationInbox() {
                 <button
                   key={notification.id}
                   type="button"
-                  onClick={() => open(notification)}
+                  onClick={() => {
+                    open(notification);
+                    onOpened?.();
+                  }}
                   className={cn(
                     "flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left hover:bg-accent/60",
                     !notification.read && "bg-accent/30"
@@ -219,12 +238,8 @@ export function NotificationInbox() {
                     {/* Through the preview renderer, so a message that was
                         mostly a custom emoji does not read as a paragraph of
                         identifier. */}
-                    {notification.body && (
-                      <MessagePreview
-                        text={notification.body}
-                        className="block text-xs text-muted-foreground"
-                      />
-                    )}
+                    <NotificationBody notification={notification} />
+
                     {location && (
                       <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground">
                         <Hash className="size-2.5 shrink-0" />
@@ -255,6 +270,77 @@ export function NotificationInbox() {
             )}
           </div>
         </ScrollArea>
+    </div>
+  );
+}
+
+export function useUnreadNotificationCount(): number {
+  return useQuery(api.notifications.unreadCount) ?? 0;
+}
+
+export function NotificationInbox() {
+  const unreadCount = useUnreadNotificationCount();
+  const mobile = useIsMobile();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  // On a phone the inbox is a full bottom sheet, like every other menu there.
+  if (mobile) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setSheetOpen(true)}
+          className="relative flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground active:bg-foreground/10"
+          aria-label={unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"}
+        >
+          <Bell className="size-5" />
+          {unreadCount > 0 && (
+            <span className="absolute top-1 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-white">
+              {unreadCount > BADGE_CAP ? `${BADGE_CAP}+` : unreadCount}
+            </span>
+          )}
+        </button>
+        <Drawer open={sheetOpen} onOpenChange={setSheetOpen}>
+          <DrawerContent className="h-[calc(100%-env(safe-area-inset-top)-0.5rem)] max-h-none rounded-t-2xl border-border/60 pb-[env(safe-area-inset-bottom)] data-[vaul-drawer-direction=bottom]:mt-0 data-[vaul-drawer-direction=bottom]:max-h-none">
+            <DrawerTitle className="sr-only">Inbox</DrawerTitle>
+            <InboxPanel fill onOpened={() => setSheetOpen(false)} />
+          </DrawerContent>
+        </Drawer>
+      </>
+    );
+  }
+  return (
+    <Popover>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                className="pointer-events-auto relative flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent/60 hover:opacity-100"
+                aria-label={
+                  unreadCount > 0 ? `Inbox, ${unreadCount} unread` : "Inbox"
+                }
+              >
+                <Bell className="size-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-white">
+                    {unreadCount > BADGE_CAP ? `${BADGE_CAP}+` : unreadCount}
+                  </span>
+                )}
+              </button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Inbox</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+
+      {/* To the side rather than below: the bell is in the sidebar, at the
+          window's left edge, and a panel this wide hung from it would run off
+          the screen. */}
+      <PopoverContent side="right" align="start" sideOffset={10} className="w-88 p-0">
+        <InboxPanel />
       </PopoverContent>
     </Popover>
   );

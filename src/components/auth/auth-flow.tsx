@@ -38,6 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AUTH_ERROR, errorCode, errorMessage } from "@/lib/auth-errors";
+import { markNewAccount } from "@/lib/e2ee-onboarding";
 import { formatDateTime } from "@/lib/locale";
 import { safeReturnTo } from "@/lib/return-to";
 import { cn } from "@/lib/utils";
@@ -116,7 +117,10 @@ export default function AuthFlow({
   const passkeySecondVerify = useAction(api.passkeys.secondFactorVerify);
 
   // Where we are, and which way we got here (for the direction the next step slides from).
-  const [step, setStep] = useState<Step>("email");
+  const [step, setStep] = useState<Step>(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("username")) return "guest";
+    return "email";
+  });
   const [direction, setDirection] = useState<1 | -1>(1);
   const go = useCallback((next: Step, dir: 1 | -1 = 1) => {
     setDirection(dir);
@@ -133,7 +137,10 @@ export default function AuthFlow({
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [usernameEdited, setUsernameEdited] = useState(false);
-  const [guestName, setGuestName] = useState("");
+  const [guestName, setGuestName] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return (new URLSearchParams(window.location.search).get("username") ?? "").trim().toLowerCase().slice(0, 32);
+  });
   const [second, setSecond] = useState<{ token: string; methods: SecondFactorMethods } | null>(null);
   const [secondCode, setSecondCode] = useState("");
   const [useBackup, setUseBackup] = useState(false);
@@ -338,6 +345,10 @@ export default function AuthFlow({
         password,
         profile: purpose === "signup" ? { username: username.trim().toLowerCase(), name: name.trim() } : undefined,
       });
+      // Encryption needs a session (the public key is registered as the signed-in account), so it is
+      // set up in the app straight after this, not on this screen. This only tells that prompt to greet
+      // a new account; nothing about keys is decided or stored here.
+      if (purpose === "signup" && result.status === "signed_in") markNewAccount();
       await handle(result);
     });
 
@@ -581,7 +592,7 @@ export default function AuthFlow({
           title={purpose === "signup" ? "Create a password" : purpose === "reset" ? "Choose a new password" : "Choose your password"}
           description={
             purpose === "signup"
-              ? "The last step. Use something long that you don't use anywhere else."
+              ? "Use something long that you don't use anywhere else. Once you're in, you'll get a recovery key that keeps your messages private."
               : "Use something long that you don't use anywhere else. It signs you out of other devices."
           }
         />
@@ -769,6 +780,9 @@ export default function AuthFlow({
             {primary("Start exploring", { disabled: !guestSettled || guestCheck?.ok !== true, icon: <Sparkles className="size-4" /> })}
           </>,
         )}
+        <Button type="button" variant="ghost" className="w-full text-muted-foreground" disabled={busy} onClick={() => { setPurpose("signup"); setEmail(""); go("email", -1); }}>
+          Make this a permanent account
+        </Button>
       </div>
     ),
 

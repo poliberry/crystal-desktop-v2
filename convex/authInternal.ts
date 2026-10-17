@@ -269,11 +269,24 @@ export const completeWithProof = internalMutation({
       const problem = usernameProblem(username);
       if (problem) return { status: "invalid", message: problem };
       if (!name || name.length > DISPLAY_NAME_MAX) return { status: "invalid", message: `Pick a display name up to ${DISPLAY_NAME_MAX} characters.` };
-      if (await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", username)).unique()) {
+      const identity = await signedInIds(ctx);
+      const currentUser = identity ? await ctx.db.get(identity.userId) : null;
+      const guest = currentUser?.isGuest && (currentUser.guestExpiresAt ?? 0) > Date.now() ? currentUser : null;
+      const nameOwner = await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", username)).unique();
+      if (nameOwner && nameOwner._id !== guest?._id) {
         return { status: "invalid", message: "That username was just taken. Pick another." };
       }
       await ctx.db.delete(row._id);
-      const userId = await createAccountForEmail(ctx, email, { username, name });
+      let userId: Id<"users">;
+      if (guest) {
+        // Keep the guest's identity and data when they sign up from the preview flow.
+        // That also lets them claim the username they were already using.
+        userId = guest._id;
+        await ctx.db.patch(userId, { username, name, isGuest: undefined, guestExpiresAt: undefined });
+        await ctx.db.insert("userEmails", { userId, email, verifiedAt: Date.now(), source: "signup" });
+      } else {
+        userId = await createAccountForEmail(ctx, email, { username, name });
+      }
       await applyPassword(ctx, userId, passwordHash);
       return finish(ctx, (await ctx.db.get(userId))!);
     }

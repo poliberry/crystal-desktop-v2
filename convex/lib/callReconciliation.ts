@@ -5,6 +5,7 @@ import { RoomServiceClient } from "livekit-server-sdk";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
+import { isCompanionIdentity } from "./companion";
 
 function getClient(): RoomServiceClient | null {
   const url = process.env.LIVEKIT_URL;
@@ -61,7 +62,8 @@ export const reconcile = internalAction({
       let liveIdentities: Set<string>;
       try {
         const participants = await svc.listParticipants(roomName);
-        liveIdentities = new Set(participants.map((p) => p.identity));
+        // Only real connections keep a row alive — a lingering screen-share companion doesn't.
+        liveIdentities = new Set(participants.filter((p) => !isCompanionIdentity(p.identity, p.attributes)).map((p) => p.identity));
       } catch {
         liveIdentities = new Set(); // Room doesn't exist anymore — every row here is stale.
       }

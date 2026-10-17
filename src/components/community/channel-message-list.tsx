@@ -10,6 +10,7 @@ import { DeleteMessageDialog } from "@/components/home/delete-message-dialog";
 import { MessageComponents, MessageEmbeds, type MessageButton, type MessageEmbed } from "@/components/community/message-embeds";
 import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
+import { MessageForwardDialog } from "@/components/home/message-forward-dialog";
 import { ReportDialog } from "@/components/reports/report-dialog";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
@@ -41,7 +42,7 @@ import { Popover, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
-import { useMessageContent } from "@/hooks/use-message-content";
+import { useIndexMessage, useMessageContent } from "@/hooks/use-message-content";
 import type { Envelope } from "@/lib/e2ee";
 import {
   AttachmentView,
@@ -135,6 +136,7 @@ const MessageRow = memo(function MessageRow({
   canManageMessages,
   communityId,
   channelId,
+  channelName,
   onReply,
   onJumpTo,
 }: {
@@ -147,6 +149,7 @@ const MessageRow = memo(function MessageRow({
   canManageMessages: boolean;
   communityId: Id<"communities">;
   channelId: Id<"channels">;
+  channelName: string;
   onReply: (draft: ReplyDraft) => void;
   onJumpTo: (messageId: string) => void;
 }) {
@@ -156,6 +159,20 @@ const MessageRow = memo(function MessageRow({
     { scope: "channel", channelId },
     message.author?.id,
     { enc: message.enc, text: message.text, embeds: message.embeds, components: message.components },
+    !!message.__pending,
+  );
+  useIndexMessage(
+    { scope: "channel", channelId },
+    {
+      id: message.id,
+      authorId: message.author?.id,
+      authorName: message.author?.name,
+      createdAt: message.createdAt,
+      communityId,
+      channelName,
+      attachments: message.attachments.map(({ fileName, fileType }) => ({ fileName, fileType })),
+    },
+    readable,
     !!message.__pending,
   );
   // Durable: edits/deletes/reactions queue in the outbox and render through the
@@ -171,6 +188,7 @@ const MessageRow = memo(function MessageRow({
   const [draft, setDraft] = useState(readable.text ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [forwarding, setForwarding] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const canDelete = message.isMine || canManageMessages;
 
@@ -385,9 +403,11 @@ const MessageRow = memo(function MessageRow({
           void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
         }
         onReply={reply}
+        onForward={() => setForwarding(true)}
         onEdit={startEdit}
         onDelete={requestDelete}
         onReport={message.isMine ? undefined : () => setReporting(true)}
+        saveTarget={{ scope: "channel", messageId: message.id as Id<"channelMessages"> }}
       >
         {content}
       </MessageContextMenu>
@@ -395,6 +415,13 @@ const MessageRow = memo(function MessageRow({
         target={reporting ? { type: "channelMessage", id: message.id, label: "this message" } : null}
         onClose={() => setReporting(false)}
       />
+      {forwarding && <MessageForwardDialog
+        open
+        onOpenChange={setForwarding}
+        authorName={message.author?.name ?? "Unknown sender"}
+        text={readable.text ?? ""}
+        attachments={message.attachments.map(({ fileName }) => ({ fileName }))}
+      />}
       <DeleteMessageDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
@@ -592,6 +619,7 @@ export function ChannelMessageList({
                 canManageMessages={canManageMessages}
                 communityId={communityId}
                 channelId={channelId}
+                channelName={channelName}
                 onReply={handleReply}
                 onJumpTo={jumpTo}
               />

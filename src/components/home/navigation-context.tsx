@@ -9,6 +9,10 @@ export interface NavigationActions {
   openConversation: (id: Id<"conversations">) => void;
   openCommunity: (id: Id<"communities">, channelId?: Id<"channels">) => void;
   goHome: () => void;
+  /** Home, showing the Friends list. */
+  openFriends: () => void;
+  /** Home's briefing surface, as opposed to Friends. */
+  openMyCrystal: () => void;
   /** A server's front page — the view its sidebar header's "Overview" opens. */
   openCommunityOverview: (id: Id<"communities">) => void;
   /** The moderation member list. The caller must have a moderation permission;
@@ -22,6 +26,8 @@ const NOOP: NavigationActions = {
   openConversation: () => {},
   openCommunity: () => {},
   goHome: () => {},
+  openFriends: () => {},
+  openMyCrystal: () => {},
   openCommunityOverview: () => {},
   openCommunityMembers: () => {},
   openPage: () => {},
@@ -60,6 +66,8 @@ export function useNavigation(): NavigationActions {
       openConversation: (id) => current().openConversation(id),
       openCommunity: (id, channelId) => current().openCommunity(id, channelId),
       goHome: () => current().goHome(),
+      openFriends: () => current().openFriends(),
+      openMyCrystal: () => current().openMyCrystal(),
       openCommunityOverview: (id) => current().openCommunityOverview(id),
       openCommunityMembers: (id) => current().openCommunityMembers(id),
       openPage: (page) => current().openPage(page),

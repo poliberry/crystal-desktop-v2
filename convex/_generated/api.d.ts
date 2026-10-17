@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as accountDeletion from "../accountDeletion.js";
 import type * as ama from "../ama.js";
 import type * as auth from "../auth.js";
 import type * as authFlow from "../authFlow.js";
@@ -40,10 +41,12 @@ import type * as communityWidgets from "../communityWidgets.js";
 import type * as connectedAccounts from "../connectedAccounts.js";
 import type * as conversations from "../conversations.js";
 import type * as cosmeticCollection from "../cosmeticCollection.js";
+import type * as creationFiles from "../creationFiles.js";
 import type * as creatorCommunities from "../creatorCommunities.js";
 import type * as creators from "../creators.js";
 import type * as creatorsDb from "../creatorsDb.js";
 import type * as crons from "../crons.js";
+import type * as dataExport from "../dataExport.js";
 import type * as discordInspiredPublish from "../discordInspiredPublish.js";
 import type * as e2eeKeys from "../e2eeKeys.js";
 import type * as e2eeMigrate from "../e2eeMigrate.js";
@@ -52,6 +55,7 @@ import type * as e2eeOnboardActions from "../e2eeOnboardActions.js";
 import type * as effectLibraryPublish from "../effectLibraryPublish.js";
 import type * as events from "../events.js";
 import type * as extensions from "../extensions.js";
+import type * as files from "../files.js";
 import type * as finance from "../finance.js";
 import type * as forums from "../forums.js";
 import type * as friends from "../friends.js";
@@ -60,6 +64,7 @@ import type * as guests from "../guests.js";
 import type * as http from "../http.js";
 import type * as klipy from "../klipy.js";
 import type * as lib_abilities from "../lib/abilities.js";
+import type * as lib_accountWipe from "../lib/accountWipe.js";
 import type * as lib_accounts from "../lib/accounts.js";
 import type * as lib_activities from "../lib/activities.js";
 import type * as lib_authPolicy from "../lib/authPolicy.js";
@@ -73,6 +78,7 @@ import type * as lib_botRoutes from "../lib/botRoutes.js";
 import type * as lib_callReconciliation from "../lib/callReconciliation.js";
 import type * as lib_communityKinds from "../lib/communityKinds.js";
 import type * as lib_communitySetup from "../lib/communitySetup.js";
+import type * as lib_companion from "../lib/companion.js";
 import type * as lib_components from "../lib/components.js";
 import type * as lib_cosmeticCollection from "../lib/cosmeticCollection.js";
 import type * as lib_cosmeticLayers from "../lib/cosmeticLayers.js";
@@ -86,6 +92,7 @@ import type * as lib_effectLibrary from "../lib/effectLibrary.js";
 import type * as lib_embeds from "../lib/embeds.js";
 import type * as lib_entitlements from "../lib/entitlements.js";
 import type * as lib_extensionManifest from "../lib/extensionManifest.js";
+import type * as lib_files from "../lib/files.js";
 import type * as lib_gameHistory from "../lib/gameHistory.js";
 import type * as lib_geode from "../lib/geode.js";
 import type * as lib_guests from "../lib/guests.js";
@@ -133,6 +140,7 @@ import type * as lib_webauthn from "../lib/webauthn.js";
 import type * as linkPreviews from "../linkPreviews.js";
 import type * as lounge from "../lounge.js";
 import type * as maintenance from "../maintenance.js";
+import type * as marketingDemo from "../marketingDemo.js";
 import type * as marketplace from "../marketplace.js";
 import type * as messages from "../messages.js";
 import type * as motion from "../motion.js";
@@ -148,10 +156,12 @@ import type * as presence from "../presence.js";
 import type * as priority from "../priority.js";
 import type * as profileImages from "../profileImages.js";
 import type * as profileWidgets from "../profileWidgets.js";
+import type * as publicStats from "../publicStats.js";
 import type * as push from "../push.js";
 import type * as redisCloud from "../redisCloud.js";
 import type * as reports from "../reports.js";
 import type * as roles from "../roles.js";
+import type * as savedMessages from "../savedMessages.js";
 import type * as search from "../search.js";
 import type * as serverProfiles from "../serverProfiles.js";
 import type * as sidebar from "../sidebar.js";
@@ -166,6 +176,8 @@ import type * as twoFactor from "../twoFactor.js";
 import type * as typing from "../typing.js";
 import type * as uploadLimits from "../uploadLimits.js";
 import type * as users from "../users.js";
+import type * as webPush from "../webPush.js";
+import type * as webPushNode from "../webPushNode.js";
 
 import type {
   ApiFromModules,
@@ -174,6 +186,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountDeletion: typeof accountDeletion;
   ama: typeof ama;
   auth: typeof auth;
   authFlow: typeof authFlow;
@@ -206,10 +219,12 @@ declare const fullApi: ApiFromModules<{
   connectedAccounts: typeof connectedAccounts;
   conversations: typeof conversations;
   cosmeticCollection: typeof cosmeticCollection;
+  creationFiles: typeof creationFiles;
   creatorCommunities: typeof creatorCommunities;
   creators: typeof creators;
   creatorsDb: typeof creatorsDb;
   crons: typeof crons;
+  dataExport: typeof dataExport;
   discordInspiredPublish: typeof discordInspiredPublish;
   e2eeKeys: typeof e2eeKeys;
   e2eeMigrate: typeof e2eeMigrate;
@@ -218,6 +233,7 @@ declare const fullApi: ApiFromModules<{
   effectLibraryPublish: typeof effectLibraryPublish;
   events: typeof events;
   extensions: typeof extensions;
+  files: typeof files;
   finance: typeof finance;
   forums: typeof forums;
   friends: typeof friends;
@@ -226,6 +242,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   klipy: typeof klipy;
   "lib/abilities": typeof lib_abilities;
+  "lib/accountWipe": typeof lib_accountWipe;
   "lib/accounts": typeof lib_accounts;
   "lib/activities": typeof lib_activities;
   "lib/authPolicy": typeof lib_authPolicy;
@@ -239,6 +256,7 @@ declare const fullApi: ApiFromModules<{
   "lib/callReconciliation": typeof lib_callReconciliation;
   "lib/communityKinds": typeof lib_communityKinds;
   "lib/communitySetup": typeof lib_communitySetup;
+  "lib/companion": typeof lib_companion;
   "lib/components": typeof lib_components;
   "lib/cosmeticCollection": typeof lib_cosmeticCollection;
   "lib/cosmeticLayers": typeof lib_cosmeticLayers;
@@ -252,6 +270,7 @@ declare const fullApi: ApiFromModules<{
   "lib/embeds": typeof lib_embeds;
   "lib/entitlements": typeof lib_entitlements;
   "lib/extensionManifest": typeof lib_extensionManifest;
+  "lib/files": typeof lib_files;
   "lib/gameHistory": typeof lib_gameHistory;
   "lib/geode": typeof lib_geode;
   "lib/guests": typeof lib_guests;
@@ -299,6 +318,7 @@ declare const fullApi: ApiFromModules<{
   linkPreviews: typeof linkPreviews;
   lounge: typeof lounge;
   maintenance: typeof maintenance;
+  marketingDemo: typeof marketingDemo;
   marketplace: typeof marketplace;
   messages: typeof messages;
   motion: typeof motion;
@@ -314,10 +334,12 @@ declare const fullApi: ApiFromModules<{
   priority: typeof priority;
   profileImages: typeof profileImages;
   profileWidgets: typeof profileWidgets;
+  publicStats: typeof publicStats;
   push: typeof push;
   redisCloud: typeof redisCloud;
   reports: typeof reports;
   roles: typeof roles;
+  savedMessages: typeof savedMessages;
   search: typeof search;
   serverProfiles: typeof serverProfiles;
   sidebar: typeof sidebar;
@@ -332,6 +354,8 @@ declare const fullApi: ApiFromModules<{
   typing: typeof typing;
   uploadLimits: typeof uploadLimits;
   users: typeof users;
+  webPush: typeof webPush;
+  webPushNode: typeof webPushNode;
 }>;
 
 /**

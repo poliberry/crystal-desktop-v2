@@ -101,12 +101,20 @@ export function StatusBubble({
       )}
       <span
         className={cn(
-          "min-w-0 truncate px-3 py-1 mt-4 -ml-3 text-sm font-medium text-white",
+          "min-w-0 px-3 py-1 mt-4 -ml-3 text-sm font-medium text-white",
+          // Up to two lines before it's cut, rather than one: the bubble only
+          // has the width beside the avatar, which a one-line status of
+          // twenty-odd characters already fills. A field being edited stays on
+          // one line, since clamping is meant for text, not for an input.
+          children ? "truncate" : "line-clamp-2 break-words",
           // A thought is rounder than a speech bubble; the difference is small
           // but it's the same difference the tails make, and the two agree.
-          thought ? "rounded-full" : "rounded-2xl",
+          // `rounded-full` on a two-line bubble turns into a lozenge, so the
+          // thought is rounded by a fixed radius instead.
+          thought ? "rounded-[1.25rem]" : "rounded-2xl",
           SURFACE
         )}
+        title={children ? undefined : text}
       >
         {children ?? text}
       </span>

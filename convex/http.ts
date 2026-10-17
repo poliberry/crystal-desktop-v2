@@ -166,7 +166,9 @@ http.route({
       if (!r.ok) {
         const text = await r.text().catch(() => "");
         console.error(`R2 PUT failed ${r.status} ${text.slice(0, 500)} for ${key}`);
-        return new Response(`R2 PUT failed: ${r.status} ${text.slice(0, 200)}`, { status: 502, headers: R2_CORS_HEADERS });
+        // The storage provider's response (bucket names, request ids, signing detail) is for the
+        // logs, not for whoever is uploading.
+        return new Response("Upload failed", { status: 502, headers: R2_CORS_HEADERS });
       }
       const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
       const publicUrl = base ? `${base.replace(/\/$/, "")}/${key}` : endpoint;
@@ -175,7 +177,7 @@ http.route({
       });
     } catch (e) {
       console.error("R2 proxy error", String(e));
-      return new Response(`R2 proxy error: ${String(e)}`, { status: 500, headers: R2_CORS_HEADERS });
+      return new Response("Upload failed", { status: 500, headers: R2_CORS_HEADERS });
     }
   }),
 });

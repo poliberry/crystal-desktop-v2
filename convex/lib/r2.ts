@@ -29,7 +29,7 @@ export function r2PublicUrlForKey(key: string): string {
   return `${base.replace(/\/$/, "")}/${key.replace(/^\//, "")}`;
 }
 
-function r2KeyFromUrl(url: string | null | undefined): string | null {
+export function r2KeyFromUrl(url: string | null | undefined): string | null {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
   if (!url || !base) return null;
   const prefix = base.replace(/\/$/, "") + "/";
@@ -46,14 +46,16 @@ function r2KeyFromUrl(url: string | null | undefined): string | null {
  * Delete an R2 object by key or by public URL. No-op if R2 not configured or key null.
  * Called when an asset is replaced or removed — mirrors ctx.storage.delete for Convex.
  */
-export async function r2DeleteByKey(key: string | null | undefined): Promise<void> {
+export async function r2DeleteByKey(key: string | null | undefined, opts: { allowProtected?: boolean } = {}): Promise<void> {
   if (!key || !isR2Enabled()) return;
   // Marketplace artwork is one file shared by everyone who owns the item. Every
   // "replace my picture" path in the app deletes what it replaces, and a buyer
   // swapping a purchased decoration for something else must not delete it for
   // every other owner. Only staff removing the SKU would, and they don't: the
   // files of an archived item stay.
-  if (key.startsWith(PROTECTED_PREFIX)) return;
+  // `allowProtected` is only passed by `cdnInternal.deleteCreationObject`, after `creationFiles` has
+  // checked that no listing, submission or buyer still uses the file.
+  if (key.startsWith(PROTECTED_PREFIX) && !opts.allowProtected) return;
   const accountId = process.env.R2_ACCOUNT_ID!;
   const bucket = process.env.R2_BUCKET!;
   const accessKey = process.env.R2_ACCESS_KEY_ID!;

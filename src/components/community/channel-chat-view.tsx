@@ -26,6 +26,8 @@ import { useWindowFocus } from "@/hooks/use-window-focus";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import type { ReplyDraft } from "@/lib/reply";
 import { ChevronLeftIcon, ChevronRightIcon } from "@animateicons/react/lucide";
+import { MobileBackButton } from "@/components/mobile/mobile-shell";
+import { UsersRound } from "lucide-react";
 
 interface ChannelChatViewProps {
   channelId: Id<"channels">;
@@ -117,10 +119,11 @@ export function ChannelChatView({
           opacity={channel?.backgroundOpacity}
         />
         <div className="relative flex h-12 shrink-0 items-center gap-2 px-2">
+          <MobileBackButton />
           <Hash className="size-4 shrink-0 text-muted-foreground" />
           <p className="shrink-0 text-sm font-semibold">{name}</p>
           {topic && (
-            <p className="truncate text-xs text-muted-foreground">— {topic}</p>
+            <p className="truncate text-xs text-muted-foreground max-md:hidden">— {topic}</p>
           )}
 
           <TooltipProvider>
@@ -129,14 +132,19 @@ export function ChannelChatView({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ml-auto size-7"
+                  className="ml-auto size-7 max-md:size-10"
                   onClick={toggleMembers}
+                  aria-label={showMembers ? "Hide member list" : "Show member list"}
                 >
+                  {/* On a phone the list is a sheet, and a chevron beside the back arrow reads as a second "back". */}
+                  <UsersRound className="size-5 md:hidden" />
+                  <span className="max-md:hidden">
                   {showMembers ? (
                     <ChevronRightIcon duration={0.8} className="size-4" />
                   ) : (
                     <ChevronLeftIcon duration={0.8} className="size-4" />
                   )}
+                  </span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom">

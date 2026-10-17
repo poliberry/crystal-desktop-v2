@@ -8,6 +8,7 @@ import { isActive } from "./lib/entitlements";
 import { deleteBlocker } from "./lib/skuDelete";
 import { audit, requireStaff } from "./lib/staff";
 import { getCurrentUserOrNull } from "./users";
+import { filesOf, releaseCreationFiles } from "./creationFiles";
 
 /**
  * The catalogue: what is for sale, in what categories, for how much.
@@ -634,6 +635,8 @@ export const deleteSkuRecord = internalMutation({
     const sku = await ctx.db.get(skuId);
     if (!sku) return { deleted: false };
     await ctx.db.delete(skuId);
+    // A creator's artwork goes too, unless someone bought the item (they keep it) or another listing uses it.
+    await releaseCreationFiles(ctx, sku.creatorId, filesOf(sku), [skuId]);
     await audit(ctx, actorId, "catalog.sku.delete", { type: "sku", id: skuId }, `Deleted "${sku.name}" (${sku.slug}) · ${summary}`);
     return { deleted: true };
   },

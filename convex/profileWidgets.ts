@@ -25,9 +25,10 @@ import {
 } from "./_generated/server";
 import { requireMember } from "./communities";
 import { hasBlocked } from "./lib/blocking";
-import { isR2Url, dropR2Url, r2PublicUrlForKey } from "./lib/r2";
+import { r2PublicUrlForKey } from "./lib/r2";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
+import { releaseUrl } from "./lib/files";
 
 /**
  * Ceilings, enforced here rather than in the schema.
@@ -283,14 +284,9 @@ export const upsertWidget = mutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, doc);
-      // A CDN cover that was replaced or removed — Convex-stored ones are
-      // handled by `dropUnreferenced` below, by id.
-      if (existing.imageUrl && existing.imageUrl !== imageUrl && isR2Url(existing.imageUrl)) {
-        await dropR2Url(ctx, existing.imageUrl).catch(() => {});
-      }
       // Whatever the new version no longer points at: the old cover, and any
-      // image field that was removed or re-picked.
-      await dropUnreferenced(ctx, existing, imageStorageId, fields);
+      // image field that was removed or re-picked, on R2 or in Convex storage.
+      await dropUnreferenced(ctx, existing, imageStorageId, fields, imageUrl);
       return existing._id;
     }
 
@@ -307,24 +303,34 @@ export const upsertWidget = mutation({
   },
 });
 
-/** Delete the blobs an edit or a removal orphaned. */
+/**
+ * Delete the files an edit or a removal orphaned: the cover and any image field the new version no
+ * longer uses. Compares by URL as well as storage id, so pictures on R2 (no storage id) go too.
+ */
 async function dropUnreferenced(
   ctx: MutationCtx,
   previous: Doc<"profileWidgets">,
   keptImage: Id<"_storage"> | undefined,
-  keptFields: { storageId?: Id<"_storage"> }[]
+  keptFields: { storageId?: Id<"_storage">; value?: string; kind?: string }[],
+  keptImageUrl?: string
 ): Promise<void> {
-  const kept = new Set<string>();
-  if (keptImage) kept.add(keptImage);
-  for (const f of keptFields) if (f.storageId) kept.add(f.storageId);
+  const keptIds = new Set<string>();
+  const keptUrls = new Set<string>();
+  if (keptImage) keptIds.add(keptImage);
+  if (keptImageUrl) keptUrls.add(keptImageUrl);
+  for (const f of keptFields) {
+    if (f.storageId) keptIds.add(f.storageId);
+    if (f.kind === "image" && f.value) keptUrls.add(f.value);
+  }
 
-  const candidates: (Id<"_storage"> | undefined)[] = [
-    previous.imageStorageId,
-    ...(previous.fields ?? []).map((f) => f.storageId),
+  const candidates: { url?: string; storageId?: Id<"_storage"> }[] = [
+    { url: previous.imageUrl, storageId: previous.imageStorageId },
+    ...(previous.fields ?? []).filter((f) => f.kind === "image").map((f) => ({ url: f.value, storageId: f.storageId })),
   ];
-  for (const id of candidates) {
-    if (!id || kept.has(id)) continue;
-    await ctx.storage.delete(id).catch(() => {});
+  for (const file of candidates) {
+    const url = file.url && !keptUrls.has(file.url) ? file.url : undefined;
+    const storageId = file.storageId && !keptIds.has(file.storageId) ? file.storageId : undefined;
+    await releaseUrl(ctx, url, storageId);
   }
 }
 
@@ -336,9 +342,6 @@ export const removeWidget = mutation({
     if (!widget || widget.userId !== me._id) return;
     await ctx.db.delete(widgetId);
     await dropUnreferenced(ctx, widget, undefined, []);
-    if (widget.imageUrl && isR2Url(widget.imageUrl)) {
-      await dropR2Url(ctx, widget.imageUrl).catch(() => {});
-    }
   },
 });
 

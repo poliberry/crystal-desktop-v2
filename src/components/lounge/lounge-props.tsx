@@ -4,6 +4,7 @@ import { RoomEvent, type Room, type RemoteParticipant } from "livekit-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { SceneSpecProp, ScenePropKind } from "../../../convex/lib/creationSpecs";
+import { isCompanion } from "@/lib/companion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -78,6 +79,8 @@ export function useLoungeProps(room: Room, props: SceneSpecProp[], enabled: bool
     };
     // Somebody arrived: tell them what has been switched, so they see the same room.
     const onJoined = (participant: RemoteParticipant) => {
+      // Screen-share companions (src/lib/companion.ts) can't receive data.
+      if (isCompanion(participant)) return;
       for (const [id, s] of stateRef.current) {
         if (s.ts === 0) continue;
         void room.localParticipant

@@ -25,6 +25,7 @@ import { notifyUsers } from "./notifications";
 import { applyBotPresence, type BotActivity, type BotStatus } from "./presence";
 import { PERMISSIONS, getBasePermissions, getHighestRolePosition, requireAbove } from "./permissions";
 import { MAX_SOUND_BYTES } from "./uploadLimits";
+import { releaseUrl } from "./lib/files";
 import { effectiveFileType } from "./lib/mediaType";
 import { fingerprintOf } from "./lib/e2eeCrypto";
 
@@ -772,8 +773,8 @@ const ops: Record<string, Handler> = {
     requirePermission(communityPermissions(a), PERMISSIONS.MANAGE_EMOJIS, "remove emojis");
     const e = await ctx.db.get(ident(ctx, "communityEmojis", req.params.emojiId, "That emoji"));
     if (!e || e.communityId !== a.community._id) return fail(404, "That emoji wasn't found.");
-    if (e.storageId) await ctx.storage.delete(e.storageId).catch(() => undefined);
     await ctx.db.delete(e._id);
+    await releaseUrl(ctx, e.imageUrl, e.storageId);
     return { data: { ok: true } };
   },
 

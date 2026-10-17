@@ -57,7 +57,7 @@ export function IncomingCall() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] w-80 overflow-hidden rounded-xl border border-border/60 bg-card/95 shadow-2xl backdrop-blur">
+    <div className="fixed bottom-4 right-4 z-[100] w-80 max-md:inset-x-3 max-md:bottom-auto max-md:top-[calc(0.75rem+env(safe-area-inset-top))] max-md:w-auto overflow-hidden rounded-xl border border-border/60 bg-card/95 shadow-2xl backdrop-blur">
       <div className="flex items-center gap-3 p-4">
         <span className="relative flex shrink-0">
           {/* The pulse is the whole affordance here — a static card reads as

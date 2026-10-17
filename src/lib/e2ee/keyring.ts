@@ -31,6 +31,8 @@ import {
   type MessageContext,
   type MessagePayload,
 } from "./crypto";
+import { isElectron } from "@/lib/desktop";
+
 import { getKeystore } from "./keystore";
 import { deriveStatus, type E2eeStatus, type LocalIdentityFact, type ServerIdentityFact } from "./state";
 
@@ -153,6 +155,11 @@ class Keyring implements E2eeClient {
 
   getSnapshot = (): KeyringSnapshot => this.snap;
 
+  /** The account whose keys are loaded, or null when signed out. */
+  get accountId(): string | null {
+    return this.account;
+  }
+
   private publish(bump: boolean) {
     const status = deriveStatus({
       cryptoAvailable: typeof crypto !== "undefined" && !!crypto.subtle,
@@ -205,6 +212,7 @@ class Keyring implements E2eeClient {
   setServer(identity: { publicKey: string } | null | undefined) {
     this.server = identity === undefined ? undefined : identity === null ? null : { publicKey: identity.publicKey };
     this.publish(false);
+    this.maybeAutoUnlock();
   }
 
   private async loadLocal(userId: string, generation: number) {
@@ -217,6 +225,7 @@ class Keyring implements E2eeClient {
     if (!this.identity) this.identity = identity;
     this.local = this.identity ? { publicKey: this.identity.publicKey } : null;
     this.publish(true);
+    this.maybeAutoUnlock();
   }
 
   private clearCaches() {
@@ -344,11 +353,15 @@ class Keyring implements E2eeClient {
     const cacheKey = this.plainKey(room, authorId, enc);
     const cached = this.plain.get(cacheKey);
     if (cached) return cached;
+    const generation = this.generation;
     const key = await this.roomKey(enc.keyId);
-    if (!key) return null;
+    if (!key || generation !== this.generation) return null;
     try {
       const context: MessageContext = { scope: room.scope, targetId: targetOf(room), keyId: enc.keyId, authorId };
       const payload = await decryptMessage(key, enc, context);
+      // The account changed while this was in flight: its plaintext belongs to the last one, and must
+      // neither be returned nor land in the new account's (just cleared) cache.
+      if (generation !== this.generation) return null;
       this.plain.set(cacheKey, payload);
       return payload;
     } catch {
@@ -534,6 +547,7 @@ class Keyring implements E2eeClient {
         // Old room keys were opened with the old identity; keep nothing from it.
         if (kind === "rotate") this.clearCaches();
         await this.adopt(identity, true);
+        rememberRecoveryKey(this.account, formatRecoverySecret(secret));
       },
     };
   }
@@ -564,6 +578,23 @@ class Keyring implements E2eeClient {
       throw new Error("That recovery key opens a different encryption identity than this account uses now. Reset encryption instead.");
     }
     await this.adopt({ publicKey: server.publicKey, privateKey, fingerprint: await fingerprintOf(server.publicKey) }, false);
+    rememberRecoveryKey(this.account, recoveryKey);
+  }
+
+  /**
+   * On the web, a key that can't be read back from IndexedDB (private browsing, storage cleared or evicted)
+   * would mean typing the recovery key after every refresh. If this browser saved the recovery key, use it:
+   * only when the server has an identity and this device has none, and only once per sign-in. A saved key
+   * that no longer opens the account (reset on another device) is forgotten.
+   */
+  private autoTried = -1;
+  private maybeAutoUnlock() {
+    if (!this.account || !this.server || this.local !== null || this.autoTried === this.generation) return;
+    const saved = savedRecoveryKey(this.account);
+    if (!saved) return;
+    this.autoTried = this.generation;
+    const account = this.account;
+    void this.unlock(saved).catch(() => forgetRecoveryKey(account));
   }
 
   /** Keeps `identity` in memory and, where the platform allows, on disk. */
@@ -587,6 +618,7 @@ class Keyring implements E2eeClient {
     const account = this.account;
     if (!account) return;
     await getKeystore().clear(account);
+    forgetRecoveryKey(account);
     this.identity = null;
     this.local = null;
     this.clearCaches();
@@ -595,6 +627,47 @@ class Keyring implements E2eeClient {
 }
 
 export const keyring = new Keyring();
+
+// --- The recovery key, remembered by this browser ---------------------------------------------------
+//
+// Web only, by request: so a refresh never asks for it again even where the device key can't be kept.
+// It sits in localStorage under the account id, which means anything that can run script on this origin
+// could read it, so it is cleared on sign-out (see auth-state.tsx) and when the device is forgotten. The
+// desktop app keeps its key in the operating system's secure storage instead and never saves this.
+const RECOVERY_PREFIX = "crystal-e2ee-recovery:";
+
+function canRemember(): boolean {
+  return typeof window !== "undefined" && !isElectron() && "localStorage" in window;
+}
+
+export function rememberRecoveryKey(account: string | null, recoveryKey: string) {
+  if (!account || !canRemember()) return;
+  try {
+    localStorage.setItem(RECOVERY_PREFIX + account, recoveryKey.trim().toUpperCase());
+  } catch {}
+}
+
+function savedRecoveryKey(account: string): string | null {
+  if (!canRemember()) return null;
+  try {
+    return localStorage.getItem(RECOVERY_PREFIX + account);
+  } catch {
+    return null;
+  }
+}
+
+function forgetRecoveryKey(account: string) {
+  try {
+    localStorage.removeItem(RECOVERY_PREFIX + account);
+  } catch {}
+}
+
+/** Every saved recovery key in this browser. Called on sign-out. */
+export function forgetAllRecoveryKeys() {
+  try {
+    for (const key of Object.keys(localStorage)) if (key.startsWith(RECOVERY_PREFIX)) localStorage.removeItem(key);
+  } catch {}
+}
 
 export function getE2ee(): E2eeClient {
   return keyring;

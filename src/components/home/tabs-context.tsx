@@ -16,6 +16,7 @@ export type PageTarget =
   | { type: "profile-editor" }
   | { type: "create-community" }
   | { type: "marketplace" }
+  | { type: "search"; query: string }
   | { type: "community-settings"; communityId: Id<"communities"> };
 
 export type TabTarget =
@@ -30,6 +31,7 @@ export function isPageTarget(target: TabTarget): target is PageTarget {
     target.type === "profile-editor" ||
     target.type === "create-community" ||
     target.type === "marketplace" ||
+    target.type === "search" ||
     target.type === "community-settings"
   );
 }
@@ -58,6 +60,8 @@ function tabId(target: TabTarget): string {
       return "create-community";
     case "marketplace":
       return "marketplace";
+    case "search":
+      return "search";
     case "community-settings":
       return `community-settings:${target.communityId}`;
   }
@@ -90,6 +94,8 @@ function tabPath(target: TabTarget): string {
       return "#/create-community";
     case "marketplace":
       return "#/marketplace";
+    case "search":
+      return `#/search?q=${encodeURIComponent(target.query)}`;
     case "community-settings":
       // Its own first segment rather than `#/community/:id/settings`, which
       // is already how a channel whose id is "settings" would be written.
@@ -98,11 +104,18 @@ function tabPath(target: TabTarget): string {
 }
 
 function parseHash(hash: string): TabTarget | null {
-  const parts = hash
-    .replace(/^#/, "")
+  const [rawPath, rawQuery = ""] = hash.replace(/^#/, "").split("?", 2);
+  const parts = rawPath
     .split("/")
     .filter(Boolean);
   if (parts.length === 0) return { type: "home" };
+  // Deep links (notification taps, crystal:// links). They land on the place itself; the extra action
+  // (joining the call, showing Friends) is done by components/deeplink-handler.tsx.
+  if (parts[0] === "friends") return { type: "home" };
+  if (parts[0] === "call" && parts[1] === "dm" && parts[2]) return { type: "dm", conversationId: parts[2] as Id<"conversations"> };
+  if (parts[0] === "call" && parts[1] === "channel" && parts[2] && parts[3]) {
+    return { type: "channel", communityId: parts[2] as Id<"communities">, channelId: parts[3] as Id<"channels"> };
+  }
   if (parts[0] === "dm" && parts[1]) {
     return { type: "dm", conversationId: parts[1] as Id<"conversations"> };
   }
@@ -117,6 +130,7 @@ function parseHash(hash: string): TabTarget | null {
   if (parts[0] === "profile") return { type: "profile-editor" };
   if (parts[0] === "create-community") return { type: "create-community" };
   if (parts[0] === "marketplace") return { type: "marketplace" };
+  if (parts[0] === "search") return { type: "search", query: new URLSearchParams(rawQuery).get("q") ?? "" };
   if (parts[0] === "community-settings" && parts[1]) {
     return { type: "community-settings", communityId: parts[1] as Id<"communities"> };
   }
@@ -221,11 +235,14 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       const target = parseHash(window.location.hash);
       if (!target) return;
       const id = tabId(target);
-      setTabs((prev) =>
-        prev.some((t) => t.id === id) || target.type === "home"
+      setTabs((prev) => {
+        if (target.type === "search" && prev.some((t) => t.id === id)) {
+          return prev.map((t) => (t.id === id ? { ...t, target } : t));
+        }
+        return prev.some((t) => t.id === id) || target.type === "home"
           ? prev
-          : [...prev, { id, target, pinned: false }]
-      );
+          : [...prev, { id, target, pinned: false }];
+      });
       setActiveTabId(id);
     };
     window.addEventListener("popstate", onPopState);
@@ -235,7 +252,12 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   const openTab = useCallback((target: TabTarget) => {
     const id = tabId(target);
     if (id !== activeTabId && !mayLeave(activeTabId)) return;
-    setTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { id, target, pinned: false }]));
+    setTabs((prev) => {
+      if (target.type === "search" && prev.some((t) => t.id === id)) {
+        return prev.map((t) => (t.id === id ? { ...t, target } : t));
+      }
+      return prev.some((t) => t.id === id) ? prev : [...prev, { id, target, pinned: false }];
+    });
     setActiveTabId(id);
   }, [activeTabId, mayLeave]);
 

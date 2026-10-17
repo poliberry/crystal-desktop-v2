@@ -112,6 +112,18 @@ const api = {
       ipcRenderer.on("notifications:navigate", handler);
       return () => ipcRenderer.removeListener("notifications:navigate", handler);
     },
+    /** The background notifier asking for a one-line preview of an encrypted message. Only the
+     * renderer holds keys; the answer goes back to main for the OS toast and nowhere else. */
+    onDecryptRequest: (cb: (request: DecryptRequest) => Promise<string | null>) => {
+      const handler = (_e: IpcRendererEvent, id: string, request: DecryptRequest) => {
+        void Promise.resolve()
+          .then(() => cb(request))
+          .catch(() => null)
+          .then((text) => ipcRenderer.send("notifications:decrypt-result", id, typeof text === "string" ? text : null));
+      };
+      ipcRenderer.on("notifications:decrypt", handler);
+      return () => ipcRenderer.removeListener("notifications:decrypt", handler);
+    },
   },
   badge: {
     /** `overlayDataUrl` is a PNG the renderer drew — see use-app-badge.ts.
@@ -144,6 +156,14 @@ const api = {
       const handler = (_e: IpcRendererEvent, search: string) => cb(search);
       ipcRenderer.on("install:open", handler);
       return () => ipcRenderer.removeListener("install:open", handler);
+    },
+  },
+  /** Fires when a link to a place in the app arrives (crystal://dm/<id> and the like): its hash route. */
+  routes: {
+    onOpen: (cb: (hash: string) => void) => {
+      const handler = (_e: IpcRendererEvent, hash: string) => cb(hash);
+      ipcRenderer.on("route:open", handler);
+      return () => ipcRenderer.removeListener("route:open", handler);
     },
   },
   pip: {
@@ -263,5 +283,14 @@ const api = {
 type NavigateTarget =
   | { kind: "conversation"; conversationId: string }
   | { kind: "channel"; communityId: string; channelId: string };
+
+/** Mirrors `DecryptRequest` in backgroundNotifier.ts (preload can't share its module graph). */
+type DecryptRequest = {
+  userId: string;
+  scope: "conversation" | "channel";
+  targetId: string;
+  authorId: string;
+  enc: { keyId: string; iv: string; ct: string };
+};
 
 contextBridge.exposeInMainWorld("desktopAPI", api);

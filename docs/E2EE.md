@@ -13,6 +13,9 @@ Not encrypted, on purpose:
 - **Attachments.** File bytes and file names stay as they are (R2/CDN). A follow-up has to encrypt
   them with the same room key. Until then an attachment is visible to the server.
 - **Reactions, pins, reply ids, timestamps, authors, read markers.** These are routing metadata.
+- **Saved-for-me bookmarks and their reminder times** (`savedMessages`). A row is a message
+  reference plus times, never text (there is deliberately no note field). `savedMessages.list`
+  returns the saved message's `enc` and the client decrypts it like any other row.
 - **`loungeMessages`, `forumPosts`, `forumReplies`, `amaQuestions`, `supportTicketMessages`.** The
   first four are public or semi-public rooms; support tickets must be readable by staff.
 - **Server-authored system messages** (`system:crystal`). They stay plaintext (`text`, no `enc`).
@@ -63,6 +66,13 @@ holds fixed test vectors that both must pass.
    the recovery secret. The private key is stored on the device: Electron main process encrypts it
    with `safeStorage`; the web build keeps a non-extractable `CryptoKey` in IndexedDB. A new device
    signs in, then enters the recovery secret to fetch and decrypt `e2eeIdentities.backup`.
+   The client prompts for this right after sign-up (registering needs a session, so it can't happen
+   on the sign-up screen) and once per launch while setup or unlock is outstanding
+   (`src/components/auth/e2ee-onboarding.tsx`). The person may defer it; nothing falls back to
+   plaintext meanwhile, sending just waits for encryption. The identity is uploaded only after they
+   confirm they stored the recovery secret (and, for full accounts, retype its last group). Losing
+   the secret with no unlocked device left means `rotateIdentity`: a new identity, and earlier
+   epochs stay unreadable to that person.
 2. **Epochs.** A conversation/channel has `e2eeKeys` rows, one per epoch. The current epoch is the
    highest one with no `supersededAt`. Each row has one `e2eeKeyWraps` row per recipient.
 3. **Sending.** The sender asks `e2eeKeys.current({ scope, targetId })`. If there is no epoch, or the

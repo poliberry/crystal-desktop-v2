@@ -1,7 +1,9 @@
 "use client";
 
+import { useMutation } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useIsOnline } from "@/hooks/use-is-online";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits";
@@ -184,14 +186,19 @@ export function useComposerAttachments(
     [generateUploadUrl, pending.length]
   );
 
+  const discardUpload = useMutation(api.cdn.discardUpload);
   const removeAt = useCallback(
     (index: number) => {
+      // Already on the CDN: take it back off, since nothing will ever point at it now. Outside the
+      // state updater, which React may run twice.
+      const removed = pending[index];
+      if (removed?.cdnKey) void discardUpload({ key: removed.cdnKey }).catch(() => {});
       setPending((prev) => {
         revoke(prev[index]?.previewUrl);
         return prev.filter((_, i) => i !== index);
       });
     },
-    [revoke]
+    [revoke, discardUpload, pending]
   );
 
   const clear = useCallback(() => {

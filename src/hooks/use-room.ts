@@ -22,6 +22,7 @@ import {
 } from "@/lib/system-audio";
 import { getDesktopAPI, isElectron } from "@/lib/desktop";
 import { applyNoiseSuppression, localMicrophoneTrack } from "@/lib/noise-filter";
+import { findCompanion, ownerIdentity, realRemoteParticipants } from "@/lib/companion";
 import {
   resolveStreamContentHint,
   resolveStreamEncoding,
@@ -298,7 +299,10 @@ export function useRoom() {
     }
     for (const p of room.remoteParticipants.values()) {
       const pub = p.getTrackPublication(Track.Source.ScreenShare);
-      if (pub && !pub.isMuted) sharing.push(p.identity);
+      // A screen-share companion (see src/lib/companion.ts) shares on behalf of
+      // its owner, so the share is listed under the owner's identity.
+      const identity = ownerIdentity(p);
+      if (pub && !pub.isMuted && !sharing.includes(identity)) sharing.push(identity);
     }
     setScreenShares(sharing);
   }, [room]);
@@ -323,7 +327,9 @@ export function useRoom() {
 
   useEffect(() => {
     const refreshParticipants = () => {
-      setParticipants(Array.from(room.remoteParticipants.values()));
+      // Companions are never participants of their own — their tracks are
+      // attributed to the owner (see src/lib/companion.ts).
+      setParticipants(realRemoteParticipants(room));
     };
     const onParticipantsChanged = () => {
       refreshParticipants();
@@ -954,15 +960,21 @@ export function useRoom() {
   // --- remote screen-share subscriptions ---------------------------------
 
   /** Moves a remote participant's screen-share video + audio publications to
-   * the given subscription state together, as one "watch" action. */
+   * the given subscription state together, as one "watch" action — including
+   * those published by their screen-share companion, if they have one. */
   const setScreenShareSubscribed = useCallback(
     (participantIdentity: string, subscribed: boolean) => {
+      const holders: Participant[] = [];
       const participant: Participant | undefined =
         room.getParticipantByIdentity(participantIdentity);
-      if (!participant || participant === room.localParticipant) return;
-      for (const pub of participant.trackPublications.values()) {
-        if (isScreenShareSource(pub.source)) {
-          (pub as RemoteTrackPublication).setSubscribed(subscribed);
+      if (participant && participant !== room.localParticipant) holders.push(participant);
+      const companion = findCompanion(room, participantIdentity);
+      if (companion) holders.push(companion);
+      for (const holder of holders) {
+        for (const pub of holder.trackPublications.values()) {
+          if (isScreenShareSource(pub.source)) {
+            (pub as RemoteTrackPublication).setSubscribed(subscribed);
+          }
         }
       }
     },

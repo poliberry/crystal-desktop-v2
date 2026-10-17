@@ -21,6 +21,7 @@ import {
   Wallet,
   ShieldCheck,
   User,
+  Eye,
 } from "lucide-react";
 
 import { useOpenCustomCss } from "@/components/settings/custom-css-dialog";
@@ -34,6 +35,7 @@ import { AboutTab } from "@/components/settings/tabs/about-tab";
 import { AccessibilityTab } from "@/components/settings/tabs/accessibility-tab";
 import { AccountTab } from "@/components/settings/tabs/account-tab";
 import { SecurityTab } from "@/components/settings/tabs/security-tab";
+import { PrivacyTab } from "@/components/settings/tabs/privacy-tab";
 import { BillingTab } from "@/components/settings/tabs/billing-tab";
 import { BlockedTab } from "@/components/settings/tabs/blocked-tab";
 import { CreatorTab } from "@/components/settings/tabs/creator-tab";
@@ -98,6 +100,7 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
       { value: "profile", label: "Edit Profile", icon: User, opens: "profile-editor" },
       { value: "account", label: "Account", icon: KeyRound },
       { value: "security", label: "Security", icon: ShieldCheck },
+      { value: "privacy", label: "Privacy Center", icon: Eye },
       { value: "blocked", label: "Blocked & Ignored", icon: Ban },
       { value: "updates", label: "Updates", icon: Download },
     ],
@@ -138,6 +141,7 @@ const SECTION_ORDER = [...NAVIGATION.flatMap((group) => group.children.map((c) =
 const SECTION_META: Record<string, { title: string; description: string }> = {
   account: { title: "Account", description: "Your sign-in, username and personal details." },
   security: { title: "Security", description: "Two-step verification, passkeys and signed-in devices." },
+  privacy: { title: "Privacy Center", description: "See what Crystal uses, how it is protected, and how to manage your data." },
   blocked: { title: "Blocked & ignored", description: "People you've muted for a while or shut out for good." },
   updates: { title: "Updates", description: "Keep Crystal up to date." },
   billing: { title: "Billing", description: "Payment methods, receipts and help with a payment." },
@@ -370,6 +374,7 @@ export function SettingsShell({
               {section === "servers" && <ServerProfilesTab />}
               {section === "account" && <AccountTab />}
               {section === "security" && <SecurityTab />}
+              {section === "privacy" && <PrivacyTab />}
               {section === "blocked" && <BlockedTab />}
               {section === "billing" && <BillingTab />}
               {section === "subscriptions" && <SubscriptionsTab />}

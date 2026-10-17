@@ -16,6 +16,7 @@ import { useFeaturedSource } from "@/components/call/use-featured-source";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { GLASS_BASE, GLASS_DARK } from "@/components/sidebar/glass";
+import { useCompanion } from "@/lib/companion";
 import { cn } from "@/lib/utils";
 
 /** 16:9, small enough to sit over a message list without being in the way. */
@@ -36,7 +37,7 @@ const DRAG_THRESHOLD_PX = 4;
  * track would double it.
  */
 function FeaturedVideo({
-  participant,
+  participant: owner,
   kind,
   fallback,
 }: {
@@ -44,6 +45,13 @@ function FeaturedVideo({
   kind: CallVideoKind;
   fallback: React.ReactNode;
 }) {
+  // A mobile sharer's screen comes from their companion connection — see src/lib/companion.ts.
+  const { controller } = useCall();
+  const companion = useCompanion(
+    controller.room,
+    kind === "screen" && !owner.isLocal ? owner.identity : null
+  );
+  const participant: Participant = kind === "screen" && companion ? companion : owner;
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasVideo, setHasVideo] = useState(false);
 
@@ -246,7 +254,7 @@ export function CallPip() {
           ? "overflow-hidden rounded-xl border border-border/60 bg-black shadow-2xl"
           : cn(GLASS_BASE, GLASS_DARK, "shadow-2xl"),
         // Last, so the glass's own `relative` can't win over `fixed`.
-        "group/pip fixed right-4 bottom-4 z-40",
+        "group/pip fixed right-4 bottom-4 z-40 max-md:right-3 max-md:bottom-[calc(4.5rem+env(safe-area-inset-bottom))] max-md:w-44",
       )}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

@@ -1,0 +1,390 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="brand.css" />
+<script src="icons.js"></script>
+<style>
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); }
+  .scene { position: absolute; inset: 0; opacity: 0; }
+  .abs { position: absolute; will-change: transform, opacity; }
+  .word { display: inline-block; will-change: transform, opacity, filter; }
+  .center { left: 0; right: 0; text-align: center; }
+  .bubble-row { display: flex; gap: 18px; align-items: flex-start; }
+  .bubble-row img { width: 52px; height: 52px; border-radius: 999px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="lights" id="lights"></div>
+
+  <!-- 1. Opening line (0–4s) -->
+  <section class="scene" id="s1">
+    <img class="abs" id="s1-logo" src="assets/logo.svg" style="width:110px; left:905px; top:250px;" />
+    <h1 class="abs display center" id="s1-title" style="top:420px; font-size:150px;">
+      <span class="word">Your</span> <span class="word">group</span> <span class="word">chat</span><br />
+      <span class="word">deserves</span> <span class="word">a</span>
+      <span class="word" id="s1-home" style="position:relative;"><span class="gradient">real home.</span>
+        <svg id="s1-underline" viewBox="0 0 300 24" preserveAspectRatio="none" style="position:absolute; left:0; bottom:-26px; width:100%; height:30px; color:var(--emerald-300);">
+          <path pathLength="1" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" d="M4 16c38-7 81-11 128-9 39 2 75 7 108 4 18-2 36-5 56-9M30 20c52-5 109-6 170-2" />
+        </svg>
+      </span>
+    </h1>
+  </section>
+
+  <!-- 2. The product (4–8s) -->
+  <section class="scene" id="s2">
+    <h2 class="abs display center" id="s2-title" style="top:62px; font-size:76px;">
+      <span class="word">All</span> <span class="word">your</span> <span class="word">people.</span> <span class="word gradient">One</span> <span class="word gradient">place.</span>
+    </h2>
+    <div class="abs" id="s2-shotwrap" style="left:690px; top:262px; width:1030px; perspective:2200px;">
+      <div class="shot" id="s2-shot"><img src="assets/shots/hero-general.webp" /></div>
+    </div>
+    <img class="abs card-img" id="s2-jordan" src="assets/shots/profile-jordan.webp" style="left:250px; top:262px; width:330px;" />
+    <div class="abs pill" id="s2-maya" style="left:1200px; top:168px; padding:10px 26px 10px 10px; font-size:26px;">
+      <span style="position:relative;"><img src="assets/avatars/maya.svg" style="width:48px; height:48px; border-radius:999px; display:block;" />
+        <span style="position:absolute; right:-2px; bottom:-2px; width:16px; height:16px; border-radius:999px; background:#34d399; box-shadow:0 0 0 4px #16191f;"></span></span>
+      <span style="color:rgb(255 255 255/0.85)">Maya is playing <b style="color:#fff">Stardew Valley</b></span>
+    </div>
+    <div class="abs hand" id="s2-note" style="left:240px; top:965px; font-size:46px; color:var(--amber-100); transform-origin:left center;">not just “online” ✦</div>
+  </section>
+
+  <!-- 3. Statuses (8–12s) -->
+  <section class="scene" id="s3">
+    <div class="abs hand" id="s3-note" style="left:150px; top:210px; font-size:52px; color:var(--sky-200);">a bit more than a green dot</div>
+    <h2 class="abs display" id="s3-title" style="left:150px; top:290px; font-size:124px; width:900px;">
+      <span class="word">See</span> <span class="word">what</span><br /><span class="word">everyone’s</span><br /><span class="word gradient">up to.</span>
+    </h2>
+    <div class="abs" id="s3-chips" style="left:150px; top:760px; width:860px; display:flex; flex-wrap:wrap; gap:16px;">
+      <span class="chip" style="padding:14px 26px; font-size:28px;">🌱 Watering the crops</span>
+      <span class="chip" style="padding:14px 26px; font-size:28px;">☕ Back in 10, making coffee</span>
+      <span class="chip" style="padding:14px 26px; font-size:28px;">🎲 Planning Friday’s game night</span>
+      <span class="chip" style="padding:14px 26px; font-size:28px;">🎧 Stardew Valley Overture</span>
+    </div>
+    <img class="abs card-img" id="s3-sam" src="assets/shots/profile-sam.webp" style="left:1030px; top:150px; width:390px;" />
+    <img class="abs card-img" id="s3-members" src="assets/shots/members.webp" style="left:1460px; top:300px; width:360px;" />
+  </section>
+
+  <!-- 4. The group (12–16s) -->
+  <section class="scene" id="s4">
+    <div class="abs hand" id="s4-note" style="left:150px; top:250px; font-size:52px; color:var(--emerald-200);">meet the greenhouse ↓</div>
+    <h2 class="abs display" id="s4-title" style="left:150px; top:330px; font-size:116px; width:720px;">
+      <span class="word">Four</span> <span class="word">friends.</span><br /><span class="word">One</span> <span class="word">farm.</span><br /><span class="word gradient">Too</span> <span class="word gradient">many</span> <span class="word gradient">fish.</span>
+    </h2>
+    <div class="abs tile" id="s4-card" style="left:930px; top:150px; width:840px; height:780px; padding:36px 40px; background:#121419;">
+      <div style="display:flex; align-items:center; gap:14px; font-size:26px; padding-bottom:22px; border-bottom:1px solid rgb(255 255 255/0.07);">
+        <img src="assets/avatars/greenhouse.svg" style="width:38px; height:38px; border-radius:10px;" />
+        <b style="color:rgb(255 255 255/0.9)">The Greenhouse</b><span style="color:rgb(255 255 255/0.3)">/</span><span class="muted"># game-chat</span>
+      </div>
+      <div id="s4-msgs" style="position:relative; height:640px;"></div>
+    </div>
+  </section>
+
+  <!-- 5. Gaming (16–20s) -->
+  <section class="scene" id="s5">
+    <div class="abs hand center" id="s5-note" style="top:96px; font-size:50px; color:var(--violet-200);">for game night</div>
+    <h2 class="abs display center" id="s5-title" style="top:160px; font-size:112px;">
+      <span class="word">Built</span> <span class="word">to</span> <span class="word gradient">play.</span>
+    </h2>
+    <div class="abs" id="s5-grid" style="left:160px; top:380px; width:1600px; display:grid; grid-template-columns:repeat(3,1fr); gap:28px;"></div>
+  </section>
+
+  <!-- 6. Privacy (20–24s) -->
+  <section class="scene" id="s6">
+    <div class="abs icon" id="s6-lock" style="left:917px; top:150px; width:86px; height:86px; border-radius:24px; background:rgb(110 231 183/0.1); color:var(--emerald-200);"></div>
+    <h2 class="abs display center" id="s6-title" style="top:280px; font-size:96px;">
+      <span class="word">Locked</span> <span class="word">before</span> <span class="word">it</span> <span class="word">leaves</span><br /><span class="word gradient">your</span> <span class="word gradient">device.</span>
+    </h2>
+    <div class="abs" id="s6-server" style="left:310px; top:600px; width:1300px; padding:26px 32px; border-radius:22px; border:1px solid rgb(255 255 255/0.08); background:rgb(0 0 0/0.35);">
+      <div class="mono" style="font-size:17px; letter-spacing:0.16em; text-transform:uppercase; color:rgb(255 255 255/0.32); margin-bottom:10px;">What the server sees</div>
+      <div class="mono" id="s6-cipher" style="font-size:24px; color:rgb(255 255 255/0.4); white-space:nowrap; overflow:hidden;"></div>
+    </div>
+    <div class="abs" id="s6-alex" style="left:310px; top:780px; width:1300px; padding:26px 32px; border-radius:22px; border:1px solid rgb(167 243 208/0.18); background:rgb(110 231 183/0.06);">
+      <div class="mono" style="font-size:17px; letter-spacing:0.16em; text-transform:uppercase; color:rgb(167 243 208/0.65); margin-bottom:10px;">What Alex sees</div>
+      <div id="s6-plain" style="font-size:34px; color:rgb(255 255 255/0.9); white-space:nowrap;"></div>
+    </div>
+  </section>
+
+  <!-- 7. Montage (24–28s) -->
+  <section class="scene" id="s7">
+    <div class="abs" id="s7-frame" style="left:260px; top:200px; width:1400px;"></div>
+    <h2 class="abs display center" id="s7-caption" style="top:70px; font-size:84px;"></h2>
+  </section>
+
+  <!-- 8. End card (28–30s) -->
+  <section class="scene" id="s8">
+    <div class="abs center" id="s8-brand" style="top:300px; display:flex; justify-content:center; align-items:center; gap:28px;">
+      <img src="assets/logo.svg" style="width:118px;" /><span class="bold" style="font-size:118px;">Crystal</span>
+    </div>
+    <h2 class="abs display center" id="s8-line" style="top:480px; font-size:104px;"><span class="gradient">Bring your people.</span></h2>
+    <div class="abs center" id="s8-cta" style="top:680px; display:flex; justify-content:center; gap:22px; align-items:center;">
+      <span class="cta" style="padding:22px 38px; font-size:36px;">usecrystal.app</span>
+      <span class="badge" style="padding:16px 28px; font-size:28px;">✦ Free, and still in beta</span>
+    </div>
+  </section>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------------------------------
+// Timing helpers. Everything is a pure function of `t` (seconds), so a frame always renders the same.
+// ---------------------------------------------------------------------------------------------------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, d) => clamp((t - a) / d);
+const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+const easeExpo = (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x));
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+/** A soft spring that overshoots a little and settles in ~0.6s. */
+const spring = (s) => (s <= 0 ? 0 : 1 - Math.exp(-7.5 * s) * Math.cos(11 * s));
+const $ = (id) => document.getElementById(id);
+const BEAT = 0.5;
+
+function sceneOpacity(t, start, end, fadeIn = 0.12, fadeOut = 0.12) {
+  if (t < start || t > end) return 0;
+  return Math.min(fadeIn ? prog(t, start, fadeIn) : 1, fadeOut ? 1 - prog(t, end - fadeOut, fadeOut) : 1);
+}
+/** Words rise in with a little blur, Apple-keynote style. */
+function revealWords(container, t, start, step) {
+  const words = container.querySelectorAll(".word");
+  words.forEach((w, i) => {
+    const x = easeExpo(prog(t, start + i * step, 0.55));
+    w.style.opacity = x;
+    w.style.transform = `translateY(${(1 - x) * 46}px)`;
+    w.style.filter = `blur(${(1 - x) * 10}px)`;
+  });
+}
+function pop(el, t, start, from = 0.6) {
+  const s = spring(t - start);
+  el.style.opacity = clamp((t - start) / 0.12);
+  el.style.transform = `scale(${from + (1 - from) * s})`;
+  return s;
+}
+function slideUp(el, t, start, dist = 120, rot = 0, dur = 0.7) {
+  const x = easeExpo(prog(t, start, dur));
+  el.style.opacity = clamp((t - start) / 0.2);
+  el.style.transform = `translateY(${(1 - x) * dist}px) rotate(${rot}deg)`;
+  return x;
+}
+function float(t, phase = 0, amp = 7) {
+  return Math.sin((t + phase) * 1.6) * amp;
+}
+function icon(name, size) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${window.ICONS[name]}</svg>`;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Content built once.
+// ---------------------------------------------------------------------------------------------------
+const PEOPLE = {
+  maya: ["Maya Chen", "assets/avatars/maya.svg", "var(--rose-200)"],
+  jordan: ["Jordan Lee", "assets/avatars/jordan.svg", "var(--violet-200)"],
+  sam: ["Sam Patel", "assets/avatars/sam.svg", "var(--emerald-200)"],
+  alex: ["Alex Rivera", "assets/avatars/alex.svg", "var(--sky-200)"],
+};
+const CHAT = [
+  ["maya", "finally finished the greenhouse in stardew!! 🍇"],
+  ["jordan", "wait how. we've been broke for two seasons"],
+  ["maya", "I may have sold all of your fish 🙃"],
+  ["jordan", "MAYA. the legend was in there"],
+  ["sam", "lmao. I put a glass roof on the minecraft base"],
+  ["alex", "screenshot or it didn't happen 👀"],
+];
+const CHAT_TIMES = [12.25, 12.85, 13.45, 14.05, 14.65, 15.25];
+$("s4-msgs").innerHTML = CHAT.map(([who, text], i) => {
+  const [name, avatar, colour] = PEOPLE[who];
+  return `<div class="bubble-row" id="msg${i}" style="margin-top:${i ? 30 : 30}px;">
+    <img src="${avatar}" /><div><div style="font-size:23px; font-weight:700; color:${colour};">${name}</div>
+    <div style="font-size:28px; color:rgb(255 255 255/0.85); margin-top:2px;">${text}</div></div></div>`;
+}).join("");
+
+const GAMING = [
+  ["gamepad-2", "Game detection", "Shows what you’re playing, automatically."],
+  ["swords", "Clans", "Rosters, ranks and roles for your squad."],
+  ["users", "Looking for group", "Open a slot. Friends join in one tap."],
+  ["calendar-days", "Scrims & events", "RSVPs, lineups and a cap on numbers."],
+  ["sparkles", "Lounges", "Hang out in a little 2D room together."],
+  ["monitor-up", "1080p60 screen share", "With native system audio on every desktop."],
+];
+$("s5-grid").innerHTML = GAMING.map(([ic, title, copy], i) => `
+  <div class="tile" id="tile${i}" style="padding:34px 36px 38px;">
+    <span class="icon" style="width:64px; height:64px; background:rgb(196 181 253/0.12); color:var(--violet-200);">${icon(ic, 32)}</span>
+    <div class="bold" style="font-size:38px; margin-top:24px;">${title}</div>
+    <div style="font-size:24px; line-height:1.35; color:rgb(255 255 255/0.55); margin-top:8px;">${copy}</div>
+  </div>`).join("");
+$("s6-lock").innerHTML = icon("lock", 40);
+
+const MONTAGE = [
+  [24.0, "assets/shots/10-community-overview.webp", "Communities."],
+  [24.5, "assets/shots/dm.webp", "DMs."],
+  [25.0, "assets/shots/08-marketplace.webp", "Make it yours."],
+  [25.5, "assets/shots/09-command-palette.webp", "Find anything."],
+  [26.0, "assets/shots/05-profile-card.webp", "Profiles."],
+  [26.5, "assets/shots/02-game-chat.webp", "Game chat."],
+  [27.0, "studio", "Build bots."],
+  [27.5, "assets/shots/hero-general.webp", "Your people."],
+];
+$("s7-frame").innerHTML = MONTAGE.map(([, src], i) =>
+  src === "studio"
+    ? `<div class="shot abs" id="m${i}" style="left:120px; right:120px; top:60px; padding:0; background:#0e1116;">
+        <div class="mono" style="padding:20px 28px; border-bottom:1px solid rgb(255 255 255/0.07); color:rgb(255 255 255/0.45); font-size:22px; display:flex; gap:12px; align-items:center;"><span style="color:var(--amber-200)">${icon("code-xml", 24)}</span> fish-alarm.ts</div>
+        <pre class="mono" style="padding:34px 40px; font-size:27px; line-height:1.7; color:rgb(255 255 255/0.82);"><span style="color:var(--violet-300)">import</span> { Client, Events } <span style="color:var(--violet-300)">from</span> <span style="color:var(--emerald-200)">"@crystal/bot"</span>;
+
+<span style="color:var(--violet-300)">const</span> client = <span style="color:var(--violet-300)">new</span> <span style="color:var(--sky-200)">Client</span>();
+client.<span style="color:var(--sky-200)">on</span>(Events.MessageCreate, <span style="color:var(--violet-300)">async</span> (message) =&gt; {
+  <span style="color:var(--violet-300)">if</span> (message.content.<span style="color:var(--sky-200)">includes</span>(<span style="color:var(--emerald-200)">"fish"</span>)) {
+    <span style="color:var(--violet-300)">await</span> message.<span style="color:var(--sky-200)">react</span>(<span style="color:var(--emerald-200)">"🐟"</span>);
+  }
+});</pre></div>`
+    : src.includes("marketplace")
+      // Cropped to the featured banner: the item row below it shows other people's listings.
+      ? `<div class="shot abs" id="m${i}" style="left:0; right:0; top:150px;"><div style="height:405px; overflow:hidden; border-radius:12px;"><img src="${src}" /></div></div>`
+      : `<div class="shot abs" id="m${i}" style="left:0; right:0; top:0;"><img src="${src}" /></div>`
+).join("");
+
+const CIPHER = "5VDmbayV26pk3FOcMETt8qdYnOBbCJYQy80W_XqxcYvgZvucC_QMDT0cm4gLKGY7wZe7VD8YtY0k7OmAJLLAQEz9x8DRel6oAh";
+const PLAIN = "jordan doesn’t know about the fish thing yet, don’t tell him 🤫";
+const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+/** Deterministic pseudo-random, so a frame always scrambles the same way. */
+function rand(n) { const x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); }
+
+// ---------------------------------------------------------------------------------------------------
+// The frame.
+// ---------------------------------------------------------------------------------------------------
+window.render = function render(t) {
+  // Background lights drift slowly; they breathe a little on the drop.
+  const drop = t >= 4 ? Math.exp(-(t - 4) * 3) : 0;
+  $("lights").style.transform = `translate(${Math.sin(t * 0.25) * 30}px, ${Math.cos(t * 0.2) * 16}px) scale(${1.04 + drop * 0.08})`;
+
+  // 1 ── opening line
+  const s1 = $("s1");
+  s1.style.opacity = sceneOpacity(t, 0, 4.0, 0.3, 0.18);
+  const logo = $("s1-logo");
+  const lx = easeOut(prog(t, 0.2, 0.9));
+  logo.style.opacity = lx * (1 - prog(t, 2.4, 0.4));
+  logo.style.transform = `scale(${0.88 + 0.12 * lx}) translateY(${-prog(t, 2.4, 0.5) * 30}px)`;
+  const words = $("s1-title").querySelectorAll(".word");
+  [1.0, 1.5, 2.0, 2.5, 2.75, 3.0].forEach((start, i) => {
+    const x = easeExpo(prog(t, start, 0.55));
+    words[i].style.opacity = x;
+    words[i].style.transform = `translateY(${(1 - x) * 50}px)`;
+    words[i].style.filter = `blur(${(1 - x) * 12}px)`;
+  });
+  $("s1-title").style.transform = `translateY(${-easeInOut(prog(t, 2.4, 0.6)) * 110}px) scale(${1 + prog(t, 3.8, 0.2) * 0.05})`;
+  $("s1-underline").querySelector("path").style.strokeDashoffset = 1 - easeInOut(prog(t, 3.2, 0.6));
+  $("s1-underline").querySelector("path").style.strokeDasharray = 1;
+
+  // 2 ── the product
+  $("s2").style.opacity = sceneOpacity(t, 4.0, 8.0, 0.08, 0.15);
+  revealWords($("s2-title"), t, 4.05, 0.12);
+  const shot = $("s2-shot");
+  const sx = easeExpo(prog(t, 4.0, 0.9));
+  shot.style.opacity = clamp((t - 4.0) / 0.25);
+  shot.style.transform = `translateY(${(1 - sx) * 300}px) rotateX(${(1 - sx) * 24}deg) scale(${(0.88 + 0.12 * sx) * (1 + prog(t, 4.9, 3.1) * 0.035)})`;
+  const jx = slideUp($("s2-jordan"), t, 5.0, 0, 0, 0.8);
+  $("s2-jordan").style.transform = `translateX(${(1 - jx) * -220}px) translateY(${float(t, 0.3)}px) rotate(-5deg)`;
+  pop($("s2-maya"), t, 5.5, 0.5);
+  $("s2-maya").style.transform += ` translateY(${float(t, 1.2, 5)}px) rotate(3deg)`;
+  const nx = easeExpo(prog(t, 6.5, 0.6));
+  $("s2-note").style.opacity = nx;
+  $("s2-note").style.transform = `rotate(-3deg) translateX(${(1 - nx) * 30}px)`;
+
+  // 3 ── statuses
+  $("s3").style.opacity = sceneOpacity(t, 8.0, 12.0, 0.08, 0.15);
+  const n3 = easeExpo(prog(t, 8.0, 0.6));
+  $("s3-note").style.opacity = n3;
+  $("s3-note").style.transform = `rotate(-2deg) translateY(${(1 - n3) * 20}px)`;
+  revealWords($("s3-title"), t, 8.1, 0.14);
+  slideUp($("s3-sam"), t, 8.3, 160, -3);
+  $("s3-sam").style.transform += ` translateY(${float(t, 0)}px)`;
+  slideUp($("s3-members"), t, 8.55, 160, 2);
+  $("s3-members").style.transform += ` translateY(${float(t, 1.7)}px)`;
+  $("s3-chips").querySelectorAll(".chip").forEach((chip, i) => pop(chip, t, 9.0 + i * 0.5, 0.4));
+
+  // 4 ── the group, the conversation replaying on the beat
+  $("s4").style.opacity = sceneOpacity(t, 12.0, 16.0, 0.08, 0.15);
+  const n4 = easeExpo(prog(t, 12.0, 0.6));
+  $("s4-note").style.opacity = n4;
+  $("s4-note").style.transform = `rotate(-2deg) translateY(${(1 - n4) * 20}px)`;
+  revealWords($("s4-title"), t, 12.1, 0.16);
+  slideUp($("s4-card"), t, 12.0, 120, 0, 0.8);
+  CHAT_TIMES.forEach((start, i) => {
+    const m = $("msg" + i);
+    const s = spring(t - start);
+    m.style.opacity = clamp((t - start) / 0.15);
+    m.style.transform = `translateY(${(1 - s) * 24}px) scale(${0.96 + 0.04 * s})`;
+  });
+
+  // 5 ── gaming
+  $("s5").style.opacity = sceneOpacity(t, 16.0, 20.0, 0.08, 0.2);
+  $("s5-note").style.opacity = easeExpo(prog(t, 16.0, 0.6));
+  revealWords($("s5-title"), t, 16.05, 0.15);
+  for (let i = 0; i < 6; i++) {
+    const tile = $("tile" + i);
+    const start = 16.5 + i * 0.5;
+    const s = spring(t - start);
+    tile.style.opacity = clamp((t - start) / 0.15);
+    tile.style.transform = `translateY(${(1 - s) * 40}px) scale(${0.9 + 0.1 * s})`;
+  }
+
+  // 6 ── privacy: calm, the ciphertext resolving into words
+  $("s6").style.opacity = sceneOpacity(t, 20.0, 24.0, 0.35, 0.12);
+  pop($("s6-lock"), t, 20.2, 0.5);
+  revealWords($("s6-title"), t, 20.55, 0.14);
+  slideUp($("s6-server"), t, 21.0, 40);
+  slideUp($("s6-alex"), t, 21.4, 40);
+  const shift = Math.floor(t * 30);
+  $("s6-cipher").textContent = (CIPHER + CIPHER).slice(shift % CIPHER.length, (shift % CIPHER.length) + 92);
+  const resolved = prog(t, 21.6, 1.4);
+  const chars = [...PLAIN];
+  const solid = Math.floor(easeInOut(resolved) * chars.length);
+  $("s6-plain").textContent = chars
+    .map((c, i) => (i < solid || c === " " ? c : GLYPHS[Math.floor(rand(i * 31 + shift) * GLYPHS.length)]))
+    .join("");
+  $("s6-plain").style.color = resolved >= 1 ? "rgb(255 255 255 / 0.92)" : "rgb(167 243 208 / 0.75)";
+
+  // 7 ── montage, a hard cut on every beat
+  const s7on = t >= 24.0 && t < 28.0;
+  $("s7").style.opacity = s7on ? 1 : 0;
+  let current = -1;
+  MONTAGE.forEach(([start], i) => { if (t >= start) current = i; });
+  MONTAGE.forEach(([start], i) => {
+    const m = $("m" + i);
+    const on = s7on && i === current;
+    m.style.opacity = on ? 1 : 0;
+    if (on) {
+      const k = prog(t, start, BEAT);
+      m.style.transform = `scale(${1.045 - 0.045 * easeOut(k)})`;
+    }
+  });
+  if (s7on && current >= 0) {
+    const cap = $("s7-caption");
+    const text = MONTAGE[current][2];
+    if (cap.dataset.text !== text) { cap.textContent = text; cap.dataset.text = text; }
+    const k = easeExpo(prog(t, MONTAGE[current][0], 0.3));
+    cap.style.opacity = k;
+    cap.style.transform = `translateY(${(1 - k) * 18}px)`;
+  }
+
+  // 8 ── end card
+  $("s8").style.opacity = sceneOpacity(t, 28.0, 30.1, 0.05, 0);
+  const b = spring(t - 28.0);
+  $("s8-brand").style.opacity = clamp((t - 28.0) / 0.15);
+  $("s8-brand").style.transform = `scale(${0.8 + 0.2 * b})`;
+  const l8 = easeExpo(prog(t, 28.3, 0.6));
+  $("s8-line").style.opacity = l8;
+  $("s8-line").style.transform = `translateY(${(1 - l8) * 40}px)`;
+  $("s8-line").style.filter = `blur(${(1 - l8) * 10}px)`;
+  const c8 = easeExpo(prog(t, 28.6, 0.6));
+  $("s8-cta").style.opacity = c8;
+  $("s8-cta").style.transform = `translateY(${(1 - c8) * 30}px)`;
+};
+
+window.ready = (async () => {
+  await document.fonts.ready;
+  await Promise.all([...document.images].map((img) => (img.complete ? null : new Promise((r) => { img.onload = img.onerror = r; }))));
+  window.render(0);
+  return true;
+})();
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ import { cloneElement, isValidElement, useCallback, useRef } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { forgetAllRecoveryKeys } from "@/lib/e2ee";
 
 /** Renders its children only while signed in. While the app is still finding out, nothing: the loading screen covers it. */
 export function SignedIn({ children }: { children: React.ReactNode }) {
@@ -29,6 +30,8 @@ export function SignedOut({ children }: { children: React.ReactNode }) {
 export function useSignOut(redirectUrl?: string): () => Promise<void> {
   const { signOut } = useAuthActions();
   return useCallback(async () => {
+    // The recovery key this browser remembered for refreshes (lib/e2ee/keyring.ts) goes with the session.
+    forgetAllRecoveryKeys();
     await signOut();
     if (redirectUrl) window.location.assign(redirectUrl);
   }, [signOut, redirectUrl]);

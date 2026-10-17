@@ -8,6 +8,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { DeleteMessageDialog } from "@/components/home/delete-message-dialog";
 import { MessageContent } from "@/components/home/message-content";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
+import { MessageForwardDialog } from "@/components/home/message-forward-dialog";
 import { ReportDialog } from "@/components/reports/report-dialog";
 import { MessageHoverActions } from "@/components/home/message-hover-actions";
 import { MessageReactions } from "@/components/home/message-reactions";
@@ -44,7 +45,7 @@ import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import type { ReplyDraft } from "@/lib/reply";
 import { cn } from "@/lib/utils";
 import { BotTag } from "@/components/bot-tag";
-import { useMessageContent } from "@/hooks/use-message-content";
+import { useIndexMessage, useMessageContent } from "@/hooks/use-message-content";
 import type { Envelope } from "@/lib/e2ee";
 
 interface MessageListProps {
@@ -122,6 +123,18 @@ const MessageRow = memo(function MessageRow({
     { enc: message.enc, text: message.text },
     !!message.__pending,
   );
+  useIndexMessage(
+    { scope: "conversation", conversationId },
+    {
+      id: message.id,
+      authorId: message.author?.id,
+      authorName: message.author?.name,
+      createdAt: message.createdAt,
+      attachments: message.attachments.map(({ fileName, fileType }) => ({ fileName, fileType })),
+    },
+    readable,
+    !!message.__pending,
+  );
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
   const updateMessage = useOutboxMutation("edit", "dm");
@@ -132,6 +145,7 @@ const MessageRow = memo(function MessageRow({
   const [draft, setDraft] = useState(readable.text ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reporting, setReporting] = useState(false);
+  const [forwarding, setForwarding] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -330,9 +344,11 @@ const MessageRow = memo(function MessageRow({
           void toggleReaction({ conversationId, messageId: message.id, emoji, desired: "add" })
         }
         onReply={reply}
+        onForward={() => setForwarding(true)}
         onEdit={startEdit}
         onDelete={requestDelete}
         onReport={message.isMine ? undefined : () => setReporting(true)}
+        saveTarget={{ scope: "conversation", messageId: message.id as Id<"messages"> }}
       >
         {content}
       </MessageContextMenu>
@@ -340,6 +356,13 @@ const MessageRow = memo(function MessageRow({
         target={reporting ? { type: "message", id: message.id, label: "this message" } : null}
         onClose={() => setReporting(false)}
       />
+      {forwarding && <MessageForwardDialog
+        open
+        onOpenChange={setForwarding}
+        authorName={message.author?.name ?? "Unknown sender"}
+        text={readable.text ?? ""}
+        attachments={message.attachments.map(({ fileName }) => ({ fileName }))}
+      />}
       <DeleteMessageDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}

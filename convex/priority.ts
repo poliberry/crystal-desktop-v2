@@ -7,6 +7,7 @@ import { publicNotificationBody } from "./lib/e2eeEnforce";
 import { allowsFriendRequest, loadNotificationPolicy } from "./lib/notificationPolicy";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { encryptedSourceOf } from "./notifications";
 
 /**
  * The sidebar's Priority card: conversations and channels the caller has
@@ -154,6 +155,8 @@ export const list = query({
 
         let last: {
           authorName: string;
+          /** Bound into the ciphertext's associated data: the client needs it to decrypt `enc`. */
+          authorId: Id<"users">;
           /** Legacy plaintext rows only. Empty for an encrypted message: the client decrypts `enc`. */
           text: string;
           enc: Doc<"channelMessages">["enc"] | null;
@@ -171,6 +174,7 @@ export const list = query({
           ]);
           last = {
             authorName: author?.name ?? "Someone",
+            authorId: lastMessage.authorId,
             // An encrypted message has no text the server may read or render.
             text: lastMessage.enc ? "" : await renderMentionsAsText(ctx, lastMessage.text ?? ""),
             enc: lastMessage.enc ?? null,
@@ -301,6 +305,15 @@ export const alerts = query({
       });
     }
 
-    return alerts.sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_ALERTS);
+    const shown = alerts.sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_ALERTS);
+    // Only for the handful actually shown: the ciphertext behind a mention or reply, so the card
+    // can decrypt it client-side instead of showing the generic body.
+    const byId = new Map(unread.map((n) => [n._id as string, n]));
+    return Promise.all(
+      shown.map(async (alert) => {
+        const row = alert.notificationId ? byId.get(alert.notificationId) : undefined;
+        return { ...alert, message: row ? await encryptedSourceOf(ctx, row, me._id) : null };
+      })
+    );
   },
 });

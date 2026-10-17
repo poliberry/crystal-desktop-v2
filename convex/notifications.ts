@@ -28,6 +28,7 @@ import { hasBlocked, isMessageHidden, isSuppressing, windowsByTarget } from "./l
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { lastMessageOf, markAllConversationsRead } from "./conversations";
+import { deepLinkFor } from "./webPush";
 
 type NotificationType =
   | "dm_message"
@@ -121,6 +122,11 @@ export async function notifyUsers(
     rest.body = genericNotificationBody(rest.type, isMention);
   }
 
+  // The message itself, still encrypted, for the recipient's own device to decrypt when the push arrives
+  // (see public/sw.js). The server passes along ciphertext and each recipient's wrapped room key; it
+  // never sees the text.
+  const sealedSource = isMessageNotification(rest.type) ? await sealedMessageFor(ctx, rest) : null;
+
   for (const userId of recipients) {
     // Checked per recipient rather than once: everyone in a channel has their
     // own DND state and their own settings for that server.
@@ -172,6 +178,17 @@ export async function notifyUsers(
         systemAuthored,
         isMention,
       },
+    });
+    // The installed web app and browsers that allowed notifications. Same title and (already generic,
+    // for encrypted messages) body, plus where a tap should take them.
+    await ctx.scheduler.runAfter(0, internal.webPushNode.send, {
+      userId,
+      kind: rest.type,
+      title: rest.title,
+      body: rest.body,
+      icon: actorUser?.imageUrl && !actorUser.imageUrl.endsWith(".svg") ? actorUser.imageUrl : undefined,
+      ...deepLinkFor(rest),
+      sealed: sealedSource ? await sealFor(ctx, sealedSource, userId) : undefined,
     });
   }
 }
@@ -440,6 +457,57 @@ export const feed = query({
   },
 });
 
+/**
+ * The ciphertext a message notification is about, for the recipient's client to open.
+ *
+ * The row's `body` is generic for an encrypted message (the server can't read it), so a client
+ * holding the room key decrypts this instead. Only ever the stored envelope: never plaintext, and
+ * nothing at all once the caller has left the conversation or the message is gone. Channel access is
+ * checked at community level only (a full permission walk per row would be the fanout this list is
+ * trying to avoid); without the room key the envelope is unreadable anyway.
+ */
+export type NotificationMessageSource = {
+  authorId: Id<"users">;
+  enc: NonNullable<Doc<"messages">["enc"]>;
+};
+
+export async function encryptedSourceOf(
+  ctx: QueryCtx,
+  row: Pick<Doc<"notifications">, "type" | "messageId" | "channelMessageId" | "conversationId" | "channelId" | "communityId">,
+  me: Id<"users">
+): Promise<NotificationMessageSource | null> {
+  if (!isMessageNotification(row.type)) return null;
+  if (row.messageId && row.conversationId) {
+    const [message, member] = await Promise.all([
+      ctx.db.get(row.messageId),
+      ctx.db
+        .query("conversationMembers")
+        .withIndex("by_conversation_user", (q) =>
+          q.eq("conversationId", row.conversationId!).eq("userId", me)
+        )
+        .first(),
+    ]);
+    if (!member || !message?.enc || message.conversationId !== row.conversationId) return null;
+    return { authorId: message.authorId, enc: message.enc };
+  }
+  if (row.channelMessageId && row.channelId) {
+    const message = await ctx.db.get(row.channelMessageId);
+    if (!message?.enc || message.channelId !== row.channelId) return null;
+    // A community membership check is not sufficient: private-channel
+    // overwrites can revoke VIEW_CHANNELS while the recipient still has a
+    // previously cached room key. Re-check the current channel permission
+    // before returning ciphertext for client-side decryption.
+    const channel = await ctx.db.get(row.channelId);
+    if (!channel) return null;
+    const community = await ctx.db.get(channel.communityId);
+    if (!community || (row.communityId && row.communityId !== community._id)) return null;
+    const perms = await getChannelPermissions(ctx, community, channel._id, me);
+    if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) return null;
+    return { authorId: message.authorId, enc: message.enc };
+  }
+  return null;
+}
+
 // --- Mobile: persisted notifications feed -----------------------------------
 
 /** Paginated, newest-first, enriched with the actor's name/avatar and (for
@@ -459,10 +527,11 @@ export const list = query({
 
     const items = await Promise.all(
       page.page.map(async (n) => {
-        const [actor, channel, community] = await Promise.all([
+        const [actor, channel, community, message] = await Promise.all([
           n.actorId ? ctx.db.get(n.actorId) : null,
           n.channelId ? ctx.db.get(n.channelId) : null,
           n.communityId ? ctx.db.get(n.communityId) : null,
+          encryptedSourceOf(ctx, n, me._id),
         ]);
         return {
           id: n._id,
@@ -480,6 +549,9 @@ export const list = query({
           communityId: n.communityId ?? null,
           communityName: community?.name ?? null,
           requestId: n.requestId ?? null,
+          /** The encrypted message behind a message notification, for the client to decrypt in
+           * place of the generic `body`. Null for legacy rows and non-message notifications. */
+          message,
         };
       })
     );
@@ -498,6 +570,20 @@ export const unreadCount = query({
       .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
       .collect();
     return unread.length;
+  },
+});
+
+/** Unread messages, replies and mentions that are likely to need a response. */
+export const priorityCount = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return 0;
+    const unread = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    return unread.filter((item) => item.type === "dm_message" || item.type === "reply" || item.type === "channel_mention").length;
   },
 });
 
@@ -573,3 +659,43 @@ export const latest = query({
     return newest ? { id: newest._id, createdAt: newest.createdAt, type: newest.type } : null;
   },
 });
+
+
+type SealedSource = {
+  scope: "conversation" | "channel";
+  targetId: string;
+  authorId: string;
+  keyId: Id<"e2eeKeys">;
+  iv: string;
+  ct: string;
+};
+
+/** Push services cap a payload at about 4 KB, and it is encrypted again on the way; leave room for the rest. */
+const MAX_SEALED_CT = 2400;
+
+async function sealedMessageFor(
+  ctx: MutationCtx,
+  n: { messageId?: Id<"messages">; channelMessageId?: Id<"channelMessages">; conversationId?: Id<"conversations">; channelId?: Id<"channels"> },
+): Promise<SealedSource | null> {
+  if (n.messageId) {
+    const m = await ctx.db.get(n.messageId);
+    if (!m?.enc || m.enc.ct.length > MAX_SEALED_CT) return null;
+    return { scope: "conversation", targetId: m.conversationId, authorId: m.authorId, keyId: m.enc.keyId as Id<"e2eeKeys">, iv: m.enc.iv, ct: m.enc.ct };
+  }
+  if (n.channelMessageId) {
+    const m = await ctx.db.get(n.channelMessageId);
+    if (!m?.enc || m.enc.ct.length > MAX_SEALED_CT) return null;
+    return { scope: "channel", targetId: m.channelId, authorId: m.authorId, keyId: m.enc.keyId as Id<"e2eeKeys">, iv: m.enc.iv, ct: m.enc.ct };
+  }
+  return null;
+}
+
+/** The sealed message plus this recipient's copy of the room key (itself encrypted to their identity key). */
+async function sealFor(ctx: MutationCtx, source: SealedSource, userId: Id<"users">) {
+  const wrap = await ctx.db
+    .query("e2eeKeyWraps")
+    .withIndex("by_key_user", (q) => q.eq("keyId", source.keyId).eq("userId", userId))
+    .first();
+  if (!wrap) return undefined;
+  return { ...source, keyId: source.keyId as string, userId: userId as string, wrapped: wrap.wrapped };
+}

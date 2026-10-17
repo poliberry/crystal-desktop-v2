@@ -23,17 +23,21 @@ import { getDesktopAPI } from "@/lib/desktop";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { MyCrystal } from "@/components/home/my-crystal";
+import { applyLaunchSurface, setHomeSurface, useHomeSurface } from "@/components/home/home-surface";
+import { SHEET_PAGES, useMobileShell } from "@/components/mobile/mobile-shell";
 
 export function HomeLayout() {
   const [pendingCommunityId, setPendingCommunityId] = useState<Id<"communities"> | null>(null);
   const pendingModeRef = useRef<"replace" | "new">("new");
   const [overviewFor, setOverviewFor] = useState<Id<"communities"> | null>(null);
   const [membersSection, setMembersSection] = useState(false);
+  const homeSurface = useHomeSurface();
 
   const { activeCall, expanded, joinDmCall, joinChannelCall, expand, collapse, joinError, dismissJoinError } = useCall();
   const { tabs, activeTab, openTab, activateTab, closeTab, leavePage } = useTabs();
   const { page } = usePage();
-  const { tabsEnabled } = useUiPreferences();
+  const { tabsEnabled, homeLanding } = useUiPreferences();
   const target = activeTab.target;
 
   const browsingCommunityId: Id<"communities"> | null =
@@ -58,6 +62,12 @@ export function HomeLayout() {
     setMembersSection(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab.id]);
+
+  // The Home page setting decides what's showing when Crystal opens; My Crystal and Friends are
+  // otherwise separate places, each opened by its own button.
+  useEffect(() => {
+    applyLaunchSurface(homeLanding);
+  }, [homeLanding]);
 
   // A server's front page, members list and not-yet-picked-channel view are
   // all drawn in place of a place's own content, so they can't be drawn over a
@@ -95,6 +105,23 @@ export function HomeLayout() {
   };
 
   const selectFriends = () => {
+    setPendingCommunityId(null);
+    setMembersSection(false);
+    setHomeSurface("friends");
+    navigateTo({ type: "home" });
+  };
+
+  const selectMyCrystal = () => {
+    setHomeSurface("my-crystal");
+    selectHomeTarget();
+  };
+
+  // Home as it was last left: My Crystal or Friends, whichever was picked.
+  const goHome = () => {
+    selectHomeTarget();
+  };
+
+  const selectHomeTarget = () => {
     setPendingCommunityId(null);
     setMembersSection(false);
     navigateTo({ type: "home" });
@@ -201,18 +228,39 @@ export function HomeLayout() {
 
   const openPage = (next: PageTarget) => navigateTo(next);
 
+  // On a phone, going somewhere also switches to that screen (components/mobile/mobile-shell.tsx). Pages
+  // with their own menu (Settings, the shop…) open on the menu; picking an entry shows its content.
+  const shell = useMobileShell();
+  const onPhone = <A extends unknown[]>(fn: (...args: A) => void, show: "content" | "list" = "content") =>
+    (...args: A) => {
+      fn(...args);
+      if (shell.mobile) (show === "list" ? shell.showList : shell.showContent)();
+    };
+
   useRegisterNavigation({
-    openConversation,
-    openCommunity: selectCommunity,
-    goHome: selectFriends,
-    openCommunityOverview,
-    openCommunityMembers,
-    openPage,
+    openConversation: onPhone(openConversation),
+    openCommunity: onPhone(selectCommunity),
+    goHome: onPhone(goHome),
+    openFriends: onPhone(selectFriends),
+    openMyCrystal: onPhone(selectMyCrystal),
+    openCommunityOverview: onPhone(openCommunityOverview),
+    openCommunityMembers: onPhone(openCommunityMembers),
+    openPage: (next: PageTarget) => {
+      openPage(next);
+      if (shell.mobile) (SHEET_PAGES.has(next.type) ? shell.showList : shell.showContent)();
+    },
   });
 
   const nav = useNavigation();
 
   const showCallStage = expanded && !!activeCall;
+
+  // On a phone the call screen lives on the content side, so opening it (from the call card, the
+  // floating player, a notification) has to bring that side forward.
+  const { mobile: shellMobile, showContent: shellShowContent } = shell;
+  useEffect(() => {
+    if (showCallStage && shellMobile) shellShowContent();
+  }, [showCallStage, shellMobile, shellShowContent]);
 
   useEffect(() => {
     // Neither the call screen nor a page is showing the conversation, so a
@@ -252,7 +300,8 @@ export function HomeLayout() {
           <CallStage />
         </div>
       )}
-      {page && !showCallStage && <PageHost key={activeTab.id} page={page} />}
+      {/* On a phone, menu pages (Settings and the like) are drawn in their own drawer (app-home). */}
+      {page && !showCallStage && !(shell.mobile && SHEET_PAGES.has(page.type)) && <PageHost key={activeTab.id} page={page} />}
       {!showCallStage && !page && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
           {joinError && (
@@ -303,6 +352,8 @@ export function HomeLayout() {
                 }}
               />
             </ErrorBoundary>
+          ) : target.type === "home" && homeSurface === "my-crystal" ? (
+            <MyCrystal onOpenFriends={() => selectFriends()} />
           ) : (
             <FriendsPanel search="" onMessageFriend={openConversation} />
           )}

@@ -1,0 +1,25 @@
+{
+  "id": "/app/",
+  "name": "Crystal",
+  "short_name": "Crystal",
+  "description": "Your group chat deserves a real home. Chat, voice, DMs and statuses that say what everyone's up to.",
+  "start_url": "/app/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "categories": ["social", "games", "entertainment"],
+  "icons": [
+    { "src": "/pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Friends", "url": "/app/#/home/friends", "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Search", "url": "/app/#/search", "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Settings", "url": "/app/#/settings", "icons": [{ "src": "/pwa/icon-192.png", "sizes": "192x192" }] }
+  ],
+  "protocol_handlers": [{ "protocol": "web+crystal", "url": "/app/?link=%s" }]
+}

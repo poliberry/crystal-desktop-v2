@@ -19,6 +19,7 @@ import { ControlBar } from "@/components/control-bar";
 import { Badge } from "@/components/ui/badge";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
 import type { RoomController } from "@/hooks/use-room";
+import { screenShareCarrier } from "@/lib/companion";
 import { getPlatform, isElectron } from "@/lib/desktop";
 import { startUiSoundLoop } from "@/lib/ui-sounds";
 
@@ -90,8 +91,10 @@ export function RoomView({ roomName, controller, onLeave, showSoundboardEmoji = 
   });
   const profileByIdentity = new Map(userData?.map((u) => [u.id as string, u]) ?? []);
 
+  // A mobile sharer publishes from a companion connection (src/lib/companion.ts), so the share is
+  // looked for there as well as on the participant.
   const screenSharers = allParticipants.filter((p) => {
-    const pub = p.getTrackPublication(Track.Source.ScreenShare);
+    const pub = screenShareCarrier(room, p).getTrackPublication(Track.Source.ScreenShare);
     return screenShares.includes(p.identity) && !!pub && !pub.isMuted;
   });
 

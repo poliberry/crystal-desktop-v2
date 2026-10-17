@@ -408,6 +408,27 @@ export const cancelSubscription = action({
   },
 });
 
+/**
+ * End every subscription right away, for an account being deleted (convex/accountDeletion.ts). Unlike
+ * the user's own cancel, it doesn't wait for the period to run out: there's no account left to use it.
+ * Stripe's `customer.subscription.deleted` webhook then ends the entitlement as usual.
+ */
+export const cancelSubscriptionsForDeletion = internalAction({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const orders = await ctx.runQuery(internal.store.subscriptionOrdersFor, { userId });
+    if (!orders.length) return;
+    const stripe = stripeClient();
+    for (const order of orders) {
+      if (!order.stripeSubscriptionId) continue;
+      // Already cancelled is fine; anything else is retried by the scheduler's own error handling.
+      await stripe.subscriptions.cancel(order.stripeSubscriptionId).catch((error: { code?: string }) => {
+        if (error?.code !== "resource_missing") throw error;
+      });
+    }
+  },
+});
+
 /** Undo "cancel at period end" while the subscription is still running. */
 export const resumeSubscription = action({
   args: { orderId: v.id("orders") },

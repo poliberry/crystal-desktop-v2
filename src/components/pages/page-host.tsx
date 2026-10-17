@@ -33,6 +33,10 @@ const MarketplacePage = dynamic(
   () => import("@/components/marketplace/marketplace-page").then((m) => m.MarketplacePage),
   { loading: loading("Loading Marketplace…") },
 );
+const MessageSearchPage = dynamic(
+  () => import("@/components/search/message-search-page").then((m) => m.MessageSearchPage),
+  { loading: loading("Loading search…") },
+);
 
 /**
  * Draws the open page in the main content area.
@@ -79,6 +83,7 @@ export function PageHost({ page }: { page: AppPage }) {
         {page.type === "profile-editor" && <ProfileEditor onRequestClose={closePage} />}
         {page.type === "create-community" && <CreateCommunityPage />}
         {page.type === "marketplace" && <MarketplacePage onClose={closePage} />}
+        {page.type === "search" && <MessageSearchPage query={page.query} />}
         {page.type === "community-settings" && (
           <CommunitySettingsPage communityId={page.communityId} onClose={closePage} />
         )}

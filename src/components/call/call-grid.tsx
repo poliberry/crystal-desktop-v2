@@ -32,6 +32,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Slider } from "@/components/ui/slider";
+import { useCompanion } from "@/lib/companion";
 import { cn } from "@/lib/utils";
 
 export interface CallTile {
@@ -132,11 +133,18 @@ function TileWithContextMenu({
   const { audioAttention } = useAudioPreferences();
   useSyncExternalStore(subscribeAttentionOverrides, attentionOverrideVersion, () => 0);
   const attentionOn = attentionApplies(tile.participant.identity, audioAttention);
+  // A mobile sharer's screen comes from a separate companion connection — see src/lib/companion.ts.
+  const { controller } = useCall();
+  const companion = useCompanion(
+    controller.room,
+    tile.kind === "screen" && !tile.isLocal ? tile.participant.identity : null
+  );
 
   const inner =
     tile.kind === "screen" ? (
       <ScreenShareTile
         participant={tile.participant}
+        companion={companion}
         isLocal={tile.isLocal}
         name={tile.name}
         fill

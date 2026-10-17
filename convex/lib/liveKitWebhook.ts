@@ -6,6 +6,7 @@ import { WebhookReceiver } from "livekit-server-sdk";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
+import { isCompanionIdentity } from "./companion";
 import { closeRoomIfEmpty } from "./liveKitAdmin";
 
 function parseRoomName(roomName: string): { kind: "dm"; conversationId: string } | { kind: "channel"; channelId: string } | null {
@@ -48,6 +49,9 @@ export const handle = internalAction({
     const roomName = event.room?.name;
     const identity = event.participant?.identity;
     if (!roomName || !identity) return;
+    // A screen-share companion (`<userId>:screen`, see ./companion.ts) has no participant row of its own,
+    // and its owner may well still be connected — it must never count as anyone leaving.
+    if (isCompanionIdentity(identity, event.participant?.attributes)) return;
 
     const parsed = parseRoomName(roomName);
     if (!parsed) return;

@@ -175,7 +175,7 @@ export function AppearanceTab() {
     accentColor,
     prefersDark,
   } = useTheme();
-  const { communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled } = useUiPreferences();
+  const { communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled, homeLanding, setHomeLanding } = useUiPreferences();
   const [editingPreset, setEditingPreset] = useState<string | null>(null);
   const [jsonValue, setJsonValue] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);
@@ -284,6 +284,24 @@ export function AppearanceTab() {
       <ThemePacksCard />
 
       <LanguageRegionCard />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Home page</CardTitle>
+          <CardDescription>Choose what opens when you select Home or launch Crystal.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          {([
+            ["my-crystal", "My Crystal", "A personal briefing with conversations to catch up on and things to prioritise."],
+            ["friends", "Friends", "Open your friends list and activity directly."],
+          ] as const).map(([value, title, description]) => (
+            <button key={value} type="button" onClick={() => setHomeLanding(value)} className={`rounded-lg border-2 p-3 text-left transition-colors ${homeLanding === value ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}>
+              <p className="text-sm font-medium">{title}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+            </button>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

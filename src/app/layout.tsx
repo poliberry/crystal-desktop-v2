@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import { Providers } from "@/components/providers";
 import { PRE_HYDRATION_SCRIPT } from "@/lib/pre-hydration-script";
@@ -6,9 +6,28 @@ import { PRE_HYDRATION_SCRIPT } from "@/lib/pre-hydration-script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Crystal — LiveKit Voice & Video Chat",
+  title: "Crystal — Find your people",
   description:
-    "Simple voice & video chat desktop app powered by LiveKit, Next.js, shadcn/ui and Electron.",
+    "Good conversations, shared communities, voice and tools to make something of your own. Find your people on Crystal.",
+  // Installable as an app on phones and desktops (see public/manifest.webmanifest and public/sw.js).
+  manifest: "/manifest.webmanifest",
+  applicationName: "Crystal",
+  appleWebApp: { capable: true, title: "Crystal", statusBarStyle: "black-translucent" },
+  icons: { apple: "/pwa/apple-touch-icon.png" },
+  formatDetection: { telephone: false },
+};
+
+/**
+ * `viewportFit: cover` lets the app draw under the notch and home indicator (the shell pads itself with
+ * `env(safe-area-inset-*)`), and `resizes-content` shrinks the layout when the keyboard opens, so the
+ * composer stays above it.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
+  themeColor: "#0b0d12",
 };
 
 export default function RootLayout({

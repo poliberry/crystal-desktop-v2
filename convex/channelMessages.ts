@@ -27,6 +27,7 @@ import { describeMessage, dispatchMessageCreated, fireCommunityEvent } from "./l
 import type { ActionRow } from "./lib/components";
 import type { Embed } from "./lib/embeds";
 import { isAcceptableAttachmentSource } from "./lib/klipy";
+import { releaseFile } from "./lib/files";
 import { effectiveFileType } from "./lib/mediaType";
 
 function r2UrlForKey(key: string): string | null {
@@ -257,15 +258,17 @@ export const list = query({
       .order("desc")
       .paginate(paginationOpts);
 
-    const decorations = await communityAuthorDecorations(
-      ctx,
-      channel.communityId,
-      [...new Set(page.page.map((m) => m.authorId))]
-    );
+    const authorIds = [...new Set(page.page.map((m) => m.authorId))];
+    // Each distinct author read once for the page, like their decorations below.
+    const [decorations, authorRows] = await Promise.all([
+      communityAuthorDecorations(ctx, channel.communityId, authorIds),
+      Promise.all(authorIds.map((id) => ctx.db.get(id))),
+    ]);
+    const authors = new Map(authorIds.map((id, i) => [id, authorRows[i]] as const));
 
     const messages = await Promise.all(
       page.page.map(async (message) => {
-        const author = await ctx.db.get(message.authorId);
+        const author = authors.get(message.authorId) ?? null;
         const decoration = decorations.get(message.authorId);
         const serverProfile = decoration?.serverProfile;
         const attachmentRows = await ctx.db
@@ -709,7 +712,10 @@ export async function deleteChannelMessage(ctx: MutationCtx, message: Doc<"chann
     ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect(),
     ctx.db.query("channelMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect(),
   ]);
-  for (const attachment of attachments) await ctx.db.delete(attachment._id);
+  for (const attachment of attachments) {
+    await ctx.db.delete(attachment._id);
+    await releaseFile(ctx, attachment);
+  }
   for (const reaction of reactions) await ctx.db.delete(reaction._id);
   await ctx.db.delete(message._id);
   const channel = await ctx.db.get(message.channelId);

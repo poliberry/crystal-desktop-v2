@@ -4,7 +4,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireMember } from "./communities";
 import { resolveProfileAsset } from "./lib/profileCosmetics";
-import { isR2Url, dropR2Url, r2PublicUrlForKey } from "./lib/r2";
+import { releaseUrl } from "./lib/files";
+import { r2PublicUrlForKey } from "./lib/r2";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 /**
@@ -187,8 +188,7 @@ async function dropRowFiles(ctx: MutationCtx, row: Doc<"profileImages">): Promis
   }
   for (const file of files) {
     if (await isReferenced(ctx, row.userId, file, row._id)) continue;
-    if (file.storageId) await ctx.storage.delete(file.storageId).catch(() => {});
-    if (file.url && isR2Url(file.url)) await dropR2Url(ctx, file.url).catch(() => {});
+    await releaseUrl(ctx, file.url, file.storageId);
   }
 }
 
@@ -436,3 +436,53 @@ export const listRecent = query({
     }));
   },
 });
+
+/**
+ * Forget saved pictures and delete their files, for a community's server profiles when the community
+ * goes, or for everything when an account is deleted. Call it after the profile itself has been
+ * deleted or cleared, so `isReferenced` doesn't count the profile as still wearing a picture.
+ *
+ * Rows go first and files second: two rows can share a file, and checking one while the other still
+ * exists would keep a file nothing will use.
+ */
+export async function forgetProfileImages(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  scope: { communityId: Id<"communities"> } | "all"
+): Promise<void> {
+  const rows = (await ctx.db.query("profileImages").withIndex("by_user", (q) => q.eq("userId", userId)).collect()).filter(
+    (row) => scope === "all" || row.communityId === scope.communityId
+  );
+  for (const row of rows) await ctx.db.delete(row._id);
+  for (const row of rows) await dropRowFiles(ctx, row);
+}
+
+/** Delete the pictures a profile (account or server) was wearing, unless its history or another profile still uses them. */
+export async function releaseWornImages(ctx: MutationCtx, userId: Id<"users">, profile: ProfileDoc | Doc<"serverProfiles"> | Doc<"users">): Promise<void> {
+  const doc = profile as unknown as ProfileDoc;
+  for (const field of Object.values(FIELDS)) {
+    const pairs: [string | undefined, string | undefined][] = [
+      [field.url, field.storage],
+      [field.originalUrl, field.originalStorage],
+    ];
+    for (const [urlKey, storageKey] of pairs) {
+      if (!urlKey) continue;
+      const url = doc[urlKey] as string | undefined;
+      const storageId = (storageKey ? doc[storageKey] : undefined) as Id<"_storage"> | undefined;
+      if (!url && !storageId) continue;
+      if (await isReferenced(ctx, userId, { url, storageId }, "" as Id<"profileImages">)) continue;
+      await releaseUrl(ctx, url, storageId);
+    }
+  }
+}
+
+/** Delete one picture a profile just stopped wearing, unless the saved-pictures list (or another profile) still has it. */
+export async function releaseUnlessKept(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  file: { url?: string; storageId?: Id<"_storage"> }
+): Promise<void> {
+  if (!file.url && !file.storageId) return;
+  if (await isReferenced(ctx, userId, file, "" as Id<"profileImages">)) return;
+  await releaseUrl(ctx, file.url, file.storageId);
+}

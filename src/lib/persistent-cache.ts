@@ -69,7 +69,10 @@ export function setCacheNamespace(userId: string | null | undefined): void {
   if (next === namespace) return;
   namespace = next;
   memo.clear();
-  notify();
+  // The namespace is switched synchronously so children cannot render another
+  // account's cached values. Subscribers are notified after the current React
+  // render; notifying inline here updates components while CacheScope renders.
+  queueMicrotask(notify);
   void hydrateNamespace(next);
 }
 

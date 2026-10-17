@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/auth-errors";
 import { formatDateTime } from "@/lib/locale";
-import { keyring, useE2eeSnapshot } from "@/lib/e2ee";
+import { E2eeSetupPanel } from "@/components/auth/e2ee-setup";
 
 /**
  * Settings → Security: what protects the account beyond its password.
@@ -51,80 +51,16 @@ export function SecurityTab() {
 }
 
 function E2eeCard() {
-  const snapshot = useE2eeSnapshot();
-  const [identity, setIdentity] = useState<{ recoveryKey: string; fingerprint: string; commit: () => Promise<void> } | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [recoveryKey, setRecoveryKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const createIdentity = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      setIdentity(await keyring.prepareSetup());
-      setSaved(false);
-    } catch (cause) {
-      setError(errorMessage(cause, "Couldn't prepare message encryption."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const finishSetup = async () => {
-    if (!identity || !saved) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await identity.commit();
-      setIdentity(null);
-    } catch (cause) {
-      setError(errorMessage(cause, "Couldn't save message encryption."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const unlock = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await keyring.unlock(recoveryKey);
-      setRecoveryKey("");
-    } catch (cause) {
-      setError(errorMessage(cause, "Couldn't unlock message encryption."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  const me = useQuery(api.users.getCurrentUser);
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><KeyRound className="size-4" />Message encryption</CardTitle>
         <CardDescription>Private conversations and community messages are encrypted on your device. Attachments and older messages remain readable by the server until they are migrated or replaced.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {snapshot.status === "loading" && <p className="text-sm text-muted-foreground">Checking this device…</p>}
-        {snapshot.status === "unavailable" && <p className="text-sm text-muted-foreground">This device does not have the cryptography support needed for encrypted messages.</p>}
-        {snapshot.status === "ready" && <p className="text-sm">Ready on this device · fingerprint <code className="select-all">{snapshot.fingerprint}</code></p>}
-        {snapshot.status === "needs-setup" && !identity && <Button onClick={() => void createIdentity()} disabled={busy}>{busy && <Spinner />}Set up message encryption</Button>}
-        {snapshot.status === "needs-unlock" && (
-          <div className="flex flex-wrap gap-2">
-            <Input value={recoveryKey} onChange={(event) => setRecoveryKey(event.target.value)} placeholder="Enter recovery key" autoComplete="off" />
-            <Button onClick={() => void unlock()} disabled={busy || !recoveryKey.trim()}>{busy && <Spinner />}Unlock this device</Button>
-          </div>
-        )}
-        {identity && (
-          <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-            <p className="text-sm">Save this recovery key somewhere private. It is shown once and can unlock your messages on another device.</p>
-            <code className="block select-all break-all rounded bg-background p-3 font-mono text-sm">{identity.recoveryKey}</code>
-            <p className="text-xs text-muted-foreground">Fingerprint: {identity.fingerprint}</p>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={saved} onChange={(event) => setSaved(event.target.checked)} />I saved the recovery key</label>
-            <Button onClick={() => void finishSetup()} disabled={busy || !saved}>{busy && <Spinner />}Enable encryption</Button>
-          </div>
-        )}
-        <FieldError message={error} />
+      <CardContent>
+        {/* The same setup, unlock and reset steps as the prompt after sign-up (components/auth/e2ee-setup.tsx). */}
+        <E2eeSetupPanel isGuest={!!me?.isGuest} />
       </CardContent>
     </Card>
   );

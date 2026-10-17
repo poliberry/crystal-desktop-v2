@@ -4,7 +4,9 @@ import { useQuery } from "convex/react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
-import { PopoverContent } from "@/components/ui/popover";
+import { PopoverContent, usePopoverState } from "@/components/ui/popover";
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { frameHeadroom, frameLayersFrom, frameLayout } from "@/lib/profile-cosmetics";
 import { layersHeadroom } from "@/lib/cosmetic-layers";
 import { cn } from "@/lib/utils";
@@ -76,6 +78,8 @@ export function ProfilePopoverContent({
   children: React.ReactNode;
 }) {
   const profile = useQuery(api.users.getProfile, { userId, communityId });
+  const mobile = useIsMobile();
+  const state = usePopoverState();
   // How far the frame reaches above the card, so the popover can be kept that
   // much clear of the window's top edge. Layers are measured in percent of the
   // card's width, which is what `PROFILE_CARD_WIDTH_PX` turns into pixels; a
@@ -87,6 +91,24 @@ export function ProfilePopoverContent({
       : profile?.profileFrame
         ? frameHeadroom(frameLayout(profile), true).paddingTop
         : 0;
+
+  // On a phone, a profile is a bottom sheet rather than a card floating beside its row.
+  if (mobile && state) {
+    return (
+      <Drawer open={state.open} onOpenChange={state.setOpen}>
+        {/* Full screen: the profile itself fills the drawer edge to edge and top to bottom, as Discord's
+            phone app shows one, rather than the desktop's small card floating in the middle of it. */}
+        <DrawerContent className="h-[calc(100%-env(safe-area-inset-top)-0.5rem)] max-h-none rounded-t-2xl border-0 data-[vaul-drawer-direction=bottom]:mt-0 data-[vaul-drawer-direction=bottom]:max-h-none">
+          <DrawerTitle className="sr-only">Profile</DrawerTitle>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))]">
+            {/* Room for a frame that reaches above the card, as a share of its width (padding percentages
+                are of the width), so it scales with the card. */}
+            <div className="h-full" style={{ paddingTop: `${(overhang / PROFILE_CARD_WIDTH_PX) * 100}%` }}>{children}</div>
+          </div>
+        </DrawerContent>
+      </Drawer>
+    );
+  }
 
   return (
     <PopoverContent

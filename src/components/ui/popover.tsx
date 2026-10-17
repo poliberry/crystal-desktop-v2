@@ -5,10 +5,35 @@ import { Popover as PopoverPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
+/** This popover's open state, for content that shows itself somewhere other than a popover (a profile
+ * card opens in a bottom sheet on a phone — see profile-popover.tsx). */
+const PopoverState = React.createContext<{ open: boolean; setOpen: (open: boolean) => void } | null>(null)
+
+function usePopoverState() {
+  return React.useContext(PopoverState)
+}
+
 function Popover({
+  open: openProp,
+  defaultOpen,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+  const [uncontrolled, setUncontrolled] = React.useState(defaultOpen ?? false)
+  const open = openProp ?? uncontrolled
+  const setOpen = React.useCallback(
+    (next: boolean) => {
+      if (openProp === undefined) setUncontrolled(next)
+      onOpenChange?.(next)
+    },
+    [openProp, onOpenChange]
+  )
+  const state = React.useMemo(() => ({ open, setOpen }), [open, setOpen])
+  return (
+    <PopoverState.Provider value={state}>
+      <PopoverPrimitive.Root data-slot="popover" open={open} onOpenChange={setOpen} {...props} />
+    </PopoverState.Provider>
+  )
 }
 
 function PopoverTrigger({
@@ -79,6 +104,7 @@ function PopoverDescription({
 }
 
 export {
+  usePopoverState,
   Popover,
   PopoverTrigger,
   PopoverContent,

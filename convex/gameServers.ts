@@ -27,6 +27,7 @@ import { normalizeProfile, type ServerProfile } from "./lib/serverProfile";
 import { r2PublicUrlForKey, dropR2Url } from "./lib/r2";
 import { PERMISSIONS, getBasePermissions, can, requireCommunityPermission } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
+import { releaseUrl } from "./lib/files";
 
 /**
  * Operating a community's game servers through its Pterodactyl panel.
@@ -314,6 +315,7 @@ export const disconnectPanel = mutation({
     if (!panel) return;
     for (const s of await ctx.db.query("gameServers").withIndex("by_panel", (q) => q.eq("panelId", panel._id)).collect()) {
       await ctx.db.delete(s._id);
+      await releaseUrl(ctx, s.iconUrl, s.iconStorageId);
     }
     // The key goes with it.
     await ctx.db.delete(panel._id);
@@ -383,6 +385,7 @@ export const removeServer = mutation({
     const community = await requireCommunity(ctx, server.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_GAME_SERVERS);
     await ctx.db.delete(serverId);
+    await releaseUrl(ctx, server.iconUrl, server.iconStorageId);
   },
 });
 

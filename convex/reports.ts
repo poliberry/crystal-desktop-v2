@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { requireMember } from "./communities";
+import { holdFile, type FileRef } from "./lib/files";
 import { audit, requireStaff } from "./lib/staff";
 import { getCurrentUserOrThrow } from "./users";
 import { effectiveFileType } from "./lib/mediaType";
@@ -57,10 +58,17 @@ type AttachmentRow = {
   fileName: string;
   fileType: string;
   cdnUrl?: string;
+  cdnKey?: string;
   storageId?: Id<"_storage">;
 };
 
+/** Files copied into a report being built in this mutation, so `create` can hold them (see lib/files.ts). */
+const evidenceFiles = new WeakMap<MutationCtx, FileRef[]>();
+
 async function toEvidenceAttachments(ctx: MutationCtx, rows: AttachmentRow[]): Promise<EvidenceAttachment[]> {
+  const held = evidenceFiles.get(ctx) ?? [];
+  held.push(...rows.map((a) => ({ cdnUrl: a.cdnUrl, cdnKey: a.cdnKey, storageId: a.storageId })));
+  evidenceFiles.set(ctx, held);
   return Promise.all(
     rows.map(async (a) => ({ fileName: a.fileName, fileType: effectiveFileType(a.fileType, a.fileName), url: await attachmentUrl(ctx, a) }))
   );
@@ -300,6 +308,9 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    // Keep the reported files even if the message is later deleted: staff need to see them.
+    for (const file of evidenceFiles.get(ctx) ?? []) await holdFile(ctx, file, id);
+    evidenceFiles.delete(ctx);
     return { id, duplicate: false };
   },
 });
