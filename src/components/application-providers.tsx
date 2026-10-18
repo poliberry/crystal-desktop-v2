@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 
 import { createConvexClient } from "@/lib/convex-client";
 import { StepUpDialog } from "@/components/auth/step-up-dialog";
@@ -29,6 +31,7 @@ import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog
 import { ProfilePageProvider } from "@/components/profile/profile-page";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { E2eeProvider } from "@/lib/e2ee";
+import { MultiAccountSession, useAccountSessions } from "@/components/auth/multi-account-session";
 
 const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
 
@@ -82,6 +85,8 @@ function DeferredEmojiFont() {
 
 function CacheScope() {
   const userId = useAuthUserId();
+  const me = useQuery(api.users.getCurrentUser);
+  const { remember } = useAccountSessions();
   // Cache namespace is safe to set during render (idempotent string assign).
   setCacheNamespace(userId);
 
@@ -91,6 +96,10 @@ function CacheScope() {
     // while rendering CacheScope" (react.dev/link/setstate-in-render).
     setOutboxUser(userId);
   }, [userId]);
+
+  useEffect(() => {
+    if (userId && me) void remember({ id: userId, name: me.name, username: me.username, imageUrl: me.imageUrl });
+  }, [userId, me?._id, me?.name, me?.username, me?.imageUrl, remember]);
 
   // Housekeeping, not startup: each pass opens a cursor over a whole IndexedDB store, which competes with the cache
   // hydration and the first queries for the same disk. A few seconds in, nobody can tell.
@@ -108,6 +117,15 @@ function CacheScope() {
 
 export function ApplicationProviders({ children }: { children: React.ReactNode }) {
   return (
+    <MultiAccountSession>
+      <ApplicationAuthProviders>{children}</ApplicationAuthProviders>
+    </MultiAccountSession>
+  );
+}
+
+function ApplicationAuthProviders({ children }: { children: React.ReactNode }) {
+  const { namespace } = useAccountSessions();
+  return (
     <ThemeProvider>
       {/* Outside everything: the user's own stylesheet is injected into
           `document.head` and has to be able to reach anything below. */}
@@ -117,7 +135,7 @@ export function ApplicationProviders({ children }: { children: React.ReactNode }
           <AudioPreferencesProvider>
             <TooltipProvider>
               {/* `shouldHandleCode` off: a `?code=` in the address is somebody's invite or OAuth return, not ours. */}
-              <ConvexAuthProvider client={convex} shouldHandleCode={false}>
+              <ConvexAuthProvider key={namespace} client={convex} storageNamespace={`crystal${namespace.replace(/[^a-zA-Z0-9]/g, "")}`} shouldHandleCode={false}>
                 <E2eeProvider>
                 <>
                   <CacheScope />

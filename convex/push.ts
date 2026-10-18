@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import { internalAction, internalQuery, mutation } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation } from "./_generated/server";
 import { getCurrentUserOrThrow } from "./users";
 import { e2eeEnforced } from "./lib/e2eeEnforce";
 import { genericNotificationBody, isMessageNotification, mustGenericize } from "./lib/e2eePure";
@@ -50,6 +50,70 @@ export const unregisterToken = mutation({
   },
 });
 
+/**
+ * The current device's VoIP (PushKit) token, which rings it through CallKit.
+ * Upserted by token like `registerToken`, so a phone that changes hands moves
+ * to whoever is signed in now.
+ */
+export const registerVoipToken = mutation({
+  args: {
+    voipToken: v.string(),
+    environment: v.union(v.literal("sandbox"), v.literal("production")),
+    expoPushToken: v.optional(v.string()),
+  },
+  handler: async (ctx, { voipToken, environment, expoPushToken }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    if (!/^[0-9a-f]{32,200}$/i.test(voipToken)) throw new Error("Invalid VoIP token.");
+    const existing = await ctx.db
+      .query("voipPushTokens")
+      .withIndex("by_token", (q) => q.eq("voipToken", voipToken))
+      .unique();
+    const row = { userId: me._id, environment, expoPushToken, updatedAt: Date.now() };
+    if (existing) await ctx.db.patch(existing._id, row);
+    else await ctx.db.insert("voipPushTokens", { voipToken, ...row });
+  },
+});
+
+export const unregisterVoipToken = mutation({
+  args: { voipToken: v.string() },
+  handler: async (ctx, { voipToken }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const existing = await ctx.db
+      .query("voipPushTokens")
+      .withIndex("by_token", (q) => q.eq("voipToken", voipToken))
+      .unique();
+    if (existing && existing.userId === me._id) await ctx.db.delete(existing._id);
+  },
+});
+
+export const getVoipTokensForUser = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const rows = await ctx.db
+      .query("voipPushTokens")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return rows.map((r) => ({ voipToken: r.voipToken, environment: r.environment, expoPushToken: r.expoPushToken }));
+  },
+});
+
+/** APNs said the token is dead (app deleted, token rotated). */
+export const removeVoipToken = internalMutation({
+  args: { voipToken: v.string() },
+  handler: async (ctx, { voipToken }) => {
+    const existing = await ctx.db
+      .query("voipPushTokens")
+      .withIndex("by_token", (q) => q.eq("voipToken", voipToken))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
+/** Whether VoIP pushes can be sent at all (APNs key configured on this deployment). */
+export function voipConfigured(): boolean {
+  return !!(process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY);
+}
+
 export const getTokensForUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
@@ -57,7 +121,7 @@ export const getTokensForUser = internalQuery({
       .query("devicePushTokens")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
-    return rows.map((r) => r.expoPushToken);
+    return rows.map((r) => ({ expoPushToken: r.expoPushToken, platform: r.platform }));
   },
 });
 
@@ -80,36 +144,50 @@ export const sendExpoPush = internalAction({
     authorImgUrl: v.optional(v.string()),
   },
   handler: async (ctx, { userId, title, body: scheduledBody, data, authorImgUrl }) => {
-    const tokens: string[] = await ctx.runQuery(internal.push.getTokensForUser, { userId });
+    let tokens: { expoPushToken: string; platform: "ios" | "android" }[] = await ctx.runQuery(internal.push.getTokensForUser, { userId });
     if (tokens.length === 0) return;
 
     // A push payload goes through Expo and Apple/Google, so it is the last place message text
     // should be. `notifyUsers` already hands over a generic body for encrypted messages; this is
     // the backstop for a caller that didn't, once E2EE_ENFORCE=1 (system messages excepted).
     const type = typeof data?.type === "string" ? data.type : "";
+
+    // An iPhone that rings through CallKit (voipNode.ts) shouldn't also get the
+    // ring as an ordinary notification.
+    if (type === "call_ring" && voipConfigured()) {
+      const voip = await ctx.runQuery(internal.push.getVoipTokensForUser, { userId });
+      const ringing = new Set(voip.map((row) => row.expoPushToken).filter((t): t is string => !!t));
+      tokens = tokens.filter((token) => !ringing.has(token.expoPushToken));
+      if (tokens.length === 0) return;
+    }
     const body =
       isMessageNotification(type) &&
       mustGenericize({ systemAuthored: data?.systemAuthored === true, enforced: e2eeEnforced() })
         ? genericNotificationBody(type, data?.isMention !== false)
         : scheduledBody;
 
-    // `richContent.image` renders as the notification's leading avatar.
-    // Android shows it out of the box; iOS only invokes a notification
-    // service extension to download/attach it when `mutable-content: 1` is
-    // set on the APNs payload, which is what `mutableContent: true` here
-    // becomes (see the mobile app's `targets/notification-service` — Expo
-    // does not bundle this extension itself, it has to be built). Both
-    // fields are omitted entirely when there's no avatar, rather than sent
-    // as empty/undefined, since `mutableContent` with no image to fetch
-    // would just cost the extension a wasted invocation.
-    const messages = tokens.map((to) => ({
-      to,
-      title,
-      body,
-      data,
-      sound: "default" as const,
-      ...(authorImgUrl ? { richContent: { image: authorImgUrl }, mutableContent: true } : {}),
-    }));
+    // `richContent.image` supplies the sender avatar. Message notifications
+    // always request mutable content so the iOS notification service
+    // extension can turn them into Communication Notifications, even when
+    // the sender has no uploaded avatar. Other notification types avoid the
+    // extension invocation entirely.
+    const messages = tokens.map(({ expoPushToken: to, platform }) => {
+      const messageNotification = isMessageNotification(type);
+      const androidDataOnly = platform === "android" && messageNotification;
+      return {
+        to,
+        data: androidDataOnly ? { ...data, notificationBody: body?.slice(0, 500) } : data,
+        // Android receives messages as data-only so our native Firebase service
+        // can decrypt when needed and build an avatar-backed MessagingStyle.
+        ...(androidDataOnly ? { priority: "high" as const } : { title, body, sound: "default" as const }),
+        ...(platform === "ios" && isMessageNotification(type)
+          ? {
+              mutableContent: true,
+              ...(authorImgUrl ? { richContent: { image: authorImgUrl } } : {}),
+            }
+          : {}),
+      };
+    });
 
     try {
       const res = await fetch("https://exp.host/--/api/v2/push/send", {

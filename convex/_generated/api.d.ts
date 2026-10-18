@@ -158,6 +158,7 @@ import type * as profileImages from "../profileImages.js";
 import type * as profileWidgets from "../profileWidgets.js";
 import type * as publicStats from "../publicStats.js";
 import type * as push from "../push.js";
+import type * as qrLogin from "../qrLogin.js";
 import type * as redisCloud from "../redisCloud.js";
 import type * as reports from "../reports.js";
 import type * as roles from "../roles.js";
@@ -176,6 +177,7 @@ import type * as twoFactor from "../twoFactor.js";
 import type * as typing from "../typing.js";
 import type * as uploadLimits from "../uploadLimits.js";
 import type * as users from "../users.js";
+import type * as voipNode from "../voipNode.js";
 import type * as webPush from "../webPush.js";
 import type * as webPushNode from "../webPushNode.js";
 
@@ -336,6 +338,7 @@ declare const fullApi: ApiFromModules<{
   profileWidgets: typeof profileWidgets;
   publicStats: typeof publicStats;
   push: typeof push;
+  qrLogin: typeof qrLogin;
   redisCloud: typeof redisCloud;
   reports: typeof reports;
   roles: typeof roles;
@@ -354,6 +357,7 @@ declare const fullApi: ApiFromModules<{
   typing: typeof typing;
   uploadLimits: typeof uploadLimits;
   users: typeof users;
+  voipNode: typeof voipNode;
   webPush: typeof webPush;
   webPushNode: typeof webPushNode;
 }>;

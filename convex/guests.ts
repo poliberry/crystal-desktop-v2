@@ -65,6 +65,7 @@ export const sweepLimits = internalMutation({
     for (const row of await ctx.db.query("authEmailProofs").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);
     for (const row of await ctx.db.query("authTickets").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);
     for (const row of await ctx.db.query("authSecondFactorChallenges").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);
+    for (const row of await ctx.db.query("qrLoginRequests").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);
     for (const row of await ctx.db.query("authEmailCodes").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);
     for (const row of await ctx.db.query("webauthnChallenges").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);
     for (const row of await ctx.db.query("stepUpGrants").take(200)) if (row.expiresAt < now) await ctx.db.delete(row._id);

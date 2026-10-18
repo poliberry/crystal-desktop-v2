@@ -535,6 +535,17 @@ export default defineSchema({
     pendingPasswordHash: v.optional(v.string()),
   }).index("by_hash", ["tokenHash"]),
 
+  /** A desktop/web login requested by a phone. Both capabilities are kept as hashes; approval
+   * consumes a real second factor before a short lived auth ticket is exposed to the requester. */
+  qrLoginRequests: defineTable({
+    requestHash: v.string(),
+    pollHash: v.string(),
+    expiresAt: v.number(),
+    attempts: v.number(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("denied"), v.literal("consumed")),
+    userId: v.optional(v.id("users")),
+  }).index("by_request", ["requestHash"]).index("by_poll", ["pollHash"]),
+
   /** Failed attempts at something guessable (a password, a code), per thing being guessed. */
   securityRateLimits: defineTable({
     key: v.string(),
@@ -2382,6 +2393,23 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_token", ["expoPushToken"]),
+
+  /**
+   * iOS VoIP (PushKit) tokens, for ringing a phone through CallKit even when
+   * the app isn't running (see voipNode.ts). Sent straight to APNs, not via
+   * Expo. `expoPushToken` links the row to the same device's Expo token, so a
+   * ring isn't also sent to that device as an ordinary notification.
+   */
+  voipPushTokens: defineTable({
+    userId: v.id("users"),
+    voipToken: v.string(),
+    /** Which APNs host this token belongs to: development builds use the sandbox. */
+    environment: v.union(v.literal("sandbox"), v.literal("production")),
+    expoPushToken: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_token", ["voipToken"]),
 
   /**
    * The caller's own arrangement of their community list in the unified

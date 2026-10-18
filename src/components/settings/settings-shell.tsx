@@ -49,6 +49,7 @@ import { UpdatesTab } from "@/components/settings/tabs/updates-tab";
 import { VoiceVideoTab } from "@/components/settings/tabs/voice-video-tab";
 import { WindowControls } from "@/components/window-controls";
 import { SignOutButton } from "@/components/auth/auth-state";
+import { useAccountSessions } from "@/components/auth/multi-account-session";
 import { Button } from "../ui/button";
 import { PageSidebar } from "@/components/pages/page-sidebar";
 import { SETTINGS_NAV_BUTTON, SectionTransition, SettingsPageLayout } from "@/components/settings/settings-ui";
@@ -196,8 +197,9 @@ export function SettingsShell({
   onRequestClose,
 }: {
   onRequestClose?: () => void;
-  }) {
+}) {
   const me = useQuery(api.users.getCurrentUser);
+  const { accounts, switchTo, addAccount } = useAccountSessions();
   const staff = useQuery(api.staff.me);
   const { status, manualStatus, activities } = useMyPresence();
   const openProfileEditor = useOpenProfileEditor();
@@ -275,6 +277,16 @@ export function SettingsShell({
                     </div>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent>
+                    {accounts.filter((account) => account.id !== me?._id).map((account) => (
+                      <DropdownMenuItem key={account.id} onSelect={() => switchTo(account.id)}>
+                        <User />
+                        <span>Switch to {account.name || `@${account.username}`}</span>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuItem onSelect={addAccount}>
+                      <User />
+                      <span>Add another account</span>
+                    </DropdownMenuItem>
                     <SignOutButton>
                       <DropdownMenuItem
                         className="text-destructive"

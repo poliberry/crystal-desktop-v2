@@ -110,6 +110,19 @@ export async function notifyUsers(
   const { userIds, actorId, isMention = true, encrypted, ...rest } = params;
   const recipients = Array.from(new Set(userIds)).filter((id) => id !== actorId);
   const actorUser = await ctx.db.get("users", actorId as Id<"users">);
+  const channel = rest.channelId ? await ctx.db.get("channels", rest.channelId) : null;
+  const community = rest.communityId
+    ? await ctx.db.get("communities", rest.communityId)
+    : channel
+      ? await ctx.db.get("communities", channel.communityId)
+      : null;
+  const channelLocation = [channel?.name ? `#${channel.name}` : null, community?.name]
+    .filter((part): part is string => !!part)
+    .join(" / ");
+  const pushTitle =
+    channelLocation && actorUser?.name
+      ? `${actorUser.name} (${channelLocation})`
+      : rest.title;
 
   // Once enforced, nothing but a system message (plaintext by design) may put text in a
   // notification, so a caller that forgot to say `encrypted` (the Bot API's DM send, say) can't leak
@@ -153,8 +166,8 @@ export async function notifyUsers(
     });
     await ctx.scheduler.runAfter(0, internal.push.sendExpoPush, {
       userId,
-      authorImgUrl: actorUser?.imageUrl,
-      title: rest.title,
+      authorImgUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
+      title: pushTitle,
       body: rest.body,
       // Include the ids the mobile app's notification-tap deep link needs
       // (dm_message -> conversationId, channel_mention -> channelId, etc.)
@@ -174,11 +187,31 @@ export async function notifyUsers(
         requestId: rest.requestId,
         senderId: actorId,
         senderName: actorUser?.name,
+        senderAvatarUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
+        channelName: channel?.name,
+        communityName: community?.name,
         // So push.ts can apply the same body rule on its own (see `sendExpoPush`).
         systemAuthored,
         isMention,
+        // Ciphertext plus this recipient's identity-encrypted room-key wrap.
+        // Native notification handlers can decrypt while the app is closed;
+        // the server still never receives plaintext.
+        sealed: sealedSource ? await sealFor(ctx, sealedSource, userId) : undefined,
       },
     });
+    // iPhones ring through CallKit (the system call screen, even with the app
+    // closed). Only sent where the recipient's settings let the ring through,
+    // which is everything checked above. No-op until APNs is configured.
+    if (rest.type === "call_ring" && rest.conversationId) {
+      const conversation = await ctx.db.get("conversations", rest.conversationId);
+      await ctx.scheduler.runAfter(0, internal.voipNode.sendCallRing, {
+        userId,
+        conversationId: rest.conversationId,
+        title: rest.title,
+        callerName: actorUser?.name,
+        isGroup: conversation?.type === "group",
+      });
+    }
     // The installed web app and browsers that allowed notifications. Same title and (already generic,
     // for encrypted messages) body, plus where a tap should take them.
     await ctx.scheduler.runAfter(0, internal.webPushNode.send, {
@@ -670,8 +703,8 @@ type SealedSource = {
   ct: string;
 };
 
-/** Push services cap a payload at about 4 KB, and it is encrypted again on the way; leave room for the rest. */
-const MAX_SEALED_CT = 2400;
+/** Expo/FCM cap data-only pushes at about 4 KB; reserve space for the wrapped room key and sender metadata. */
+const MAX_SEALED_CT = 1400;
 
 async function sealedMessageFor(
   ctx: MutationCtx,

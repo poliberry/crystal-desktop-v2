@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuthActions } from "@convex-dev/auth/react";
+import QRCode from "qrcode";
 import { startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
@@ -115,6 +116,9 @@ export default function AuthFlow({
   const passkeySignInVerify = useAction(api.passkeys.signInVerify);
   const passkeySecondOptions = useAction(api.passkeys.secondFactorOptions);
   const passkeySecondVerify = useAction(api.passkeys.secondFactorVerify);
+  const createQrLogin = useMutation(api.qrLogin.create);
+  const pollQrLogin = useMutation(api.qrLogin.poll);
+  const cancelQrLogin = useMutation(api.qrLogin.cancel);
 
   // Where we are, and which way we got here (for the direction the next step slides from).
   const [step, setStep] = useState<Step>(() => {
@@ -148,6 +152,8 @@ export default function AuthFlow({
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [qrLogin, setQrLogin] = useState<{ request: string; poll: string; image: string } | null>(null);
+  const [qrResult, setQrResult] = useState<{ status: "pending" | "expired" | "denied" | "approved" | "blocked"; ticket?: string; reason?: string } | null>(null);
   const [shake, setShake] = useState(0);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [resendAt, setResendAt] = useState<number | null>(null);
@@ -200,6 +206,43 @@ export default function AuthFlow({
     },
     [fail, go, router, signIn, target],
   );
+
+  useEffect(() => {
+    if (!qrLogin) return;
+    let active = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const result = await pollQrLogin({ poll: qrLogin.poll, pulse: Date.now() });
+        if (!active) return;
+        setQrResult(result);
+        if (result.status === "pending") timer = window.setTimeout(() => void poll(), 1500);
+      } catch {
+        if (active) timer = window.setTimeout(() => void poll(), 2500);
+      }
+    };
+    void poll();
+    return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [qrLogin, pollQrLogin]);
+  useEffect(() => {
+    if (!qrResult) return;
+    if (qrResult.status === "approved" && qrResult.ticket) {
+      setQrLogin(null);
+      void finish(qrResult.ticket);
+    } else if (qrResult.status === "expired" || qrResult.status === "denied") {
+      setQrLogin(null);
+      fail(qrResult.status === "expired" ? "That QR code expired. Try again." : "That sign-in was not approved.");
+    } else if (qrResult.status === "blocked") {
+      setQrLogin(null);
+      fail(qrResult.reason ?? "This account can't sign in right now.");
+    }
+  }, [qrResult, finish, fail]);
+  const beginQrLogin = () => run(async () => {
+    const result = await createQrLogin({});
+    setQrResult({ status: "pending" });
+    const image = await QRCode.toDataURL(`crystal://login/approve?request=${encodeURIComponent(result.request)}`, { width: 240, margin: 1, errorCorrectionLevel: "M" });
+    setQrLogin({ request: result.request, poll: result.poll, image });
+  });
 
   /** Act on whatever the server says comes next. */
   const handle = useCallback(
@@ -465,7 +508,14 @@ export default function AuthFlow({
   );
 
   const body: Record<Step, React.ReactNode> = {
-    email: (
+    email: qrLogin ? (
+      <div className="space-y-5 text-center">
+        <StepHeader title="Scan with Crystal mobile" description="Open Crystal on your phone and scan this code with its camera. Approving the sign in requires your authenticator or a backup code." />
+        <img src={qrLogin.image} alt="QR code to approve this Crystal sign in" className="mx-auto size-60 rounded-xl bg-white p-2" />
+        <p className="text-sm text-muted-foreground" aria-live="polite">{qrResult?.status === "approved" ? "Approved. Signing you in…" : "Waiting for approval… This code expires in two minutes."}</p>
+        <Button type="button" variant="ghost" className="h-10 w-full" onClick={() => { void cancelQrLogin({ poll: qrLogin.poll }); setQrLogin(null); }}>Use another sign-in method</Button>
+      </div>
+    ) : (
       <div className="space-y-6">
         <StepHeader
           title={bare ? "Sign in to Crystal" : "Welcome to Crystal"}
@@ -502,6 +552,7 @@ export default function AuthFlow({
               Sign in with a passkey
             </Button>
           )}
+          <Button type="button" variant="outline" className="h-11 w-full" disabled={busy} onClick={beginQrLogin}>Sign in with Crystal on your phone</Button>
           <Button type="button" variant="ghost" className="h-11 w-full text-muted-foreground" disabled={busy} onClick={() => go("guest")}>
             <Sparkles className="size-4" />
             Try it as a guest
