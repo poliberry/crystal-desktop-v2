@@ -630,6 +630,28 @@ export const markRead = mutation({
   },
 });
 
+/** Put a notification back to unread (mobile inbox swipe). */
+export const markUnread = mutation({
+  args: { notificationId: v.id("notifications") },
+  handler: async (ctx, { notificationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const notification = await ctx.db.get(notificationId);
+    if (!notification || notification.userId !== me._id) return;
+    if (notification.read) await ctx.db.patch(notificationId, { read: false });
+  },
+});
+
+/** Delete one notification from the inbox (mobile inbox swipe). */
+export const remove = mutation({
+  args: { notificationId: v.id("notifications") },
+  handler: async (ctx, { notificationId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const notification = await ctx.db.get(notificationId);
+    if (!notification || notification.userId !== me._id) return;
+    await ctx.db.delete(notificationId);
+  },
+});
+
 /**
  * Clear the inbox, and the unread DMs it was telling you about.
  *

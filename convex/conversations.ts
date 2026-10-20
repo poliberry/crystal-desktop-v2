@@ -27,6 +27,12 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .unique();
   const status = presence?.effective ?? "offline";
+  let nameplateFallbackUrl: string | undefined;
+  if (user.nameplateUrl) {
+    const entitlements = await ctx.db.query("entitlements").withIndex("by_user", (q) => q.eq("userId", userId)).order("desc").take(300);
+    const entitlement = entitlements.find((row) => row.kind === "nameplate" && row.payload === user.nameplateUrl && row.revokedAt === undefined && (row.expiresAt === undefined || row.expiresAt > Date.now()));
+    if (entitlement) nameplateFallbackUrl = (await ctx.db.get(entitlement.skuId))?.imageUrl;
+  }
   return {
     id: user._id,
     isBot: !!user.isBot,
@@ -34,6 +40,7 @@ async function summarizeUser(ctx: QueryCtx, userId: Id<"users">) {
     username: user.username,
     imageUrl: user.imageUrl,
     nameplateUrl: user.nameplateUrl,
+    nameplateFallbackUrl,
     avatarDecoration: effectiveDecoration(user),
     // The presence dot takes this as its backdrop wherever they appear — see
     // src/components/presence-dot.tsx.
@@ -311,6 +318,12 @@ export const listMembersWithPresence = query({
     return Promise.all(
       allMembers.map(async (m) => {
         const user = await ctx.db.get(m.userId);
+        let nameplateFallbackUrl: string | undefined;
+        if (user?.nameplateUrl) {
+          const entitlements = await ctx.db.query("entitlements").withIndex("by_user", (q) => q.eq("userId", m.userId)).order("desc").take(300);
+          const entitlement = entitlements.find((row) => row.kind === "nameplate" && row.payload === user.nameplateUrl && row.revokedAt === undefined && (row.expiresAt === undefined || row.expiresAt > Date.now()));
+          if (entitlement) nameplateFallbackUrl = (await ctx.db.get(entitlement.skuId))?.imageUrl;
+        }
         const presence = await ctx.db
           .query("presence")
           .withIndex("by_user", (q) => q.eq("userId", m.userId))
@@ -323,6 +336,7 @@ export const listMembersWithPresence = query({
           imageUrl: user?.imageUrl,
           bio: user?.bio,
           nameplateUrl: user?.nameplateUrl,
+          nameplateFallbackUrl,
           avatarDecoration: effectiveDecoration(user),
           // Drawn by the card this row opens — see src/lib/image-preload.ts.
           profileEffect: user?.profileEffect,

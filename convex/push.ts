@@ -166,21 +166,19 @@ export const sendExpoPush = internalAction({
         ? genericNotificationBody(type, data?.isMention !== false)
         : scheduledBody;
 
-    // `richContent.image` supplies the sender avatar. Message notifications
-    // always request mutable content so the iOS notification service
-    // extension can turn them into Communication Notifications, even when
-    // the sender has no uploaded avatar. Other notification types avoid the
-    // extension invocation entirely.
+    // `richContent.image` supplies the sender avatar. Notifications request
+    // mutable content so the iOS service extension can attach the sender to a
+    // Communication Notification. Android receives data-only pushes so its
+    // native handler can download the avatar and build MessagingStyle.
     const messages = tokens.map(({ expoPushToken: to, platform }) => {
-      const messageNotification = isMessageNotification(type);
-      const androidDataOnly = platform === "android" && messageNotification;
+      const androidDataOnly = platform === "android";
       return {
         to,
-        data: androidDataOnly ? { ...data, notificationBody: body?.slice(0, 500) } : data,
-        // Android receives messages as data-only so our native Firebase service
-        // can decrypt when needed and build an avatar-backed MessagingStyle.
+        data: androidDataOnly ? { ...data, notificationTitle: title.slice(0, 200), notificationBody: body?.slice(0, 500) } : data,
+        // Android receives notifications as data-only so the native Firebase
+        // service can decrypt messages when needed and build MessagingStyle.
         ...(androidDataOnly ? { priority: "high" as const } : { title, body, sound: "default" as const }),
-        ...(platform === "ios" && isMessageNotification(type)
+        ...(platform === "ios"
           ? {
               mutableContent: true,
               ...(authorImgUrl ? { richContent: { image: authorImgUrl } } : {}),

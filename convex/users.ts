@@ -983,6 +983,23 @@ export const getProfile = query({
         .map((r) => ({ id: r._id, name: r.name, color: r.color }));
     }
 
+    const nameplateUrl = serverProfile?.nameplateUrl ?? user.nameplateUrl;
+    let nameplateFallbackUrl: string | undefined;
+    if (nameplateUrl) {
+      const entitlements = await ctx.db
+        .query("entitlements")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .take(300);
+      const entitlement = entitlements.find(
+        (row) => row.kind === "nameplate" && row.payload === nameplateUrl && row.revokedAt === undefined && (row.expiresAt === undefined || row.expiresAt > Date.now())
+      );
+      if (entitlement) {
+        const sku = await ctx.db.get(entitlement.skuId);
+        nameplateFallbackUrl = sku?.imageUrl;
+      }
+    }
+
     return {
       id: user._id,
       createdAt: user._creationTime,
@@ -990,6 +1007,8 @@ export const getProfile = query({
       username: user.username,
       isBot: !!user.isBot,
       imageUrl: serverProfile?.imageUrl ?? user.imageUrl,
+      nameplateUrl,
+      nameplateFallbackUrl,
       bio: serverProfile?.bio ?? user.bio,
       bannerUrl: serverProfile?.bannerUrl ?? user.bannerUrl,
       /**

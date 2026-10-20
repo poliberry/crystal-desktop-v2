@@ -155,6 +155,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const watchShare = useCallback(
     (identity: string, options?: { replace?: boolean }) => {
+      // The OS is already playing the audio being captured for our own share.
+      // Never subscribe to it through the room, including a companion track.
+      if (identity === controller.room.localParticipant.identity) return;
       if (options?.replace) {
         // "Watch" replaces the whole watch set — unsubscribe whichever streams
         // are being dropped so they stop being downloaded and decoded.
@@ -173,7 +176,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       // shouldn't chime at the person streaming it again.
       if (!watchedShares.includes(identity)) void notifyStreamView(identity, true);
     },
-    [watchedShares, subscribeToScreenShare, unsubscribeFromScreenShare, notifyStreamView]
+    [controller.room, watchedShares, subscribeToScreenShare, unsubscribeFromScreenShare, notifyStreamView]
   );
 
   const unwatchShare = useCallback(

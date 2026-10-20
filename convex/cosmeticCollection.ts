@@ -32,6 +32,17 @@ import { audit } from "./lib/staff";
  */
 
 const ONE_PRICE_NOTE = "suggested price";
+const LEGACY_STORM_CHASER_HASHES = new Set([
+  "1c639e0181fe7d551336392a7d3e3b415a7c0c3258dd5b72ca7c9cb08abb19d3",
+  "857634fb8d38b34b7bf63098f6e854a40131d31358a751899c3aa19840346d5c",
+  "6d587291453757228510423b4d2695a8850c0599fb47fbf8ed1166ca21a5ff80",
+  "0c45cc7167dd316269850e5daadcf78005a82d2b67b8b7f66a0252db8e16d26b",
+]);
+
+function isLegacyStormChaser(url?: string) {
+  const hash = url?.match(/\/([a-f0-9]{64})\.json(?:$|\?)/)?.[1];
+  return !!hash && LEGACY_STORM_CHASER_HASHES.has(hash);
+}
 
 const noPictures = (url: string): string => {
   throw new Error(`a collection design has a picture address (${url}); the collection is made only of generators`);
@@ -163,6 +174,24 @@ export const publishDecorations = internalAction({
     });
     const result: { created: number; repointed: number } = await ctx.runMutation(internal.cosmeticCollection.seedDecorations, { items });
     return { published: planned.length, ...result };
+  },
+});
+
+/** Update profiles still wearing one of Storm Chaser's retired asset versions. */
+export const refreshEquippedStormChaser = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), payload: v.string() },
+  handler: async (ctx, { cursor, payload }) => {
+    const page = await ctx.db.query("users").paginate({ numItems: 100, cursor });
+    let updated = 0;
+    for (const user of page.page) {
+      if (!isLegacyStormChaser(user.profileEffect)) continue;
+      await ctx.db.patch(user._id, { profileEffect: payload, profileEffectStorageId: undefined });
+      updated++;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.cosmeticCollection.refreshEquippedStormChaser, { cursor: page.continueCursor, payload });
+    }
+    return { updated, more: !page.isDone };
   },
 });
 
@@ -312,6 +341,9 @@ export const seed = internalMutation({
       // The original Storm Chaser effect predates the collection slug. Reuse that published listing by kind and name so existing
       // owners get the lighter design instead of receiving a duplicate marketplace item.
       if (!existing && item.slug === "storm-chaser-effect") {
+        existing = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", "storm-chaser")).unique();
+      }
+      if (!existing && item.slug === "storm-chaser-effect") {
         existing = (await ctx.db.query("skus").withIndex("by_category", (q) => q.eq("categoryId", categoryId)).collect()).find(
           (sku) => sku.name.toLowerCase() === "storm chaser" && sku.grants.some((grant) => grant.kind === "profileEffect")
         ) ?? null;
@@ -323,6 +355,7 @@ export const seed = internalMutation({
         await ctx.db.patch(existing._id, { name: item.name, description: item.description, categoryId, grants, updatedAt: now });
         if (item.slug === "storm-chaser-effect" && existing.status !== "draft") {
           await ctx.scheduler.runAfter(0, internal.marketplace.refreshOwners, { skuId: existing._id, after: null });
+          await ctx.scheduler.runAfter(0, internal.cosmeticCollection.refreshEquippedStormChaser, { cursor: null, payload: item.payload });
         }
         refreshed++;
         continue;

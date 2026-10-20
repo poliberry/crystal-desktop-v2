@@ -343,14 +343,16 @@ function createBlobCache(config: CacheConfig) {
    * network re-checked either way.
    */
   function useCachedSrc(url: string | undefined): string | undefined {
-    if (url && isCdnUrl(url)) return url; // CDN: direct <img src>, no blob/cache, no CORS fetch
+    // Keep hook order stable when an image changes between a CDN url and a
+    // cacheable origin. React can reuse this component across that change.
+    const direct = !!url && isCdnUrl(url);
     const [cached, setCached] = useState<string | undefined>(() =>
-      url ? objectUrls.get(url) : undefined,
+      url && !direct ? objectUrls.get(url) : undefined,
     );
 
     useEffect(() => {
-      if (!url || isCdnUrl(url)) {
-        if (url) setCached(undefined);
+      if (!url || direct) {
+        setCached(undefined);
         return;
       }
       const already = objectUrls.get(url);
@@ -373,8 +375,9 @@ function createBlobCache(config: CacheConfig) {
       return () => {
         cancelled = true;
       };
-    }, [url]);
+    }, [url, direct]);
 
+    if (direct) return url; // CDN: direct <img src>, no blob/cache, no CORS fetch
     return cached ?? url;
   }
 

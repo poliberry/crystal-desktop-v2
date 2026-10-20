@@ -195,7 +195,7 @@ function ProfilePageBody({
       {...profileCssAttributes(profileCss, member.userId)}
       // The whole window, titlebar row included: the app's top bar is hidden while this is open (see `useProfilePageOpen`), so
       // the page's own header takes its place instead of sitting under a second bar with both sidebars cut off behind it.
-      className="fixed inset-0 z-50 flex flex-col"
+      className="fixed inset-0 z-50 flex flex-col bg-background"
       style={{
         background: member.borderGradientStart ? `linear-gradient(to bottom, rgba(0,0,0,0.6), rgba(0,0,0,0.6)), linear-gradient(to bottom, ${member.borderGradientStart}, ${member.borderGradientEnd})` : `var(--background)`
       }}

@@ -964,6 +964,10 @@ export function useRoom() {
    * those published by their screen-share companion, if they have one. */
   const setScreenShareSubscribed = useCallback(
     (participantIdentity: string, subscribed: boolean) => {
+      // The local share is already captured and played by the OS. Subscribing
+      // to our own ScreenShareAudio (including a companion publication) sends
+      // that output straight back to our speakers and creates a feedback loop.
+      if (participantIdentity === room.localParticipant.identity) return;
       const holders: Participant[] = [];
       const participant: Participant | undefined =
         room.getParticipantByIdentity(participantIdentity);

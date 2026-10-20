@@ -368,24 +368,26 @@ const stormChaser: CollectionDesign = {
   ],
 };
 
-/** A lighter, low-cost profile-card take on Storm Chaser. Transparent sky keeps profile text legible. */
+/** A transparent profile-card take on Storm Chaser. The artwork remains visible beneath the weather. */
 const stormChaserEffect: CollectionDesign = {
   slug: "storm-chaser-effect",
   name: "Storm Chaser",
   kind: "effect",
-  description: "A bright, gentle storm over your profile: drifting clouds, a light shower and one soft lightning flash that leaves your profile easy to read.",
+  description: "A transparent storm overlay with drifting clouds, visible rain and flashes of lightning over your profile artwork.",
   priceCents: 399,
-  colors: ["#8099b5", "#bacde0", "#e3effb", "#f8fbff"],
+  colors: ["#64748b", "#94a3b8", "#dbeafe", "#f8fbff"],
   duration: 7,
   intro: 1.2,
   build: (c) => [
-    make(c, "Storm glow", grad(c, 90, [[0, "#6f8dad00"], [0.34, "#829fbd14"], [0.72, "#bacde01f"], [1, "#edf6ff0a"]]), { ramp: false }),
-    make(c, "Cloud bank", puff(EW * 1.1, 200, "#c8d8e8"), { blend: "screen", transform: tf({ y: -EH * 0.4, opacity: 0.17 }) }),
-    crossing(c, "Passing cloud", puff(EW * 0.85, 180, "#8fa9c4"), { from: -EW * 0.4, to: EW * 0.4, y: -EH * 0.18, a: 0.12, phase: 0.4, blend: "screen", sy: 0.24 }),
-    make(c, "Fine rain", part(c, { shape: "dot", w: EW * 1.1, h: 10, count: cnt(c, 22), life: fit(c, 2.2), speed: 190, angle: 100, spread: 4, size: 2.5, sizeEnd: 1, colors: ["#dbeafe"], fadeIn: 0.1, fadeOut: 0.45, seed: c.seed + 5 }), { transform: tf({ y: -EH / 2, opacity: 0.32 }) }),
-    make(c, "Rain", part(c, { shape: "dot", w: EW * 0.9, h: 10, count: cnt(c, 14), life: fit(c, 1.4), speed: 290, angle: 100, spread: 4, size: 3, sizeEnd: 1, colors: ["#f0f7ff"], fadeIn: 0.08, fadeOut: 0.45, seed: c.seed + 11 }), { transform: tf({ y: -EH / 2, opacity: 0.34 }) }),
-    ...bolt(c, "Distant lightning", [EW * 0.34, -EH * 0.45], [EW * 0.25, -EH * 0.08], strike(c, 0.62), { seed: 17, jag: 10, n: 4, width: 2, color: "#f8fbff", halo: "#bfdbfe" }),
-    make(c, "Lightning glow", { type: "solid", w: EW, h: EH, color: "#eaf4ff" }, { blend: "screen", transform: tf({ opacity: cycle(c, c.idle, [[0, 0, "out"], [0.62, 0, "out"], [0.625, 0.1, "out"], [0.67, 0, "out"]]) }) }),
+    // No background plate or full-card gradient: every layer below is weather only.
+    make(c, "Cloud bank", puff(EW * 1.45, 250, "#a9bfd8"), { blend: "screen", transform: tf({ y: -EH * 0.34, opacity: 0.28 }) }),
+    crossing(c, "Passing cloud", puff(EW * 1.2, 220, "#c5d8ed"), { from: -EW * 0.45, to: EW * 0.45, y: -EH * 0.12, a: 0.16, phase: 0.4, blend: "screen", sy: 0.12 }),
+    crossing(c, "Low cloud", puff(EW * 1.25, 240, "#a9bfd8"), { from: EW * 0.4, to: -EW * 0.4, y: EH * 0.34, a: 0.2, phase: 0.7, blend: "screen", sy: 0.14 }),
+    make(c, "Fine rain", part(c, { shape: "dot", w: EW * 1.1, h: EH, count: cnt(c, 64), life: fit(c, 2.2), speed: 220, angle: 100, spread: 4, size: 2.8, sizeEnd: 1, colors: ["#dbeafe", "#ffffff"], fadeIn: 0.05, fadeOut: 0.28, seed: c.seed + 5 }), { transform: tf({ opacity: 0.62 }) }),
+    make(c, "Rain", part(c, { shape: "dot", w: EW * 0.9, h: EH, count: cnt(c, 36), life: fit(c, 1.4), speed: 320, angle: 100, spread: 4, size: 3.4, sizeEnd: 1.1, colors: ["#ffffff"], fadeIn: 0.03, fadeOut: 0.25, seed: c.seed + 11 }), { transform: tf({ opacity: 0.76 }) }),
+    ...bolt(c, "Lightning strike", [EW * 0.68, -EH * 0.48], [EW * 0.48, EH * 0.45], strike(c, 0.2), { seed: 17, jag: 18, n: 9, width: 4, color: "#ffffff", halo: "#bfdbfe" }),
+    ...bolt(c, "Second lightning strike", [EW * 0.27, -EH * 0.43], [EW * 0.4, EH * 0.32], strike(c, 0.62), { seed: 27, jag: 16, n: 8, width: 3.5, color: "#ffffff", halo: "#bfdbfe" }),
+    make(c, "Lightning glow", { type: "solid", w: EW, h: EH, color: "#eaf4ff" }, { blend: "screen", transform: tf({ opacity: cycle(c, c.idle, [[0, 0, "out"], [0.2, 0, "out"], [0.205, 0.32, "out"], [0.24, 0.1, "out"], [0.28, 0, "out"], [0.62, 0, "out"], [0.625, 0.28, "out"], [0.66, 0, "out"], [0.7, 0, "out"]]) }) }),
   ],
 };
 

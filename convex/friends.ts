@@ -15,8 +15,14 @@ async function presenceFor(ctx: QueryCtx, userId: Id<"users">) {
     .unique();
 }
 
-function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
+async function summarize(ctx: QueryCtx, user: Doc<"users">, presence: Doc<"presence"> | null) {
   const status = presence?.effective ?? "offline";
+  let nameplateFallbackUrl: string | undefined;
+  if (user.nameplateUrl) {
+    const entitlements = await ctx.db.query("entitlements").withIndex("by_user", (q) => q.eq("userId", user._id)).order("desc").take(300);
+    const entitlement = entitlements.find((row) => row.kind === "nameplate" && row.payload === user.nameplateUrl && row.revokedAt === undefined && (row.expiresAt === undefined || row.expiresAt > Date.now()));
+    if (entitlement) nameplateFallbackUrl = (await ctx.db.get(entitlement.skuId))?.imageUrl;
+  }
   return {
     id: user._id,
     name: user.name,
@@ -27,6 +33,7 @@ function summarize(user: Doc<"users">, presence: Doc<"presence"> | null) {
      * rather than only whether they're reachable. */
     customStatus: visibleCustomStatus(user, status),
     nameplateUrl: user.nameplateUrl,
+    nameplateFallbackUrl,
     avatarDecoration: effectiveDecoration(user),
     // The backdrop for their presence dot — see src/components/presence-dot.tsx.
     borderGradientStart: user.borderGradientStart,
@@ -60,7 +67,7 @@ export const listFriends = query({
       rows.map(async (row) => {
         const friend = await ctx.db.get(row.friendId);
         if (!friend) return null;
-        return friend.isBot ? null : summarize(friend, await presenceFor(ctx, row.friendId));
+        return friend.isBot ? null : summarize(ctx, friend, await presenceFor(ctx, row.friendId));
       })
     );
     return friends.filter((f): f is NonNullable<typeof f> => f !== null);
@@ -80,7 +87,7 @@ export const listIncomingRequests = query({
       rows.map(async (row) => {
         const requester = await ctx.db.get(row.requesterId);
         if (!requester) return null;
-        return requester.isBot ? null : { requestId: row._id, createdAt: row.createdAt, user: summarize(requester, null) };
+        return requester.isBot ? null : { requestId: row._id, createdAt: row.createdAt, user: await summarize(ctx, requester, null) };
       })
     );
     return requests.filter((r): r is NonNullable<typeof r> => r !== null);
@@ -100,7 +107,7 @@ export const listOutgoingRequests = query({
       rows.map(async (row) => {
         const recipient = await ctx.db.get(row.recipientId);
         if (!recipient) return null;
-        return recipient.isBot ? null : { requestId: row._id, createdAt: row.createdAt, user: summarize(recipient, null) };
+        return recipient.isBot ? null : { requestId: row._id, createdAt: row.createdAt, user: await summarize(ctx, recipient, null) };
       })
     );
     return requests.filter((r): r is NonNullable<typeof r> => r !== null);
