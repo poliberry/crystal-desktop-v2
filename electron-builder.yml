@@ -24,6 +24,13 @@ publish:
 # window managers don't derive the taskbar/window icon from the packaged app
 # the way Windows/macOS do.
 compression: maximum
+# The AppImage's squashfs stays gzip even though everything else compresses
+# for size: it is decompressed on demand through FUSE on every cold start,
+# and xz costs several times the CPU per byte paged in. On a slow machine
+# that is the difference between the app opening and a minutes-long wait
+# with a busy cursor. The download gets bigger; launching gets much faster.
+appImage:
+  compression: gzip
 asar: true
 # Keep file sets minimal. scripts/electron-builder-config.cjs points the packager at .app-stage/ (made by
 # scripts/stage-app.mjs), which holds only what the main process loads: the `files` below are relative to it. Without

@@ -17,6 +17,7 @@ import { InviteDeepLinkHandler } from "@/components/invite-deeplink-handler";
 import { VerifyMembershipHost } from "@/components/community/verify-membership-host";
 import { TabsProvider } from "@/components/home/tabs-context";
 import { SessionBootstrap } from "@/components/session-bootstrap";
+import { NotificationToasts } from "@/hooks/use-notification-toasts";
 import { TopNav } from "@/components/top-nav";
 import { WindowControls } from "@/components/window-controls";
 import { WindowControlsDock } from "@/components/window-controls-dock";
@@ -205,6 +206,7 @@ export function AppHome() {
           <TabsProvider>
             <NavigationProvider>
               <BirthdayProvider>
+                <NotificationToasts />
                 <InviteDeepLinkHandler />
                 <SecurityOpener />
                 <InstallDeepLinkHandler />

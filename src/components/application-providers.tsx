@@ -31,6 +31,7 @@ import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog
 import { ProfilePageProvider } from "@/components/profile/profile-page";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { E2eeProvider } from "@/lib/e2ee";
+import { Toaster } from "@/components/ui/sonner";
 import { MultiAccountSession, useAccountSessions } from "@/components/auth/multi-account-session";
 
 const CONVEX_URL = process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
@@ -153,6 +154,9 @@ function ApplicationAuthProviders({ children }: { children: React.ReactNode }) {
                   <OutboxFlusher />
                   <OutboxStatus />
                   <FileDropGuard />
+                  {/* In-app notification toasts (sonner). Mounted once per
+                      session, above page content. */}
+                  <Toaster position="bottom-right" closeButton />
                   {/* All inside Convex: each of these renders something
                       that queries the current user.
 

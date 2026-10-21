@@ -634,6 +634,17 @@ export const markRead = mutation({
     if (patch.lastReadAt !== undefined || "closedAt" in patch) {
       await ctx.db.patch(membership._id, patch);
     }
+    // Having looked at the conversation, being told about it in the inbox as
+    // well is noise — same as channels.markRead does for channel mentions.
+    const unread = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read", (q) => q.eq("userId", me._id).eq("read", false))
+      .collect();
+    for (const notification of unread) {
+      if (notification.conversationId === conversationId) {
+        await ctx.db.patch(notification._id, { read: true });
+      }
+    }
   },
 });
 

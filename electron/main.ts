@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { applyAppIdentity } from "./appIdentity";
-import { applyGpuPreference, getGpuSettings, recoverFromRendererLoss, setGpuDisabled, startDiagnostics } from "./diagnostics";
+import { applyGpuPreference, getGpuSettings, markStartupStage, recoverFromRendererLoss, setGpuDisabled, startDiagnostics } from "./diagnostics";
 import * as backgroundNotifier from "./backgroundNotifier";
 import { appIdentity, CHANNELS, REPO, resolveRunningApp, resolveRunningChannel, type AppKind } from "./channels";
 import { isAppLink, parseDeepLink, parseStudioLink, STUDIO_PROTOCOL, type DeepLink } from "./deeplink";
@@ -258,24 +258,36 @@ function customCssPath(): string {
 }
 
 /**
- * The app icon sized for a tray/menu-bar slot.
+ * The tray/menu-bar icon: the logomark alone, not the app icon.
  *
- * `new Tray(path)` uses the image at its natural size, and our icons ship at
- * 512px+ for the installer — which on macOS is drawn into the menu bar as-is,
- * swallowing the bar. macOS wants roughly an 18pt image, so it's drawn at 2x
- * and the buffer tagged as a Retina representation: the logical size stays
- * 18pt while the pixels stay sharp on a Retina display. Windows and Linux
- * both want 16px. Not a template image — templates are drawn from alpha
- * alone, which would reduce a full-colour logo to a solid blob.
+ * `build/tray.png` is the white mark from public/logo-mark.svg on
+ * transparency (see scripts/make-icons.mjs), shipped as a `tray.png`
+ * resource on every platform. `new Tray(path)` uses the image at its
+ * natural size, and it ships at 256px — which on macOS would be drawn into
+ * the menu bar as-is, swallowing the bar. macOS wants roughly an 18pt image,
+ * so it's drawn at 2x and the buffer tagged as a Retina representation: the
+ * logical size stays 18pt while the pixels stay sharp on a Retina display.
+ * Windows and Linux both want 16px. On macOS it is a template image, so the
+ * menu bar tints it for light and dark mode alike — correct here because the
+ * mark is monochrome (a full-colour logo would flatten to a solid blob).
  */
+function trayIconPath(): string | undefined {
+  const candidate = isDev
+    ? path.join(__dirname, "..", "build", "tray.png")
+    : path.join(process.resourcesPath, "tray.png");
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
+
 function trayIconImage(): Electron.NativeImage {
-  const source = appIconPath();
+  const source = trayIconPath();
   if (!source) return nativeImage.createEmpty();
   const image = nativeImage.createFromPath(source);
   if (image.isEmpty()) return nativeImage.createEmpty();
   if (process.platform === "darwin") {
     const retina = image.resize({ width: 36, height: 36, quality: "best" });
-    return nativeImage.createFromBuffer(retina.toPNG(), { scaleFactor: 2 });
+    const withScale = nativeImage.createFromBuffer(retina.toPNG(), { scaleFactor: 2 });
+    withScale.setTemplateImage(true);
+    return withScale;
   }
   return image.resize({ width: 16, height: 16, quality: "best" });
 }
@@ -343,6 +355,12 @@ function wireWindowStateEvents(win: BrowserWindow): void {
 }
 
 let mainWindow: BrowserWindow | null = null;
+/**
+ * The system tray icon. Module-level on purpose: a Tray held only by the
+ * `whenReady` callback's locals can be garbage collected once that callback
+ * returns, taking its icon with it.
+ */
+let appTray: Tray | null = null;
 /** Windows in an active call must remain unthrottled while hidden so audio,
  * video, and signalling continue. Everything else may return to Chromium's
  * normal background throttling after it has repainted on restore. */
@@ -514,11 +532,16 @@ function createWindow(): void {
   const showOnce = () => {
     if (shown || win.isDestroyed()) return;
     shown = true;
+    markStartupStage("main window shown");
     win.show();
   };
-  win.once("ready-to-show", showOnce);
+  win.once("ready-to-show", () => {
+    markStartupStage("main window ready to show (first paint)");
+    showOnce();
+  });
   const showFallback = setTimeout(showOnce, 4_000);
   win.once("closed", () => clearTimeout(showFallback));
+  win.webContents.once("did-finish-load", () => markStartupStage("main window finished loading"));
 
   if (isDev) {
     void win.loadURL(`${process.env.ELECTRON_START_URL as string}/app`);
@@ -956,6 +979,7 @@ function createOrFocusEditorWindow(options: {
 }
 
 app.whenReady().then(async () => {
+  markStartupStage("app ready");
   // A packaged macOS app gets its Dock icon from its bundle. A run from source is the stock Electron app, whose icon is
   // Electron's, so set ours; Windows and Linux take the window icon (see `appIconPath`).
   if (!app.isPackaged && process.platform === "darwin" && app.dock) {
@@ -1033,12 +1057,23 @@ app.whenReady().then(async () => {
   // signing in to. Worth knowing now that channels have their own sessions: a
   // callback delivered to a channel with no sign-in in flight simply does
   // nothing, and the flow can be restarted from the right one.
+  // Only when not already the handler: on Linux every registration rewrites
+  // the MIME database, which on a slow disk is seconds of launch for nothing
+  // when nothing changed. A check that throws is treated as "not registered".
+  const claimProtocol = (scheme: string) => {
+    try {
+      if (app.isDefaultProtocolClient(scheme)) return;
+    } catch {
+      /* fall through to registering */
+    }
+    app.setAsDefaultProtocolClient(scheme);
+  };
   if (isStudioApp) {
     // Studio is the handler for its own scheme only: claiming `crystal://` would take sign-in callbacks and invites
     // away from Crystal. Not in development, where this registers the bare Electron binary.
-    if (!isDev) app.setAsDefaultProtocolClient(STUDIO_PROTOCOL);
+    if (!isDev) claimProtocol(STUDIO_PROTOCOL);
   } else {
-    app.setAsDefaultProtocolClient("crystal");
+    claimProtocol("crystal");
   }
 
   const ses = session.defaultSession;
@@ -1371,28 +1406,45 @@ app.whenReady().then(async () => {
 
   // Tray icon: lets the app keep running (and keep watching for
   // notifications) after the window is closed, per the `close` handler in
-  // createWindow() above.
+  // createWindow() above. On every platform — Windows and Linux as well as
+  // macOS.
   // Studio has none: closing its window quits it.
-  const tray = isStudioApp ? null : new Tray(trayIconImage());
-  if (tray) {
-  tray.setToolTip(identity.productName);
-  // Without this macOS swallows the first click of a double-click and delays
-  // the menu; the tray has no double-click behaviour to preserve.
-  if (process.platform === "darwin") tray.setIgnoreDoubleClickEvents(true);
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: `Open ${identity.productName}`, click: () => createOrFocusMainWindow() },
-      { type: "separator" },
-      {
-        label: "Quit",
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        },
-      },
-    ])
-  );
-  tray.on("click", () => createOrFocusMainWindow());
+  //
+  // Kept in a module-level variable, not a local: once the `whenReady`
+  // callback returns, a local is eligible for garbage collection, and a
+  // collected Tray takes its icon with it. (That is also why the tray used
+  // to go missing off macOS.) Creation is guarded so a machine that cannot
+  // host a tray still starts the app — it just has no tray to live in.
+  if (!isStudioApp) {
+    try {
+      const image = trayIconImage();
+      if (!image.isEmpty()) {
+        appTray = new Tray(image);
+        appTray.setToolTip(identity.productName);
+        // Without this macOS swallows the first click of a double-click and delays
+        // the menu; the tray has no double-click behaviour to preserve.
+        if (process.platform === "darwin") appTray.setIgnoreDoubleClickEvents(true);
+        appTray.setContextMenu(
+          Menu.buildFromTemplate([
+            { label: `Open ${identity.productName}`, click: () => createOrFocusMainWindow() },
+            { type: "separator" },
+            {
+              label: "Quit",
+              click: () => {
+                isQuitting = true;
+                app.quit();
+              },
+            },
+          ])
+        );
+        appTray.on("click", () => createOrFocusMainWindow());
+      } else {
+        console.warn("No tray icon image; running without a system tray icon.");
+      }
+    } catch (error) {
+      console.warn("Could not create the system tray icon; running without one.", error);
+      appTray = null;
+    }
   }
 
   backgroundNotifier.init({
@@ -1688,7 +1740,9 @@ app.whenReady().then(async () => {
     createOrFocusStudioWindow();
     app.on("activate", () => createOrFocusStudioWindow());
   } else {
+    markStartupStage("creating main window");
     createWindow();
+    markStartupStage("main window created");
     app.on("activate", () => createOrFocusMainWindow());
     const firstLoad = mainWindow?.webContents;
     let started = false;

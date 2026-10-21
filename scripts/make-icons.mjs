@@ -17,6 +17,13 @@
  *                                         square, Apple's grid). electron-builder turns this into the .icns, and the dev
  *                                         build sets it as the Dock icon. Without the margin, the icon is drawn a fifth
  *                                         larger than every other app's in the Dock and Finder.
+ *
+ * Plus the tray icon, which is the logomark rather than an app icon:
+ *
+ *   tray.png                              the white mark from public/logo-mark.svg on transparency, 256px square. The
+ *                                         main process resizes it per platform at startup (18pt template image on
+ *                                         macOS, 16px on Windows/Linux). Same mark on every channel, so it is not
+ *                                         per-channel like the icons above.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -61,6 +68,13 @@ const make = {
       .png({ compressionLevel: 9 })
       .toBuffer(),
   small: (src, size) => sharp(src).resize(size, size).png({ compressionLevel: 9 }).toBuffer(),
+  // The SVG is wider than it is tall (628x622); centring it on a square keeps
+  // the runtime resize to a square tray slot from stretching it.
+  tray: (src) =>
+    sharp(src)
+      .resize(256, 256, { fit: "contain", background: CLEAR })
+      .png({ compressionLevel: 9 })
+      .toBuffer(),
 };
 
 const digest = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -94,6 +108,27 @@ for (const app of APPS) {
   await emit(app.full, await make.full(src));
   await emit(app.mac, await make.mac(src));
   for (const [rel, size] of app.small) await emit(rel, await make.small(src, size));
+}
+
+// The tray logomark. Same mark on every channel, so it sits outside the
+// per-channel loop above. Validated loosely (an SVG whose art is roughly
+// square) rather than exactly: it is hand-drawn, not Icon Composer output.
+{
+  const src = join(root, "public/logo-mark.svg");
+  if (!existsSync(src)) {
+    console.error("missing source: public/logo-mark.svg");
+    process.exit(1);
+  }
+  const meta = await sharp(src).metadata();
+  const squarish =
+    meta.width !== undefined &&
+    meta.height !== undefined &&
+    Math.abs(meta.width - meta.height) / Math.max(meta.width, meta.height) < 0.05;
+  if (!squarish) {
+    console.error(`public/logo-mark.svg should be roughly square (it is ${meta.width}x${meta.height}).`);
+    process.exit(1);
+  }
+  await emit("build/tray.png", await make.tray(src));
 }
 
 if (check) {

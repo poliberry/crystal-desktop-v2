@@ -114,6 +114,42 @@ export function voipConfigured(): boolean {
   return !!(process.env.APNS_KEY_ID && process.env.APNS_PRIVATE_KEY);
 }
 
+/**
+ * Whether the user has the desktop app open right now: a live `desktop`
+ * session heartbeat (clients beat every 20s; see convex/presence.ts
+ * `STALE_MS`), or a fresh legacy `presence` heartbeat with no sessions at
+ * all (an old client, which presence treats as one implicit desktop
+ * session).
+ *
+ * Mobile pushes are suppressed while this is true — the desktop already
+ * rings/toasts through its own background notifier, so buzzing the phone
+ * too is just noise. Checked both when a notification is written (to avoid
+ * scheduling work) and at send time (the desktop may have opened since).
+ */
+const DESKTOP_ALIVE_MS = 60_000;
+
+export const isDesktopLive = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const now = Date.now();
+    const sessions = await ctx.db
+      .query("presenceSessions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    if (sessions.some((s) => s.platform === "desktop" && s.lastHeartbeat > now - DESKTOP_ALIVE_MS)) {
+      return true;
+    }
+    if (sessions.length === 0) {
+      const row = await ctx.db
+        .query("presence")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .unique();
+      if (row && row.lastHeartbeat > now - DESKTOP_ALIVE_MS) return true;
+    }
+    return false;
+  },
+});
+
 export const getTokensForUser = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
@@ -144,6 +180,9 @@ export const sendExpoPush = internalAction({
     authorImgUrl: v.optional(v.string()),
   },
   handler: async (ctx, { userId, title, body: scheduledBody, data, authorImgUrl }) => {
+    // The desktop app opened after this was scheduled: it already notifies
+    // through its own background notifier.
+    if (await ctx.runQuery(internal.push.isDesktopLive, { userId })) return;
     let tokens: { expoPushToken: string; platform: "ios" | "android" }[] = await ctx.runQuery(internal.push.getTokensForUser, { userId });
     if (tokens.length === 0) return;
 

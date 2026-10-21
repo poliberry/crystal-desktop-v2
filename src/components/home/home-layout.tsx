@@ -20,6 +20,7 @@ import { PageHost } from "@/components/pages/page-host";
 import { usePage } from "@/components/pages/page-context";
 import { Button } from "@/components/ui/button";
 import { getDesktopAPI } from "@/lib/desktop";
+import { setActiveView } from "@/lib/active-view";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -273,6 +274,8 @@ export function HomeLayout() {
           ? { kind: "channel" as const, id: target.channelId }
           : null;
     void getDesktopAPI()?.notifications.setActiveView(view);
+    // Same signal for in-app toasts: nothing pops for the room on screen.
+    setActiveView(view);
   }, [showCallStage, page, target]);
 
   useEffect(() => {

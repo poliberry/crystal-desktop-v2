@@ -31,9 +31,23 @@ const BLOCKED_AFTER_MS = 5_000;
 
 let file: string | null = null;
 
+/** When this process started, so startup stages can say how long launch took. */
+const processStartedAt = Date.now();
+
 function logPath(): string {
   if (!file) file = path.join(app.getPath("logs"), "diagnostics.log");
   return file;
+}
+
+/**
+ * One timestamped line for a launch milestone (e.g. "window shown"), with
+ * milliseconds since process start. A slow launch is otherwise a mystery —
+ * minutes of nothing followed by an app — and this is what says which stage
+ * ate them (GPU init before first paint, a hung protocol handler, first
+ * paint waiting on the network, ...). Read it in `logs/diagnostics.log`.
+ */
+export function markStartupStage(stage: string): void {
+  logDiagnostic(`startup +${Date.now() - processStartedAt} ms: ${stage}`);
 }
 
 /** One line, timestamped. Never throws: a diagnostic must not be the thing that breaks the app. */

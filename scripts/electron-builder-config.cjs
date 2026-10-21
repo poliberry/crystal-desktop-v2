@@ -119,9 +119,11 @@ const appConfig = {
   },
   // Replaces the base entry rather than adding to it: the app asks for
   // `icon.png` at runtime whichever channel it is, so each channel ships its
-  // own icon under that one name.
+  // own icon under that one name. `tray.png` is the logomark tray icon (see
+  // scripts/make-icons.mjs) — the same mark on every channel.
   extraResources: [
     { from: `build/${app.icon}`, to: "icon.png" },
+    { from: "build/tray.png", to: "tray.png" },
   ],
   mac: {
     ...base.mac,
@@ -135,6 +137,7 @@ const appConfig = {
       // The system-audio helper belongs to Crystal's calls; Studio has none.
       ...(studio ? [] : (base.mac?.extraResources ?? [])),
       { from: `build/${app.icon}`, to: "icon.png" },
+      { from: "build/tray.png", to: "tray.png" },
     ],
   },
   // A product name with a space in it ("Crystal Canary") is exactly the

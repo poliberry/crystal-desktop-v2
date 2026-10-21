@@ -76,6 +76,34 @@ function wants(
 }
 
 /**
+ * Whether the user has the desktop app open: a live `desktop` presence
+ * session (clients beat every 20s; see presence.ts `STALE_MS`), or a fresh
+ * legacy `presence` heartbeat with no sessions (an old client, which
+ * presence treats as one implicit desktop session). Mirrors
+ * `push.isDesktopLive` for use inside the notifying transaction.
+ */
+const DESKTOP_ALIVE_MS = 60_000;
+
+async function hasLiveDesktop(ctx: MutationCtx, userId: Id<"users">): Promise<boolean> {
+  const now = Date.now();
+  const sessions = await ctx.db
+    .query("presenceSessions")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  if (sessions.some((s) => s.platform === "desktop" && s.lastHeartbeat > now - DESKTOP_ALIVE_MS)) {
+    return true;
+  }
+  if (sessions.length === 0) {
+    const row = await ctx.db
+      .query("presence")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (row && row.lastHeartbeat > now - DESKTOP_ALIVE_MS) return true;
+  }
+  return false;
+}
+
+/**
  * Inserts one `notifications` row per recipient (skipping the actor, so
  * nobody gets notified about their own message/request) and schedules an
  * Expo push for each via `push.sendExpoPush`. A plain helper — not a Convex
@@ -164,53 +192,62 @@ export async function notifyUsers(
       ...(rest.type === "channel_mention" ? { isMention } : {}),
       ...rest,
     });
-    await ctx.scheduler.runAfter(0, internal.push.sendExpoPush, {
-      userId,
-      authorImgUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
-      title: pushTitle,
-      body: rest.body,
-      // Include the ids the mobile app's notification-tap deep link needs
-      // (dm_message -> conversationId, channel_mention -> channelId, etc.)
-      // so it can navigate without a follow-up query. Additive only —
-      // existing `{ type }` consumers are unaffected.
-      //
-      // senderId/senderName are additive for the same reason, but for the
-      // mobile app's notification-service extension: it builds an
-      // INSendMessageIntent from them to render the push as an iOS
-      // Communication Notification (sender avatar) instead of a plain
-      // alert — see crystal-mobile/targets/notification-service.
-      data: {
-        type: rest.type,
-        conversationId: rest.conversationId,
-        channelId: rest.channelId,
-        communityId: rest.communityId,
-        requestId: rest.requestId,
-        senderId: actorId,
-        senderName: actorUser?.name,
-        senderAvatarUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
-        channelName: channel?.name,
-        communityName: community?.name,
-        // So push.ts can apply the same body rule on its own (see `sendExpoPush`).
-        systemAuthored,
-        isMention,
-        // Ciphertext plus this recipient's identity-encrypted room-key wrap.
-        // Native notification handlers can decrypt while the app is closed;
-        // the server still never receives plaintext.
-        sealed: sealedSource ? await sealFor(ctx, sealedSource, userId) : undefined,
-      },
-    });
-    // iPhones ring through CallKit (the system call screen, even with the app
-    // closed). Only sent where the recipient's settings let the ring through,
-    // which is everything checked above. No-op until APNs is configured.
-    if (rest.type === "call_ring" && rest.conversationId) {
-      const conversation = await ctx.db.get("conversations", rest.conversationId);
-      await ctx.scheduler.runAfter(0, internal.voipNode.sendCallRing, {
+    // The desktop app already notifies through its own background notifier
+    // while it's open, so the phone stays quiet — except the inbox row
+    // above, which is still written so nothing is lost. Calls ring on the
+    // desktop too, and a missed call stays in the inbox either way.
+    const desktopLive = await hasLiveDesktop(ctx, userId);
+    if (!desktopLive) {
+      await ctx.scheduler.runAfter(0, internal.push.sendExpoPush, {
         userId,
-        conversationId: rest.conversationId,
-        title: rest.title,
-        callerName: actorUser?.name,
-        isGroup: conversation?.type === "group",
+        authorImgUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
+        title: pushTitle,
+        body: rest.body,
+        // Include the ids the mobile app's notification-tap deep link needs
+        // (dm_message -> conversationId, channel_mention -> channelId, etc.)
+        // so it can navigate without a follow-up query. Additive only —
+        // existing `{ type }` consumers are unaffected.
+        //
+        // senderId/senderName are additive for the same reason, but for the
+        // mobile app's notification-service extension: it builds an
+        // INSendMessageIntent from them to render the push as an iOS
+        // Communication Notification (sender avatar) instead of a plain
+        // alert — see crystal-mobile/targets/notification-service.
+        data: {
+          type: rest.type,
+          conversationId: rest.conversationId,
+          channelId: rest.channelId,
+          communityId: rest.communityId,
+          requestId: rest.requestId,
+          senderId: actorId,
+          senderName: actorUser?.name,
+          senderAvatarUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
+          channelName: channel?.name,
+          communityName: community?.name,
+          // So push.ts can apply the same body rule on its own (see `sendExpoPush`).
+          systemAuthored,
+          isMention,
+          // Ciphertext plus this recipient's identity-encrypted room-key wrap.
+          // Native notification handlers can decrypt while the app is closed;
+          // the server still never receives plaintext.
+          sealed: sealedSource ? await sealFor(ctx, sealedSource, userId) : undefined,
+        },
       });
+      // iPhones ring through CallKit (the system call screen, even with the
+      // app closed). Only sent where the recipient's settings let the ring
+      // through, which is everything checked above. No-op until APNs is
+      // configured. Skipped while the desktop is open, like the Expo push
+      // above: the call rings there instead.
+      if (rest.type === "call_ring" && rest.conversationId) {
+        const conversation = await ctx.db.get("conversations", rest.conversationId);
+        await ctx.scheduler.runAfter(0, internal.voipNode.sendCallRing, {
+          userId,
+          conversationId: rest.conversationId,
+          title: rest.title,
+          callerName: actorUser?.name,
+          isGroup: conversation?.type === "group",
+        });
+      }
     }
     // The installed web app and browsers that allowed notifications. Same title and (already generic,
     // for encrypted messages) body, plus where a tap should take them.
@@ -711,7 +748,20 @@ export const latest = query({
       .withIndex("by_user_created", (q) => q.eq("userId", me._id))
       .order("desc")
       .take(1);
-    return newest ? { id: newest._id, createdAt: newest.createdAt, type: newest.type } : null;
+    if (!newest) return null;
+    const actor = newest.actorId ? await ctx.db.get(newest.actorId) : null;
+    return {
+      id: newest._id,
+      createdAt: newest.createdAt,
+      type: newest.type,
+      title: newest.title,
+      body: newest.body ?? null,
+      actorName: actor?.name ?? null,
+      actorImageUrl: actor?.imageUrl ?? null,
+      conversationId: newest.conversationId ?? null,
+      channelId: newest.channelId ?? null,
+      communityId: newest.communityId ?? null,
+    };
   },
 });
 
