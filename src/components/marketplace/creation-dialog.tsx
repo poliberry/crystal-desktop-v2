@@ -15,26 +15,28 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { CREATION_ACCEPT, uploadCreation } from "@/lib/creation-upload";
+import { posterFromVideo } from "@/studio/model/rasterize";
+import { withCosmeticPoster } from "@/lib/cosmetic-video";
 
 type CreationKind = Extract<GrantKind, "avatarDecoration" | "profileSticker" | "profileEffect" | "nameplate" | "communityTheme">;
 const KINDS: CreationKind[] = ["avatarDecoration", "profileSticker", "profileEffect", "nameplate", "communityTheme"];
 
 const HINTS: Record<CreationKind, string> = {
-  avatarDecoration: "A transparent PNG, GIF or WebP that wraps around an avatar. Square artwork works best.",
-  profileSticker: "A transparent PNG, GIF or WebP that is stuck onto a profile card.",
-  profileEffect: "A full-card PNG, GIF or WebP that plays over a profile. Make it transparent.",
+  avatarDecoration: "Transparent image or looping WebM video that wraps around an avatar. Square artwork works best.",
+  profileSticker: "Transparent image or looping WebM video placed on a profile card.",
+  profileEffect: "A full-card image or looping WebM video layered over a profile. Make it transparent.",
   nameplate: "A wide image or short WebM/MP4 clip that sits behind a name.",
   communityTheme: "Two colours that become a gradient across a community.",
 };
 
 /** The grant's payload as the preview should draw it, before it is submitted —
  * the same shapes the server builds. */
-function previewPayload(kind: CreationKind, url: string | null, start: string, end: string): string | undefined {
+function previewPayload(kind: CreationKind, url: string | null, posterUrl: string | null, start: string, end: string): string | undefined {
   if (kind === "communityTheme") return JSON.stringify({ start, end });
   if (!url) return undefined;
-  if (kind === "avatarDecoration") return JSON.stringify([{ id: "a", url, anchor: "center", x: 50, y: 0, width: 100 }]);
-  if (kind === "profileSticker") return JSON.stringify([{ id: "a", url, anchor: "top", x: 50, y: 50, width: 36 }]);
-  return url;
+  if (kind === "avatarDecoration") return JSON.stringify([{ id: "a", url, posterUrl: posterUrl ?? undefined, anchor: "center", x: 50, y: 0, width: 100 }]);
+  if (kind === "profileSticker") return JSON.stringify([{ id: "a", url, posterUrl: posterUrl ?? undefined, anchor: "top", x: 50, y: 50, width: 36 }]);
+  return withCosmeticPoster(url, posterUrl ?? undefined);
 }
 
 export function CreationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -47,6 +49,7 @@ export function CreationDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   const [price, setPrice] = useState("1.99");
   const [free, setFree] = useState(false);
   const [artwork, setArtwork] = useState<string | null>(null);
+  const [poster, setPoster] = useState<string | null>(null);
   const [start, setStart] = useState("#6366f1");
   const [end, setEnd] = useState("#ec4899");
   const [uploading, setUploading] = useState(false);
@@ -59,6 +62,7 @@ export function CreationDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     setPrice("1.99");
     setFree(false);
     setArtwork(null);
+    setPoster(null);
     setError(null);
   };
 
@@ -66,16 +70,22 @@ export function CreationDialog({ open, onOpenChange }: { open: boolean; onOpenCh
   // payout account and nothing is charged or paid out for it.
   const cents = free ? 0 : Math.round(Number(price) * 100);
   const priceOk = cents === 0 || (Number.isInteger(cents) && cents >= 50 && cents <= 50_000);
-  const payload = previewPayload(kind, artwork, start, end);
+  const payload = previewPayload(kind, artwork, poster, start, end);
   const grants: PreviewGrant[] = payload ? [{ kind, payload, label: name }] : [];
-  const ready = name.trim().length >= 2 && priceOk && (kind === "communityTheme" || !!artwork);
+  const videoNeedsPoster = !!artwork && /\.(webm|mp4|m4v|mov)(\?.*)?$/i.test(artwork);
+  const ready = name.trim().length >= 2 && priceOk && (kind === "communityTheme" || (!!artwork && (!videoNeedsPoster || !!poster)));
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
     setUploading(true);
     setError(null);
+    setPoster(null);
     try {
-      setArtwork(await uploadCreation(convex, file));
+      const url = await uploadCreation(convex, file);
+      setArtwork(url);
+      setPoster(file.type.startsWith("video/")
+        ? await uploadCreation(convex, new File([await posterFromVideo(file)], `${file.name}.poster.png`, { type: "image/png" }))
+        : null);
     } catch (e) {
       setError(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "The upload failed.");
     } finally {
@@ -92,6 +102,8 @@ export function CreationDialog({ open, onOpenChange }: { open: boolean; onOpenCh
         name,
         description: description || undefined,
         artworkUrl: artwork ?? undefined,
+        posterUrl: poster ?? undefined,
+        previewUrl: poster ?? undefined,
         themeStart: kind === "communityTheme" ? start : undefined,
         themeEnd: kind === "communityTheme" ? end : undefined,
         priceCents: cents,
@@ -175,7 +187,7 @@ export function CreationDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                 {artwork ? "Replace artwork" : "Upload artwork"}
                 <input
                   type="file"
-                  accept={kind === "nameplate" ? CREATION_ACCEPT : CREATION_ACCEPT.split(",").filter((t) => t.startsWith("image/")).join(",")}
+                  accept={kind === "nameplate" ? CREATION_ACCEPT : CREATION_ACCEPT.split(",").filter((type) => type.startsWith("image/") || type === "video/webm").join(",")}
                   className="sr-only"
                   onChange={(e) => {
                     void pick(e.target.files?.[0]);

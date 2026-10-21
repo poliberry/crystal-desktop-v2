@@ -3,6 +3,8 @@
 import { useRef } from "react";
 
 import { isMotionUrl } from "../../../convex/lib/motion";
+import { isVideoUrl } from "@/lib/media";
+import { CosmeticVideo } from "@/components/motion/cosmetic-video";
 import { MotionPlayer } from "@/components/motion/motion-player";
 import { useAncestorHover } from "@/hooks/use-ancestor-hover";
 import { useMotionAllowed } from "@/hooks/use-motion-allowed";
@@ -27,12 +29,13 @@ export function CosmeticMedia({
   animate?: boolean | "hover";
 }) {
   const motion = isMotionUrl(src);
+  const video = isVideoUrl(src);
   const box = useRef<HTMLDivElement>(null);
   const marker = useRef<HTMLSpanElement>(null);
-  const hovered = useAncestorHover(motion ? box : marker, animate === "hover" && !!src);
+  const hovered = useAncestorHover(motion || video ? box : marker, animate === "hover" && !!src);
   const motionAllowed = useMotionAllowed();
   const playing = motionAllowed && (animate === true || (animate === "hover" && hovered));
-  const poster = useStaticFrame(src && !motion ? src : undefined, !playing);
+  const poster = useStaticFrame(src && !motion && !video ? src : undefined, !playing);
 
   if (!src) return null;
   if (motion) {
@@ -40,6 +43,13 @@ export function CosmeticMedia({
     return (
       <div ref={box} className={cn("relative size-full", className)}>
         <MotionPlayer url={src} animate={playing} />
+      </div>
+    );
+  }
+  if (video) {
+    return (
+      <div ref={box} className={cn("relative size-full overflow-hidden", className)}>
+        <CosmeticVideo value={src} playing={playing} className="h-full w-full object-cover" />
       </div>
     );
   }

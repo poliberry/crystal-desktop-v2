@@ -4,6 +4,10 @@ import { cycle } from "./effectLibrary";
 /**
  * The Archive collection: original nameplates and profile effects for the shop.
  *
+ * **Superseded for publishing.** The listings now sell calm remakes of these designs, drawn in scripts/cosmetics/ and
+ * published as transparent video by scripts/publish-cosmetic-remakes.mjs. These timelines are kept for the tests and the
+ * Studio library; `cosmeticCollection.publish` refuses to put them back on sale.
+ *
  * Crystal's cosmetics are data, not pictures. A design here is a stack of the same generators and keyframes anyone can use in
  * Studio's timeline (gradients, shapes, particles, shimmer, rays, noise, compound clips), played live on a canvas, so each one is
  * a few kilobytes and crisp at any size. The set is written in the spirit of the collectibles people remember from the big chat

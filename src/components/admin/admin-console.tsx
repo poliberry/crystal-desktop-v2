@@ -20,6 +20,7 @@ import { GuidesSection } from "@/components/admin/sections/guides";
 import { TicketRecord } from "@/components/admin/records/ticket";
 import { UserRecord } from "@/components/admin/records/user";
 import { CatalogSection, CategoriesSection } from "@/components/admin/sections/catalog";
+import { CosmeticVideosSection } from "@/components/admin/sections/cosmetic-videos";
 import { DashboardSection } from "@/components/admin/sections/dashboard";
 import { AccountsSection, CommunitiesSection } from "@/components/admin/sections/directory";
 import { OrdersSection, PayoutsSection, RevenueSection } from "@/components/admin/sections/finance";
@@ -45,6 +46,7 @@ const SECTIONS: Record<string, () => React.JSX.Element> = {
   communities: CommunitiesSection,
   support: SupportSection,
   catalog: CatalogSection,
+  cosmeticVideos: CosmeticVideosSection,
   submissions: SubmissionsSection,
   extensions: ExtensionsSection,
   e2ee: E2eeSection,

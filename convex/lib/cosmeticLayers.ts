@@ -46,6 +46,7 @@ export const layerArgValidator = v.object({
   id: v.string(),
   kind: v.optional(kindValidator),
   url: v.string(),
+  posterUrl: v.optional(v.string()),
   storageId: v.optional(v.id("_storage")),
   anchor: v.union(
     v.literal("top"),
@@ -84,6 +85,7 @@ export type LayerArg = {
   id: string;
   kind?: "image" | "text" | "shape";
   url: string;
+  posterUrl?: string;
   storageId?: Id<"_storage">;
   anchor: "top" | "center" | "bottom" | "locked";
   x: number;
@@ -136,6 +138,7 @@ export function normalizeLayers(layers: LayerArg[]): LayerArg[] {
   return layers.slice(0, MAX_LAYERS).map((layer) => ({
     id: layer.id,
     url: layer.url,
+    posterUrl: layer.posterUrl,
     storageId: layer.storageId,
     anchor: layer.anchor,
     x: round(clamp(layer.x, POSITION.min, POSITION.max)),

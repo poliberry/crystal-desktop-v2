@@ -8,6 +8,7 @@ import {
   BarChart3,
   CircleDollarSign,
   Flag,
+  Film,
   FolderTree,
   Globe2,
   Inbox,
@@ -57,6 +58,7 @@ export const SITE_MAP: { label: string; items: SiteMapItem[] }[] = [
     label: "Marketplace",
     items: [
       { id: "catalog", label: "Catalogue", icon: Package, permission: "catalog.read" },
+      { id: "cosmeticVideos", label: "Cosmetic videos", icon: Film, permission: "catalog.read" },
       { id: "submissions", label: "Creator submissions", icon: Palette, permission: "catalog.read" },
       { id: "categories", label: "Categories", icon: FolderTree, permission: "catalog.read" },
     ],

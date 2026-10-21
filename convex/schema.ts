@@ -84,6 +84,8 @@ const cosmeticLayerValidator = v.object({
    * reorder rather than a delete and an insert. Minted by the client. */
   id: v.string(),
   url: v.string(),
+  /** Still image paired with a video layer for reduced-motion and native fallbacks. */
+  posterUrl: v.optional(v.string()),
   /** Absent for a built-in preset, which is drawn from code and owns no file. */
   storageId: v.optional(v.id("_storage")),
   /** Which edge of the card `y` is measured from — or `"locked"`, where it is

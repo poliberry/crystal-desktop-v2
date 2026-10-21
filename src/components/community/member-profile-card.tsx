@@ -176,6 +176,7 @@ export function MemberProfileCard({
   previewActivities,
   customStatusOverride,
   inlineEdit,
+  bleed = false,
   className,
 }: {
   member: MemberProfileMember;
@@ -202,6 +203,11 @@ export function MemberProfileCard({
    * and nothing is saved from here.
    */
   inlineEdit?: InlineProfileEdit;
+  /**
+   * The card is a surface of its own (the DM profile sidebar) rather than a padded, rounded card: its content box and
+   * the profile effect run to its edges, square, with no ring round them. Pass `p-0 rounded-none` in `className` too.
+   */
+  bleed?: boolean;
   className?: string;
 }) {
   const me = useQuery(api.users.getCurrentUser);
@@ -299,7 +305,8 @@ export function MemberProfileCard({
           // and every block under it pads itself. Padding the box as well
           // insets the banner into a floating strip and doubles the gutter of
           // everything else.
-          "relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/20",
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden",
+          bleed ? "rounded-none" : "rounded-xl border border-border/20",
           hasGradient ? "bg-background/70" : "bg-sidebar-accent",
           // Radix wraps the viewport's children in a `display: table` box that
           // shrink-wraps to content — so a stream still (a replaced element with
@@ -604,8 +611,8 @@ export function MemberProfileCard({
           without it moving over the top. Only the card itself counts, not the page around it on the full profile. */}
       <ProfileEffectLayer
         src={profileEffect}
-        inset="inset-1"
-        rounded="rounded-xl"
+        inset={bleed ? "inset-0" : "inset-1"}
+        rounded={bleed ? "rounded-none" : "rounded-xl"}
         className="group-hover/profile-card:opacity-50"
       />
       {!frameHandledByHost &&

@@ -41,6 +41,8 @@ import type * as communityWidgets from "../communityWidgets.js";
 import type * as connectedAccounts from "../connectedAccounts.js";
 import type * as conversations from "../conversations.js";
 import type * as cosmeticCollection from "../cosmeticCollection.js";
+import type * as cosmeticMigration from "../cosmeticMigration.js";
+import type * as cosmeticRemake from "../cosmeticRemake.js";
 import type * as creationFiles from "../creationFiles.js";
 import type * as creatorCommunities from "../creatorCommunities.js";
 import type * as creators from "../creators.js";
@@ -221,6 +223,8 @@ declare const fullApi: ApiFromModules<{
   connectedAccounts: typeof connectedAccounts;
   conversations: typeof conversations;
   cosmeticCollection: typeof cosmeticCollection;
+  cosmeticMigration: typeof cosmeticMigration;
+  cosmeticRemake: typeof cosmeticRemake;
   creationFiles: typeof creationFiles;
   creatorCommunities: typeof creatorCommunities;
   creators: typeof creators;

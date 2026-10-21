@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 
 import { isMotionUrl } from "../../../convex/lib/motion";
 import { MotionPlayer } from "@/components/motion/motion-player";
@@ -9,6 +9,8 @@ import { useMotionAllowed } from "@/hooks/use-motion-allowed";
 import { useStaticFrame } from "@/hooks/use-static-frame";
 import { useCachedImageSrc } from "@/lib/image-cache";
 import { cn } from "@/lib/utils";
+import { CosmeticVideo } from "@/components/motion/cosmetic-video";
+import { isVideoUrl } from "@/lib/media";
 
 /**
  * The strip behind somebody's name — in a member list, a friend row, the user
@@ -42,7 +44,7 @@ import { cn } from "@/lib/utils";
  * storage with the original filename's extension intact, and one fewer field
  * is one fewer thing for the two profile tables to disagree about. */
 export function isVideoNameplate(url: string | null | undefined): boolean {
-  return !!url && /\.(webm|mp4|m4v|mov)(\?.*)?$/i.test(url);
+  return isVideoUrl(url);
 }
 
 /** What a nameplate upload will accept. Shared with the file picker so the
@@ -104,7 +106,7 @@ export function Nameplate({
         // An animated nameplate made in Crystal Studio is a design played live on a canvas, not a file the browser plays.
         <MotionPlayer url={url} animate={playing} />
       ) : isVideo ? (
-        <NameplateVideo url={url} playing={playing} />
+        <CosmeticVideo value={url} playing={playing} className="size-full object-cover" />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -116,46 +118,5 @@ export function Nameplate({
         />
       )}
     </span>
-  );
-}
-
-/**
- * A video held on its first frame until it is allowed to play.
- *
- * No `autoPlay` attribute: whether it runs is decided here, and the `#t` fragment is what gets a browser that has
- * only loaded metadata to paint a frame to rest on. Pausing goes back to the start so that the next hover begins
- * where the nameplate does, as a freshly opened profile would.
- */
-function NameplateVideo({ url, playing }: { url: string; playing: boolean }) {
-  const ref = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = ref.current;
-    if (!video) return;
-    if (playing) {
-      // Refused when the tab isn't allowed to start media yet; it will simply stay on its still.
-      void video.play().catch(() => {});
-    } else if (!video.paused) {
-      // Only when it had been running: on first mount there is nothing to rewind, and touching the position
-      // would undo the `#t` seek that gave it a frame to show.
-      video.pause();
-      video.currentTime = 0.001;
-    }
-  }, [playing, url]);
-
-  return (
-    <video
-      ref={ref}
-      src={url.includes("#") ? url : `${url}#t=0.001`}
-      loop
-      muted
-      playsInline
-      preload="metadata"
-      // A video element is focusable and draggable by default in a way an
-      // `<img>` decoration shouldn't be.
-      tabIndex={-1}
-      aria-hidden
-      className="size-full object-cover"
-    />
   );
 }

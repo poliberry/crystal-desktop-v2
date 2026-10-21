@@ -86,6 +86,8 @@ export interface CosmeticLayer {
   /** The picture, for an image layer. Empty on the other two, which draw
    * themselves. */
   url: string;
+  /** Still image paired with a video layer for reduced-motion and native fallbacks. */
+  posterUrl?: string;
   /** Absent for a built-in preset, which owns no uploaded file. */
   storageId?: string;
   anchor: LayerAnchor;

@@ -244,11 +244,11 @@ and looping always show the same picture.
 - **Limits** (`MOTION_LIMITS`): 96 clips, nesting depth 3, 24 pictures, 6 effects per clip, 64 keys per property,
   400 particles per emitter. Colours are hex only, enums are matched against lists, numbers clamped, text has no control
   characters, and every picture address must be on the CDN in the creator's folder. There is no code or CSS in a spec.
-- **Publishing** (`convex/motion.ts`): the creator's browser renders each canvas layer to a PNG (the canvas renderer) and
-  uploads it; the `publish` action then runs the spec through the same normaliser, writes *the checked copy* to
-  `marketplace/motion/<sha256>.json` and returns the address. The file is content-addressed and immutable, so what is at a
-  published address is exactly what was checked. A grant (`nameplate`, `profileEffect`) carries that address as its payload
-  (`isMotionAddress`); a picture or clip is still accepted as before. A design that never changes is sent as a plain picture.
+- **Publishing** (`src/studio/submit.ts` and `convex/motion.ts`): the creator's app renders each canvas layer through the
+  shared renderer, validates the timeline, records animated profile effects and nameplates as VP9 WebM, and checks that
+  the encoded clip retains transparency. A transparent cosmetic also gets a stacked-alpha H.264 copy for Android (colour
+  over alpha, `cosmetic-stacked`), which the mobile app recombines in a shader. The listing points at the video and a
+  transparent PNG poster; the store picture remains a representative still frame. Static designs remain PNGs.
 - **Playing** (`src/components/motion/motion-player.tsx`, `src/lib/motion-render.ts`): one shared frame loop for all
   players; off-screen and hidden-tab players do nothing; at most eight animate at once (the rest show a still frame); a
   nameplate runs at 24 fps and a smaller size; "reduce motion" shows a still frame. The app fetches the file, normalises it

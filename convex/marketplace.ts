@@ -199,13 +199,33 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
  * points of what the creator keeps. */
 const DEFAULT_CREATOR_SHARE_BPS = 8000;
 
+function checkedCreationArtwork(url: string, clerkId: string, explicitPoster?: string): { url: string; posterUrl?: string; loopFrom?: number; playback: string } {
+  const [address, fragment] = url.split("#", 2);
+  const params = new URLSearchParams(fragment ?? "");
+  const posterUrl = explicitPoster ?? params.get("cosmetic-poster") ?? undefined;
+  const parsedLoop = Number(params.get("cosmetic-loop"));
+  const loopFrom = params.has("cosmetic-loop") && Number.isFinite(parsedLoop) && parsedLoop > 0 && parsedLoop < 12 ? parsedLoop : undefined;
+  const checkedUrl = creationArtworkUrl(address, clerkId);
+  const checkedPoster = posterUrl ? creationArtworkUrl(posterUrl, clerkId) : undefined;
+  // The other encodings of the same video (src/lib/cosmetic-video.ts): Safari's and Android's. Each is the creator's own upload too.
+  const companion = (tag: string) => {
+    const value = params.get(tag);
+    return value ? `${tag}=${encodeURIComponent(creationArtworkUrl(value, clerkId))}` : "";
+  };
+  const playbackTags = [loopFrom !== undefined ? `cosmetic-loop=${loopFrom}` : "", companion("cosmetic-hevc"), companion("cosmetic-stacked")].filter(Boolean);
+  const tags = [checkedPoster ? `cosmetic-poster=${encodeURIComponent(checkedPoster)}` : "", ...playbackTags];
+  const withTags = (list: string[]) => (list.filter(Boolean).length ? `${checkedUrl}#${list.filter(Boolean).join("&")}` : checkedUrl);
+  // `playback`: the address with what a player needs but no poster, for a layer that carries its poster beside it.
+  return { url: withTags(tags), posterUrl: checkedPoster, loopFrom, playback: withTags(playbackTags) };
+}
+
 /** The grant a creation gives, built here from the artwork rather than accepted
  * as JSON from the client: placement comes from the defaults, run through the
  * same limits the profile editors apply. */
 function creationGrant(
   kind: CreationKind,
   name: string,
-  input: { artworkUrl?: string; themeStart?: string; themeEnd?: string },
+  input: { artworkUrl?: string; posterUrl?: string; previewUrl?: string; themeStart?: string; themeEnd?: string },
   clerkId: string,
 ): { kind: CreationKind; payload: string; label: string } {
   if (kind === "communityTheme") {
@@ -218,14 +238,16 @@ function creationGrant(
       payload: JSON.stringify({ start: input.themeStart.toLowerCase(), end: input.themeEnd.toLowerCase() }),
     };
   }
-  const url = creationArtworkUrl(input.artworkUrl ?? "", clerkId);
+  const artwork = checkedCreationArtwork(input.artworkUrl ?? "", clerkId, input.posterUrl);
+  const url = artwork.url.split("#", 1)[0];
+  const posterUrl = artwork.posterUrl;
   switch (kind) {
     case "avatarDecoration":
       return {
         kind,
         label: name,
         payload: JSON.stringify(
-          normalizeDecorationLayers([{ id: "art", url, anchor: "center", x: 50, y: 0, width: 100 }]),
+          normalizeDecorationLayers([{ id: "art", url: artwork.playback, posterUrl, anchor: "center", x: 50, y: 0, width: 100 }]),
         ),
       };
     case "profileSticker":
@@ -233,11 +255,11 @@ function creationGrant(
         kind,
         label: name,
         payload: JSON.stringify(
-          normalizeStickerLayers([{ id: "art", url, anchor: "top", x: 50, y: 50, width: 36 }]),
+          normalizeStickerLayers([{ id: "art", url: artwork.playback, posterUrl, anchor: "top", x: 50, y: 50, width: 36 }]),
         ),
       };
     default:
-      return { kind, label: name, payload: url };
+      return { kind, label: name, payload: artwork.url };
   }
 }
 
@@ -276,6 +298,8 @@ export const submitListing = mutation({
     name: v.string(),
     description: v.optional(v.string()),
     artworkUrl: v.optional(v.string()),
+    posterUrl: v.optional(v.string()),
+    previewUrl: v.optional(v.string()),
     themeStart: v.optional(v.string()),
     themeEnd: v.optional(v.string()),
     priceCents: v.number(),
@@ -314,6 +338,7 @@ export const submitListing = mutation({
       description: description || undefined,
       type: args.kind === "communityTheme" ? "community" : "cosmetic",
       grants: [grant],
+      previewUrl: args.previewUrl ? creationArtworkUrl(args.previewUrl, creatorKey(me)) : undefined,
       requestedPriceCents: args.priceCents,
       currency: args.currency,
       status: "pending",
@@ -354,6 +379,7 @@ function buildCreationItem(
           ...layer,
           // Pictures are on our CDN or nowhere; text and shapes carry no address.
           url: picture ? assertUrl(layer.url) : "",
+          posterUrl: picture && layer.posterUrl ? assertUrl(layer.posterUrl) : undefined,
           // Nothing in a submission points at a private upload.
           storageId: undefined,
         };
@@ -369,7 +395,7 @@ function buildCreationItem(
         if (!isMotionAddress(item.artworkUrl)) throw new Error("Publish the animation through Crystal first.");
         return { kind: item.kind, label: name, payload: item.artworkUrl };
       }
-      return { kind: item.kind, label: name, payload: assertUrl(item.artworkUrl) };
+      return { kind: item.kind, label: name, payload: checkedCreationArtwork(item.artworkUrl, clerkId).url };
     }
     case "loungeScene":
       return { kind: item.kind, label: name, payload: JSON.stringify(normalizeSceneSpec({ ...item.spec, name }, assertUrl)) };

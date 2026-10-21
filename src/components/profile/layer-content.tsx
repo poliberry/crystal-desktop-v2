@@ -7,6 +7,8 @@ import {
   type CosmeticLayer,
 } from "@/lib/cosmetic-layers";
 import { useCachedImageSrc } from "@/lib/image-cache";
+import { isVideoUrl } from "@/lib/media";
+import { CosmeticVideo } from "@/components/motion/cosmetic-video";
 
 /**
  * What one layer looks like, inside the box its geometry has already decided.
@@ -40,12 +42,13 @@ export function LayerContent({
 }) {
   const kind = layerKind(layer);
   const src = resolveSrc(layer.url);
+  const video = kind === "image" && isVideoUrl(src);
   // Called unconditionally, because hooks are: a text layer resolves an empty
   // url, which the hook is happy to do nothing with.
-  const poster = useStaticFrame(kind === "image" ? src : "", frozen);
+  const poster = useStaticFrame(kind === "image" && !video ? src : "", frozen);
   // Every frame, decoration and effect layer in the app renders through
   // here — see src/lib/image-cache.ts.
-  const cachedSrc = useCachedImageSrc(kind === "image" ? src : undefined);
+  const cachedSrc = useCachedImageSrc(kind === "image" && !video ? src : undefined);
 
   if (kind === "text") {
     return (
@@ -101,6 +104,10 @@ export function LayerContent({
         }}
       />
     );
+  }
+
+  if (video) {
+    return <CosmeticVideo value={src} posterUrl={layer.posterUrl} playing={!frozen} className={className} style={{ width: "100%", height: "100%", objectFit: layerObjectFit(layer) }} />;
   }
 
   return (

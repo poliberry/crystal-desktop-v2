@@ -168,16 +168,16 @@ export const sendExpoPush = internalAction({
 
     // `richContent.image` supplies the sender avatar. Notifications request
     // mutable content so the iOS service extension can attach the sender to a
-    // Communication Notification. Android receives data-only pushes so its
-    // native handler can download the avatar and build MessagingStyle.
+    // Communication Notification. Android has no custom Firebase receiver in
+    // the mobile app, so it also needs ordinary title/body fields.
     const messages = tokens.map(({ expoPushToken: to, platform }) => {
-      const androidDataOnly = platform === "android";
       return {
         to,
-        data: androidDataOnly ? { ...data, notificationTitle: title.slice(0, 200), notificationBody: body?.slice(0, 500) } : data,
-        // Android receives notifications as data-only so the native Firebase
-        // service can decrypt messages when needed and build MessagingStyle.
-        ...(androidDataOnly ? { priority: "high" as const } : { title, body, sound: "default" as const }),
+        data: { ...data, ...(authorImgUrl ? { senderAvatarUrl: authorImgUrl } : {}) },
+        title: title.slice(0, 200),
+        body: body?.slice(0, 500),
+        sound: "default" as const,
+        ...(platform === "android" ? { channelId: "crystal-messages", priority: "high" as const } : {}),
         ...(platform === "ios"
           ? {
               mutableContent: true,

@@ -66,6 +66,9 @@ const itemValidator = v.object({
 export const publish = internalAction({
   args: { dryRun: v.optional(v.boolean()), only: v.optional(v.array(v.string())), createdBy: v.optional(v.id("users")) },
   handler: async (ctx, { dryRun, only, createdBy }) => {
+    // The live listings now sell the remade videos (scripts/cosmetics/, convex/cosmeticRemake.ts). Publishing these
+    // timelines would put the old motion back on the Storm Chaser listing and its owners, so only a dry run is allowed.
+    if (!dryRun) throw new Error("Superseded: the collection's nameplates and effects are published by scripts/publish-cosmetic-remakes.mjs. Only a dry run is allowed here.");
     const items: (typeof itemValidator.type)[] = [];
 
     // Avatar decorations are published by `publishDecorations`, which uploads their artwork: they are not `builtin:` keys, because
@@ -146,6 +149,9 @@ export function checkDecorationSvg(svg: string): string | null {
 export const publishDecorations = internalAction({
   args: { files: v.array(v.object({ key: v.string(), svg: v.string(), refract: v.optional(v.literal("ice")) })), dryRun: v.optional(v.boolean()) },
   handler: async (ctx, { files, dryRun }): Promise<unknown> => {
+    // The decorations are now remade as videos (scripts/cosmetics/designs-decorations.ts). Re-publishing the SMIL
+    // artwork would repoint their listings and owners back to it.
+    if (!dryRun) throw new Error("Superseded: avatar decorations are published by scripts/publish-cosmetic-remakes.mjs. Only a dry run is allowed here.");
     const known = new Map(COLLECTION_DECORATIONS.map((d) => [d.key, d]));
     // Only the decorations handed in are touched: publishing a new one must never repoint an older one that people may own.
     if (files.length === 0 || files.some((f) => !known.has(f.key)) || new Set(files.map((f) => f.key)).size !== files.length) throw new Error(`Expected one or more distinct collection decorations (${[...known.keys()].join(", ")}).`);

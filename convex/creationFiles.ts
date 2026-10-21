@@ -17,13 +17,23 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
  * check covers the creator's other items too, not just the one being removed.
  */
 
-const KEY_RE = /marketplace\/creations\/[^"'\s)\\]+/g;
+const KEY_RE = /marketplace\/creations\/[^"'\s)#\\]+/g;
 
 /** Every creation file mentioned in some strings (URLs, or JSON payloads that contain URLs). */
 export function creationKeysIn(...texts: (string | null | undefined)[]): string[] {
   const keys = new Set<string>();
-  for (const text of texts) for (const match of text?.match(KEY_RE) ?? []) keys.add(match);
+  for (const text of texts) {
+    if (!text) continue;
+    for (const source of [text, decodeURIComponentSafe(text)]) {
+      for (const match of source.match(KEY_RE) ?? []) keys.add(match);
+    }
+  }
   return [...keys];
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try { return decodeURIComponent(value); }
+  catch { return value; }
 }
 
 /** The files a listing or submission uses: its grants' payloads and its pictures. */

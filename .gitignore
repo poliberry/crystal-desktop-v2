@@ -23,7 +23,11 @@ native/**/.build
 public/monaco
 public/studio-sdk
 public/studio-library
+public/studio-ffmpeg
 
 # Marketing render scratch (marketing/src/render.ts)
 marketing/video/.frames/
 marketing/video/stills/
+
+# Rendered cosmetic remakes (scripts/render-cosmetics.mjs): published to the CDN, not committed.
+/public/cosmetic-remakes/

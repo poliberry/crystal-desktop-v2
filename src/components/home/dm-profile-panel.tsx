@@ -40,7 +40,7 @@ export function DmProfilePanel({
       {/* The profile card owns scrolling through its internal `ScrollArea`;
           keeping this host clipped prevents a second scrollbar and a small
           overflow around the full-height card. */}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {/* Nothing at all until the query lands, rather than a placeholder
             card: this panel is a copy of information already on screen, and a
             skeleton of it would be the loudest thing in the window. */}
@@ -49,7 +49,15 @@ export function DmProfilePanel({
           // viewport and use its own scroller when content is taller.
           <MemberProfileCard
             member={member}
-            className="h-full min-h-0 w-full min-w-0 max-w-full -translate-y-2 rounded-none p-0"
+            // Pinned to the panel rather than given a percentage height: this host is a flex item, and a percentage of its
+            // height can resolve to `auto`, which left the card (and the profile effect drawn over it) only as tall as its
+            // content.
+            className="absolute inset-0 min-h-0 w-full min-w-0 max-w-full rounded-none p-0"
+            // Edge to edge: no padding ring, so the profile effect covers the whole panel.
+            bleed
+            // No headroom either: with no frame the card still takes 8px above and below for one, which here only
+            // shortened the card, and the effect over it, by that much at each end. The panel clips a frame anyway.
+            reserveFrameRoom={false}
             // The card is *in* the conversation its Message button opens.
             hideMessageAction
           />

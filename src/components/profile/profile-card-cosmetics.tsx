@@ -16,6 +16,8 @@ import {
   type CosmeticLayer as Layer,
 } from "@/lib/cosmetic-layers";
 import { useCachedImageSrc } from "@/lib/image-cache";
+import { isVideoUrl } from "@/lib/media";
+import { CosmeticVideo } from "@/components/motion/cosmetic-video";
 import {
   DEFAULT_FRAME_LAYOUT,
   type ProfileFrameLayout,
@@ -51,10 +53,12 @@ function CosmeticLayer({
   style?: React.CSSProperties;
 }) {
   const motionAllowed = useMotionAllowed();
-  const poster = useStaticFrame(src, !animate || !motionAllowed);
+  const video = isVideoUrl(src);
+  const poster = useStaticFrame(video ? undefined : src, !animate || !motionAllowed);
   // The legacy single-image frame (a list of layers goes through
   // LayerContent instead) — see src/lib/image-cache.ts.
-  const cachedSrc = useCachedImageSrc(src);
+  const cachedSrc = useCachedImageSrc(video ? undefined : src);
+  if (video && src) return <CosmeticVideo value={src} playing={!!animate && motionAllowed} className={cn("pointer-events-none absolute select-none", className)} style={style} />;
   return (
     <img
       src={poster ?? cachedSrc ?? src}
@@ -115,7 +119,8 @@ export function ProfileEffectLayer({
   // design makes the same call itself (see `MotionPlayer`).
   const motionAllowed = useMotionAllowed();
   // A picture effect plays once and holds; a motion design says for itself how it loops (see its `loop`).
-  const playback = useLoopedPlayback(motion ? undefined : src, animate && motionAllowed);
+  const video = isVideoUrl(src);
+  const playback = useLoopedPlayback(motion || video ? undefined : src, animate && motionAllowed);
 
   if (!src) return null;
 
@@ -127,6 +132,8 @@ export function ProfileEffectLayer({
     <div aria-hidden data-slot="profile-effect" className={cn("pointer-events-none absolute z-20 overflow-hidden transition-opacity duration-200", inset, rounded, className)}>
       {motion ? (
         <MotionPlayer url={src} animate={animate} />
+      ) : video ? (
+        <CosmeticVideo value={src} playing={!!animate && motionAllowed} className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover" />
       ) : (
         <img
           // A new element per play: an `<img>` cannot be rewound, but a fresh one

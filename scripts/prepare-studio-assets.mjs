@@ -24,6 +24,22 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// FFmpeg's alpha-capable WebM encoder is loaded only when a creator exports a
+// transparent animation. Keep the large WASM core on the app origin so offline
+// Studio sessions work and no third-party CDN is needed.
+{
+  const from = join(root, "node_modules/@ffmpeg/core/dist/esm");
+  const to = join(root, "public/studio-ffmpeg");
+  const workerFrom = join(root, "node_modules/@ffmpeg/ffmpeg/dist/esm");
+  if (existsSync(from)) {
+    mkdirSync(to, { recursive: true });
+    for (const name of ["ffmpeg-core.js", "ffmpeg-core.wasm"]) cpSync(join(from, name), join(to, name));
+    const workerDir = join(to, "wrapper");
+    mkdirSync(workerDir, { recursive: true });
+    for (const name of ["worker.js", "const.js", "errors.js"]) cpSync(join(workerFrom, name), join(workerDir, name));
+  }
+}
+
 const src = join(root, "node_modules/monaco-editor/min/vs");
 const dest = join(root, "public/monaco/vs");
 if (existsSync(src)) {
