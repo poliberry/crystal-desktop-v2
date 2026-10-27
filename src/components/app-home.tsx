@@ -52,11 +52,21 @@ function SignedInShell() {
   if (!mobile) {
     return (
       <ResizableSidebarProvider className="h-full min-h-0">
-        <Sidebar variant="floating"><UnifiedSidebar /></Sidebar>
-        <SidebarInset className="min-w-0 overflow-hidden">
-          <div className="flex h-full min-w-0 flex-col"><TopNav /><div className="min-h-0 flex-1"><HomeLayout /></div></div>
-        </SidebarInset>
-        <RightSidebarHost />
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+          <TopNav />
+          <div className="flex min-h-0 min-w-0 flex-1">
+            <Sidebar
+              variant="sidebar"
+              className="top-12! bottom-auto! h-[calc(100svh-3rem)]!"
+            >
+              <UnifiedSidebar />
+            </Sidebar>
+            <SidebarInset className="min-w-0 overflow-hidden">
+              <div className="flex h-full min-w-0 flex-col"><div className="min-h-0 flex-1"><HomeLayout /></div></div>
+            </SidebarInset>
+            <RightSidebarHost />
+          </div>
+        </div>
       </ResizableSidebarProvider>
     );
   }

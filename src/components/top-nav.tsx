@@ -24,13 +24,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { UpdateIndicator } from "@/components/update-indicator";
-import { useRightSidebarShown } from "@/components/sidebar/right-sidebar";
 import { useReservesWindowControls, WINDOW_CONTROLS_WIDTH } from "@/components/window-controls-dock";
 import { Menu01Icon } from "@animateicons/react/huge";
 import { SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { cn } from "@/lib/utils";
 import { hasNativeWindowControls, useTrafficLightsInset } from "@/hooks/use-window-controls";
 import { useProfilePageOpen } from "@/components/profile/profile-page";
+import { useRightSidebarShown } from "@/components/sidebar/right-sidebar";
 
 /**
  * Replays the birthday celebration.
@@ -165,7 +165,9 @@ export function TopNav() {
   // With the sidebar out of the way the window's top-left corner is this bar's,
   // and the system's window buttons are in it.
   const trafficLights = useTrafficLightsInset();
-  const clearOfLights = state === "collapsed" ? trafficLights : 0;
+  // Traffic lights remain at the window edge even when the sidebar is open;
+  // the header controls must always start after them.
+  const clearOfLights = trafficLights;
   // Tall enough that what is in the bar sits on the same line as the lights,
   // which are inset from the corner. And with no window buttons of ours at the
   // right-hand end, the buttons there need their own margin from the edge.
@@ -181,9 +183,11 @@ export function TopNav() {
       data-pack-panel="clear"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       className={cn(
-        "relative flex shrink-0 items-center justify-between gap-2 bg-background z-[99]",
+        "relative z-[99] flex shrink-0 items-center justify-between gap-2 border-b border-sidebar-border bg-sidebar text-sidebar-foreground",
         profileOpen && "invisible",
-        trafficLights ? "h-12" : "h-8",
+        // The sidebar is a fixed desktop container, so it needs one stable
+        // title-bar height to start below this row on every platform.
+        "h-12",
         nativeControls && "pr-4",
       )}
     >

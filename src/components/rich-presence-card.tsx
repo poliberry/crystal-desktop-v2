@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Gamepad2, Music, Tv, type LucideIcon } from "lucide-react";
 
 import type { Id } from "../../convex/_generated/dataModel";
@@ -38,32 +38,51 @@ function formatClock(ms: number): string {
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 }
 
-/** A once-a-second clock, so the elapsed counter and the seek bar tick from
- * one timer rather than each running their own. */
+/** One shared clock for all live presence cards. This avoids a timer and a
+ * visibility listener per card while preserving the wall-clock catch-up when
+ * the window becomes visible again. */
+let presenceNow = Date.now();
+let presenceTimer: ReturnType<typeof setInterval> | null = null;
+const presenceClockListeners = new Set<() => void>();
+
+function notifyPresenceClock() {
+  presenceNow = Date.now();
+  for (const listener of presenceClockListeners) listener();
+}
+
+function startPresenceClock() {
+  if (presenceTimer || typeof document === "undefined") return;
+  presenceTimer = setInterval(() => {
+    if (!document.hidden) notifyPresenceClock();
+  }, 1000);
+  document.addEventListener("visibilitychange", notifyPresenceClock);
+}
+
+function stopPresenceClock() {
+  if (presenceClockListeners.size > 0 || !presenceTimer) return;
+  clearInterval(presenceTimer);
+  presenceTimer = null;
+  document.removeEventListener("visibilitychange", notifyPresenceClock);
+}
+
+function subscribePresenceClock(listener: () => void) {
+  presenceClockListeners.add(listener);
+  startPresenceClock();
+  return () => {
+    presenceClockListeners.delete(listener);
+    stopPresenceClock();
+  };
+}
+
+const subscribeWithoutClock = () => () => {};
+const readPresenceClock = () => presenceNow;
+
 function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  const [visible, setVisible] = useState(() =>
-    typeof document === "undefined" ? true : !document.hidden,
+  return useSyncExternalStore(
+    active ? subscribePresenceClock : subscribeWithoutClock,
+    readPresenceClock,
+    readPresenceClock,
   );
-
-  useEffect(() => {
-    const updateVisibility = () => {
-      const nextVisible = !document.hidden;
-      setVisible(nextVisible);
-      // Wall-clock interpolation means one update is enough to catch the
-      // counter/seek bar up after a hidden window is restored.
-      if (nextVisible) setNow(Date.now());
-    };
-    document.addEventListener("visibilitychange", updateVisibility);
-    return () => document.removeEventListener("visibilitychange", updateVisibility);
-  }, []);
-
-  useEffect(() => {
-    if (!active || !visible) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, [active, visible]);
-  return now;
 }
 
 /**
@@ -245,6 +264,22 @@ function GameBody({ activity }: { activity: RichPresenceActivity }) {
   );
 }
 
+function CompactBody({ activity }: { activity: RichPresenceActivity }) {
+  const Icon = ACTIVITY_ICON[activity.type] ?? Gamepad2;
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <Artwork activity={activity} size="sm" />
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate text-sm font-semibold">{activity.details ?? activity.name}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {ACTIVITY_VERB[activity.type]}{activity.type === "listening" && activity.state ? ` · ${activity.state}` : ""}
+        </p>
+      </div>
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+    </div>
+  );
+}
+
 /**
  * The "Playing …" / "Listening to …" block shown under a user's bio on the
  * profile cards. Renders nothing when the user isn't broadcasting anything,
@@ -254,11 +289,13 @@ export function RichPresenceCard({
   activity,
   className,
   onClick,
+  compact = false,
 }: {
   activity: RichPresenceActivity | null | undefined;
   className?: string;
   /** Set by `RichPresenceCards` to fan a deck open (or fold it shut). */
   onClick?: () => void;
+  compact?: boolean;
 }) {
   if (!activity) return null;
   // Music and video get the media treatment — bigger art, a seek bar, and the
@@ -293,7 +330,9 @@ export function RichPresenceCard({
         {ACTIVITY_VERB[activity.type]}
         {(isMedia || isStream) && activity.name ? ` · ${activity.name}` : ""}
       </p>
-      {isStream ? (
+      {compact ? (
+        <CompactBody activity={activity} />
+      ) : isStream ? (
         <StreamBody
           label={activity.details ?? activity.name}
           thumbnailUrl={activity.imageUrl}
@@ -380,7 +419,12 @@ export function RichPresenceCards({
   const sheets = Math.min(rest.length, MAX_STACK_SHEETS);
 
   return (
-    <div className={cn("relative min-w-0", className)} style={{ paddingBottom: sheets * STACK_PEEK }}>
+    <div
+      className={cn("relative min-w-0", className)}
+      style={{ paddingBottom: sheets * STACK_PEEK }}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+    >
       {/* A grid with every child in the same cell makes the sheets exactly the
           front card's size without having to measure it — they're then nudged
           down and narrowed so only their bottom edge shows, like a deck. */}
@@ -405,6 +449,7 @@ export function RichPresenceCards({
         <RichPresenceCard
           activity={front}
           className="col-start-1 row-start-1 z-10 min-w-0"
+          compact
           onClick={() => setExpanded(true)}
         />
       </div>

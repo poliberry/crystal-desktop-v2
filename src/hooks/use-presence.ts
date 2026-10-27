@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import { api } from "../../convex/_generated/api";
 import { getDeviceId } from "@/lib/device-id";
@@ -75,11 +75,19 @@ export function usePresenceHeartbeat() {
 
 export function useMyPresence() {
   const presence = useQuery(api.presence.getMine);
+  const activities = useMemo(() => {
+    if (!presence) return [] as RichPresenceActivity[];
+    return ((presence.activities as RichPresenceActivity[] | undefined)?.length
+      ? (presence.activities as RichPresenceActivity[])
+      : presence.activity
+        ? [presence.activity as RichPresenceActivity]
+        : []) as RichPresenceActivity[];
+  }, [presence]);
   if (!presence) {
     return {
       status: "online" as const,
       manualStatus: "online" as const,
-      activities: [] as RichPresenceActivity[],
+      activities,
       loaded: presence !== undefined,
     };
   }
@@ -90,11 +98,7 @@ export function useMyPresence() {
     // show as selected unless the user actually picked "Idle" themselves.
     manualStatus: presence.manualStatus,
     /** Everything this client is currently broadcasting, richest first. */
-    activities: ((presence.activities as RichPresenceActivity[] | undefined)?.length
-      ? (presence.activities as RichPresenceActivity[])
-      : presence.activity
-        ? [presence.activity as RichPresenceActivity]
-        : []) as RichPresenceActivity[],
+    activities,
     loaded: true,
   };
 }

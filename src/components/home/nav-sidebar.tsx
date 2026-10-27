@@ -1,6 +1,6 @@
 "use client";
 
-import { SearchIcon, ShoppingBag, Sparkles } from "lucide-react";
+import { SearchIcon, ShoppingBag } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -76,13 +76,6 @@ export function NavSidebar({
           <Button variant="ghost" className="justify-start gap-2" disabled>
             <ShoppingBag className="size-4" />
             Marketplace
-            <Badge variant="outline" className="ml-auto">
-              Soon
-            </Badge>
-          </Button>
-          <Button variant="ghost" className="justify-start gap-2" disabled>
-            <Sparkles className="size-4" />
-            Subscriptions
             <Badge variant="outline" className="ml-auto">
               Soon
             </Badge>

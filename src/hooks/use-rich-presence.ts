@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -109,18 +109,20 @@ export function useUserActivities(userId: Id<"users"> | undefined): RichPresence
   // older rows, and nothing at all for somebody offline.
   const reported = (presence?.activities ?? []) as RichPresenceActivity[];
 
-  if (!stream) return reported;
-  // First: a live stream is the most immediate thing anyone is doing, and it's
-  // the one with something to click.
-  return [
-    {
-      type: "streaming",
-      name: stream.where,
-      details: stream.context ?? undefined,
-      imageUrl: stream.thumbnailUrl,
-    },
-    ...reported,
-  ];
+  return useMemo(() => {
+    if (!stream) return reported;
+    // First: a live stream is the most immediate thing anyone is doing, and it's
+    // the one with something to click.
+    return [
+      {
+        type: "streaming",
+        name: stream.where,
+        details: stream.context ?? undefined,
+        imageUrl: stream.thumbnailUrl,
+      },
+      ...reported,
+    ];
+  }, [reported, stream]);
 }
 
 /** Diagnostics for the Settings panel — detectable count, IPC socket path. */

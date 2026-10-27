@@ -292,7 +292,7 @@ export function AppearanceTab() {
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
           {([
-            ["my-crystal", "My Crystal", "A personal briefing with conversations to catch up on and things to prioritise."],
+            ["my-crystal", "Home", "Your servers, mentions, priorities, friends, and direct messages at a glance."],
             ["friends", "Friends", "Open your friends list and activity directly."],
           ] as const).map(([value, title, description]) => (
             <button key={value} type="button" onClick={() => setHomeLanding(value)} className={`rounded-lg border-2 p-3 text-left transition-colors ${homeLanding === value ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}>

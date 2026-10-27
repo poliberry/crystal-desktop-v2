@@ -2,7 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Gem, ShoppingBag, Sparkles, Users } from "lucide-react";
+import { ArrowLeft, ShoppingBag, Sparkles, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -14,8 +14,7 @@ import { NotificationInbox } from "@/components/home/notification-inbox";
 import { LogoMark } from "@/components/logo-mark";
 import { useOpenMarketplace, useOpenSettings, usePage, type AppPage } from "@/components/pages/page-context";
 import { PageSidebarSlot } from "@/components/pages/page-sidebar";
-import { CommunitiesSection } from "@/components/sidebar/communities-section";
-import { useTrafficLightsInset } from "@/hooks/use-window-controls";
+import { CommunitiesSection, CommunitySidebarContext, type CommunitySummary } from "@/components/sidebar/communities-section";
 import { SidebarDock } from "@/components/sidebar/dock";
 import { useHomeSurface } from "@/components/home/home-surface";
 import { SidebarResizeHandle } from "@/components/sidebar/resizable-sidebar";
@@ -123,6 +122,7 @@ export function UnifiedSidebar() {
   const [dockExpanded, setDockExpanded] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCommunity, setSelectedCommunity] = useState<CommunitySummary | null>(null);
   const searchOverlayRef = useRef<HTMLDivElement>(null);
   const { page, closePage } = usePage();
   const homeSurface = useHomeSurface();
@@ -153,8 +153,11 @@ export function UnifiedSidebar() {
     page && page.type !== "search" && !(expanded && activeCall) && !(shell.mobile && SHEET_PAGES.has(page.type)) ? page : null;
   // The system's window buttons sit in this sidebar's top-left corner. Both
   // menus start underneath them rather than beside them.
-  const trafficLights = useTrafficLightsInset();
-  const topPadding = trafficLights ? "pt-12" : "pt-3";
+  // The app-wide TopNav now owns the title-bar row and its traffic-light inset.
+  // The sidebar starts underneath it, so adding another platform-dependent pad
+  // here would leave a duplicate blank strip.
+  const topPadding = "pt-3";
+  const communityMenu = selectedCommunity && !pageMenu ? selectedCommunity : null;
   const blurred = dockExpanded && "pointer-events-none opacity-60 blur-sm select-none";
   const activateSearch = useCallback(() => setSearchOpen(true), []);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
@@ -220,19 +223,34 @@ export function UnifiedSidebar() {
             </div>
           </motion.div>
         )}
+        {communityMenu && (
+          <motion.div
+            key="community"
+            initial={{ opacity: 0, x: SLIDE }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: SLIDE }}
+            transition={SLIDE_TRANSITION}
+            className="absolute inset-0 z-10 flex flex-col"
+          >
+            <CommunitySidebarContext
+              community={communityMenu}
+              onBack={() => setSelectedCommunity(null)}
+            />
+          </motion.div>
+        )}
       </AnimatePresence>
 
       <motion.div
         initial={false}
         animate={
-          pageMenu
+          pageMenu || communityMenu
             ? { opacity: 0, x: -SLIDE, transitionEnd: { display: "none" } }
             : { opacity: 1, x: 0, display: "flex" }
         }
         transition={SLIDE_TRANSITION}
         // Hidden rather than unmounted once it has left, so the community that
         // was unfolded and the scroll position are there when it comes back.
-        inert={!!pageMenu}
+        inert={!!pageMenu || !!communityMenu}
         className={cn("absolute inset-0 flex flex-col gap-3", topPadding)}
       >
         <div className="flex flex-col gap-3 px-3">
@@ -253,7 +271,7 @@ export function UnifiedSidebar() {
           <div className="flex gap-1">
             <NavButton
               icon={Sparkles}
-              label="My Crystal"
+              label="Home"
               active={!page && activeTab.target.type === "home" && homeSurface === "my-crystal"}
               onClick={nav.openMyCrystal}
             />
@@ -264,7 +282,6 @@ export function UnifiedSidebar() {
               onClick={nav.openFriends}
             />
             <NavButton icon={ShoppingBag} label="Marketplace" active={page?.type === "marketplace"} onClick={openMarketplace} />
-            <NavButton icon={Gem} label="Subscriptions" onClick={() => openSettings("subscriptions")} />
           </div>
         </div>
 
@@ -276,7 +293,7 @@ export function UnifiedSidebar() {
         <ScrollArea className="min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:!block">
           <div className="flex min-w-0 flex-col gap-4 px-3 pb-3">
             <PrioritySection />
-            <CommunitiesSection />
+            <CommunitiesSection onSelectCommunity={setSelectedCommunity} />
             <DmSection />
           </div>
         </ScrollArea>

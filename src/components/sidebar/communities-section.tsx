@@ -31,19 +31,19 @@ import { animate, motion, useMotionValue } from "framer-motion";
 import {
   Armchair,
   AtSign,
+  ArrowLeft,
   BellOff,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   GripVertical,
   Hash,
   LayoutDashboard,
   Plus,
-  Settings,
   Star,
   StarOff,
   Users,
   Volume2,
+  ChevronLeft,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
@@ -88,15 +88,15 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCachedQuery } from "@/hooks/use-cached-query";
+import { useMobileShell } from "@/components/mobile/mobile-shell";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { useMobileShell } from "@/components/mobile/mobile-shell";
 
 type Preview = NonNullable<
   NonNullable<ReturnType<typeof useQuery<typeof api.sidebar.communityPreviews>>>[number]["preview"]
 >;
 
-interface CommunitySummary {
+export interface CommunitySummary {
   id: Id<"communities">;
   name: string;
   imageUrl?: string;
@@ -885,14 +885,16 @@ function ChannelDropBucket({
  * to open, so an icon that went straight there would do nothing for most
  * people.
  */
-function CommunityCard({
+export function CommunityCard({
   community,
   unreadChannelIds,
   onCollapse,
+  full = false,
 }: {
   community: CommunitySummary;
   unreadChannelIds: Set<string>;
   onCollapse: () => void;
+  full?: boolean;
 }) {
   const nav = useNavigation();
   const { activeTab } = useTabs();
@@ -945,7 +947,7 @@ function CommunityCard({
   const bannerUrl = info?.bannerUrl;
 
   return (
-    <div className="flex flex-col">
+    <div className={cn("flex flex-col", full && "min-h-0 flex-1")}>
       <div className="relative h-24 shrink-0">
         {bannerUrl ? (
           <CachedBackground
@@ -959,51 +961,48 @@ function CommunityCard({
             into the card at the bottom so the banner doesn't end on a hard
             line. */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-black/10 to-black/40" />
-
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2.5">
-          <p className="min-w-0 truncate text-sm font-semibold text-white drop-shadow">
-            {community.name}
-          </p>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Community settings"
-                  className="size-7 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white max-md:size-9"
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {actions.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <Fragment key={item.key}>
-                      {item.separatorBefore && <DropdownMenuSeparator />}
-                      <DropdownMenuItem
-                        variant={item.destructive ? "destructive" : "default"}
-                        onClick={item.onSelect}
-                      >
-                        <Icon className="size-4" />
-                        {item.label}
-                      </DropdownMenuItem>
-                    </Fragment>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Collapse"
-              onClick={onCollapse}
-              className="size-7 rounded-full bg-black/30 text-white hover:bg-black/50 hover:text-white max-md:size-9"
-            >
-              <ChevronUp className="size-4" />
-            </Button>
-          </div>
+        <div
+          className="absolute inset-x-0 top-0 z-10 flex w-full items-center gap-1 bg-gradient-to-b from-black/75 via-black/35 to-transparent p-1.5"
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Back to communities"
+            title="Back to communities"
+            className="size-7 shrink-0 rounded-full bg-black/25 text-white hover:bg-black/45 hover:text-white max-md:size-9"
+            onClick={onCollapse}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                className="min-w-0 flex-1 justify-start overflow-hidden px-1 py-1 text-left text-sm font-semibold text-white hover:bg-black/25 hover:text-white"
+                aria-label="Community settings and controls"
+              >
+                <span className="min-w-0 flex-1 truncate">{community.name}</span>
+                <ChevronDown className="ml-1 size-3 shrink-0 text-white/75" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              {actions.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Fragment key={item.key}>
+                    {item.separatorBefore && <DropdownMenuSeparator />}
+                    <DropdownMenuItem
+                      variant={item.destructive ? "destructive" : "default"}
+                      onClick={item.onSelect}
+                    >
+                      <Icon className="size-4" />
+                      {item.label}
+                    </DropdownMenuItem>
+                  </Fragment>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1022,7 +1021,7 @@ function CommunityCard({
         )}
       </div>
 
-      <ScrollArea className="max-h-[min(20rem,45vh)]">
+      <ScrollArea className={full ? "min-h-0 flex-1" : "max-h-[min(20rem,45vh)]"}>
         <div className="p-1.5">
           {loading ? (
             <div className="flex flex-col gap-1">
@@ -1281,7 +1280,35 @@ function SortableCommunity({
   );
 }
 
-export function CommunitiesSection() {
+export function CommunitySidebarContext({
+  community,
+  onBack,
+}: {
+  community: CommunitySummary;
+  onBack: () => void;
+}) {
+  const activity = useQuery(api.communities.listMineActivity);
+  const stats = activity?.find((entry) => entry.communityId === community.id);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <CommunityCard
+          community={community}
+          unreadChannelIds={new Set((stats?.unreadChannelIds ?? []).map((id) => id as string))}
+          onCollapse={onBack}
+          full
+        />
+      </div>
+    </div>
+  );
+}
+
+export function CommunitiesSection({
+  onSelectCommunity,
+}: {
+  onSelectCommunity?: (community: CommunitySummary) => void;
+}) {
   const nav = useNavigation();
   const { activeTab } = useTabs();
   const [expandedId, setExpandedId] = useState<Id<"communities"> | null>(null);
@@ -1498,7 +1525,10 @@ export function CommunitiesSection() {
               {orderedCommunities.map((community) => {
                 const stats = activityById.get(community.id);
                 const entry = previewById.get(community.id);
-                const expanded = expandedId === community.id;
+                // Desktop keeps the sidebar stable: selecting a community opens
+                // its full content context beside the sidebar. Only the mobile
+                // list needs an inline channel drawer.
+                const expanded = shell.mobile && expandedId === community.id;
 
                 return (
                   <SortableCommunity
@@ -1517,10 +1547,13 @@ export function CommunitiesSection() {
                         voiceCount={stats?.voiceCount ?? 0}
                         selected={activeCommunityId === community.id}
                         onClick={() => {
-                          setExpandedId(community.id);
+                          if (shell.mobile) setExpandedId(community.id);
                           // On a phone, tapping a community unfolds its channels here, in the list; opening one
                           // of them is what switches screens. On a desktop it opens the community beside.
-                          if (!shell.mobile) nav.openCommunity(community.id);
+                          if (!shell.mobile) {
+                            onSelectCommunity?.(community);
+                            nav.openCommunity(community.id);
+                          }
                         }}
                       />
                     }

@@ -16,7 +16,15 @@ import {
   Video,
   VideoOff,
 } from "lucide-react";
-import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { api } from "../../../convex/_generated/api";
 import { AudioDeviceWheels } from "@/components/audio-device-wheels";
@@ -27,10 +35,7 @@ import {
   useCallRoster,
 } from "@/components/call/call-participant-strip";
 import { useCall } from "@/components/call/call-provider";
-import {
-  ConnectionPanel,
-  GRADE,
-} from "@/components/call/connection-details";
+import { ConnectionPanel, GRADE } from "@/components/call/connection-details";
 import { SoundboardButton } from "@/components/call/soundboard";
 import { useCallTitle } from "@/components/call/use-call-title";
 import { useCallStats, type ConnectionGrade } from "@/hooks/use-call-stats";
@@ -44,7 +49,12 @@ import {
   topActivity,
 } from "@/components/rich-presence-card";
 import { useOpenSettings } from "@/components/pages/page-context";
-import { GLASS_BASE, GLASS_CONTROL, GLASS_DARK, GLASS_NEUTRAL } from "@/components/sidebar/glass";
+import {
+  GLASS_BASE,
+  GLASS_CONTROL,
+  GLASS_DARK,
+  GLASS_NEUTRAL,
+} from "@/components/sidebar/glass";
 import { StatusDialog } from "@/components/status-dialog";
 import {
   Avatar,
@@ -53,7 +63,11 @@ import {
   AvatarImage,
 } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Tooltip,
   TooltipContent,
@@ -105,7 +119,8 @@ function callStatus(
   status: string,
   grade: ConnectionGrade,
 ): { label: string; tone: string } {
-  if (status === "connected") return { label: "Connected", tone: GRADE[grade].tone };
+  if (status === "connected")
+    return { label: "Connected", tone: GRADE[grade].tone };
   if (status === "error" || status === "disconnected") {
     return { label: "Unable to connect", tone: "text-red-500" };
   }
@@ -137,7 +152,8 @@ function CallButton({
           className={cn(
             "size-7 shrink-0 rounded-md",
             GLASS_BUTTON,
-            destructive && "text-red-400 hover:bg-destructive/30 hover:text-red-300",
+            destructive &&
+              "text-red-400 hover:bg-destructive/30 hover:text-red-300",
           )}
         >
           {children}
@@ -158,18 +174,19 @@ function CallButton({
  * is the same height either way, so opening the pile doesn't resize the card.
  */
 function CallCard({ spread }: { spread: boolean }) {
-  const {
-    activeCall,
-    controller,
-    expand,
-    leaveCall,
-    openSharePicker,
-  } = useCall();
+  const { activeCall, controller, expand, leaveCall, openSharePicker } =
+    useCall();
   const { hasCamera } = useMediaDeviceAvailability();
   const title = useCallTitle(activeCall);
   const { participants, metaByIdentity, soundboardActive } = useCallRoster();
-  const { status, room, cameraEnabled, screenSharing, toggleCamera, toggleScreenShare } =
-    controller;
+  const {
+    status,
+    room,
+    cameraEnabled,
+    screenSharing,
+    toggleCamera,
+    toggleScreenShare,
+  } = controller;
   const stats = useCallStats(room, status === "connected");
   const [statsOpen, setStatsOpen] = useState(false);
   usePinDockWhile(statsOpen);
@@ -195,13 +212,18 @@ function CallCard({ spread }: { spread: boolean }) {
       // the call buttons) keep doing their thing; the title button is the keyboard route.
       onClick={(event) => {
         const target = event.target as HTMLElement;
-        if (target.closest("button, a, input, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]")) return;
+        if (
+          target.closest(
+            "button, a, input, [role='button'], [role='menuitem'], [data-radix-popper-content-wrapper]",
+          )
+        )
+          return;
         if (!event.currentTarget.contains(target)) return; // a portal (popover) bubbling through React
         event.stopPropagation(); // opening the call, not locking the stack (see SidebarDock)
         expand();
       }}
       title="Open call"
-      className={cn(GLASS_BASE, GLASS_DARK, "cursor-pointer px-3.5 py-3")}
+      className="cursor-pointer px-2 py-2"
     >
       <div className="flex min-w-0 items-center gap-1.5 text-xs">
         {/* The status opens the connection panel; the name goes back to the
@@ -252,7 +274,10 @@ function CallCard({ spread }: { spread: boolean }) {
                   — and easing apart. Opening the pile is the stack coming
                   open, not the stack being swapped for a row. */}
               {ordered.map((p, index) => {
-                const folded = { marginLeft: index === 0 ? 0 : -8, opacity: index < 2 ? 1 : 0 };
+                const folded = {
+                  marginLeft: index === 0 ? 0 : -8,
+                  opacity: index < 2 ? 1 : 0,
+                };
                 return (
                   <Fragment key={p.identity}>
                     <motion.div
@@ -262,16 +287,37 @@ function CallCard({ spread }: { spread: boolean }) {
                       exit={folded}
                       transition={SPREAD_TRANSITION}
                     >
-                      {chip(p, "ring-2 ring-[color:var(--glass-ring)] rounded-md")}
+                      {chip(
+                        p,
+                        "ring-2 ring-[color:var(--glass-ring)] rounded-md",
+                      )}
                     </motion.div>
                     {/* The count sits where it does in the folded stack, then
                         folds away as the people it stood for appear. */}
                     {index === 1 && hidden > 0 && (
                       <motion.span
                         className="shrink-0 overflow-hidden whitespace-nowrap rounded-full border border-foreground/15 bg-foreground/10 text-[10px] font-semibold text-muted-foreground"
-                        initial={{ width: "auto", marginLeft: 6, paddingInline: 6, borderWidth: 1, opacity: 1 }}
-                        animate={{ width: 0, marginLeft: 0, paddingInline: 0, borderWidth: 0, opacity: 0 }}
-                        exit={{ width: "auto", marginLeft: 6, paddingInline: 6, borderWidth: 1, opacity: 1 }}
+                        initial={{
+                          width: "auto",
+                          marginLeft: 6,
+                          paddingInline: 6,
+                          borderWidth: 1,
+                          opacity: 1,
+                        }}
+                        animate={{
+                          width: 0,
+                          marginLeft: 0,
+                          paddingInline: 0,
+                          borderWidth: 0,
+                          opacity: 0,
+                        }}
+                        exit={{
+                          width: "auto",
+                          marginLeft: 6,
+                          paddingInline: 6,
+                          borderWidth: 1,
+                          opacity: 1,
+                        }}
                         transition={SPREAD_TRANSITION}
                       >
                         +{hidden}
@@ -284,7 +330,9 @@ function CallCard({ spread }: { spread: boolean }) {
           ) : (
             <div className="-my-1 flex min-w-0 flex-1 items-center py-1 pl-0.5">
               <div className="flex items-center -space-x-2">
-                {shown.map((p) => chip(p, "ring-2 ring-[color:var(--glass-ring)] rounded-md"))}
+                {shown.map((p) =>
+                  chip(p, "ring-2 ring-[color:var(--glass-ring)] rounded-md"),
+                )}
               </div>
               {hidden > 0 && (
                 <span className="ml-1.5 rounded-full border border-foreground/15 bg-foreground/10 px-1.5 text-[10px] font-semibold text-muted-foreground">
@@ -294,10 +342,7 @@ function CallCard({ spread }: { spread: boolean }) {
             </div>
           )}
 
-          {spread && (
-            // Slides in from the right and out again — these only exist in the
-            // spread card, so without this they would appear and vanish the
-            // instant the pile opens or closes.
+          <>
             <motion.div
               className="flex shrink-0 items-center gap-1.5"
               initial={{ opacity: 0, x: 12 }}
@@ -305,8 +350,7 @@ function CallCard({ spread }: { spread: boolean }) {
               exit={{ opacity: 0, x: 12 }}
               transition={{ ...SPREAD_TRANSITION, delay: 0.05 }}
             >
-              {/* Same trigger as the full call screen's control bar; the
-                  className overrides its round 40px shape for this row. */}
+              {/* The compact call controls remain available inside the dock. */}
               <SoundboardButton
                 variant="ghost"
                 className={cn("size-7 rounded-md", GLASS_BUTTON)}
@@ -325,7 +369,13 @@ function CallCard({ spread }: { spread: boolean }) {
                 )}
               </CallButton>
               <CallButton
-                label={!hasCamera ? "No camera" : cameraEnabled ? "Camera off" : "Camera on"}
+                label={
+                  !hasCamera
+                    ? "No camera"
+                    : cameraEnabled
+                      ? "Camera off"
+                      : "Camera on"
+                }
                 disabled={!hasCamera}
                 onClick={() => void toggleCamera()}
               >
@@ -335,11 +385,15 @@ function CallCard({ spread }: { spread: boolean }) {
                   <VideoOff className="size-4 text-destructive" />
                 )}
               </CallButton>
-              <CallButton label="Leave call" destructive onClick={() => void leaveCall()}>
+              <CallButton
+                label="Leave call"
+                destructive
+                onClick={() => void leaveCall()}
+              >
                 <Phone className="size-4 rotate-135" />
               </CallButton>
             </motion.div>
-          )}
+          </>
         </div>
       </TooltipProvider>
     </div>
@@ -351,7 +405,7 @@ function ShareCard() {
   const { controller, sharedSourceName, openShareSettings } = useCall();
 
   return (
-    <div className={cn(GLASS_BASE, GLASS_NEUTRAL, "flex items-center gap-2 px-3 py-2 text-sm")}>
+    <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
       <MonitorUp className="size-4 shrink-0 text-primary" />
       <span className="min-w-0 flex-1 truncate font-medium">
         Sharing{sharedSourceName ? `: ${sharedSourceName}` : ""}
@@ -368,7 +422,9 @@ function ShareCard() {
               <MonitorCog className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="top">Change screen, audio or quality</TooltipContent>
+          <TooltipContent side="top">
+            Change screen, audio or quality
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -390,13 +446,24 @@ function ShareCard() {
 
 /** One of your own Rich Presence activities — what you're playing or hearing. */
 function ActivityCard({ activity }: { activity: RichPresenceActivity }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
-    <div className={cn(GLASS_BASE, GLASS_NEUTRAL)}>
+    <motion.div
+      layout
+      transition={{
+        layout: { type: "spring", stiffness: 360, damping: 32, mass: 0.8 },
+      }}
+      className={cn(GLASS_BASE, GLASS_NEUTRAL, "overflow-hidden")}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+    >
       <RichPresenceCard
         activity={activity}
+        compact={!expanded}
         className="rounded-none border-0 bg-transparent"
       />
-    </div>
+    </motion.div>
   );
 }
 
@@ -406,11 +473,18 @@ function ActivityCard({ activity }: { activity: RichPresenceActivity }) {
  * You: avatar and profile popover, name and status, and the controls that apply
  * whether or not a call is running — mute, deafen, audio devices, settings.
  */
-function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean }) {
+function IdentityCard({
+  underlap,
+  inset,
+}: {
+  underlap: number;
+  inset: boolean;
+}) {
   const me = useQuery(api.users.getCurrentUser);
   const { status, activities } = useMyPresence();
   const { activeCall, controller, sharedSourceName } = useCall();
-  const { muted, deafened, toggleMuted, toggleDeafened } = useAudioPreferences();
+  const { muted, deafened, toggleMuted, toggleDeafened } =
+    useAudioPreferences();
   const [statusOpen, setStatusOpen] = useState(false);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -425,7 +499,9 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
   const plateFade = useMotionValue(0);
   const plateMask = useMotionTemplate`linear-gradient(to bottom, transparent 0%, black ${plateFade}%)`;
   useEffect(() => {
-    const controls = animate(plateFade, devicesOpen ? 80 : 0, { duration: 0.3 });
+    const controls = animate(plateFade, devicesOpen ? 80 : 0, {
+      duration: 0.3,
+    });
     return () => controls.stop();
   }, [devicesOpen, plateFade]);
 
@@ -434,7 +510,8 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
   useEffect(() => {
     if (!devicesOpen) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (!cardRef.current?.contains(event.target as Node)) setDevicesOpen(false);
+      if (!cardRef.current?.contains(event.target as Node))
+        setDevicesOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setDevicesOpen(false);
@@ -452,6 +529,14 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
   // document, so the birthday-overrides-your-choice rule has to be applied
   // locally — see ownDecorationState.
   const { decoration, isBirthday } = ownDecorationState(me);
+  const streaming =
+    activities.find((activity) => activity.type === "streaming") ??
+    (activeCall && controller.screenSharing
+      ? {
+          type: "streaming" as const,
+          name: sharedSourceName || "your screen",
+        }
+      : undefined);
 
   if (!me) return null;
 
@@ -461,7 +546,10 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
   // this card's raw presence read doesn't go through.
   const badgeActivities: RichPresenceActivity[] =
     activeCall && controller.screenSharing
-      ? [{ type: "streaming", name: sharedSourceName || "your screen" }, ...activities]
+      ? [
+          { type: "streaming", name: sharedSourceName || "your screen" },
+          ...activities,
+        ]
       : activities;
 
   // Your own card reads the raw profile, so the deadline has to be applied
@@ -492,12 +580,13 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
     //
     // The surface is on this wrapper rather than on the frame so the device
     // pickers can unfold above the row and the card grows around them.
-    <div
+    <motion.div
+      layout
       ref={cardRef}
       // `rounded-lg`, the sidebar's own radius, rather than the glass family's
       // 2xl: the card sits a few px inside the sidebar's corner, and a rounder
       // curve than the one around it leaves a wedge of gap there.
-      className={cn(GLASS_BASE, GLASS_NEUTRAL, "rounded-lg")}
+      className={cn(GLASS_BASE, GLASS_NEUTRAL, "overflow-hidden rounded-lg")}
       style={{ marginInline: inset ? 10 : 0 }}
     >
       {/* The call card's surface, faded in over this one while the pickers are
@@ -505,17 +594,63 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
           background-image can't be transitioned and the card would blink. */}
       <motion.div
         aria-hidden
-        className={cn("pointer-events-none absolute inset-0", GLASS_DARK)}
+        className={cn("pointer-events-none absolute inset-0 z-0", GLASS_DARK)}
         initial={false}
-        animate={{ opacity: devicesOpen ? 1 : 0 }}
+        animate={{ opacity: devicesOpen || Boolean(activeCall) || Boolean(streaming) ? 1 : 0 }}
         transition={{ duration: 0.3 }}
       />
+
+      <AnimatePresence initial={false}>
+        {(streaming || activeCall) && (
+          <motion.div
+            layout
+            className="relative z-10 space-y-1 px-1 pt-1"
+            transition={SPREAD_TRANSITION}
+          >
+            <AnimatePresence initial={false}>
+              {streaming && (
+                <motion.div
+                  key="streaming"
+                  layout
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={SPREAD_TRANSITION}
+                  className="overflow-hidden"
+                >
+                  {controller.screenSharing ? (
+                    <ShareCard />
+                  ) : (
+                    <RichPresenceCard
+                      activity={streaming}
+                      className="border-0 bg-transparent"
+                    />
+                  )}
+                </motion.div>
+              )}
+              {activeCall && (
+                <motion.div
+                  key="call"
+                  layout
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={SPREAD_TRANSITION}
+                  className="overflow-hidden"
+                >
+                  <CallCard spread={false} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence initial={false}>
         {devicesOpen && (
           <motion.div
             key="devices"
-            className="relative overflow-hidden"
+            className="relative z-10 overflow-hidden"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -527,207 +662,222 @@ function IdentityCard({ underlap, inset }: { underlap: number; inset: boolean })
       </AnimatePresence>
 
     <motion.div
+      className="relative z-10"
       style={{ height: 56 + underlap }}
-      variants={IDENTITY_FRAME}
-      transition={SPREAD_TRANSITION}
-    >
-      <motion.div
-        className="relative flex h-full items-center gap-2 px-3"
-        style={{ paddingTop: underlap }}
-        variants={IDENTITY_BODY}
         transition={SPREAD_TRANSITION}
       >
         <motion.div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{ maskImage: plateMask, WebkitMaskImage: plateMask }}
+          className="relative flex h-full items-center gap-2 px-3"
+          style={{ paddingTop: underlap }}
+          transition={SPREAD_TRANSITION}
         >
-          <Nameplate url={me.nameplateUrl} />
-        </motion.div>
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{ maskImage: plateMask, WebkitMaskImage: plateMask }}
+          >
+            <Nameplate url={me.nameplateUrl} />
+          </motion.div>
 
-        <Popover open={profileOpen} onOpenChange={setProfileOpen}>
-          <PopoverTrigger asChild>
-            <Avatar size="default" className="relative shrink-0 cursor-pointer">
-              <AvatarImage src={me.imageUrl} alt={me.name} className="rounded-md" />
-              <AvatarFallback>{me.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-              <AvatarDecoration value={decoration} />
-              <PresenceBadge
-                status={status}
-                activities={badgeActivities}
-                accent={me.borderGradientStart}
-                isBirthday={isBirthday}
-              />
-            </Avatar>
-          </PopoverTrigger>
-          {/* The same transparent host every other profile card gets: the card
+          <Popover open={profileOpen} onOpenChange={setProfileOpen}>
+            <PopoverTrigger asChild>
+              <Avatar
+                size="default"
+                className="relative shrink-0 cursor-pointer"
+              >
+                <AvatarImage
+                  src={me.imageUrl}
+                  alt={me.name}
+                  className="rounded-md"
+                />
+                <AvatarFallback>
+                  {me.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+                <AvatarDecoration value={decoration} />
+                <PresenceBadge
+                  status={status}
+                  activities={badgeActivities}
+                  accent={me.borderGradientStart}
+                  isBirthday={isBirthday}
+                />
+              </Avatar>
+            </PopoverTrigger>
+            {/* The same transparent host every other profile card gets: the card
               brings its own surface and its frame is drawn outside its edges,
               so a popover panel behind it shows up as a second box sticking
               out from under the artwork. */}
-          <ProfilePopoverContent
-            userId={me._id}
-            side="top"
-            align="start"
-            className="mb-5 -ml-4"
-          >
-            <MemberProfileCard
-              reserveFrameRoom={false}
-              member={{
-                userId: me._id,
-                name: me.name,
-                username: me.username,
-                imageUrl: me.imageUrl,
-                bio: me.bio,
-                customStatus,
-                bannerUrl: me.bannerUrl,
-                avatarDecoration: decoration,
-                isBirthday,
-                borderGradientStart: me.borderGradientStart,
-                borderGradientEnd: me.borderGradientEnd,
-                // "invisible" appears as offline to others; show the same for self
-                status: (status === "invisible" ? "offline" : status) as FriendStatus,
-              }}
-            />
-          </ProfilePopoverContent>
-        </Popover>
+            <ProfilePopoverContent
+              userId={me._id}
+              side="top"
+              align="start"
+              className="mb-5 -ml-4"
+            >
+              <MemberProfileCard
+                reserveFrameRoom={false}
+                member={{
+                  userId: me._id,
+                  name: me.name,
+                  username: me.username,
+                  imageUrl: me.imageUrl,
+                  bio: me.bio,
+                  customStatus,
+                  bannerUrl: me.bannerUrl,
+                  avatarDecoration: decoration,
+                  isBirthday,
+                  borderGradientStart: me.borderGradientStart,
+                  borderGradientEnd: me.borderGradientEnd,
+                  // "invisible" appears as offline to others; show the same for self
+                  status: (status === "invisible"
+                    ? "offline"
+                    : status) as FriendStatus,
+                }}
+              />
+            </ProfilePopoverContent>
+          </Popover>
 
-        {/* The name is the second way into the status dialog — the first (the
+          {/* The name is the second way into the status dialog — the first (the
             pill on your profile card) only exists once you already have a
             custom status set. */}
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => setStatusOpen(true)}
-                className="group/name min-w-0 flex-1 cursor-pointer rounded-md px-1 py-0.5 text-left hover:bg-foreground/10"
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setStatusOpen(true)}
+                  className="group/name min-w-0 flex-1 cursor-pointer rounded-md px-1 py-0.5 text-left hover:bg-foreground/10"
+                >
+                  <p className="truncate text-sm font-semibold">{me.name}</p>
+                  <div className="relative h-4 overflow-hidden">
+                    <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
+                      <span className="truncate">{subtitle}</span>
+                    </p>
+                    <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">
+                      @{me.username}
+                    </p>
+                  </div>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Set your status</TooltipContent>
+            </Tooltip>
+
+            <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />
+
+            <div className="flex shrink-0 items-center">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={
+                      !hasMicrophone
+                        ? "No microphone detected"
+                        : muted
+                          ? "Unmute"
+                          : "Mute"
+                    }
+                    className={cn(
+                      "size-7 shrink-0 hover:bg-foreground/10 max-md:size-10",
+                      muted && "text-destructive hover:bg-destructive/20",
+                    )}
+                    disabled={!hasMicrophone}
+                    onClick={toggleMuted}
+                  >
+                    {muted ? (
+                      <MicOffIcon duration={0.8} className="size-4" />
+                    ) : (
+                      <MicIcon duration={0.8} className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {!hasMicrophone
+                    ? "No microphone detected"
+                    : muted
+                      ? "Unmute"
+                      : "Mute"}
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={deafened ? "Undeafen" : "Deafen"}
+                    className={cn(
+                      "size-7 shrink-0 hover:bg-foreground/10 max-md:size-10",
+                      deafened && "text-destructive hover:bg-destructive/20",
+                    )}
+                    onClick={toggleDeafened}
+                  >
+                    {deafened ? (
+                      <HeadphoneOffIcon duration={0.8} className="size-4" />
+                    ) : (
+                      <HeadphonesIcon duration={0.8} className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {deafened ? "Undeafen" : "Deafen"}
+                </TooltipContent>
+              </Tooltip>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Audio devices"
+                aria-expanded={devicesOpen}
+                className="size-7 shrink-0 hover:bg-foreground/10 max-md:size-10"
+                onClick={() => setDevicesOpen((open) => !open)}
               >
-                <p className="truncate text-sm font-semibold">{me.name}</p>
-                <div className="relative h-4 overflow-hidden">
-                  <p className="absolute inset-0 flex items-center gap-1 truncate text-xs text-muted-foreground transition-all duration-200 group-hover/name:translate-y-full group-hover/name:opacity-0">
-                    <span className="truncate">{subtitle}</span>
-                  </p>
-                  <p className="absolute inset-0 -translate-y-full truncate text-xs text-muted-foreground opacity-0 transition-all duration-200 group-hover/name:translate-y-0 group-hover/name:opacity-100">
-                    @{me.username}
-                  </p>
-                </div>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">Set your status</TooltipContent>
-          </Tooltip>
-
-          <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />
-
-          <div className="flex shrink-0 items-center">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={!hasMicrophone ? "No microphone detected" : muted ? "Unmute" : "Mute"}
+                <ChevronUpIcon
+                  duration={0.8}
                   className={cn(
-                    "size-7 shrink-0 hover:bg-foreground/10 max-md:size-10",
-                    muted && "text-destructive hover:bg-destructive/20",
+                    "size-4 transition-transform duration-300",
+                    devicesOpen && "rotate-180",
                   )}
-                  disabled={!hasMicrophone}
-                  onClick={toggleMuted}
-                >
-                  {muted ? (
-                    <MicOffIcon duration={0.8} className="size-4" />
-                  ) : (
-                    <MicIcon duration={0.8} className="size-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {!hasMicrophone ? "No microphone detected" : muted ? "Unmute" : "Mute"}
-              </TooltipContent>
-            </Tooltip>
+                />
+              </Button>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={deafened ? "Undeafen" : "Deafen"}
-                  className={cn(
-                    "size-7 shrink-0 hover:bg-foreground/10 max-md:size-10",
-                    deafened && "text-destructive hover:bg-destructive/20",
-                  )}
-                  onClick={toggleDeafened}
-                >
-                  {deafened ? (
-                    <HeadphoneOffIcon duration={0.8} className="size-4" />
-                  ) : (
-                    <HeadphonesIcon duration={0.8} className="size-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">{deafened ? "Undeafen" : "Deafen"}</TooltipContent>
-            </Tooltip>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Audio devices"
-              aria-expanded={devicesOpen}
-              className="size-7 shrink-0 hover:bg-foreground/10 max-md:size-10"
-              onClick={() => setDevicesOpen((open) => !open)}
-            >
-              <ChevronUpIcon
-                duration={0.8}
-                className={cn("size-4 transition-transform duration-300", devicesOpen && "rotate-180")}
-              />
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Settings"
-              className="size-7 shrink-0 hover:bg-foreground/10 max-md:size-10"
-              onClick={() => openSettings()}
-            >
-              <SettingsIcon duration={0.8} className="size-4" />
-            </Button>
-          </div>
-        </TooltipProvider>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Settings"
+                className="size-7 shrink-0 hover:bg-foreground/10 max-md:size-10"
+                onClick={() => openSettings()}
+              >
+                <SettingsIcon duration={0.8} className="size-4" />
+              </Button>
+            </div>
+          </TooltipProvider>
+        </motion.div>
       </motion.div>
     </motion.div>
-    </div>
   );
 }
 
-// --- The stack ---------------------------------------------------------------
+// --- The dock ----------------------------------------------------------------
 
 /** How far the front card lies over the top of the user card, in px. The
  * cards are a pile, not a column: the one in front covers the edge of the one
  * behind it. */
-const OVERLAP = 22;
 
 /** Vertical offset per card behind the front one, in px. */
-const STACK_PEEK = 6;
 
 /** However many cards there are, only this many sheets peek out above the
  * front one — past that the edges are too thin to read as anything but noise. */
-const MAX_STACK_SHEETS = 2;
 
-const SPREAD_TRANSITION = { type: "spring" as const, stiffness: 420, damping: 34 };
-
-/** The user card as the folded pile has it (its top hidden under the card above)
- * and as the list has it. */
-const IDENTITY_FRAME = {
-  folded: { height: 56 + OVERLAP },
-  open: { height: 56 },
+const SPREAD_TRANSITION = {
+  type: "spring" as const,
+  stiffness: 420,
+  damping: 34,
 };
-const IDENTITY_BODY = {
-  folded: { paddingTop: OVERLAP },
-  open: { paddingTop: 0 },
-};
-
 /**
  * One card in the spread list. `depth` is how many cards sit between it and
  * the user card; the deeper it is, the further back and lower it starts, and
  * the later it moves, so the pile reads as fanning out rather than appearing.
  */
+/*
 function SpreadCard({
   depth,
   children,
@@ -761,6 +911,7 @@ function SpreadCard({
     </motion.div>
   );
 }
+*/
 
 /**
  * The bottom of the sidebar: a pile of cards — whatever is going on (the call
@@ -779,220 +930,11 @@ export function SidebarDock({
 }: {
   onExpandedChange: (expanded: boolean) => void;
 }) {
-  const { activeCall, controller } = useCall();
-  const { activities } = useMyPresence();
-  const [hovered, setHovered] = useState(false);
-  // Clicked open: stays spread whatever the pointer does, until a click outside (on the catcher
-  // below) or Escape. Hover alone is fiddly to keep open on the way to a button, and on a touch
-  // screen there is no hover at all.
-  const [locked, setLocked] = useState(false);
-  const [pins, setPins] = useState(0);
-  const pin = useCallback((delta: number) => setPins((n) => n + delta), []);
-
-  // Whatever was holding the pile open is gone, so forget the hover too. The
-  // dialog or menu is drawn in a portal, which React counts as part of this
-  // element: the pointer moved over it, never "left" the dock, and then it
-  // vanished — so no leave event arrives to clear the hover, and the pile would
-  // sit spread until the pointer happened to cross its edge. If the pointer is
-  // in fact still over the dock, its next movement opens the pile again.
-  const wasPinned = useRef(false);
-  useEffect(() => {
-    if (pins > 0) {
-      wasPinned.current = true;
-    } else if (wasPinned.current) {
-      wasPinned.current = false;
-      setHovered(false);
-    }
-  }, [pins]);
-
-  // Front first: the call is the thing most likely to be touched, and it sits
-  // against the user card where the mute and deafen buttons already are.
-  // Each card is a function of whether the pile is spread, because the call
-  // card shows more when it is.
-  const cards: { key: string; render: (spread: boolean) => React.ReactNode }[] = [];
-  if (activeCall) cards.push({ key: "call", render: (spread) => <CallCard spread={spread} /> });
-  if (activeCall && controller.screenSharing) {
-    cards.push({ key: "share", render: () => <ShareCard /> });
-  }
-  activities.forEach((activity, index) => {
-    cards.push({
-      key: `activity-${activity.type}-${activity.name}-${index}`,
-      render: () => <ActivityCard activity={activity} />,
-    });
-  });
-
-  const [front, ...rest] = cards;
-  // The user card is always in the pile, so one card above it is already a
-  // stack worth spreading.
-  const piled = !!front;
-  const expanded = (hovered || pins > 0 || locked) && piled;
-  const sheets = Math.min(rest.length, MAX_STACK_SHEETS);
-
-  // The folded pile stays hidden from the moment the list opens until the list
-  // has finished leaving, not just while the pointer is over it. Showing it
-  // again on mouseleave would put it under the list's cards while they are
-  // still sliding back — two copies of the call card at once.
-  const [spread, setSpread] = useState(false);
-  if (expanded && !spread) setSpread(true);
-
-  // A card that goes away under the pointer takes its mouseleave with it, so
-  // the hover would otherwise be remembered and the next card to arrive would
-  // open the stack on its own.
-  useEffect(() => {
-    if (!piled) {
-      setHovered(false);
-      setLocked(false);
-    }
-  }, [piled]);
-
-  useEffect(() => {
-    if (!locked) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLocked(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [locked]);
-
-  const unlock = () => {
-    setLocked(false);
-    // The pointer is wherever the closing click was, which is not on the dock.
-    setHovered(false);
-  };
-
-  useEffect(() => {
-    onExpandedChange(expanded);
-  }, [expanded, onExpandedChange]);
-
+  useEffect(() => onExpandedChange(false), [onExpandedChange]);
   return (
-    <DockPinContext.Provider value={pin}>
-    {/* While locked open, everything behind the blur is frozen: this takes the click, so nothing
-        under it fires, and the click only closes the stack. */}
-    {locked && expanded && (
-      <div
-        aria-hidden
-        data-mobile-stay
-        className="fixed inset-0 z-40"
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={unlock}
-      />
-    )}
-    <div
-      className={cn("relative flex flex-col p-2", locked && expanded && "z-50")}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={(event) => {
-        if (!piled) return;
-        const target = event.target as HTMLElement;
-        // Its buttons do their own thing; a portal (a menu or popover opened from a card) bubbles
-        // through React but isn't part of the stack.
-        if (!event.currentTarget.contains(target)) return;
-        if (target.closest("button, a, input, [role='button'], [role='menuitem']")) return;
-        setLocked((on) => !on);
-      }}
-    >
-      {/* The folded pile. Its size and position never change — the dock is
-          anchored to the bottom, so anything here that moved on hover would
-          move the user card under the pointer, which moves the hover area,
-          which un-hovers it. While the pile is spread it is hidden rather than
-          removed, so it keeps holding its place. */}
-      <div className={cn("flex flex-col", (expanded || spread) && "invisible")}>
-        {front && (
-          <div
-            className="relative z-10"
-            // The room the sheets lean back into, and how far this card lies
-            // over the user card. Padding rather than margin on top, because a
-            // child's top margin would collapse through this box.
-            style={{ paddingTop: STACK_PEEK * sheets, marginBottom: -OVERLAP }}
-          >
-            <div className="relative">
-              {Array.from({ length: sheets }, (_, index) => {
-                const depth = sheets - index;
-                return (
-                  <div
-                    key={depth}
-                    aria-hidden
-                    // `visible` overrides the hidden pile around it: these are
-                    // what the cards in the list fold back into, so they have
-                    // to be there as the list leaves, not after it has gone.
-                    className={cn(
-                      GLASS_BASE,
-                      GLASS_NEUTRAL,
-                      "visible absolute inset-0 origin-bottom transition-opacity duration-200",
-                    )}
-                    style={{
-                      transform: `translateY(${-depth * STACK_PEEK}px) scaleX(${1 - depth * 0.05})`,
-                      opacity: expanded ? 0 : 1 - depth * 0.25,
-                    }}
-                  />
-                );
-              })}
-              <div className="relative z-10">{front.render(false)}</div>
-              {rest.length > 0 && (
-                <span
-                  // Unlike the sheets, this has no business being visible while
-                  // the list is on its way out: the list's cards pass over it
-                  // and it reads as clipping behind them. Gone instantly when
-                  // the list opens (no transition into the hidden state), back
-                  // with a fade once the list has left.
-                  className={cn(
-                    "pointer-events-none absolute top-0 right-4 z-20 -translate-y-1/2 rounded-full border border-white/15 bg-black/60 px-1.5 text-[10px] font-semibold text-muted-foreground",
-                    expanded || spread
-                      ? "opacity-0 transition-none"
-                      : "opacity-100 transition-opacity duration-200",
-                  )}
-                >
-                  +{rest.length}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        <IdentityCard underlap={piled ? OVERLAP : 0} inset={piled} />
-      </div>
-
-      {/* The spread pile: every card in a list, the user card last. Laid over
-          the folded one from the same bottom edge, so the user card ends up
-          where it already was. Fades in rather than sliding, for the same
-          reason. */}
-      {/* No fade or scroll container around the list itself: glass blurs what
-          is behind it, and an ancestor that is fading (or clipping) breaks that
-          while it happens. The cards animate individually instead. */}
-      <AnimatePresence onExitComplete={() => setSpread(false)}>
-        {expanded && front && (
-          <motion.div
-            key="list"
-            className="absolute inset-x-2 bottom-2 z-30 flex flex-col gap-2"
-          >
-            <div className="flex flex-col gap-2">
-              {/* Each card starts where the folded pile had it — behind the
-                  front card, a little lower, a little smaller — and eases up
-                  into its place, the nearest first. */}
-              {[...rest].reverse().map((card, index, reversed) => (
-                <SpreadCard key={card.key} depth={reversed.length - index}>
-                  {card.render(true)}
-                </SpreadCard>
-              ))}
-              <SpreadCard depth={0}>{front.render(true)}</SpreadCard>
-            </div>
-            {/* The user card stays where it is; it only widens out of the
-                inset it had in the pile. */}
-            <motion.div
-              className="shrink-0"
-              initial="folded"
-              animate="open"
-              exit="folded"
-              variants={{ folded: { paddingInline: 10 }, open: { paddingInline: 0 } }}
-              transition={SPREAD_TRANSITION}
-            >
-              <IdentityCard underlap={0} inset={false} />
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="relative p-2">
+      <IdentityCard underlap={0} inset={false} />
     </div>
-    </DockPinContext.Provider>
   );
 }
 

@@ -11,9 +11,9 @@ import { useMobileShell } from "@/components/mobile/mobile-shell";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 /**
- * The right-hand counterpart of the unified sidebar: the same floating card —
- * `sidebar` surface, hairline `sidebar-border`, rounded, small shadow, 8px of
- * air around it — and, like the left one, a full-height column of the window.
+ * The right-hand counterpart of the unified sidebar: an integrated full-height
+ * column beside the content. It shares the sidebar surface, but is no longer a
+ * floating card with rounded corners, shadow, or an outer gutter.
  * The top bar and the content sit between the two, so opening or resizing this
  * one narrows the bar as well.
  *
@@ -30,9 +30,6 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
  */
 
 const SPRING = { type: "spring" as const, stiffness: 420, damping: 34 };
-/** The air on either side of the card. */
-const GUTTER = 16;
-
 interface RightSidebarContextValue {
   open: boolean;
   toggle: () => void;
@@ -98,7 +95,7 @@ export function RightSidebarContent({ children }: { children: React.ReactNode })
   return createPortal(children, ctx.slot);
 }
 
-/** The window's end of it: the column, between the content and the right edge. */
+/** The window's end of it: an integrated column between content and the edge. */
 export function RightSidebarHost() {
   const ctx = useContext(RightSidebarContext);
   const controls = useStoredWidth({
@@ -135,18 +132,18 @@ export function RightSidebarHost() {
           aria-label="Details"
           data-slot="right-sidebar"
           initial={{ width: 0, opacity: 0 }}
-          animate={{ width: controls.width + GUTTER, opacity: 1 }}
+          animate={{ width: controls.width, opacity: 1 }}
           exit={{ width: 0, opacity: 0 }}
           // Straight to the pointer while it is being dragged; the spring is
           // for opening and closing.
           transition={dragging ? { duration: 0 } : SPRING}
-          className="flex h-full shrink-0 overflow-hidden pb-2"
-          style={{ paddingTop: reserve ? WINDOW_CONTROLS_HEIGHT + 4 : 8 }}
+          className="flex h-full shrink-0 overflow-hidden"
+          style={{ paddingTop: reserve ? WINDOW_CONTROLS_HEIGHT : 0 }}
         >
           <div
             data-pack-panel="sidebar"
             className={cn(
-              "relative mx-2 flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm",
+              "relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar text-sidebar-foreground",
             )}
             style={{ width: controls.width }}
           >

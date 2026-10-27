@@ -306,7 +306,7 @@ export function HomeLayout() {
       {/* On a phone, menu pages (Settings and the like) are drawn in their own drawer (app-home). */}
       {page && !showCallStage && !(shell.mobile && SHEET_PAGES.has(page.type)) && <PageHost key={activeTab.id} page={page} />}
       {!showCallStage && !page && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col border-t">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {joinError && (
             <div className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <span className="min-w-0 flex-1">{joinError}</span>

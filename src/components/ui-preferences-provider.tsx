@@ -5,9 +5,22 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 const STORAGE_KEY_NAV_STYLE = "crystal-community-nav-style";
 const STORAGE_KEY_TABS_ENABLED = "crystal-tabs-enabled";
 const STORAGE_KEY_HOME_LANDING = "crystal-home-landing";
+const STORAGE_KEY_HOME_SECTIONS = "crystal-home-sections";
 
 export type CommunityNavStyle = "rail" | "popover";
 export type HomeLanding = "my-crystal" | "friends";
+export type HomeSectionId = "jump-back-in" | "missed" | "important" | "online" | "games" | "dms" | "friends";
+export interface HomeSectionPreference { id: HomeSectionId; visible: boolean; }
+
+export const DEFAULT_HOME_SECTIONS: HomeSectionPreference[] = [
+  { id: "jump-back-in", visible: true },
+  { id: "missed", visible: true },
+  { id: "important", visible: true },
+  { id: "online", visible: true },
+  { id: "games", visible: true },
+  { id: "dms", visible: true },
+  { id: "friends", visible: true },
+];
 
 interface UiPreferencesContextValue {
   /** Whether communities are switched via a persistent left-edge icon rail
@@ -20,6 +33,8 @@ interface UiPreferencesContextValue {
   setTabsEnabled: (enabled: boolean) => void;
   homeLanding: HomeLanding;
   setHomeLanding: (landing: HomeLanding) => void;
+  homeSections: HomeSectionPreference[];
+  setHomeSections: (sections: HomeSectionPreference[]) => void;
 }
 
 const DEFAULTS: UiPreferencesContextValue = {
@@ -29,6 +44,8 @@ const DEFAULTS: UiPreferencesContextValue = {
   setTabsEnabled: () => {},
   homeLanding: "my-crystal",
   setHomeLanding: () => {},
+  homeSections: DEFAULT_HOME_SECTIONS,
+  setHomeSections: () => {},
 };
 
 const UiPreferencesContext = createContext<UiPreferencesContextValue>(DEFAULTS);
@@ -41,6 +58,7 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
   const [communityNavStyle, setNavStyleState] = useState<CommunityNavStyle>(DEFAULTS.communityNavStyle);
   const [tabsEnabled, setTabsEnabledState] = useState(DEFAULTS.tabsEnabled);
   const [homeLanding, setHomeLandingState] = useState<HomeLanding>(DEFAULTS.homeLanding);
+  const [homeSections, setHomeSectionsState] = useState<HomeSectionPreference[]>(DEFAULT_HOME_SECTIONS);
 
   useEffect(() => {
     const storedStyle = localStorage.getItem(STORAGE_KEY_NAV_STYLE);
@@ -49,6 +67,13 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
     if (storedTabs === "true" || storedTabs === "false") setTabsEnabledState(storedTabs === "true");
     const storedLanding = localStorage.getItem(STORAGE_KEY_HOME_LANDING);
     if (storedLanding === "my-crystal" || storedLanding === "friends") setHomeLandingState(storedLanding);
+    try {
+      const storedSections = JSON.parse(localStorage.getItem(STORAGE_KEY_HOME_SECTIONS) ?? "null");
+      if (Array.isArray(storedSections) && storedSections.length === DEFAULT_HOME_SECTIONS.length) {
+        const valid = storedSections.every((item) => item && typeof item.id === "string" && typeof item.visible === "boolean");
+        if (valid) setHomeSectionsState(storedSections as HomeSectionPreference[]);
+      }
+    } catch { /* keep defaults */ }
   }, []);
 
   useEffect(() => {
@@ -61,6 +86,12 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
       }
       if (e.key === STORAGE_KEY_HOME_LANDING && (e.newValue === "my-crystal" || e.newValue === "friends")) {
         setHomeLandingState(e.newValue);
+      }
+      if (e.key === STORAGE_KEY_HOME_SECTIONS && e.newValue) {
+        try {
+          const next = JSON.parse(e.newValue);
+          if (Array.isArray(next)) setHomeSectionsState(next as HomeSectionPreference[]);
+        } catch { /* keep current layout */ }
       }
     };
     window.addEventListener("storage", onStorage);
@@ -82,9 +113,14 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
     localStorage.setItem(STORAGE_KEY_HOME_LANDING, next);
   }, []);
 
+  const setHomeSections = useCallback((next: HomeSectionPreference[]) => {
+    setHomeSectionsState(next);
+    localStorage.setItem(STORAGE_KEY_HOME_SECTIONS, JSON.stringify(next));
+  }, []);
+
   return (
     <UiPreferencesContext.Provider
-      value={{ communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled, homeLanding, setHomeLanding }}
+      value={{ communityNavStyle, setCommunityNavStyle, tabsEnabled, setTabsEnabled, homeLanding, setHomeLanding, homeSections, setHomeSections }}
     >
       {children}
     </UiPreferencesContext.Provider>
