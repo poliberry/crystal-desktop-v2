@@ -171,6 +171,8 @@ export const getTokensForUser = internalQuery({
  * delivery hiccup shouldn't be visible to (or retried against) the caller
  * that triggered the notification.
  */
+const MAX_PUSH_BYTES = 3800;
+
 export const sendExpoPush = internalAction({
   args: {
     userId: v.id("users"),
@@ -205,18 +207,38 @@ export const sendExpoPush = internalAction({
         ? genericNotificationBody(type, data?.isMention !== false)
         : scheduledBody;
 
-    // `richContent.image` supplies the sender avatar. Notifications request
-    // mutable content so the iOS service extension can attach the sender to a
-    // Communication Notification. Android has no custom Firebase receiver in
-    // the mobile app, so it also needs ordinary title/body fields.
+    // iOS: a normal alert that asks for mutable content, so the mobile app's notification service
+    // extension can rebuild it as a Communication Notification (sender avatar, decrypted text, the
+    // picture). `richContent.image` is the avatar, for the extension's fallback.
+    //
+    // Android: data only. A push with a top-level title/body is an FCM *notification message*, which the
+    // system shows by itself while the app is closed, so the app's own service never runs and can neither
+    // decrypt the text nor attach the avatar and picture. The text travels as `notificationTitle` /
+    // `notificationBody` instead (not `title` / `message`, which expo-notifications would present by
+    // itself, a second time) and CrystalFirebaseMessagingService builds the conversation notification.
+    // No `channelId` either: Expo turns it into a `notification` block, which makes Firebase show a blank
+    // notification of its own and skip the service. The service creates its own channel.
     const messages = tokens.map(({ expoPushToken: to, platform }) => {
+      let payload: Record<string, unknown> = { ...data, ...(authorImgUrl ? { senderAvatarUrl: authorImgUrl } : {}) };
+      // Expo (and APNs/FCM behind it) refuse a message over 4 KB outright, which would lose the push
+      // altogether. The encrypted text is the one big part: past the limit it goes, and the phone shows the
+      // generic body instead of nothing.
+      if (payload.sealed && JSON.stringify({ title, body, data: payload }).length > MAX_PUSH_BYTES) {
+        payload = { ...payload, sealed: undefined };
+      }
+      if (platform === "android") {
+        return {
+          to,
+          data: { ...payload, notificationTitle: title.slice(0, 200), notificationBody: body?.slice(0, 500) },
+          priority: "high" as const,
+        };
+      }
       return {
         to,
-        data: { ...data, ...(authorImgUrl ? { senderAvatarUrl: authorImgUrl } : {}) },
+        data: payload,
         title: title.slice(0, 200),
         body: body?.slice(0, 500),
         sound: "default" as const,
-        ...(platform === "android" ? { channelId: "crystal-messages", priority: "high" as const } : {}),
         ...(platform === "ios"
           ? {
               mutableContent: true,
