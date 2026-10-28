@@ -3,8 +3,12 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
+import { isValidBits } from "./lib/permissionBits";
 import {
   PERMISSIONS,
+  ROLE_PERMS_VERSION,
+  can,
+  effectiveRolePermissions,
   getBasePermissions,
   getHighestRolePosition,
   requireCommunityPermission,
@@ -54,7 +58,8 @@ export const list = query({
         id: r._id,
         name: r.name,
         color: r.color,
-        permissions: r.permissions,
+        // As it takes effect, so the editor shows an old @everyone with the defaults it holds.
+        permissions: effectiveRolePermissions(r),
         position: r.position,
         isEveryone: r.isEveryone,
         hoist: r.hoist ?? false,
@@ -147,6 +152,7 @@ export const create = mutation({
       communityId,
       name: trimmed,
       permissions: 0,
+      permsVersion: ROLE_PERMS_VERSION,
       position,
       isEveryone: false,
     });
@@ -170,14 +176,20 @@ export const update = mutation({
     await assertCanManageRole(ctx, community, role, me._id);
     assertNotBotRole(role);
 
-    const patch: { name?: string; color?: string; permissions?: number; hoist?: boolean } = {};
+    const patch: { name?: string; color?: string; permissions?: number; permsVersion?: number; hoist?: boolean } = {};
     if (name !== undefined && !role.isEveryone) {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Role name can't be empty.");
       patch.name = trimmed;
     }
     if (color !== undefined) patch.color = color;
-    if (permissions !== undefined) patch.permissions = permissions;
+    if (permissions !== undefined) {
+      if (!isValidBits(permissions)) throw new Error("Those permissions aren't valid.");
+      patch.permissions = permissions;
+      // Written whole from now on: whatever the editor showed (an old @everyone included, with
+      // the defaults it already held) is what is stored.
+      patch.permsVersion = ROLE_PERMS_VERSION;
+    }
     if (hoist !== undefined) patch.hoist = hoist;
 
     if (Object.keys(patch).length > 0) await ctx.db.patch(roleId, patch);
@@ -257,7 +269,8 @@ export const duplicate = mutation({
       communityId: role.communityId,
       name: `${role.name} copy`.slice(0, 32),
       color: role.color,
-      permissions: role.permissions,
+      permissions: effectiveRolePermissions(role),
+      permsVersion: ROLE_PERMS_VERSION,
       position,
       isEveryone: false,
       hoist: role.hoist,
@@ -331,6 +344,53 @@ export const unassign = mutation({
       .collect();
     const match = existing.find((m) => m.roleId === roleId);
     if (match) await ctx.db.delete(match._id);
+  },
+});
+
+/**
+ * What a member can do community-wide, and which roles it comes from — for the Members tab's
+ * read-only "View permissions". Whoever manages roles can look at anyone; anyone can look at
+ * themselves. Channel overwrites are not folded in: they differ per channel, and are read where
+ * they are set (Channels → Permissions).
+ */
+export const memberPermissions = query({
+  args: { communityId: v.id("communities"), userId: v.id("users") },
+  handler: async (ctx, { communityId, userId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const community = await ctx.db.get(communityId);
+    if (!community) return null;
+    const mine = await getBasePermissions(ctx, community, me._id);
+    if (me._id !== userId && !can(mine, PERMISSIONS.MANAGE_ROLES)) return null;
+    const membership = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId))
+      .unique();
+    if (!membership) return null;
+
+    const assigned = await ctx.db
+      .query("memberRoles")
+      .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId))
+      .collect();
+    const everyone = await ctx.db
+      .query("roles")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .filter((q) => q.eq(q.field("isEveryone"), true))
+      .unique();
+    const held = (await Promise.all(assigned.map((m) => ctx.db.get(m.roleId)))).filter(
+      (r): r is Doc<"roles"> => !!r,
+    );
+    const roles = [...(everyone ? [everyone] : []), ...held.sort((a, b) => b.position - a.position)];
+    return {
+      isOwner: community.ownerId === userId,
+      roles: roles.map((r) => ({
+        id: r._id,
+        name: r.name,
+        color: r.color,
+        isEveryone: r.isEveryone,
+        permissions: effectiveRolePermissions(r),
+      })),
+    };
   },
 });
 

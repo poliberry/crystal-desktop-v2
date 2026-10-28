@@ -33,7 +33,9 @@ import {
 } from "@/components/ui/sidebar";
 import { DeleteCommunityOverlay } from "@/components/community/delete-community-overlay";
 import { hasPermission, PERMISSIONS } from "@/lib/permissions";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { onPageSection, takePageSection } from "@/lib/page-intent";
 
 interface CommunitySettingsPageProps {
   communityId: Id<"communities">;
@@ -57,6 +59,20 @@ const data = {
   ],
 };
 
+/** `"Channels:<id>"` → the tab and the channel to open on it. */
+function parseSection(
+  section: string | undefined,
+  communityId: string,
+): { tab: string; channelId?: string } {
+  if (!section) return { tab: "General" };
+  // `Tab[:channelId]@communityId` — the community keeps one server's request
+  // from moving another server's settings page that happens to be open.
+  const [rest, forCommunity] = section.split("@");
+  if (forCommunity && forCommunity !== communityId) return { tab: "General" };
+  const [tab, channelId] = rest.split(":");
+  return { tab: data.navMain[0].items.some((i) => i.title === tab) ? tab : "General", channelId };
+}
+
 /**
  * A community's settings, as a page.
  *
@@ -75,8 +91,24 @@ export function CommunitySettingsPage(props: CommunitySettingsPageProps) {
 }
 
 function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsPageProps) {
-  const [selectedTab, setSelectedTab] = useState("General");
+  // Opened from somewhere that knew what it wanted ("Edit channel" on a
+  // channel row asks for `Channels:<id>`) or on General.
+  const [asked] = useState(() => parseSection(takePageSection("community-settings"), communityId));
+  const [selectedTab, setSelectedTab] = useState(asked.tab);
+  const [focusChannelId, setFocusChannelId] = useState<string | undefined>(asked.channelId);
   const confirmLeave = useConfirmLeave();
+
+  // Asked again while the page was already open.
+  useEffect(
+    () =>
+      onPageSection("community-settings", (section) => {
+        if (section.split("@")[1] !== communityId) return;
+        const next = parseSection(section, communityId);
+        setSelectedTab(next.tab);
+        setFocusChannelId(next.channelId);
+      }),
+    [communityId],
+  );
   /** Changing tab with edits still unsaved asks first, and drops them if the
    * answer is yes — they belong to the tab being left. */
   const selectTab = (tab: string) => {
@@ -189,6 +221,7 @@ function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsP
               {selectedTab === "Channels" && (
                 <CommunitySettingsChannelsTab
                   communityId={communityId}
+                  initialChannelId={focusChannelId as Id<"channels"> | undefined}
                   canManage={canManageChannels}
                 />
               )}

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "convex/react";
-import { Flag, Inbox, Palette } from "lucide-react";
+import { Flag, Inbox, Palette, TicketPlus } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import {
@@ -16,7 +16,9 @@ import {
   useStaff,
   type Tone,
 } from "@/components/admin/admin-ui";
+import { CreateTicketDialog } from "@/components/admin/email-dialogs";
 import { useOpenEntity } from "@/components/admin/console-state";
+import { Button } from "@/components/ui/button";
 import { GRANT_KIND_META, type GrantKind } from "@/components/marketplace/sku-kinds";
 import { formatMoney, formatRelative } from "@/lib/money";
 
@@ -112,10 +114,24 @@ export function SupportSection() {
   const open = useOpenEntity();
   const [filter, setFilter] = useState<TicketFilter>("open");
   const rows = useQuery(api.support.adminList, { status: filter });
+  const staff = useStaff();
+  const [creating, setCreating] = useState(false);
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Support inbox" description="Customer requests, with the whole conversation kept." icon={Inbox} />
+      <PageHeader
+        title="Support inbox"
+        description="Customer requests, with the whole conversation kept."
+        icon={Inbox}
+        actions={
+          staff.can("support.act") && (
+            <Button onClick={() => setCreating(true)}>
+              <TicketPlus /> New ticket
+            </Button>
+          )
+        }
+      />
+      <CreateTicketDialog open={creating} onOpenChange={setCreating} />
       <PillTabs
         value={filter}
         onChange={setFilter}
@@ -147,6 +163,7 @@ export function SupportSection() {
                 </div>
                 <StatusPill>{t.category}</StatusPill>
                 {(t.priority === "high" || t.priority === "urgent") && <StatusPill tone="bad">{t.priority}</StatusPill>}
+                {t.createdByStaffId && <StatusPill tone="info">by staff</StatusPill>}
                 <StatusPill tone={TICKET_TONE[t.status]}>{pretty(t.status)}</StatusPill>
                 <span className="w-16 text-right text-xs text-muted-foreground">{formatRelative(t.updatedAt)}</span>
               </ListRow>

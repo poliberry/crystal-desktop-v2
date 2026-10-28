@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Ban, Clock, Flag, PencilLine, UserMinus } from "lucide-react";
+import { Ban, Clock, Flag, PencilLine, Shield, UserMinus } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -11,6 +11,7 @@ import { ReportDialog } from "@/components/reports/report-dialog";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuLabel,
@@ -57,6 +58,7 @@ export function MemberContextMenu({
   name,
   isSelf,
   timeoutUntil,
+  roleIds,
   children,
 }: {
   communityId: Id<"communities">;
@@ -64,13 +66,22 @@ export function MemberContextMenu({
   name: string;
   isSelf: boolean;
   timeoutUntil?: number;
+  /** The roles they hold now, so the Roles submenu can tick them. */
+  roleIds?: string[];
   children: React.ReactNode;
 }) {
   const myPermissions = useQuery(api.roles.myPermissions, { communityId }) ?? 0;
+  const canManageRoles = hasPermission(myPermissions, PERMISSIONS.MANAGE_ROLES);
+  // Only fetched once the viewer could use it: a menu per member row shouldn't
+  // each hold a roles subscription for people who can't assign anything.
+  const allRoles = useQuery(api.roles.list, canManageRoles ? { communityId } : "skip");
+  const assignableRoles = (allRoles ?? []).filter((role) => !role.isEveryone);
   const kickMember = useMutation(api.communities.kickMember);
   const banMember = useMutation(api.communities.banMember);
   const timeoutMember = useMutation(api.communities.timeoutMember);
   const setMemberNickname = useMutation(api.communities.setMemberNickname);
+  const assignRole = useMutation(api.roles.assign);
+  const unassignRole = useMutation(api.roles.unassign);
 
   const [reporting, setReporting] = useState(false);
   const [blocking, setBlocking] = useState<{ id: Id<"users">; name: string } | null>(null);
@@ -84,11 +95,12 @@ export function MemberContextMenu({
   // You can always rename yourself; renaming someone else is moderation.
   const canNickname = isSelf || hasPermission(myPermissions, PERMISSIONS.MANAGE_NICKNAMES);
   const canModerate = !isSelf && (canKick || canBan || canTimeout);
+  const canAssignRoles = canManageRoles && assignableRoles.length > 0;
   const timedOut = !!timeoutUntil && timeoutUntil > Date.now();
 
   // Anyone can report someone else, so the menu is only plain for your own row
   // when you have nothing to do to it.
-  if (!canModerate && !canNickname && isSelf) return <>{children}</>;
+  if (!canModerate && !canNickname && !canAssignRoles && isSelf) return <>{children}</>;
 
   const run = (action: () => Promise<unknown>) => {
     setError(null);
@@ -115,6 +127,37 @@ export function MemberContextMenu({
               <PencilLine />
               Set nickname
             </ContextMenuItem>
+          )}
+
+          {canAssignRoles && (
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Shield />
+                Roles
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent className="max-h-72 w-52 overflow-y-auto">
+                {assignableRoles.map((role) => (
+                  <ContextMenuCheckboxItem
+                    key={role.id}
+                    checked={roleIds?.includes(role.id) ?? false}
+                    // Several roles are usually changed in one go, so a pick
+                    // leaves the menu open.
+                    onSelect={(e) => e.preventDefault()}
+                    onCheckedChange={(checked) =>
+                      run(() =>
+                        (checked ? assignRole : unassignRole)({ communityId, userId, roleId: role.id }),
+                      )
+                    }
+                  >
+                    <span
+                      className="size-2.5 shrink-0 rounded-full bg-muted-foreground/40"
+                      style={role.color ? { backgroundColor: role.color } : undefined}
+                    />
+                    <span className="truncate">{role.name}</span>
+                  </ContextMenuCheckboxItem>
+                ))}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
           )}
 
           {canTimeout && !isSelf && (

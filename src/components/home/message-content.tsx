@@ -58,6 +58,8 @@ interface MessageContentProps {
    * in a DM, where a `<@id>` can still name a person but there are no roles
    * and no `@everyone` to speak of. */
   communityId?: Id<"communities">;
+  /** The author couldn't embed links, so none unfurl into cards. */
+  noEmbeds?: boolean;
 }
 
 function MediaEmbed({ url }: { url: string }) {
@@ -354,7 +356,7 @@ const MessageMarkdown = memo(function MessageMarkdown({
 
 MessageMarkdown.displayName = "MessageMarkdown";
 
-export function MessageContent({ text, edited, communityId }: MessageContentProps) {
+export function MessageContent({ text, edited, communityId, noEmbeds }: MessageContentProps) {
   // Every community the reader belongs to, not just the one they're viewing:
   // a message can carry an emoji from any server they share with the author.
   const emojis = useAccessibleEmojis();
@@ -366,9 +368,9 @@ export function MessageContent({ text, edited, communityId }: MessageContentProp
   // Crystal pages have their own message affordances (currently server
   // invites). Never unfurl the site's OG metadata as a second card; invite
   // links are still rendered below by InviteEmbedCard.
-  const linkUrls = urls.filter(
-    (url) => classifyUrl(url) === "link" && !isCrystalAppUrl(url),
-  );
+  const linkUrls = noEmbeds
+    ? []
+    : urls.filter((url) => classifyUrl(url) === "link" && !isCrystalAppUrl(url));
   const inviteCodes = extractInviteCodes(text);
 
   return (

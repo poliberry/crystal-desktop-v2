@@ -19,10 +19,12 @@ import { Label } from "@/components/ui/label";
 
 interface EditCategoryDialogProps {
   category: { id: Id<"channelCategories">; name: string } | null;
+  /** Open on the delete confirmation, for callers whose menu said "Delete". */
+  startInDelete?: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function EditCategoryDialog({ category, onOpenChange }: EditCategoryDialogProps) {
+export function EditCategoryDialog({ category, startInDelete = false, onOpenChange }: EditCategoryDialogProps) {
   const rename = useMutation(api.channelCategories.rename);
   const remove = useMutation(api.channelCategories.remove);
   const [name, setName] = useState("");
@@ -32,9 +34,9 @@ export function EditCategoryDialog({ category, onOpenChange }: EditCategoryDialo
   useEffect(() => {
     if (category) {
       setName(category.name);
-      setConfirmDelete(false);
+      setConfirmDelete(startInDelete);
     }
-  }, [category]);
+  }, [category, startInDelete]);
 
   if (!category) return null;
 

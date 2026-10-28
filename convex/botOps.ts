@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 
+import { bitsOr, bitsWithout } from "./lib/permissionBits";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
@@ -403,7 +404,8 @@ const ops: Record<string, Handler> = {
     // Only what the bot holds can be *allowed*; denying is always fine.
     const grant = grantableToRole(eff, allow, existing?.allow ?? 0);
     if (!grant.ok) return fail(403, grant.message);
-    if (existing) await ctx.db.patch(existing._id, { allow, deny });
+    // Flags above the low 31 aren't a bot's to set, but they aren't its to drop either.
+    if (existing) await ctx.db.patch(existing._id, { allow: bitsOr(bitsWithout(existing.allow, 0x7fffffff), allow), deny: bitsOr(bitsWithout(existing.deny, 0x7fffffff), deny) });
     else await ctx.db.insert("channelPermissionOverwrites", { channelId: channel._id, roleId, userId, allow, deny });
     return { data: { ok: true } };
   },
@@ -727,7 +729,8 @@ const ops: Record<string, Handler> = {
       const permissions = int(req.body, "permissions", { min: 0, max: 0x7fffffff, required: true })!;
       const g = grantableToRole(eff, permissions, role.permissions);
       if (!g.ok) return fail(403, g.message);
-      patch.permissions = permissions;
+      // A bot only ever speaks in the low 31 bits; flags above them on the role are not its to drop.
+      patch.permissions = bitsOr(bitsWithout(role.permissions, 0x7fffffff), permissions);
     }
     if (Object.keys(patch).length === 0) return fail(400, "Nothing to change.");
     await ctx.db.patch(role._id, patch);

@@ -182,6 +182,7 @@ export function MemberList({ communityId }: MemberListProps) {
                           name={member.name}
                           isSelf={member.userId === me?._id}
                           timeoutUntil={member.timeoutUntil}
+                          roleIds={member.roles.map((r) => r.id)}
                         >
                         <PopoverTrigger asChild>
                           <button

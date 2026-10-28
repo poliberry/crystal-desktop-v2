@@ -9,12 +9,13 @@ const STORAGE_KEY_HOME_SECTIONS = "crystal-home-sections";
 
 export type CommunityNavStyle = "rail" | "popover";
 export type HomeLanding = "my-crystal" | "friends";
-export type HomeSectionId = "jump-back-in" | "missed" | "important" | "online" | "games" | "dms" | "friends";
+export type HomeSectionId = "jump-back-in" | "missed" | "newsfeed" | "important" | "online" | "games" | "dms" | "friends";
 export interface HomeSectionPreference { id: HomeSectionId; visible: boolean; }
 
 export const DEFAULT_HOME_SECTIONS: HomeSectionPreference[] = [
   { id: "jump-back-in", visible: true },
   { id: "missed", visible: true },
+  { id: "newsfeed", visible: true },
   { id: "important", visible: true },
   { id: "online", visible: true },
   { id: "games", visible: true },
@@ -69,9 +70,18 @@ export function UiPreferencesProvider({ children }: { children: React.ReactNode 
     if (storedLanding === "my-crystal" || storedLanding === "friends") setHomeLandingState(storedLanding);
     try {
       const storedSections = JSON.parse(localStorage.getItem(STORAGE_KEY_HOME_SECTIONS) ?? "null");
-      if (Array.isArray(storedSections) && storedSections.length === DEFAULT_HOME_SECTIONS.length) {
-        const valid = storedSections.every((item) => item && typeof item.id === "string" && typeof item.visible === "boolean");
-        if (valid) setHomeSectionsState(storedSections as HomeSectionPreference[]);
+      if (Array.isArray(storedSections)) {
+        const known = new Set<string>(DEFAULT_HOME_SECTIONS.map((section) => section.id));
+        const kept = storedSections.filter(
+          (item): item is HomeSectionPreference =>
+            !!item && known.has(item.id) && typeof item.visible === "boolean",
+        );
+        // A section added since this layout was saved (the newsfeed) joins at its default place.
+        const merged = [...kept];
+        DEFAULT_HOME_SECTIONS.forEach((section, index) => {
+          if (!merged.some((item) => item.id === section.id)) merged.splice(Math.min(index, merged.length), 0, section);
+        });
+        if (kept.length > 0) setHomeSectionsState(merged);
       }
     } catch { /* keep defaults */ }
   }, []);

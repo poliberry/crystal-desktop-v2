@@ -503,7 +503,15 @@ export function MemberProfileCard({
               />
             </div>
           ) : member.bio ? (
-            <p data-slot="profile-bio" className="text-sm whitespace-pre-wrap">
+            <p
+              data-slot="profile-bio"
+              title={expanded ? undefined : member.bio}
+              className={
+                expanded
+                  ? "text-sm break-words whitespace-pre-wrap [overflow-wrap:anywhere]"
+                  : "line-clamp-4 text-sm break-words whitespace-pre-wrap [overflow-wrap:anywhere]"
+              }
+            >
               {member.bio}
             </p>
           ) : (

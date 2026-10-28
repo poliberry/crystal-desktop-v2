@@ -5,7 +5,7 @@ import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { releaseCreationFiles } from "./creationFiles";
 import { hashPassword } from "./lib/passwordHash";
-import { DEFAULT_EVERYONE_PERMISSIONS } from "./permissions";
+import { DEFAULT_EVERYONE_PERMISSIONS, ROLE_PERMS_VERSION } from "./permissions";
 
 const CAST_USERNAMES = ["maya_chen_demo", "jordan_lee_demo", "sam_patel_demo"];
 
@@ -35,7 +35,7 @@ export const seed = internalMutation({
     });
     await ctx.db.insert("communityMembers", { communityId, userId: user._id, joinedAt: Date.now() });
     await ctx.db.patch(user._id, { name: "Alex Rivera" });
-    await ctx.db.insert("roles", { communityId, name: "@everyone", permissions: DEFAULT_EVERYONE_PERMISSIONS, position: 0, isEveryone: true });
+    await ctx.db.insert("roles", { communityId, name: "@everyone", permissions: DEFAULT_EVERYONE_PERMISSIONS, permsVersion: ROLE_PERMS_VERSION, position: 0, isEveryone: true });
     const categoryId = await ctx.db.insert("channelCategories", { communityId, name: "THE LOUNGE", position: 0 });
     const definitions = [
       { name: "general", type: "text" as const, topic: "A little bit of everything", position: 0 },

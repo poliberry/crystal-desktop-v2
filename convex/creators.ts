@@ -42,6 +42,33 @@ export const startOnboarding = action({
     const stripe = stripeClient();
 
     const existing = await ctx.runQuery(internal.creatorsDb.accountForUser, { userId });
+    if (existing) {
+      try {
+        await stripe.accounts.retrieve(existing.stripeAccountId);
+      } catch (error) {
+        if ((error as { code?: string } | null)?.code !== "resource_missing") throw error;
+        // Another mode's account: make one here and point the creator at it.
+        const fresh = await stripe.accounts.create(
+          {
+            type: "express",
+            capabilities: { transfers: { requested: true } },
+            metadata: { userId },
+          },
+          { idempotencyKey: `creator-account-${userId}-live` },
+        );
+        await ctx.runMutation(internal.creatorsDb.replaceAccount, {
+          userId,
+          stripeAccountId: fresh.id,
+        });
+        const link = await stripe.accountLinks.create({
+          account: fresh.id,
+          type: "account_onboarding",
+          refresh_url: returnUrl(),
+          return_url: returnUrl(),
+        });
+        return { url: link.url };
+      }
+    }
     const accountId =
       existing?.stripeAccountId ??
       (await ctx.runMutation(internal.creatorsDb.createAccount, {

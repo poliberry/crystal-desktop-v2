@@ -2,7 +2,7 @@
 
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { AtSign, Paperclip, Reply, Send, Smile, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -74,7 +74,15 @@ export function ChannelMessageComposer({
   // The composer holds readable `:name:` shortcodes; the message has to carry
   // `<:name:id>` so any reader can resolve the emoji without guessing which
   // server it came from.
-  const { byName: customEmojiByName, byId: customEmojiById } = useAccessibleEmojis();
+  const { byName: allEmojiByName, byId: customEmojiById, communityOf: emojiCommunityOf } = useAccessibleEmojis();
+  // Another community's emoji only goes into a message where Use External Emojis allows it; left
+  // out of the lookup, a typed `:name:` stays the plain text it was typed as.
+  const channelDetails = useQuery(api.channels.get, { channelId });
+  const externalEmojis = channelDetails?.canUseExternalEmojis ?? true;
+  const customEmojiByName = useMemo(() => {
+    if (externalEmojis || !channelDetails) return allEmojiByName;
+    return new Map([...allEmojiByName].filter(([, e]) => emojiCommunityOf.get(e.id) === channelDetails.communityId));
+  }, [allEmojiByName, emojiCommunityOf, externalEmojis, channelDetails]);
   const [sending, setSending] = useState(false);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);

@@ -3,9 +3,11 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { requireMember } from "./communities";
+import { queueEmail } from "./emailOutbox";
+import { appUrl } from "./lib/email";
 import { holdFile, type FileRef } from "./lib/files";
 import { audit, requireStaff } from "./lib/staff";
-import { getCurrentUserOrThrow } from "./users";
+import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { effectiveFileType } from "./lib/mediaType";
 
 const categoryValidator = v.union(
@@ -412,6 +414,22 @@ export const adminGet = query({
         : [],
     ]);
 
+    const [updateRows, emailRows] = await Promise.all([
+      ctx.db.query("reportUpdates").withIndex("by_report", (q) => q.eq("reportId", reportId)).collect(),
+      ctx.db.query("emailLog").withIndex("by_report", (q) => q.eq("relatedReportId", reportId)).order("desc").take(20),
+    ]);
+    const updates = await Promise.all(
+      updateRows.map(async (u) => ({
+        id: u._id,
+        kind: u.kind,
+        status: u.status ?? null,
+        body: u.body ?? null,
+        emailed: u.emailed === true,
+        author: (await ctx.db.get(u.authorId))?.username ?? "unknown",
+        createdAt: u.createdAt,
+      }))
+    );
+
     const noteRows = await Promise.all(
       notes.map(async (note) => ({
         id: note._id,
@@ -440,6 +458,9 @@ export const adminGet = query({
       assignee: assignee?.username ?? null,
       resolver: resolver?.username ?? null,
       notes: noteRows,
+      /** What the reporter has been told, and the emails that went with it. */
+      updates,
+      emails: emailRows.map((e) => ({ id: e._id, subject: e.subject, status: e.status, detail: e.detail ?? null, createdAt: e.createdAt })),
       otherReportsAboutTarget: others
         .filter((r) => r._id !== report._id)
         .map((r) => ({ id: r._id, category: r.category, status: r.status, createdAt: r.createdAt }))
@@ -458,11 +479,16 @@ export const adminClaim = mutation({
     if (report.status === "resolved" || report.status === "dismissed") {
       throw new Error("That report is already closed.");
     }
+    const now = Date.now();
     await ctx.db.patch(reportId, {
       assignedTo: staff.user._id,
       status: "reviewing",
-      updatedAt: Date.now(),
+      updatedAt: now,
     });
+    // The reporter sees that someone is looking at it. No email for this one: it isn't news worth a message.
+    if (report.status !== "reviewing") {
+      await ctx.db.insert("reportUpdates", { reportId, kind: "status", status: "reviewing", authorId: staff.user._id, createdAt: now });
+    }
     await audit(ctx, staff.user._id, "reports.claim", { type: "report", id: reportId });
   },
 });
@@ -474,14 +500,21 @@ export const adminSetStatus = mutation({
     reportId: v.id("reports"),
     status: statusValidator,
     resolution: v.optional(v.string()),
+    /** What the reporter is told when it closes. Separate from `resolution`, which is for staff:
+     * this is written for the person who filed the report, and is the only thing they are shown. */
+    closureNote: v.optional(v.string()),
+    /** Email the reporter. On unless staff turn it off. */
+    emailReporter: v.optional(v.boolean()),
   },
-  handler: async (ctx, { reportId, status, resolution }) => {
+  handler: async (ctx, { reportId, status, resolution, closureNote, emailReporter }) => {
     const staff = await requireStaff(ctx, "reports.act");
     const report = await ctx.db.get(reportId);
     if (!report) throw new Error("That report doesn't exist.");
     const closing = status === "resolved" || status === "dismissed";
     const note = resolution?.trim().slice(0, MAX_DETAILS);
     if (closing && !note) throw new Error("Say what was decided before closing a report.");
+    const told = closureNote?.trim().slice(0, MAX_DETAILS) || undefined;
+    if (closing && !told) throw new Error("Say why it ended so the reporter can see it — write them a note.");
     const now = Date.now();
     await ctx.db.patch(reportId, {
       status,
@@ -491,6 +524,18 @@ export const adminSetStatus = mutation({
         : { resolution: undefined, resolvedBy: undefined, resolvedAt: undefined }),
       ...(status === "open" ? { assignedTo: undefined } : {}),
     });
+    if (report.status !== status) {
+      await ctx.db.insert("reportUpdates", {
+        reportId,
+        kind: "status",
+        status,
+        body: closing ? told : undefined,
+        authorId: staff.user._id,
+        emailed: closing && emailReporter !== false ? true : undefined,
+        createdAt: now,
+      });
+      if (closing && emailReporter !== false) await emailReporter_(ctx, report, status, told, staff.user._id);
+    }
     await audit(
       ctx,
       staff.user._id,
@@ -515,5 +560,162 @@ export const adminAddNote = mutation({
       createdAt: Date.now(),
     });
     await audit(ctx, staff.user._id, "reports.note", { type: "report", id: reportId });
+  },
+});
+
+// --- Telling the reporter ------------------------------------------------------
+
+const REPORT_LINK = () => ({ ctaLabel: "See your report", ctaUrl: `${appUrl()}/` });
+
+/** The words for a report's closing email. Says what the reporter did and how it ended, never what happened to anyone else. */
+async function emailReporter_(
+  ctx: MutationCtx,
+  report: Doc<"reports">,
+  status: "resolved" | "dismissed",
+  note: string | undefined,
+  staffId: Id<"users">,
+) {
+  const outcome =
+    status === "resolved"
+      ? "We reviewed your report and have taken action."
+      : "We reviewed your report and didn't find that action was needed.";
+  await queueEmail(ctx, {
+    userId: report.reporterId,
+    kind: "report_closed",
+    subject: "Update on your Crystal report",
+    body: [outcome, "Thank you for helping keep Crystal safe. You can see this in Settings → Reports."].join("\n\n"),
+    // The reporter's note lives outside the prose so the email shows it as its own block.
+    note,
+    ...REPORT_LINK(),
+    respectsPreference: true,
+    relatedReportId: report._id,
+    sentBy: staffId,
+  });
+}
+
+/** Write to the person who filed a report — a question, or news that it isn't finished. They see it under Settings → Reports. */
+export const adminMessageReporter = mutation({
+  args: { reportId: v.id("reports"), body: v.string(), email: v.optional(v.boolean()) },
+  handler: async (ctx, { reportId, body, email }) => {
+    const staff = await requireStaff(ctx, "reports.act");
+    const report = await ctx.db.get(reportId);
+    if (!report) throw new Error("That report doesn't exist.");
+    const text = body.trim().slice(0, MAX_DETAILS);
+    if (!text) throw new Error("Write something first.");
+    const now = Date.now();
+    await ctx.db.insert("reportUpdates", {
+      reportId,
+      kind: "message",
+      body: text,
+      authorId: staff.user._id,
+      emailed: email !== false ? true : undefined,
+      createdAt: now,
+    });
+    await ctx.db.patch(reportId, { updatedAt: now });
+    if (email !== false) {
+      await queueEmail(ctx, {
+        userId: report.reporterId,
+        kind: "report_update",
+        subject: "An update on your Crystal report",
+        body: `Our team sent a message about your report:\n\n${text}\n\nYou can see it in Settings → Reports.`,
+        ...REPORT_LINK(),
+        respectsPreference: true,
+        relatedReportId: reportId,
+        sentBy: staff.user._id,
+      });
+    }
+    await audit(ctx, staff.user._id, "reports.message_reporter", { type: "report", id: reportId });
+  },
+});
+
+// --- The reporter's own view ----------------------------------------------------
+
+/** How a status reads to the person who filed the report. "Dismissed" is just "closed" to them. */
+function reporterStatus(status: Doc<"reports">["status"]): "received" | "in_review" | "resolved" | "closed" {
+  return status === "open" ? "received" : status === "reviewing" ? "in_review" : status === "resolved" ? "resolved" : "closed";
+}
+
+/** What the reporter sees of the thing they reported — only what they themselves reported, in words they would recognise. */
+function reportedLabel(report: Doc<"reports">): string {
+  const who = report.evidence?.authorUsername ? `@${report.evidence.authorUsername}` : null;
+  switch (report.targetType) {
+    case "user":
+      return who ? `The account ${who}` : "An account";
+    case "community":
+      return report.evidence?.context?.replace(/^Community:\s*/, "") ?? "A community";
+    default:
+      return who ? `A message from ${who}` : "A message";
+  }
+}
+
+/** The reports the caller filed, newest first. Never anyone else's, and never staff's side of it. */
+export const mine = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return [];
+    const rows = await ctx.db.query("reports").withIndex("by_reporter", (q) => q.eq("reporterId", me._id)).order("desc").take(100);
+    return Promise.all(
+      rows.map(async (r) => {
+        const latest = (await ctx.db.query("reportUpdates").withIndex("by_report", (q) => q.eq("reportId", r._id)).order("desc").take(1))[0];
+        return {
+          id: r._id,
+          targetType: r.targetType,
+          about: reportedLabel(r),
+          category: r.category,
+          status: reporterStatus(r.status),
+          createdAt: r.createdAt,
+          updatedAt: latest?.createdAt ?? r.createdAt,
+          unread: !!latest && latest.createdAt > (r.reporterReadAt ?? r.createdAt),
+        };
+      })
+    );
+  },
+});
+
+/** One of the caller's reports with its timeline: when it was filed, each step, and any closing note. */
+export const getMine = query({
+  args: { reportId: v.id("reports") },
+  handler: async (ctx, { reportId }) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const report = await ctx.db.get(reportId);
+    if (!report || report.reporterId !== me._id) return null;
+    const updates = await ctx.db.query("reportUpdates").withIndex("by_report", (q) => q.eq("reportId", reportId)).order("asc").collect();
+    const closing = [...updates].reverse().find((u) => u.kind === "status" && (u.status === "resolved" || u.status === "dismissed") && u.body);
+    return {
+      id: report._id,
+      targetType: report.targetType,
+      about: reportedLabel(report),
+      category: report.category,
+      details: report.details ?? null,
+      // The words they reported, as captured: what they already saw when they filed it.
+      quoted: report.evidence?.text ?? null,
+      context: report.evidence?.context ?? null,
+      status: reporterStatus(report.status),
+      createdAt: report.createdAt,
+      closedAt: report.resolvedAt ?? null,
+      /** Why it ended, in words written for the reporter. Null when staff closed it without a note (older reports). */
+      closureNote: closing?.body ?? null,
+      timeline: updates.map((u) => ({
+        id: u._id,
+        kind: u.kind,
+        status: u.status ? reporterStatus(u.status) : null,
+        body: u.body ?? null,
+        createdAt: u.createdAt,
+      })),
+    };
+  },
+});
+
+/** The reporter opened a report: the updates so far are read. */
+export const markRead = mutation({
+  args: { reportId: v.id("reports") },
+  handler: async (ctx, { reportId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const report = await ctx.db.get(reportId);
+    if (!report || report.reporterId !== me._id) return;
+    const latest = (await ctx.db.query("reportUpdates").withIndex("by_report", (q) => q.eq("reportId", reportId)).order("desc").take(1))[0];
+    if (latest && latest.createdAt > (report.reporterReadAt ?? report.createdAt)) await ctx.db.patch(reportId, { reporterReadAt: Date.now() });
   },
 });

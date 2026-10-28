@@ -61,10 +61,12 @@ export function assertPlaintextAllowed(args: {
   hasEnc: boolean;
   /** Non-empty `text`, `embeds` or `components`. */
   hasPlaintext: boolean;
+  /** A room that is plaintext by design — an announcements channel, read by people who hold no key to it. */
+  plaintextRoom?: boolean;
 }): void {
   const problem = plaintextViolation({
     enforced: e2eeEnforced(),
-    system: isSystemAuthor(args.author),
+    system: isSystemAuthor(args.author) || args.plaintextRoom === true,
     hasEnc: args.hasEnc,
     hasPlaintext: args.hasPlaintext,
   });

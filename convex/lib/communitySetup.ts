@@ -38,6 +38,8 @@ export const setupValidator = v.object({
       surface: v.optional(v.string()),
       /** The clan game it belongs to. */
       gameId: v.optional(v.string()),
+      /** A text channel that is an announcements channel: read-only for @everyone, followable. */
+      announcement: v.optional(v.boolean()),
     }),
   ),
   /** Highest first: the first role in the list outranks the ones after it. */
@@ -71,6 +73,8 @@ export function sanitizeSetup(setup: CommunitySetup): CommunitySetup {
         ? (channel.surface as ChannelSurface)
         : undefined,
       gameId: clean(channel.gameId, 32),
+      // Only a plain text channel can be one: a surface already is something else.
+      announcement: channel.announcement === true && channel.type === "text" && !channel.surface ? true : undefined,
     }))
     .filter((channel): channel is typeof channel & { name: string } => !!channel.name)
     .slice(0, MAX_SETUP_CHANNELS);

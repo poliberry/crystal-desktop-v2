@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { hasVerifiedEmail, queueEmail } from "./emailOutbox";
+import { appUrl } from "./lib/email";
 import { audit, requireStaff } from "./lib/staff";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -31,7 +33,20 @@ export const mine = query({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    return ctx.db.query("supportTickets").withIndex("by_user", (q) => q.eq("userId", me._id)).order("desc").take(100);
+    const rows = await ctx.db.query("supportTickets").withIndex("by_user", (q) => q.eq("userId", me._id)).order("desc").take(100);
+    // Only what the owner is meant to see: no assignee, no priority.
+    return rows.map((t) => ({
+      _id: t._id,
+      subject: t.subject,
+      category: t.category,
+      status: t.status,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      onBehalf: t.createdByStaffId !== undefined,
+      unread: (t.lastStaffReplyAt ?? 0) > (t.userReadAt ?? 0),
+      closureNote: t.closureNote ?? null,
+      resolvedAt: t.resolvedAt ?? null,
+    }));
   },
 });
 
@@ -59,12 +74,53 @@ export const adminGet = query({
     const ticket = await ctx.db.get(ticketId);
     if (!ticket) return null;
     const messages = await ctx.db.query("supportTicketMessages").withIndex("by_ticket", (q) => q.eq("ticketId", ticketId)).order("asc").collect();
-    return { ticket, messages: await Promise.all(messages.map(async (message) => ({ ...message, author: (await ctx.db.get(message.authorId))?.username ?? "unknown" }))) };
+    const emails = await ctx.db.query("emailLog").withIndex("by_ticket", (q) => q.eq("relatedTicketId", ticketId)).order("desc").take(20);
+    const openedBy = ticket.createdByStaffId ? (await ctx.db.get(ticket.createdByStaffId))?.username ?? null : null;
+    const resolvedBy = ticket.resolvedBy ? (await ctx.db.get(ticket.resolvedBy))?.username ?? null : null;
+    return {
+      ticket,
+      openedBy,
+      resolvedBy,
+      emails: emails.map((e) => ({ id: e._id, kind: e.kind, subject: e.subject, status: e.status, detail: e.detail ?? null, createdAt: e.createdAt })),
+      messages: await Promise.all(messages.map(async (message) => ({ ...message, author: (await ctx.db.get(message.authorId))?.username ?? "unknown" }))),
+    };
   },
 });
 
+/** The link in these emails: the app, where the request is under Settings → Support. */
+const SUPPORT_LINK = () => ({ ctaLabel: "Open Crystal", ctaUrl: `${appUrl()}/` });
+
+/** Tell the customer a ticket moved. Not sent when staff wrote an internal note, and not when staff turned it off. */
+async function emailTicket(
+  ctx: Parameters<typeof queueEmail>[0],
+  ticket: Doc<"supportTickets">,
+  staffId: Id<"users">,
+  kind: "ticket_opened" | "ticket_reply" | "ticket_resolved",
+  subject: string,
+  body: string,
+  note?: string,
+) {
+  await queueEmail(ctx, {
+    userId: ticket.userId,
+    kind,
+    subject,
+    body,
+    note,
+    ...SUPPORT_LINK(),
+    respectsPreference: true,
+    relatedTicketId: ticket._id,
+    sentBy: staffId,
+  });
+}
+
 export const adminReply = mutation({
-  args: { ticketId: v.id("supportTickets"), body: v.string(), internal: v.optional(v.boolean()) },
+  args: {
+    ticketId: v.id("supportTickets"),
+    body: v.string(),
+    internal: v.optional(v.boolean()),
+    /** Email the customer the reply. On unless staff turn it off. */
+    email: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const staff = await requireStaff(ctx, "support.act");
     const body = args.body.trim().slice(0, 4000);
@@ -72,18 +128,111 @@ export const adminReply = mutation({
     if (!ticket || !body) throw new Error("Ticket or reply not found.");
     const now = Date.now();
     await ctx.db.insert("supportTicketMessages", { ticketId: args.ticketId, authorId: staff.user._id, body, internal: args.internal ?? false, createdAt: now });
-    if (!args.internal) await ctx.db.patch(args.ticketId, { status: "waiting_on_user", updatedAt: now });
+    if (!args.internal) {
+      await ctx.db.patch(args.ticketId, { status: "waiting_on_user", updatedAt: now, lastStaffReplyAt: now });
+      if (args.email !== false) {
+        await emailTicket(ctx, ticket, staff.user._id, "ticket_reply", `Re: ${ticket.subject}`, `Crystal support replied to your request “${ticket.subject}”:\n\n${body}\n\nYou can answer from Settings → Support in Crystal.`);
+      }
+    }
     await audit(ctx, staff.user._id, "support.reply", { type: "supportTicket", id: args.ticketId });
   },
 });
 
-export const adminSetStatus = mutation({
-  args: { ticketId: v.id("supportTickets"), status, priority: v.optional(v.union(v.literal("low"), v.literal("normal"), v.literal("high"), v.literal("urgent"))) },
+/**
+ * Open a ticket for a customer, from the console: they wrote in some other way (an email, a
+ * chat, a call) and the conversation should live here, where they can also see and answer it.
+ * The first message is from staff and visible to the customer; an internal note can ride along.
+ */
+export const adminCreate = mutation({
+  args: {
+    userId: v.id("users"),
+    subject: v.string(),
+    category,
+    body: v.string(),
+    internalNote: v.optional(v.string()),
+    email: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const staff = await requireStaff(ctx, "support.act");
-    if (!(await ctx.db.get(args.ticketId))) throw new Error("Ticket not found.");
-    await ctx.db.patch(args.ticketId, { status: args.status, ...(args.priority ? { priority: args.priority } : {}), updatedAt: Date.now() });
-    await audit(ctx, staff.user._id, `support.${args.status}`, { type: "supportTicket", id: args.ticketId });
+    const user = await ctx.db.get(args.userId);
+    if (!user || user.isBot) throw new Error("That account can't have a ticket.");
+    const subject = args.subject.trim().slice(0, 120);
+    const body = args.body.trim().slice(0, 4000);
+    if (subject.length < 3 || !body) throw new Error("Add a subject and a message for the customer.");
+    const now = Date.now();
+    const ticketId = await ctx.db.insert("supportTickets", {
+      userId: user._id,
+      subject,
+      category: args.category,
+      priority: "normal",
+      // The customer has the next move.
+      status: "waiting_on_user",
+      assignedTo: staff.user._id,
+      createdByStaffId: staff.user._id,
+      lastStaffReplyAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("supportTicketMessages", { ticketId, authorId: staff.user._id, body, internal: false, createdAt: now });
+    const note = args.internalNote?.trim().slice(0, 4000);
+    if (note) await ctx.db.insert("supportTicketMessages", { ticketId, authorId: staff.user._id, body: note, internal: true, createdAt: now + 1 });
+    if (args.email !== false) {
+      const ticket = (await ctx.db.get(ticketId))!;
+      await emailTicket(ctx, ticket, staff.user._id, "ticket_opened", `Crystal support: ${subject}`, `Crystal support opened a request for you: “${subject}”.\n\n${body}\n\nYou can read it and answer from Settings → Support in Crystal.`);
+    }
+    await audit(ctx, staff.user._id, "support.create", { type: "supportTicket", id: ticketId }, `for @${user.username}`);
+    return ticketId;
+  },
+});
+
+export const adminSetStatus = mutation({
+  args: {
+    ticketId: v.id("supportTickets"),
+    status,
+    priority: v.optional(v.union(v.literal("low"), v.literal("normal"), v.literal("high"), v.literal("urgent"))),
+    /** Why a resolved/closed ticket ended, in words written for the customer. Shown under Settings → Support. */
+    closureNote: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const staff = await requireStaff(ctx, "support.act");
+    const ticket = await ctx.db.get(args.ticketId);
+    if (!ticket) throw new Error("Ticket not found.");
+    const now = Date.now();
+    const finishing = args.status === "resolved" || args.status === "closed";
+    const reopening = !finishing && (ticket.status === "resolved" || ticket.status === "closed");
+    const newlyFinishing = finishing && ticket.status !== args.status;
+    // A priority-only change keeps the existing note; closing needs one so the customer sees why it ended.
+    const note = args.closureNote?.trim().slice(0, 1000) || ticket.closureNote?.trim().slice(0, 1000) || undefined;
+    if (newlyFinishing && (!note || note.length < 3)) throw new Error("Say why this is closed so the customer can see it.");
+    await ctx.db.patch(args.ticketId, {
+      status: args.status,
+      ...(args.priority ? { priority: args.priority } : {}),
+      ...(finishing ? { closureNote: note, resolvedAt: now, resolvedBy: staff.user._id } : {}),
+      ...(reopening ? { closureNote: undefined, resolvedAt: undefined, resolvedBy: undefined } : {}),
+      // Keeping the note without moving status (a priority change on a closed ticket) still saves an edited note.
+      ...(ticket.status === args.status && finishing && args.closureNote?.trim() ? { closureNote: args.closureNote.trim().slice(0, 1000) } : {}),
+      updatedAt: now,
+    });
+    // Telling them it is done is the one status change worth an email; the rest are bookkeeping.
+    if (newlyFinishing) {
+      await ctx.db.patch(args.ticketId, { lastStaffReplyAt: now });
+      await emailTicket(
+        ctx,
+        ticket,
+        staff.user._id,
+        "ticket_resolved",
+        `Your request was ${args.status}: ${ticket.subject}`,
+        [
+          `Crystal support marked your request “${ticket.subject}” as ${args.status}.`,
+          args.status === "resolved"
+            ? "If it isn't sorted, reply to it from Settings → Support and it will be reopened."
+            : "If you still need help, send a new request from Settings → Support.",
+        ].join("\n\n"),
+        // The closure reason lives outside the prose so the email shows it as its own block.
+        note,
+      );
+    }
+    await audit(ctx, staff.user._id, `support.${args.status}`, { type: "supportTicket", id: args.ticketId }, note);
   },
 });
 
@@ -112,7 +261,17 @@ export const get = query({
       .order("asc")
       .collect();
     return {
-      ticket: { id: ticket._id, subject: ticket.subject, status: ticket.status, category: ticket.category, createdAt: ticket.createdAt },
+      ticket: {
+        id: ticket._id,
+        subject: ticket.subject,
+        status: ticket.status,
+        category: ticket.category,
+        createdAt: ticket.createdAt,
+        updatedAt: ticket.updatedAt,
+        onBehalf: ticket.createdByStaffId !== undefined,
+        closureNote: ticket.closureNote ?? null,
+        resolvedAt: ticket.resolvedAt ?? null,
+      },
       messages: await Promise.all(
         messages
           .filter((m) => !m.internal)
@@ -121,7 +280,8 @@ export const get = query({
             body: m.body,
             createdAt: m.createdAt,
             fromStaff: m.authorId !== me._id,
-            author: m.authorId === me._id ? "You" : (await ctx.db.get(m.authorId))?.name ?? "Crystal support",
+            // Staff appear as the team, not by their own name.
+            author: m.authorId === me._id ? "You" : "Crystal support",
           })),
       ),
     };
@@ -140,6 +300,68 @@ export const reply = mutation({
     if (!text) throw new Error("Write something first.");
     const now = Date.now();
     await ctx.db.insert("supportTicketMessages", { ticketId, authorId: me._id, body: text, internal: false, createdAt: now });
-    await ctx.db.patch(ticketId, { status: "open", updatedAt: now });
+    await ctx.db.patch(ticketId, {
+      status: "open",
+      updatedAt: now,
+      ...(ticket.status === "resolved" ? { closureNote: undefined, resolvedAt: undefined, resolvedBy: undefined } : {}),
+    });
+  },
+});
+
+/** The customer opened a ticket's thread: whatever staff said so far is read. */
+export const markRead = mutation({
+  args: { ticketId: v.id("supportTickets") },
+  handler: async (ctx, { ticketId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const ticket = await ctx.db.get(ticketId);
+    if (!ticket || ticket.userId !== me._id) return;
+    if ((ticket.lastStaffReplyAt ?? 0) > (ticket.userReadAt ?? 0)) await ctx.db.patch(ticketId, { userReadAt: Date.now() });
+  },
+});
+
+/** The customer marks their own ticket resolved — it's sorted, or they no longer need it. Replying to it reopens it. */
+export const closeMine = mutation({
+  args: { ticketId: v.id("supportTickets") },
+  handler: async (ctx, { ticketId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const ticket = await ctx.db.get(ticketId);
+    if (!ticket || ticket.userId !== me._id) throw new Error("That isn't yours.");
+    if (ticket.status === "closed" || ticket.status === "resolved") return;
+    await ctx.db.patch(ticketId, { status: "resolved", resolvedAt: Date.now(), updatedAt: Date.now() });
+  },
+});
+
+/** Whether the caller gets email about their tickets and reports, and whether they have an address to get it at. */
+export const emailPreference = query({
+  args: {},
+  handler: async (ctx) => {
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return null;
+    const settings = await ctx.db.query("notificationSettings").withIndex("by_user", (q) => q.eq("userId", me._id)).unique();
+    return { enabled: settings?.emailSupportUpdates !== false, hasAddress: await hasVerifiedEmail(ctx, me._id) };
+  },
+});
+
+export const setEmailPreference = mutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, { enabled }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const existing = await ctx.db.query("notificationSettings").withIndex("by_user", (q) => q.eq("userId", me._id)).unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { emailSupportUpdates: enabled });
+      return;
+    }
+    // First write makes the row, so the other switches get their defaults here (see notificationSettings.update).
+    await ctx.db.insert("notificationSettings", {
+      userId: me._id,
+      dmMessages: true,
+      channelMessages: true,
+      friendRequests: true,
+      incomingCalls: true,
+      callActivity: true,
+      streamActivity: true,
+      replies: true,
+      emailSupportUpdates: enabled,
+    });
   },
 });

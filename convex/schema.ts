@@ -1231,6 +1231,11 @@ export default defineSchema({
     name: v.string(),
     color: v.optional(v.string()),
     permissions: v.number(),
+    /** Which generation of the permission set `permissions` was written against. Unset on roles
+     * saved before the wider set existed: an @everyone role like that is also read as holding
+     * the permissions that used to be given to everyone without a flag (see
+     * `effectiveRolePermissions` in convex/permissions.ts). */
+    permsVersion: v.optional(v.number()),
     position: v.number(),
     isEveryone: v.boolean(),
     /** This role is a bot's grant, kept by the Bots tab: it can't be edited, renamed or deleted
@@ -1310,6 +1315,15 @@ export default defineSchema({
      * flag on a voice channel and not a third channel type.
      */
     isLounge: v.optional(v.boolean()),
+    /**
+     * A text channel that is an **announcements** channel: ordinarily only people with a say
+     * post in it (@everyone is denied Send Messages when it is made), and other people and
+     * communities can follow it — into their Home newsfeed, or into a channel of their own
+     * (`channelFollows`). A flag on a text channel for the same reason `isLounge` is one on a
+     * voice channel. Its messages are plaintext, not end-to-end encrypted: the point of the
+     * channel is to be read by people who aren't in its room and so hold no key to it.
+     */
+    isAnnouncement: v.optional(v.boolean()),
     /**
      * A text channel that shows something other than a message list — a feed, a
      * calendar, a forum, a game server. See convex/lib/communityKinds.ts. Only
@@ -1907,6 +1921,25 @@ export default defineSchema({
   /** Per-channel allow/deny overwrite for a role OR a specific member
    * (exactly one of `roleId`/`userId` is set) — see
    * `computeChannelPermissions` in convex/permissions.ts for precedence. */
+  /**
+   * Someone following an announcements channel (`channels.isAnnouncement`).
+   *
+   * `feed`: `userId` reads it in their Home newsfeed. `channel`: every new message in it is copied
+   * into `targetChannelId` (a text channel in `targetCommunityId`) by `userId`'s authority, which
+   * they needed Manage Channels in the target community to have set up.
+   */
+  channelFollows: defineTable({
+    channelId: v.id("channels"),
+    kind: v.union(v.literal("feed"), v.literal("channel")),
+    userId: v.id("users"),
+    targetCommunityId: v.optional(v.id("communities")),
+    targetChannelId: v.optional(v.id("channels")),
+    createdAt: v.number(),
+  })
+    .index("by_channel", ["channelId"])
+    .index("by_user", ["userId"])
+    .index("by_target_channel", ["targetChannelId"]),
+
   channelPermissionOverwrites: defineTable({
     channelId: v.id("channels"),
     roleId: v.optional(v.id("roles")),
@@ -1967,6 +2000,21 @@ export default defineSchema({
     enc: v.optional(e2eeEnvelopeValidator),
     /** Who the message pings, in the clear. See the twin on `messages`. */
     mentions: v.optional(e2eeMentionsValidator),
+    /** The author lacked Embed Links when this was sent, so links in it show as plain text. */
+    noEmbeds: v.optional(v.boolean()),
+    /**
+     * Set on a copy delivered by following an announcements channel: where it came from. The copy
+     * is authored by whoever posted the original, and is a snapshot — editing or deleting the
+     * original later doesn't reach it.
+     */
+    forwardedFrom: v.optional(
+      v.object({
+        channelId: v.id("channels"),
+        channelName: v.string(),
+        communityId: v.id("communities"),
+        communityName: v.string(),
+      }),
+    ),
   })
     .index("by_channel", ["channelId"])
     .index("by_author", ["authorId"])
@@ -2374,6 +2422,8 @@ export default defineSchema({
     streamActivity: v.optional(v.boolean()),
     /** Someone replies to one of your messages. */
     replies: v.optional(v.boolean()),
+    /** Email about your support tickets and reports (a reply, a decision). On unless turned off. */
+    emailSupportUpdates: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
   /** Per-server override of how much a user wants to hear from it. */
@@ -2664,9 +2714,12 @@ export default defineSchema({
       v.literal("dismissed")
     ),
     assignedTo: v.optional(v.id("users")),
+    /** What was decided, for staff. The reporter never sees this: what they are told is in `reportUpdates`. */
     resolution: v.optional(v.string()),
     resolvedBy: v.optional(v.id("users")),
     resolvedAt: v.optional(v.number()),
+    /** When the reporter last opened the report in their settings. */
+    reporterReadAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2674,6 +2727,25 @@ export default defineSchema({
     .index("by_target", ["targetType", "targetId"])
     .index("by_target_user", ["targetUserId"])
     .index("by_reporter", ["reporterId", "createdAt"]),
+
+  /**
+   * What the reporter is told about their report: status changes, messages from staff and the
+   * closure note. The only part of a report's handling they can read; `reportNotes` and
+   * `reports.resolution` stay with staff.
+   */
+  reportUpdates: defineTable({
+    reportId: v.id("reports"),
+    kind: v.union(v.literal("status"), v.literal("message")),
+    /** For `status`: where the report went. */
+    status: v.optional(
+      v.union(v.literal("open"), v.literal("reviewing"), v.literal("resolved"), v.literal("dismissed"))
+    ),
+    /** The words the reporter is shown: a message, or a closure note. */
+    body: v.optional(v.string()),
+    authorId: v.id("users"),
+    emailed: v.optional(v.boolean()),
+    createdAt: v.number(),
+  }).index("by_report", ["reportId", "createdAt"]),
 
   /** Staff-only notes on a report. */
   reportNotes: defineTable({
@@ -2692,6 +2764,17 @@ export default defineSchema({
     priority: v.union(v.literal("low"), v.literal("normal"), v.literal("high"), v.literal("urgent")),
     status: v.union(v.literal("open"), v.literal("in_progress"), v.literal("waiting_on_user"), v.literal("resolved"), v.literal("closed")),
     assignedTo: v.optional(v.id("users")),
+    /** Staff opened this on the customer's behalf (from the console), rather than the customer asking. */
+    createdByStaffId: v.optional(v.id("users")),
+    /** When staff last said something the customer can read. Unread for them = this is after `userReadAt`. */
+    lastStaffReplyAt: v.optional(v.number()),
+    /** When the customer last opened the ticket. */
+    userReadAt: v.optional(v.number()),
+    /** Why a resolved/closed ticket ended, in words written for the customer. Shown under Settings → Support. */
+    closureNote: v.optional(v.string()),
+    /** When it was resolved/closed, and who did it. */
+    resolvedAt: v.optional(v.number()),
+    resolvedBy: v.optional(v.id("users")),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_status", ["status", "updatedAt"]).index("by_user", ["userId", "updatedAt"]),
@@ -2703,6 +2786,43 @@ export default defineSchema({
     internal: v.boolean(),
     createdAt: v.number(),
   }).index("by_ticket", ["ticketId", "createdAt"]),
+
+  /**
+   * Every email Crystal sent (or meant to) about support and reports, or that staff sent by hand.
+   * Written when the email is queued and finished by the delivery action, so a failure is visible
+   * in the console instead of being a message that quietly never arrived.
+   */
+  emailLog: defineTable({
+    userId: v.id("users"),
+    kind: v.union(
+      v.literal("ticket_opened"),
+      v.literal("ticket_reply"),
+      v.literal("ticket_resolved"),
+      v.literal("report_update"),
+      v.literal("report_closed"),
+      v.literal("direct"),
+    ),
+    subject: v.string(),
+    /** The words of the email, as plain paragraphs separated by blank lines. */
+    body: v.string(),
+    /** Why something ended, in words written for the reader — rendered as its own block. */
+    note: v.optional(v.string()),
+    ctaLabel: v.optional(v.string()),
+    ctaUrl: v.optional(v.string()),
+    /** Whether the person's "email me about my requests" setting applies to this one. */
+    respectsPreference: v.boolean(),
+    status: v.union(v.literal("queued"), v.literal("sent"), v.literal("failed"), v.literal("skipped")),
+    /** Why it was skipped or how it failed. Never the provider's raw response. */
+    detail: v.optional(v.string()),
+    relatedTicketId: v.optional(v.id("supportTickets")),
+    relatedReportId: v.optional(v.id("reports")),
+    sentBy: v.optional(v.id("users")),
+    createdAt: v.number(),
+    sentAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_ticket", ["relatedTicketId", "createdAt"])
+    .index("by_report", ["relatedReportId", "createdAt"]),
 
   /** Immutable record of platform-wide account moderation. */
   platformModerationLog: defineTable({

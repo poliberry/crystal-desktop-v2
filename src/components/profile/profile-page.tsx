@@ -33,7 +33,7 @@ import { useReservesWindowControls, WINDOW_CONTROLS_HEIGHT, WINDOW_CONTROLS_WIDT
 import { type FriendStatus } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 import { BotTag } from "@/components/bot-tag";
-import { PERMISSION_GROUPS, PERMISSION_LABELS, PERMISSIONS } from "@/lib/permissions";
+import { PERMISSION_GROUPS, PERMISSION_LABELS, PERMISSIONS, bitsHas } from "@/lib/permissions";
 
 /**
  * A profile, as a page rather than a dialog.
@@ -310,7 +310,7 @@ function ProfilePageBody({
                 <section className="space-y-5">
                   <div><h2 className="text-base font-semibold">Server permissions</h2><p className="mt-1 text-sm text-muted-foreground">What this bot can do in {communityName ?? "this server"}.</p></div>
                   {PERMISSION_GROUPS.map((group) => {
-                    const granted = group.keys.filter((key) => (botInfo?.permissions ?? 0) & PERMISSIONS[key]);
+                    const granted = group.keys.filter((key) => bitsHas(botInfo?.permissions ?? 0, PERMISSIONS[key]));
                     if (!granted.length) return null;
                     return <div key={group.title} className="space-y-2"><h3 className="text-sm font-semibold">{group.title}</h3><div className="flex flex-wrap gap-1.5">{granted.map((key) => <span key={key} className="rounded-md border border-border bg-muted/30 px-2 py-1 text-xs">{PERMISSION_LABELS[key]}</span>)}</div></div>;
                   })}

@@ -1,4 +1,5 @@
 import { PERMISSIONS } from "../permissions";
+import { bitsAnd, bitsHas } from "./permissionBits";
 
 /**
  * How a bot gets its authority, and how it proves who it is. Pure functions — nothing here reads
@@ -75,7 +76,7 @@ const ALL = ~0;
 
 /** Whether a set of permissions covers `bit`. Administrator, and the owner's all-ones, cover everything. */
 export function holds(base: number, bit: number): boolean {
-  return base === ALL || (base & PERMISSIONS.ADMINISTRATOR) !== 0 || (base & bit) === bit;
+  return base === ALL || bitsHas(base, PERMISSIONS.ADMINISTRATOR) || bitsAnd(base, bit) === bit;
 }
 
 /** The bits in `wanted` that `base` doesn't hold. */

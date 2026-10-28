@@ -25,6 +25,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { useBrowsingCommunityId } from "@/lib/browsing-community";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { FOCUS_MESSAGE_SEARCH_EVENT } from "@/lib/command-events";
 import { SHEET_PAGES, useMobileShell } from "@/components/mobile/mobile-shell";
 
@@ -122,11 +124,19 @@ export function UnifiedSidebar() {
   const [dockExpanded, setDockExpanded] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCommunity, setSelectedCommunity] = useState<CommunitySummary | null>(null);
+  // The community the content is showing: the active tab's, or one whose front page is open. A tab
+  // switch, a notification or a link into a channel all change it, and the sidebar follows; a DM,
+  // a group or Home has none, so the main lists stay.
+  const browsingCommunityId = useBrowsingCommunityId();
+  const myCommunities = useCachedQuery(api.communities.listMine, {}, "communities.listMine") as
+    | CommunitySummary[]
+    | undefined;
   const searchOverlayRef = useRef<HTMLDivElement>(null);
   const { page, closePage } = usePage();
   const homeSurface = useHomeSurface();
   const shell = useMobileShell();
+  // On a phone the channels unfold in the list instead, so there is no separate community menu.
+  const selectedCommunity = (!shell.mobile && myCommunities?.find((c) => c.id === browsingCommunityId)) || null;
   const showContentRef = useRef(shell.showContent);
   showContentRef.current = shell.mobile ? shell.showContent : () => {};
   const pageMenuRef = useCallback((node: HTMLDivElement | null) => {
@@ -232,9 +242,11 @@ export function UnifiedSidebar() {
             transition={SLIDE_TRANSITION}
             className="absolute inset-0 z-10 flex flex-col"
           >
+            {/* Keyed, so moving between communities starts the next one clean. */}
             <CommunitySidebarContext
+              key={communityMenu.id}
               community={communityMenu}
-              onBack={() => setSelectedCommunity(null)}
+              onBack={nav.goHome}
             />
           </motion.div>
         )}
@@ -293,7 +305,7 @@ export function UnifiedSidebar() {
         <ScrollArea className="min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]>div]:!block">
           <div className="flex min-w-0 flex-col gap-4 px-3 pb-3">
             <PrioritySection />
-            <CommunitiesSection onSelectCommunity={setSelectedCommunity} />
+            <CommunitiesSection />
             <DmSection />
           </div>
         </ScrollArea>

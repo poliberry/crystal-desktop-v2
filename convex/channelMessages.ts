@@ -21,6 +21,7 @@ import {
   validateMentions,
 } from "./lib/e2eeEnforce";
 import { sameEnvelope } from "./lib/e2eePure";
+import { internal } from "./_generated/api";
 import { markChannelRead } from "./channels";
 import { isMessageHidden, windowsByTarget } from "./lib/blocking";
 import { describeMessage, dispatchMessageCreated, fireCommunityEvent } from "./lib/botEvents";
@@ -47,6 +48,41 @@ async function requireChannelPerm(
   const community = await requireCommunity(ctx, channel.communityId);
   const perms = await getChannelPermissions(ctx, community, channelId, userId);
   if (!can(perms, flag)) throw new Error("You don't have permission to do that.");
+}
+
+/**
+ * A reaction that is another community's custom emoji (`<:name:id>`) takes Use External Emojis
+ * here. Unicode emoji and this community's own are always fine.
+ */
+async function requireOwnCommunityEmoji(ctx: QueryCtx, channelId: Id<"channels">, userId: Id<"users">, emoji: string): Promise<void> {
+  const tag = /^<:[a-zA-Z0-9_]+:([a-zA-Z0-9]+)>$/.exec(emoji);
+  if (!tag) return;
+  const channel = await ctx.db.get(channelId);
+  if (!channel) return;
+  const doc = await ctx.db.get(tag[1] as Id<"communityEmojis">).catch(() => null);
+  if (!doc || doc.communityId === channel.communityId) return;
+  if (!(await channelPermitted(ctx, channelId, userId, PERMISSIONS.USE_EXTERNAL_EMOJIS))) {
+    throw new Error("You can't use emojis from other communities here.");
+  }
+}
+
+/** Whether `userId` holds `flag` in the channel — the question, not the refusal. */
+async function channelPermitted(ctx: QueryCtx, channelId: Id<"channels">, userId: Id<"users">, flag: number): Promise<boolean> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) return false;
+  const community = await requireCommunity(ctx, channel.communityId);
+  return can(await getChannelPermissions(ctx, community, channelId, userId), flag);
+}
+
+/** Pinning is its own permission now; Manage Messages still does it, as it always did. */
+async function requirePinPerm(ctx: QueryCtx, channelId: Id<"channels">, userId: Id<"users">): Promise<void> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) throw new Error("Channel not found.");
+  const community = await requireCommunity(ctx, channel.communityId);
+  const perms = await getChannelPermissions(ctx, community, channelId, userId);
+  if (!can(perms, PERMISSIONS.MANAGE_MESSAGES) && !can(perms, PERMISSIONS.PIN_MESSAGES)) {
+    throw new Error("You don't have permission to do that.");
+  }
 }
 
 async function reactionsFor(ctx: QueryCtx, messageId: Id<"channelMessages">, me: Id<"users">) {
@@ -303,7 +339,8 @@ export const list = query({
           replyToId: message.replyToId ?? null,
           createdAt: message._creationTime,
           editedAt: message.editedAt ?? null,
-          isMine: message.authorId === me._id,
+          // A forwarded copy carries its author's name, but it isn't theirs to edit or delete here.
+          isMine: message.authorId === me._id && !message.forwardedFrom,
           replyTo: await resolveReplyPreview(ctx, message.replyToId),
           /** Idempotency key of the send that made this row — see the twin in
            * convex/messages.ts and src/lib/outbox-overlay.ts. */
@@ -329,6 +366,9 @@ export const list = query({
           attachments,
           embeds: message.embeds ?? [],
           components: message.components ?? [],
+          /** Where a copy delivered by following an announcements channel came from. */
+          forwardedFrom: message.forwardedFrom ?? null,
+          noEmbeds: message.noEmbeds ?? false,
           reactions: await reactionsFor(ctx, message._id, me._id),
         };
       })
@@ -411,22 +451,30 @@ export async function sendChannelMessage(
   { channelId, text, attachments, replyToId, pingReply, clientId, enc, mentions }: SendArgs,
   opts: { permissionChecked?: boolean; /** Already validated by `validateEmbeds`. Only the Bot API passes these. */ embeds?: Embed[]; /** Already validated by `validateComponents`. */ components?: ActionRow[] } = {}
 ): Promise<Id<"channelMessages">> {
-  if (!opts.permissionChecked) await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
+  if (!opts.permissionChecked) {
+    await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
+    if (attachments?.length) await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.ATTACH_FILES);
+  }
   // Staff can take sending away from an account; a bot's user is never limited, so this
   // only ever stops a person (including one a bot acts for, which re-reads the row).
   requireAbility(me, "send_messages");
   if (attachments?.length) requireAbility(me, "upload_media");
   await requireNotTimedOut(ctx, channelId, me._id);
+  // An announcements channel is plaintext by design (followers hold no key to its room).
+  let plaintextRoom = false;
   {
     const channel = await ctx.db.get(channelId);
     if (channel) await requireCommunityOpen(ctx, channel.communityId, "post");
+    plaintextRoom = channel?.isAnnouncement === true;
   }
+  if (plaintextRoom && enc) throw new Error("Announcements are public, so they aren't end-to-end encrypted.");
   // Embeds and components live inside `enc` for an encrypted message, so they count as plaintext
   // here: a person and the Bot API are held to the same rule.
   assertPlaintextAllowed({
     author: me,
     hasEnc: !!enc,
     hasPlaintext: !!text?.trim() || !!opts.embeds?.length || !!opts.components?.length,
+    plaintextRoom,
   });
 
   if (clientId) {
@@ -470,9 +518,15 @@ export async function sendChannelMessage(
       ? replyTarget.authorId
       : null;
 
+  // Links only unfurl for someone who may embed them. A bot's caller has checked its own
+  // permissions, and a person's are read here once for the one flag the list can't derive later.
+  const noEmbeds =
+    !opts.permissionChecked && !(await channelPermitted(ctx, channelId, me._id, PERMISSIONS.EMBED_LINKS));
+
   const messageId = await ctx.db.insert("channelMessages", {
     channelId,
     authorId: me._id,
+    ...(noEmbeds ? { noEmbeds: true } : {}),
     // Never both: an encrypted row has no `text`, `embeds` or `components`.
     text: enc ? undefined : trimmed || undefined,
     replyToId: validReplyToId,
@@ -609,6 +663,12 @@ export async function sendChannelMessage(
   // Bots in this community that can see the channel are told. Never allowed to get in the way.
   if (channel) await dispatchMessageCreated(ctx, channel, messageId, me);
 
+  // Followers of an announcements channel get it delivered after this commits — their copies are
+  // theirs to fail or be slow without holding up the post.
+  if (channel?.isAnnouncement && !enc) {
+    await ctx.scheduler.runAfter(0, internal.announcements.deliverToFollowers, { messageId });
+  }
+
   return messageId;
 }
 
@@ -636,8 +696,11 @@ export async function editChannelMessage(
 ): Promise<void> {
   const hasPlaintext = change.text !== undefined || change.embeds !== undefined || change.components !== undefined;
   const author = await ctx.db.get(message.authorId);
+  const sourceChannel = await ctx.db.get(message.channelId);
+  const plaintextRoom = sourceChannel?.isAnnouncement === true;
+  if (plaintextRoom && change.enc) throw new Error("Announcements are public, so they aren't end-to-end encrypted.");
   // Whether the *edit* may carry plaintext. A text edit that only clears (empty string) still is one.
-  if (author) assertPlaintextAllowed({ author, hasEnc: !!change.enc, hasPlaintext });
+  if (author) assertPlaintextAllowed({ author, hasEnc: !!change.enc, hasPlaintext, plaintextRoom });
 
   if (change.enc) {
     const room = { scope: "channel", channelId: message.channelId } as const;
@@ -697,6 +760,8 @@ export const update = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) return;
     if (message.authorId !== me._id) throw new Error("You can only edit your own messages.");
+    // A copy delivered by following an announcements channel carries its author's name but isn't theirs to change here.
+    if (message.forwardedFrom) throw new Error("A forwarded announcement can't be edited.");
     if (enc) {
       await editChannelMessage(ctx, message, { enc, mentions });
       return;
@@ -772,6 +837,18 @@ export const toggleReaction = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
     await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
+    // Reacting with something already on the message is always allowed; a reaction nobody has
+    // used yet is a new one, and takes Add Reactions. Taking your own away never does.
+    if (desired !== "remove") {
+      await requireOwnCommunityEmoji(ctx, message.channelId, me._id, emoji);
+      const used = await ctx.db
+        .query("channelMessageReactions")
+        .withIndex("by_message", (q) => q.eq("messageId", messageId))
+        .collect();
+      if (!used.some((r) => r.emoji === emoji)) {
+        await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.ADD_REACTIONS);
+      }
+    }
     await setChannelReaction(ctx, message, me._id, emoji, desired);
   },
 });
@@ -792,7 +869,7 @@ export const pin = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
-    await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.MANAGE_MESSAGES);
+    await requirePinPerm(ctx, message.channelId, me._id);
     await ctx.db.patch(messageId, { pinnedAt: Date.now() });
   },
 });
@@ -803,7 +880,7 @@ export const unpin = mutation({
     const me = await getCurrentUserOrThrow(ctx);
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
-    await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.MANAGE_MESSAGES);
+    await requirePinPerm(ctx, message.channelId, me._id);
     await ctx.db.patch(messageId, { pinnedAt: undefined });
   },
 });

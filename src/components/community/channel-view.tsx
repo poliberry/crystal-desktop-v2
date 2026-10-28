@@ -55,6 +55,8 @@ export function ChannelView({ channelId }: ChannelViewProps) {
       communityId={channel.communityId}
       name={channel.name}
       topic={channel.topic}
+      isAnnouncement={channel.isAnnouncement}
+      canSend={channel.canSend}
     />
   );
 }

@@ -10,6 +10,7 @@
 
 import type * as accountDeletion from "../accountDeletion.js";
 import type * as ama from "../ama.js";
+import type * as announcements from "../announcements.js";
 import type * as auth from "../auth.js";
 import type * as authFlow from "../authFlow.js";
 import type * as authInternal from "../authInternal.js";
@@ -55,6 +56,7 @@ import type * as e2eeMigrate from "../e2eeMigrate.js";
 import type * as e2eeOnboard from "../e2eeOnboard.js";
 import type * as e2eeOnboardActions from "../e2eeOnboardActions.js";
 import type * as effectLibraryPublish from "../effectLibraryPublish.js";
+import type * as emailOutbox from "../emailOutbox.js";
 import type * as events from "../events.js";
 import type * as extensions from "../extensions.js";
 import type * as files from "../files.js";
@@ -91,6 +93,8 @@ import type * as lib_e2eeEnforce from "../lib/e2eeEnforce.js";
 import type * as lib_e2eeEscrow from "../lib/e2eeEscrow.js";
 import type * as lib_e2eePure from "../lib/e2eePure.js";
 import type * as lib_effectLibrary from "../lib/effectLibrary.js";
+import type * as lib_email from "../lib/email.js";
+import type * as lib_emailBrand from "../lib/emailBrand.js";
 import type * as lib_embeds from "../lib/embeds.js";
 import type * as lib_entitlements from "../lib/entitlements.js";
 import type * as lib_extensionManifest from "../lib/extensionManifest.js";
@@ -119,6 +123,8 @@ import type * as lib_notificationPolicy from "../lib/notificationPolicy.js";
 import type * as lib_oauthLinks from "../lib/oauthLinks.js";
 import type * as lib_panelClient from "../lib/panelClient.js";
 import type * as lib_passwordHash from "../lib/passwordHash.js";
+import type * as lib_permissionBits from "../lib/permissionBits.js";
+import type * as lib_permissionFlags from "../lib/permissionFlags.js";
 import type * as lib_platforms from "../lib/platforms.js";
 import type * as lib_profileCosmetics from "../lib/profileCosmetics.js";
 import type * as lib_r2 from "../lib/r2.js";
@@ -170,6 +176,7 @@ import type * as serverProfiles from "../serverProfiles.js";
 import type * as sidebar from "../sidebar.js";
 import type * as soundboard from "../soundboard.js";
 import type * as staff from "../staff.js";
+import type * as staffEmail from "../staffEmail.js";
 import type * as store from "../store.js";
 import type * as studioDocs from "../studioDocs.js";
 import type * as support from "../support.js";
@@ -192,6 +199,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   accountDeletion: typeof accountDeletion;
   ama: typeof ama;
+  announcements: typeof announcements;
   auth: typeof auth;
   authFlow: typeof authFlow;
   authInternal: typeof authInternal;
@@ -237,6 +245,7 @@ declare const fullApi: ApiFromModules<{
   e2eeOnboard: typeof e2eeOnboard;
   e2eeOnboardActions: typeof e2eeOnboardActions;
   effectLibraryPublish: typeof effectLibraryPublish;
+  emailOutbox: typeof emailOutbox;
   events: typeof events;
   extensions: typeof extensions;
   files: typeof files;
@@ -273,6 +282,8 @@ declare const fullApi: ApiFromModules<{
   "lib/e2eeEscrow": typeof lib_e2eeEscrow;
   "lib/e2eePure": typeof lib_e2eePure;
   "lib/effectLibrary": typeof lib_effectLibrary;
+  "lib/email": typeof lib_email;
+  "lib/emailBrand": typeof lib_emailBrand;
   "lib/embeds": typeof lib_embeds;
   "lib/entitlements": typeof lib_entitlements;
   "lib/extensionManifest": typeof lib_extensionManifest;
@@ -301,6 +312,8 @@ declare const fullApi: ApiFromModules<{
   "lib/oauthLinks": typeof lib_oauthLinks;
   "lib/panelClient": typeof lib_panelClient;
   "lib/passwordHash": typeof lib_passwordHash;
+  "lib/permissionBits": typeof lib_permissionBits;
+  "lib/permissionFlags": typeof lib_permissionFlags;
   "lib/platforms": typeof lib_platforms;
   "lib/profileCosmetics": typeof lib_profileCosmetics;
   "lib/r2": typeof lib_r2;
@@ -352,6 +365,7 @@ declare const fullApi: ApiFromModules<{
   sidebar: typeof sidebar;
   soundboard: typeof soundboard;
   staff: typeof staff;
+  staffEmail: typeof staffEmail;
   store: typeof store;
   studioDocs: typeof studioDocs;
   support: typeof support;

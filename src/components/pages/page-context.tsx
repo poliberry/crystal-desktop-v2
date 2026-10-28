@@ -79,11 +79,15 @@ export function useOpenProfileEditor(): () => void {
   return useCallback(() => openPage({ type: "profile-editor" }), [openPage]);
 }
 
-/** Opens a community's settings. */
-export function useOpenCommunitySettings(): (communityId: Id<"communities">) => void {
+/** Opens a community's settings, optionally on a tab (`"Channels"`, or `"Channels:<channelId>"` for one channel). Add `@<communityId>` so only that community's page reacts. */
+export function useOpenCommunitySettings(): (communityId: Id<"communities">, section?: string) => void {
   const { openPage } = usePage();
   return useCallback(
-    (communityId) => openPage({ type: "community-settings", communityId }),
+    (communityId, section) => {
+      // Typed check, as in `useOpenSettings`: a handler may pass an event along.
+      if (typeof section === "string") requestPageSection("community-settings", section);
+      openPage({ type: "community-settings", communityId });
+    },
     [openPage],
   );
 }

@@ -10,8 +10,10 @@ import {
   Cpu,
   CreditCard,
   Download,
+  Flag,
   Gem,
   Info,
+  LifeBuoy,
   KeyRound,
   LogOut,
   Mic,
@@ -40,7 +42,9 @@ import { BillingTab } from "@/components/settings/tabs/billing-tab";
 import { BlockedTab } from "@/components/settings/tabs/blocked-tab";
 import { CreatorTab } from "@/components/settings/tabs/creator-tab";
 import { ExtensionsTab } from "@/components/settings/tabs/extensions-tab";
+import { ReportsTab } from "@/components/settings/tabs/reports-tab";
 import { SubscriptionsTab } from "@/components/settings/tabs/subscriptions-tab";
+import { SupportTab } from "@/components/settings/tabs/support-tab";
 import { AppearanceTab } from "@/components/settings/tabs/appearance-tab";
 import { NotificationsTab } from "@/components/settings/tabs/notifications-tab";
 import { PerformanceTab } from "@/components/settings/tabs/performance-tab";
@@ -115,6 +119,13 @@ const NAVIGATION: { label: string; children: NavChild[] }[] = [
     ],
   },
   {
+    label: "Help",
+    children: [
+      { value: "support", label: "Support", icon: LifeBuoy },
+      { value: "reports", label: "Reports", icon: Flag },
+    ],
+  },
+  {
     label: "Customisation",
     children: [
       { value: "appearance", label: "Appearance", icon: Palette },
@@ -147,6 +158,8 @@ const SECTION_META: Record<string, { title: string; description: string }> = {
   updates: { title: "Updates", description: "Keep Crystal up to date." },
   billing: { title: "Billing", description: "Payment methods, receipts and help with a payment." },
   subscriptions: { title: "Subscriptions", description: "Your Crystal plan and anything else that renews." },
+  support: { title: "Support", description: "Your requests to Crystal support, and the replies." },
+  reports: { title: "Reports", description: "Reports you've sent, and what happened to them." },
   extensions: { title: "Extensions", description: "Add-ons written by others, running in a sandbox with only the powers you give them." },
   creator: { title: "Creator", description: "Get paid for what you sell in the shop, and see what you've earned." },
   appearance: { title: "Appearance", description: "Themes, colour and how the app is laid out." },
@@ -390,6 +403,8 @@ export function SettingsShell({
               {section === "blocked" && <BlockedTab />}
               {section === "billing" && <BillingTab />}
               {section === "subscriptions" && <SubscriptionsTab />}
+              {section === "support" && <SupportTab />}
+              {section === "reports" && <ReportsTab />}
               {section === "creator" && <CreatorTab />}
               {section === "extensions" && <ExtensionsTab />}
               {section === "voice" && <VoiceVideoTab />}

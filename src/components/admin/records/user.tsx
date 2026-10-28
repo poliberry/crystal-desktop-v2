@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Award, Ban, Gift, Gavel, Loader2, ShieldCheck, ShieldOff, SlidersHorizontal, UserRound } from "lucide-react";
+import { Award, Ban, Gift, Gavel, Loader2, Mail, ShieldCheck, ShieldOff, SlidersHorizontal, TicketPlus, UserRound } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -22,6 +22,7 @@ import {
   useStaff,
   type Tone,
 } from "@/components/admin/admin-ui";
+import { CreateTicketDialog, EmailHistory, EmailUserDialog } from "@/components/admin/email-dialogs";
 import { useConsole } from "@/components/admin/console-state";
 import { GRANT_KIND_META, type GrantKind } from "@/components/marketplace/sku-kinds";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -30,7 +31,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatMoney, formatRelative } from "@/lib/money";
 
-type Tab = "overview" | "items" | "moderation" | "orders";
+type Tab = "overview" | "items" | "moderation" | "orders" | "emails";
 const pretty = (value: string) => value.replace(/_/g, " ");
 const ORDER_TONE: Record<string, Tone> = { paid: "good", refunded: "warn", pending: "neutral", failed: "bad", canceled: "neutral" };
 
@@ -86,6 +87,8 @@ export function UserRecord({ id }: { id: string }) {
   const [banning, setBanning] = useState(false);
   const [unbanning, setUnbanning] = useState(false);
   const [includeNetwork, setIncludeNetwork] = useState(true);
+  const [emailing, setEmailing] = useState(false);
+  const [ticketing, setTicketing] = useState(false);
   const suspend = useMutation(api.operations.suspendUser);
   const unsuspend = useMutation(api.operations.unsuspendUser);
   const limit = useMutation(api.operations.limitUser);
@@ -118,6 +121,16 @@ export function UserRecord({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {staff.can("support.act") && (
+            <>
+              <Button variant="outline" onClick={() => setEmailing(true)}>
+                <Mail /> Email
+              </Button>
+              <Button variant="outline" onClick={() => setTicketing(true)}>
+                <TicketPlus /> Open ticket
+              </Button>
+            </>
+          )}
           {detail.isStaff && <StatusPill tone="info">Staff</StatusPill>}
           {banned && <StatusPill tone="bad">Banned</StatusPill>}
           {suspension && <StatusPill tone="bad">Suspended</StatusPill>}
@@ -205,6 +218,7 @@ export function UserRecord({ id }: { id: string }) {
           { id: "items", label: "Items", count: detail.entitlements.filter((e) => e.active).length },
           { id: "moderation", label: "Moderation", count: detail.reportsAbout.filter((r) => r.status === "open" || r.status === "reviewing").length },
           ...(detail.orders ? [{ id: "orders" as const, label: "Orders", count: 0 }] : []),
+          { id: "emails" as const, label: "Emails" },
         ]}
       />
 
@@ -212,6 +226,17 @@ export function UserRecord({ id }: { id: string }) {
       {tab === "items" && <Items detail={detail} userId={userId} />}
       {tab === "moderation" && <Moderation detail={detail} />}
       {tab === "orders" && detail.orders && <Orders orders={detail.orders} username={user.username} />}
+      {tab === "emails" && (
+        <Panel title="Emails sent to them" description="Replies, report updates and anything staff wrote. Their address is never shown." flush>
+          <EmailHistory userId={userId} />
+        </Panel>
+      )}
+      <EmailUserDialog open={emailing} onOpenChange={setEmailing} user={{ id: userId, username: user.username }} />
+      <CreateTicketDialog
+        open={ticketing}
+        onOpenChange={setTicketing}
+        presetUser={{ id: userId, username: user.username, name: user.name, imageUrl: user.imageUrl }}
+      />
 
       <ReasonDialog
         open={suspending}

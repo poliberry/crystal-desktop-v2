@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { Armchair, Hash, Volume2 } from "lucide-react";
+import { Armchair, Hash, Megaphone, Volume2 } from "lucide-react";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -44,6 +44,7 @@ export function CreateChannelDialog({
   const surfaces = community === undefined || community === null ? [] : CHANNEL_SURFACES.filter((s) => surfaceAllowed(community.kind, s));
   const [type, setType] = useState<"text" | "voice">(defaultType);
   const [lounge, setLounge] = useState(false);
+  const [announcement, setAnnouncement] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +54,10 @@ export function CreateChannelDialog({
     setCreating(true);
     setError(null);
     try {
-      await create({ communityId, name, type, categoryId, lounge: type === "voice" && lounge, surface: surface ?? undefined });
+      await create({ communityId, name, type, categoryId, lounge: type === "voice" && lounge,
+        announcement: type === "text" && announcement && !surface ? true : undefined,
+        surface: surface ?? undefined,
+      });
       onOpenChange(false);
       setName("");
     } catch (err) {
@@ -69,7 +73,9 @@ export function CreateChannelDialog({
         <DialogHeader>
           <DialogTitle>Create a channel</DialogTitle>
           <DialogDescription>
-            {type === "text"
+            {type === "text" && announcement
+              ? "Only people you allow can post. Other people and communities can follow it."
+              : type === "text"
               ? "A place for text conversation."
               : lounge
                 ? "A room people walk around in, with a screen for whatever is being shared."
@@ -83,11 +89,12 @@ export function CreateChannelDialog({
             onClick={() => {
               setType("text");
               setLounge(false);
+              setAnnouncement(false);
               setSurface(null);
             }}
             className={cn(
               "flex flex-1 items-center gap-2 rounded-md border px-3 py-2 text-sm",
-              type === "text" ? "border-primary bg-primary/10" : "text-muted-foreground"
+              type === "text" && !announcement ? "border-primary bg-primary/10" : "text-muted-foreground"
             )}
           >
             <Hash className="size-4" /> Text
@@ -95,8 +102,24 @@ export function CreateChannelDialog({
           <button
             type="button"
             onClick={() => {
+              setType("text");
+              setLounge(false);
+              setAnnouncement(true);
+              setSurface(null);
+            }}
+            className={cn(
+              "flex flex-1 items-center gap-2 rounded-md border px-3 py-2 text-sm",
+              type === "text" && announcement ? "border-primary bg-primary/10" : "text-muted-foreground"
+            )}
+          >
+            <Megaphone className="size-4" /> Announcements
+          </button>
+          <button
+            type="button"
+            onClick={() => {
               setType("voice");
               setLounge(false);
+              setAnnouncement(false);
               setSurface(null);
             }}
             className={cn(
@@ -111,6 +134,7 @@ export function CreateChannelDialog({
             onClick={() => {
               setType("voice");
               setLounge(true);
+              setAnnouncement(false);
               setSurface(null);
             }}
             className={cn(
@@ -133,6 +157,7 @@ export function CreateChannelDialog({
                   onClick={() => {
                     setType("text");
                     setLounge(false);
+                    setAnnouncement(false);
                     setSurface(surface === s ? null : s);
                     if (!name.trim()) setName(SURFACE_META[s].label.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
                   }}
@@ -158,7 +183,7 @@ export function CreateChannelDialog({
             id="channel-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={type === "text" ? "general" : lounge ? "Movie Night" : "General Voice"}
+            placeholder={type === "text" ? (announcement ? "announcements" : "general") : lounge ? "Movie Night" : "General Voice"}
             maxLength={64}
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleCreate();
