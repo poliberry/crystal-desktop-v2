@@ -102,6 +102,39 @@ export const createAccount = internalMutation({
   },
 });
 
+/** Point a creator at a new Stripe account (e.g. re-onboarding on live after test),
+ * resetting what the old one had reported. */
+export const replaceAccount = internalMutation({
+  args: { userId: v.id("users"), stripeAccountId: v.string() },
+  handler: async (ctx, { userId, stripeAccountId }) => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("creatorAccounts")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        stripeAccountId,
+        chargesEnabled: false,
+        payoutsEnabled: false,
+        detailsSubmitted: false,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("creatorAccounts", {
+        userId,
+        stripeAccountId,
+        chargesEnabled: false,
+        payoutsEnabled: false,
+        detailsSubmitted: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return stripeAccountId;
+  },
+});
+
 /** Copy Stripe's view of an account in. Returns the creator it belongs to. */
 export const setAccountFlags = internalMutation({
   args: {

@@ -6,7 +6,7 @@ import { EyeOff, Inbox, Loader2, Send } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { EmptyState, EntityLink, Fields, Loading, Panel, StatusPill, useRun, useStaff, type Tone } from "@/components/admin/admin-ui";
+import { EmptyState, EntityLink, Fields, Loading, Panel, ReasonDialog, StatusPill, useRun, useStaff, type Tone } from "@/components/admin/admin-ui";
 import { useConsole } from "@/components/admin/console-state";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -30,6 +30,8 @@ export function TicketRecord({ id }: { id: string }) {
   const { run, busy } = useRun();
   const [text, setText] = useState("");
   const [internal, setInternal] = useState(false);
+  const [emailThem, setEmailThem] = useState(true);
+  const [finishing, setFinishing] = useState<"resolved" | "closed" | null>(null);
 
   const ticket = detail?.ticket;
   const customer = useQuery(api.operations.userDetail, ticket && staff.can("users.read") ? { userId: ticket.userId } : "skip");
@@ -54,6 +56,7 @@ export function TicketRecord({ id }: { id: string }) {
           </div>
           <p className="text-sm text-muted-foreground">
             {pretty(ticket.category)} · opened {formatDate(ticket.createdAt, true)}
+            {detail.openedBy && ` · opened by @${detail.openedBy} on their behalf`}
           </p>
         </header>
 
@@ -91,13 +94,21 @@ export function TicketRecord({ id }: { id: string }) {
                 maxLength={4000}
               />
               <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
-                  Internal note — the customer won&apos;t see it
-                </label>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+                    Internal note — the customer won&apos;t see it
+                  </label>
+                  {!internal && (
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <input type="checkbox" checked={emailThem} onChange={(e) => setEmailThem(e.target.checked)} />
+                      Email them this reply
+                    </label>
+                  )}
+                </div>
                 <Button
                   disabled={!text.trim() || busy === "reply"}
-                  onClick={() => void run("reply", () => reply({ ticketId, body: text, internal }), internal ? "Note added." : "Sent.").then(() => setText(""))}
+                  onClick={() => void run("reply", () => reply({ ticketId, body: text, internal, email: emailThem }), internal ? "Note added." : "Sent.").then(() => setText(""))}
                 >
                   {busy === "reply" ? <Loader2 className="animate-spin" /> : <Send />} {internal ? "Add note" : "Send reply"}
                 </Button>
@@ -110,7 +121,19 @@ export function TicketRecord({ id }: { id: string }) {
       <aside className="space-y-5">
         <Panel title="Ticket">
           <div className="space-y-3">
-            <Select value={ticket.status} disabled={!act} onValueChange={(status) => void run("status", () => setStatus({ ticketId, status: status as (typeof STATUSES)[number] }))}>
+            <Select
+              value={ticket.status}
+              disabled={!act}
+              onValueChange={(status) => {
+                const next = status as (typeof STATUSES)[number];
+                if (next === "resolved" || next === "closed") {
+                  if (ticket.status !== next || !ticket.closureNote) setFinishing(next);
+                  else void run("status", () => setStatus({ ticketId, status: next }));
+                } else {
+                  void run("status", () => setStatus({ ticketId, status: next }));
+                }
+              }}
+            >
               <SelectTrigger className="w-full capitalize">
                 <SelectValue />
               </SelectTrigger>
@@ -138,6 +161,15 @@ export function TicketRecord({ id }: { id: string }) {
                 ))}
               </SelectContent>
             </Select>
+            {ticket.closureNote && (
+              <div className="rounded-lg bg-foreground/5 px-3 py-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Closure reason{ticket.resolvedAt ? ` · ${formatDate(ticket.resolvedAt, true)}` : ""}
+                  {detail.resolvedBy ? ` · by @${detail.resolvedBy}` : ""}
+                </p>
+                <p className="mt-0.5 text-sm whitespace-pre-wrap">{ticket.closureNote}</p>
+              </div>
+            )}
             {act && (
               <Button
                 variant="outline"
@@ -150,6 +182,25 @@ export function TicketRecord({ id }: { id: string }) {
             )}
           </div>
         </Panel>
+
+        {detail.emails.length > 0 && (
+          <Panel title="Emails sent" description="What went to the customer about this ticket." flush>
+            <div className="divide-y divide-foreground/10">
+              {detail.emails.map((e) => (
+                <div key={e.id} className="space-y-0.5 px-4 py-2.5 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{e.subject}</span>
+                    <StatusPill tone={e.status === "sent" ? "good" : e.status === "failed" ? "bad" : "neutral"}>{e.status}</StatusPill>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {formatRelative(e.createdAt)}
+                    {e.detail ? ` · ${e.detail}` : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
 
         <Panel title="Customer">
           {customer ? (
@@ -166,6 +217,18 @@ export function TicketRecord({ id }: { id: string }) {
           )}
         </Panel>
       </aside>
+
+      <ReasonDialog
+        open={!!finishing}
+        onOpenChange={(open) => !open && setFinishing(null)}
+        title={finishing === "resolved" ? "Resolve this ticket" : "Close this ticket"}
+        description="Shown to the customer under Settings → Support, and emailed to them. Say why it ended."
+        confirmLabel={finishing === "resolved" ? "Resolve" : "Close"}
+        placeholder="Why this is closed (shown to the customer)"
+        onConfirm={(closureNote) =>
+          run("status", () => setStatus({ ticketId, status: finishing!, closureNote })).then(() => setFinishing(null))
+        }
+      />
     </div>
   );
 }

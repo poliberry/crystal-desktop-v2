@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
-import { PERMISSIONS, can, getBasePermissions, requireCommunityPermission } from "./permissions";
+import { PERMISSIONS, can, getBasePermissions, requireAnyCommunityPermission, requireCommunityPermission } from "./permissions";
 import { requireCommunityOpen } from "./lib/moderation";
 import { getCurrentUserOrThrow } from "./users";
 
@@ -84,7 +84,7 @@ export const create = mutation({
   handler: async (ctx, args): Promise<Id<"communityEvents">> => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, args.communityId);
-    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_EVENTS);
+    await requireAnyCommunityPermission(ctx, community, me._id, [PERMISSIONS.MANAGE_EVENTS, PERMISSIONS.CREATE_EVENTS]);
     await requireCommunityOpen(ctx, args.communityId, "post");
     if (!community.kind) throw new Error("A calendar is for clans and creator communities.");
     const title = args.title.trim().slice(0, MAX_TITLE);

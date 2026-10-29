@@ -2,6 +2,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { requireCommunity, requireMember } from "../communities";
 import { getChannelPermissions, PERMISSIONS } from "../permissions";
+import { bitsHas } from "./permissionBits";
 import { getCurrentUserOrThrow } from "../users";
 
 /**
@@ -20,10 +21,10 @@ export async function requireSurface(
   await requireMember(ctx, channel.communityId, me._id);
   const community = await requireCommunity(ctx, channel.communityId);
   const perms = await getChannelPermissions(ctx, community, channelId, me._id);
-  if ((perms & PERMISSIONS.VIEW_CHANNELS) === 0 && (perms & PERMISSIONS.ADMINISTRATOR) === 0) {
+  if (!bitsHas(perms, PERMISSIONS.VIEW_CHANNELS) && !bitsHas(perms, PERMISSIONS.ADMINISTRATOR)) {
     throw new Error("You can't see that channel.");
   }
   return { me, channel, community, perms };
 }
 
-export const canDo = (perms: number, flag: number) => (perms & PERMISSIONS.ADMINISTRATOR) !== 0 || (perms & flag) !== 0;
+export const canDo = (perms: number, flag: number) => bitsHas(perms, PERMISSIONS.ADMINISTRATOR) || bitsHas(perms, flag);

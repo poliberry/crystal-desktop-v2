@@ -1,4 +1,4 @@
-import { Armchair, Hash, Volume2 } from "lucide-react";
+import { Armchair, Hash, Megaphone, Volume2 } from "lucide-react";
 
 import { SURFACE_ICONS, SURFACE_META, type ChannelSurface } from "@/lib/community-kinds";
 
@@ -11,13 +11,16 @@ export function ChannelGlyph({
   type,
   surface,
   isLounge,
+  isAnnouncement,
   className,
 }: {
   type: "text" | "voice";
   surface?: string;
   isLounge?: boolean;
+  isAnnouncement?: boolean;
   className?: string;
 }) {
+  if (type === "text" && isAnnouncement) return <Megaphone className={className} />;
   if (type === "text" && surface && surface in SURFACE_ICONS) {
     const Icon = SURFACE_ICONS[surface as ChannelSurface];
     return <Icon className={className} />;
@@ -30,7 +33,8 @@ export function ChannelGlyph({
 }
 
 /** What to call a channel's kind, for tooltips. */
-export function channelKindLabel(type: "text" | "voice", surface?: string, isLounge?: boolean): string {
+export function channelKindLabel(type: "text" | "voice", surface?: string, isLounge?: boolean, isAnnouncement?: boolean): string {
+  if (type === "text" && isAnnouncement) return "Announcements";
   if (type === "text" && surface && surface in SURFACE_META) return SURFACE_META[surface as ChannelSurface].label;
   if (type === "voice") return isLounge ? "Lounge" : "Voice";
   return "Text";

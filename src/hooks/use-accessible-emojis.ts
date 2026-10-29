@@ -22,9 +22,11 @@ export interface AccessibleEmojis {
    * two servers using the same name resolve to whichever sorts first, which
    * at least makes it deterministic. */
   byName: Map<string, ServerEmoji>;
+  /** Which community each emoji belongs to, by emoji id. */
+  communityOf: Map<string, Id<"communities">>;
 }
 
-const EMPTY: AccessibleEmojis = { groups: [], byId: new Map(), byName: new Map() };
+const EMPTY: AccessibleEmojis = { groups: [], byId: new Map(), byName: new Map(), communityOf: new Map() };
 
 /**
  * Every custom emoji the signed-in user can use, across every community they
@@ -41,12 +43,14 @@ export function useAccessibleEmojis(): AccessibleEmojis {
     if (!groups) return EMPTY;
     const byId = new Map<string, ServerEmoji>();
     const byName = new Map<string, ServerEmoji>();
+    const communityOf = new Map<string, Id<"communities">>();
     for (const group of groups) {
       for (const emoji of group.emojis) {
         byId.set(emoji.id, emoji);
+        communityOf.set(emoji.id, group.communityId);
         if (!byName.has(emoji.name)) byName.set(emoji.name, emoji);
       }
     }
-    return { groups: groups as EmojiCommunityGroup[], byId, byName };
+    return { groups: groups as EmojiCommunityGroup[], byId, byName, communityOf };
   }, [groups]);
 }

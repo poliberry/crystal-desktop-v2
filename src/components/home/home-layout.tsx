@@ -25,6 +25,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { MyCrystal } from "@/components/home/my-crystal";
+import { publishBrowsingCommunity } from "@/lib/browsing-community";
 import { applyLaunchSurface, setHomeSurface, useHomeSurface } from "@/components/home/home-surface";
 import { SHEET_PAGES, useMobileShell } from "@/components/mobile/mobile-shell";
 
@@ -47,6 +48,11 @@ export function HomeLayout() {
     api.roles.myPermissions,
     browsingCommunityId ? { communityId: browsingCommunityId } : "skip",
   ) ?? 0;
+
+  // The sidebar shows this community's channels in place of its own lists — see `UnifiedSidebar`.
+  useEffect(() => {
+    publishBrowsingCommunity(browsingCommunityId);
+  }, [browsingCommunityId]);
 
   // Set by a navigation that steps off a page *and* sets one of the states
   // below in the same breath: the tab changes as a result, and the reset that

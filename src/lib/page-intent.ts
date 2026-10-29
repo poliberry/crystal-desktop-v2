@@ -8,12 +8,16 @@
  * a page that is mounting takes what is waiting, and one that is already open
  * hears about it.
  */
-export type IntentPage = "settings" | "marketplace";
+export type IntentPage = "settings" | "marketplace" | "community-settings";
 
 type Listener = (section: string) => void;
 
 const waiting: Partial<Record<IntentPage, string>> = {};
-const listeners: Record<IntentPage, Set<Listener>> = { settings: new Set(), marketplace: new Set() };
+const listeners: Record<IntentPage, Set<Listener>> = {
+  settings: new Set(),
+  marketplace: new Set(),
+  "community-settings": new Set(),
+};
 
 export function requestPageSection(page: IntentPage, section: string): void {
   waiting[page] = section;

@@ -61,6 +61,10 @@ import {
   PERMISSION_GROUPS,
   PERMISSION_LABELS,
   PERMISSIONS,
+  UNENFORCED_PERMISSIONS,
+  bitsHas,
+  bitsOr,
+  bitsWithout,
   type PermissionKey,
 } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
@@ -773,7 +777,7 @@ function PermissionsTab({
                 className="h-auto p-0 text-sm"
                 onClick={() =>
                   setPermissions((previous) =>
-                    group.keys.reduce((acc, key) => acc & ~PERMISSIONS[key], previous)
+                    group.keys.reduce((acc, key) => bitsWithout(acc, PERMISSIONS[key]), previous)
                   )
                 }
               >
@@ -784,17 +788,27 @@ function PermissionsTab({
           {group.keys.map((key) => (
             <div key={key} className="flex items-start justify-between gap-6 border-b py-3">
               <div className="space-y-0.5">
-                <p className="text-sm font-semibold">{PERMISSION_LABELS[key]}</p>
+                <p className="flex items-center gap-2 text-sm font-semibold">
+                  {PERMISSION_LABELS[key]}
+                  {UNENFORCED_PERMISSIONS.has(key) && (
+                    <span
+                      className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                      title="This is saved with the role, but Crystal doesn't check it yet."
+                    >
+                      Not enforced yet
+                    </span>
+                  )}
+                </p>
                 <p className="text-sm text-muted-foreground">{PERMISSION_DESCRIPTIONS[key]}</p>
               </div>
               <Switch
-                checked={(permissions & PERMISSIONS[key]) !== 0}
+                checked={bitsHas(permissions, PERMISSIONS[key])}
                 disabled={!canManage}
                 onCheckedChange={() =>
                   setPermissions((previous) =>
-                    previous & PERMISSIONS[key]
-                      ? previous & ~PERMISSIONS[key]
-                      : previous | PERMISSIONS[key]
+                    bitsHas(previous, PERMISSIONS[key])
+                      ? bitsWithout(previous, PERMISSIONS[key])
+                      : bitsOr(previous, PERMISSIONS[key])
                   )
                 }
               />

@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
-import { PERMISSIONS, requireCommunityPermission } from "./permissions";
+import { PERMISSIONS, requireAnyCommunityPermission, requireCommunityPermission } from "./permissions";
 import { MAX_SOUND_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import type { Id } from "./_generated/dataModel";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
@@ -67,7 +67,7 @@ export const add = mutation({
   handler: async (ctx, { communityId, name, emoji, storageId, durationMs }) => {
     const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const community = await requireCommunity(ctx, communityId);
-    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_EMOJIS);
+    await requireAnyCommunityPermission(ctx, community, me._id, [PERMISSIONS.MANAGE_EMOJIS, PERMISSIONS.CREATE_EXPRESSIONS]);
 
     const trimmed = name.trim();
     if (trimmed.length < 2 || trimmed.length > 32) {

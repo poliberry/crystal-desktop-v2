@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { Hash } from "lucide-react";
+import { Hash, Megaphone } from "lucide-react";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -115,6 +115,10 @@ interface MessageDoc {
   /** Cards a bot attached. */
   embeds?: MessageEmbed[];
   components?: { buttons: MessageButton[] }[];
+  /** Set on a copy delivered by following an announcements channel: where it came from. */
+  forwardedFrom?: { channelName: string; communityName: string } | null;
+  /** The author couldn't embed links when this was sent. */
+  noEmbeds?: boolean;
   reactions: ReactionSummary[];
   /** The message this one replies to — see convex/channelMessages.ts `list`. */
   replyTo?: OverlayReplyPreview | null;
@@ -337,11 +341,18 @@ const MessageRow = memo(function MessageRow({
           </div>
         ) : (
           <>
+            {message.forwardedFrom && (
+              <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Megaphone className="size-3" />
+                Forwarded from #{message.forwardedFrom.channelName} · {message.forwardedFrom.communityName}
+              </p>
+            )}
             {readable.text && (
               <MessageContent
                 text={readable.text}
                 communityId={communityId}
                 edited={!!message.editedAt}
+                noEmbeds={message.noEmbeds}
               />
             )}
             {readable.state === "locked" && <p className="text-xs text-muted-foreground">Encrypted message. Unlock your account to read it.</p>}

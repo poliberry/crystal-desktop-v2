@@ -1,7 +1,7 @@
 "use node";
 
 import { v } from "convex/values";
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, TrackSource } from "livekit-server-sdk";
 
 import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
@@ -12,7 +12,7 @@ import { closeRoomIfEmpty, ensureRoom, mintScreenToken } from "./lib/liveKitAdmi
 export const join = action({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }): Promise<{ token: string; url: string; roomName: string }> => {
-    const { userId, name } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
+    const { userId, name, canSpeak, canVideo } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
     await ctx.runMutation(internal.channels.recordVoiceJoin, { channelId, userId });
 
     const apiKey = process.env.LIVEKIT_API_KEY;
@@ -29,7 +29,12 @@ export const join = action({
     at.addGrant({
       room: roomName,
       roomJoin: true,
-      canPublish: true,
+      // Without Speak and Video the member listens: they can be heard by nobody and seen by nobody.
+      canPublish: canSpeak || canVideo,
+      canPublishSources: [
+        ...(canSpeak ? [TrackSource.MICROPHONE] : []),
+        ...(canVideo ? [TrackSource.CAMERA] : []),
+      ],
       canSubscribe: true,
       canPublishData: true,
     });
@@ -43,7 +48,8 @@ export const join = action({
 export const joinScreen = action({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }): Promise<{ token: string; url: string; roomName: string }> => {
-    const { userId, name } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
+    const { userId, name, canVideo } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
+    if (!canVideo) throw new Error("You don't have permission to share your screen in this channel.");
     return mintScreenToken(`channel-${channelId}`, userId, name);
   },
 });

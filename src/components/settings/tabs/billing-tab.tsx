@@ -249,7 +249,7 @@ const CATEGORIES = [
   ["other", "Something else"],
 ] as const;
 
-function SupportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function SupportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const create = useMutation(api.support.create);
   const [category, setCategory] = useState<(typeof CATEGORIES)[number][0]>("billing");
   const [subject, setSubject] = useState("");

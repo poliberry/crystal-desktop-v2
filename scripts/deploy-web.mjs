@@ -16,7 +16,8 @@
  *  - the build reads NEXT_PUBLIC_* from the environment / .env.local, which is what decides which
  *    Clerk instance and Convex deployment the site talks to. It prints them first, because
  *    publishing a build made against the wrong backend is the easy mistake;
- *  - leaves out Monaco (the code editor's files): that editor only runs in the desktop app;
+ *  - leaves out Monaco (the code editor's files) and the Studio's ffmpeg encoder: both only run in the
+ *    desktop app, and the encoder's .wasm is over the 25 MiB a single Pages file may be;
  *  - needs `wrangler login` (or CLOUDFLARE_API_TOKEN) for the account that owns the project.
  */
 import { spawnSync } from "node:child_process";
@@ -78,6 +79,7 @@ const stage = mkdtempSync(join(tmpdir(), "crystal-web-"));
 try {
   cpSync(out, stage, { recursive: true });
   rmSync(join(stage, "monaco"), { recursive: true, force: true });
+  rmSync(join(stage, "studio-ffmpeg"), { recursive: true, force: true });
   run("npx", ["wrangler", "pages", "deploy", stage, "--project-name", PROJECT, "--branch", branch, "--commit-dirty=true"]);
 } finally {
   rmSync(stage, { recursive: true, force: true });

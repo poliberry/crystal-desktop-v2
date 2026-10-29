@@ -2,7 +2,7 @@ import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
-import { PERMISSIONS } from "./permissions";
+import { PERMISSIONS, requireAnyCommunityPermission } from "./permissions";
 import { isInviteOnly, requireCommunity, requireMember } from "./communities";
 import { getCurrentUserOrThrow } from "./users";
 
@@ -135,26 +135,8 @@ export const add = mutation({
     const me = await getCurrentUserOrThrow(ctx, "upload_media");
     const community = await requireCommunity(ctx, communityId);
 
-    // Permission check — owner always passes.
-    if (community.ownerId !== me._id) {
-      const perms = await ctx.db
-        .query("memberRoles")
-        .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", me._id))
-        .collect();
-      const roles = await Promise.all(perms.map((m) => ctx.db.get(m.roleId)));
-      const everyoneRole = await ctx.db
-        .query("roles")
-        .withIndex("by_community", (q) => q.eq("communityId", communityId))
-        .filter((q) => q.eq(q.field("isEveryone"), true))
-        .unique();
-      let bits = everyoneRole?.permissions ?? 0;
-      for (const r of roles) {
-        if (r) bits |= r.permissions;
-      }
-      const isAdmin = (bits & PERMISSIONS.ADMINISTRATOR) !== 0;
-      const canManage = isAdmin || (bits & PERMISSIONS.MANAGE_EMOJIS) !== 0;
-      if (!canManage) throw new Error("You don't have permission to manage emojis.");
-    }
+    // Permission check — the owner always passes; Create Expressions is enough to add one.
+    await requireAnyCommunityPermission(ctx, community, me._id, [PERMISSIONS.MANAGE_EMOJIS, PERMISSIONS.CREATE_EXPRESSIONS]);
 
     // Name validation — alphanumeric + underscores, 2-32 chars.
     const sanitized = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");

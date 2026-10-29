@@ -9,6 +9,7 @@ import { releaseFile, releaseUrl } from "./lib/files";
 import { r2PublicUrlForKey } from "./lib/r2";
 import {
   DEFAULT_EVERYONE_PERMISSIONS,
+  ROLE_PERMS_VERSION,
   PERMISSIONS,
   can,
   getBasePermissions,
@@ -106,6 +107,7 @@ export const create = mutation({
       communityId,
       name: "@everyone",
       permissions: DEFAULT_EVERYONE_PERMISSIONS,
+      permsVersion: ROLE_PERMS_VERSION,
       position: 0,
       isEveryone: true,
     });
@@ -215,6 +217,7 @@ export const createFromSetup = mutation({
       communityId,
       name: "@everyone",
       permissions: DEFAULT_EVERYONE_PERMISSIONS,
+      permsVersion: ROLE_PERMS_VERSION,
       position: 0,
       isEveryone: true,
     });
@@ -256,7 +259,19 @@ export const createFromSetup = mutation({
         createdAt: now,
         surface: channel.surface as never,
         gameId: channel.gameId,
+        ...(channel.announcement ? { isAnnouncement: true } : {}),
       });
+      if (channel.announcement) {
+        // Read-only for everyone until a role or a member is let in — the same default `channels.create` gives.
+        const everyone = await ctx.db
+          .query("roles")
+          .withIndex("by_community", (q) => q.eq("communityId", communityId))
+          .filter((q) => q.eq(q.field("isEveryone"), true))
+          .unique();
+        if (everyone) {
+          await ctx.db.insert("channelPermissionOverwrites", { channelId: id, roleId: everyone._id, allow: 0, deny: PERMISSIONS.SEND_MESSAGES });
+        }
+      }
       channelIds.push({ id, type: channel.type });
     }
 
@@ -1319,6 +1334,10 @@ export const setMemberNickname = mutation({
       await requireAbove(ctx, community, me._id, userId);
     } else {
       await requireMember(ctx, communityId, me._id);
+      const mine = await getBasePermissions(ctx, community, me._id);
+      if (!can(mine, PERMISSIONS.CHANGE_NICKNAME) && !can(mine, PERMISSIONS.MANAGE_NICKNAMES)) {
+        throw new Error("You can't change your nickname in this community.");
+      }
     }
 
     const trimmed = nickname.trim();

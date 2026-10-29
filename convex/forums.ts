@@ -5,6 +5,10 @@ import { mutation, query } from "./_generated/server";
 import { requireAbility, requireCommunityOpen } from "./lib/moderation";
 import { canDo, requireSurface } from "./lib/surfaces";
 import { PERMISSIONS } from "./permissions";
+import { bitsOr } from "./lib/permissionBits";
+
+/** Moderating a thread or forum post: Manage Threads, or Manage Messages as it always was. */
+const MODERATE_THREADS = bitsOr(PERMISSIONS.MANAGE_THREADS, PERMISSIONS.MANAGE_MESSAGES);
 
 /**
  * A thread channel: a forum. Every post is a conversation of its own, listed by
@@ -40,7 +44,7 @@ export const list = query({
     const seen = new Set(pinned.map((p) => p._id));
     const rows = [...pinned, ...recent.filter((p) => !seen.has(p._id))];
     return {
-      canModerate: canDo(perms, PERMISSIONS.MANAGE_MESSAGES),
+      canModerate: canDo(perms, MODERATE_THREADS),
       posts: await Promise.all(
         rows.map(async (p) => ({
           id: p._id,
@@ -77,7 +81,7 @@ export const get = query({
       pinned: post.pinned,
       locked: post.locked,
       mine: post.authorId === me._id,
-      canModerate: canDo(perms, PERMISSIONS.MANAGE_MESSAGES),
+      canModerate: canDo(perms, MODERATE_THREADS),
       replies: await Promise.all(
         replies.map(async (r) => ({
           id: r._id,
@@ -95,7 +99,9 @@ export const create = mutation({
   args: { channelId: v.id("channels"), title: v.string(), body: v.string() },
   handler: async (ctx, { channelId, title, body }) => {
     const { me, channel, perms } = await requireSurface(ctx, channelId, "threads");
-    if (!canDo(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You can't post here.");
+    if (!canDo(perms, PERMISSIONS.SEND_MESSAGES) || !canDo(perms, PERMISSIONS.CREATE_PUBLIC_THREADS)) {
+      throw new Error("You can't post here.");
+    }
     requireAbility(me, "send_messages");
     await requireCommunityOpen(ctx, channel.communityId, "post");
     const t = title.trim().slice(0, MAX_TITLE);
@@ -124,10 +130,12 @@ export const reply = mutation({
     const post = await ctx.db.get(postId);
     if (!post) throw new Error("That thread is gone.");
     const { me, perms } = await requireSurface(ctx, post.channelId, "threads");
-    if (!canDo(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You can't post here.");
+    if (!canDo(perms, PERMISSIONS.SEND_MESSAGES) || !canDo(perms, PERMISSIONS.SEND_MESSAGES_IN_THREADS)) {
+      throw new Error("You can't post here.");
+    }
     requireAbility(me, "send_messages");
     await requireCommunityOpen(ctx, post.communityId, "post");
-    if (post.locked && !canDo(perms, PERMISSIONS.MANAGE_MESSAGES)) throw new Error("This thread is locked.");
+    if (post.locked && !canDo(perms, MODERATE_THREADS)) throw new Error("This thread is locked.");
     const body = text.trim().slice(0, MAX_REPLY);
     if (!body) throw new Error("Write something first.");
     const now = Date.now();
@@ -143,7 +151,7 @@ export const moderate = mutation({
     const post = await ctx.db.get(postId);
     if (!post) return;
     const { me, perms } = await requireSurface(ctx, post.channelId, "threads");
-    const mod = canDo(perms, PERMISSIONS.MANAGE_MESSAGES);
+    const mod = canDo(perms, MODERATE_THREADS);
     if (action === "delete") {
       if (!mod && post.authorId !== me._id) throw new Error("That isn't yours to remove.");
       for (const r of await ctx.db.query("forumReplies").withIndex("by_post", (q) => q.eq("postId", postId)).collect()) await ctx.db.delete(r._id);
@@ -164,7 +172,7 @@ export const removeReply = mutation({
     const post = await ctx.db.get(reply.postId);
     if (!post) return;
     const { me, perms } = await requireSurface(ctx, post.channelId, "threads");
-    if (reply.authorId !== me._id && !canDo(perms, PERMISSIONS.MANAGE_MESSAGES)) throw new Error("That isn't yours to remove.");
+    if (reply.authorId !== me._id && !canDo(perms, MODERATE_THREADS)) throw new Error("That isn't yours to remove.");
     await ctx.db.delete(replyId);
     await ctx.db.patch(post._id, { replyCount: Math.max(0, post.replyCount - 1) });
   },

@@ -646,7 +646,7 @@ export const invokeCommand = mutation({
     if (!channel) throw new Error("Channel not found.");
     const community = await requireCommunity(ctx, channel.communityId);
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
-    if (!holds(perms, PERMISSIONS.VIEW_CHANNELS) || !holds(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You can't use commands in this channel.");
+    if (!holds(perms, PERMISSIONS.VIEW_CHANNELS) || !holds(perms, PERMISSIONS.SEND_MESSAGES) || !holds(perms, PERMISSIONS.USE_APPLICATION_COMMANDS)) throw new Error("You can't use commands in this channel.");
 
     const name = command.trim().toLowerCase();
     if (!/^[a-z0-9_-]{1,32}$/.test(name)) throw new Error("That isn't a command.");
@@ -714,7 +714,7 @@ export const pressButton = mutation({
     if (!channel) throw new Error("That channel is gone.");
     const community = await requireCommunity(ctx, channel.communityId);
     const perms = await getChannelPermissions(ctx, community, channel._id, me._id);
-    if (!holds(perms, PERMISSIONS.VIEW_CHANNELS) || !holds(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You can't use buttons in this channel.");
+    if (!holds(perms, PERMISSIONS.VIEW_CHANNELS) || !holds(perms, PERMISSIONS.SEND_MESSAGES) || !holds(perms, PERMISSIONS.USE_APPLICATION_COMMANDS)) throw new Error("You can't use buttons in this channel.");
 
     const button = message.components?.flatMap((r) => r.buttons).find((b) => b.customId === customId);
     if (!button || button.style === "link" || button.disabled) throw new Error("That button isn't available.");

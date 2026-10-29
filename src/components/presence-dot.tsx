@@ -25,13 +25,11 @@ interface PresenceDotProps {
    * point of the cake is that it's noticed. */
   isBirthday?: boolean;
   /**
-   * The colour of the plate the glyph sits on, and of the ring around it.
+   * Unused, kept so existing callers still typecheck.
    *
-   * Somebody with a gradient on their card gets their own colour here instead
-   * of the app background, so the dot reads as part of them rather than as a
-   * hole punched through their picture. Passed as a value rather than as a
-   * class because it *is* a value — a hex out of a database can never be a
-   * Tailwind class, which is compiled from the source text and cannot know it.
+   * The plate behind the glyph is always the theme's sidebar accent — a profile
+   * gradient must never recolour it, or one person's decoration would change
+   * shared chrome for everyone looking at them.
    */
   accent?: string;
   /** Sit where it is put, instead of being nudged toward the corner of an avatar
@@ -103,40 +101,12 @@ const DOT_OFFSET = "translate-x-[35%] translate-y-[35%]";
  * Over the opaque default it costs nothing and does nothing.
  */
 const PLATE =
-  "flex items-center justify-center rounded-full bg-background backdrop-blur-sm";
-
-/**
- * The plate and its edge, in one colour.
- *
- * All three properties, because the edge is spelled two ways across the app —
- * a `border` on the standalone dot, a `ring` inside an avatar badge — and
- * `--tw-ring-color` is what every `ring-*` utility reads, so setting it here
- * colours whichever width the caller asked for.
- *
- * As a style rather than a class, which is not a preference: `ring-[#a3e]` is
- * a class Tailwind compiles by *reading the source text*, so one built from a
- * value out of the database matches nothing and silently does nothing. That is
- * the bug this replaces.
- */
-function plateStyle(accent: string | undefined): React.CSSProperties | undefined {
-  if (!accent) return undefined;
-  // Forty percent, because a card gradient is chosen to be a *border* and at
-  // full strength it competes with the glyph sitting on it. `color-mix` rather
-  // than an alpha hex: the stored value is whatever the colour picker wrote,
-  // and this works whatever notation that was.
-  const tint = `color-mix(in srgb, ${accent} 40%, transparent)`;
-  return {
-    backgroundColor: tint,
-    borderColor: tint,
-    "--tw-ring-color": tint,
-  } as React.CSSProperties;
-}
+  "flex items-center justify-center rounded-full bg-sidebar-accent backdrop-blur-sm";
 
 export function PresenceDot({
   status,
   activities,
   isBirthday,
-  accent,
   inline = false,
   className,
 }: PresenceDotProps) {
@@ -145,13 +115,11 @@ export function PresenceDot({
       role={isBirthday ? "img" : undefined}
       title={isBirthday ? BIRTHDAY_LABEL : undefined}
       aria-label={isBirthday ? BIRTHDAY_LABEL : undefined}
-      style={plateStyle(accent)}
       className={cn(
         // The dot's own box, unchanged from when it was a coloured circle:
         // whatever a caller sizes it with lands the same way it always did.
-        "size-4 border-2 border-background select-none",
+        "size-4 border-2 border-sidebar-accent select-none",
         PLATE,
-        isBirthday && !accent && "bg-muted",
         className,
         // After `className`, which is where a caller puts the dot: the offset
         // moves it from wherever that was rather than to a fixed corner.
@@ -174,7 +142,6 @@ export function PresenceBadge({
   status,
   activities,
   isBirthday,
-  accent,
   className,
 }: PresenceDotProps) {
   return (
@@ -182,13 +149,11 @@ export function PresenceBadge({
       role={isBirthday ? "img" : undefined}
       title={isBirthday ? BIRTHDAY_LABEL : undefined}
       aria-label={isBirthday ? BIRTHDAY_LABEL : undefined}
-      style={plateStyle(accent)}
       className={cn(
         PLATE,
-        isBirthday && !accent && "bg-muted",
         // Bigger than the badge's own sizes, which were drawn for a plain disc
         // — a controller or a moon at eight pixels is a smudge.
-        "group-data-[size=sm]/avatar:size-3 group-data-[size=default]/avatar:size-3.5 group-data-[size=lg]/avatar:size-4",
+        "ring-sidebar-accent group-data-[size=sm]/avatar:size-3 group-data-[size=default]/avatar:size-3.5 group-data-[size=lg]/avatar:size-4",
         className,
         DOT_OFFSET,
       )}

@@ -13,9 +13,13 @@ const SYSTEM_BANNER_URL = "https://usecrystal.app/crystal-official-banner.svg";
 export async function systemUser(ctx: { db: any }): Promise<Doc<"users">> {
   const existing = await ctx.db.query("users").withIndex("by_clerk_id", (q: any) => q.eq("clerkId", SYSTEM_CLERK_ID)).unique();
   if (existing) {
-    if (existing.imageUrl !== SYSTEM_AVATAR_URL || existing.bannerUrl !== SYSTEM_BANNER_URL) {
-      await ctx.db.patch(existing._id, { imageUrl: SYSTEM_AVATAR_URL, bannerUrl: SYSTEM_BANNER_URL });
-    }
+    // Only fill in what's missing: the avatar and banner are edited in the console
+    // (`systemAccount.update`), and putting the defaults back here on every system
+    // message would undo that the next time one is sent.
+    const missing: { imageUrl?: string; bannerUrl?: string } = {};
+    if (!existing.imageUrl) missing.imageUrl = SYSTEM_AVATAR_URL;
+    if (!existing.bannerUrl) missing.bannerUrl = SYSTEM_BANNER_URL;
+    if (Object.keys(missing).length) await ctx.db.patch(existing._id, missing);
     const badge = await ctx.db.query("badges").withIndex("by_badge_id", (q: any) => q.eq("badgeId", "official")).unique();
     if (!badge) await ctx.db.insert("badges", { badgeId: "official", label: "OFFICIAL", description: "Official Crystal system account.", icon: "BsPatchCheckFill", className: "text-sky-400", position: -1 });
     const official = await ctx.db.query("userBadges").withIndex("by_user_badge", (q: any) => q.eq("userId", existing._id).eq("badgeId", "official")).unique();

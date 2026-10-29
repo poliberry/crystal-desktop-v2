@@ -44,6 +44,42 @@ export const setStripeIds = internalMutation({
   },
 });
 
+/** Every paid SKU that is on sale — what a catalogue resync publishes. */
+export const paidActiveSkuIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("skus").collect();
+    return rows.filter((s) => s.status === "active" && s.priceCents > 0).map((s) => s._id);
+  },
+});
+
+/** Every SKU's Stripe references — what the catalogue dedupe reconciles against. */
+export const allSkuStripeRefs = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("skus").collect();
+    return rows.map((s) => ({
+      id: s._id,
+      status: s.status,
+      priceCents: s.priceCents,
+      stripeProductId: s.stripeProductId ?? null,
+      stripePriceId: s.stripePriceId ?? null,
+    }));
+  },
+});
+
+/** Drop a stored customer (e.g. another mode's) so the next purchase remakes it. */
+export const forgetStripeCustomer = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const existing = await ctx.db
+      .query("stripeCustomers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
 export const stripeCustomerFor = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {

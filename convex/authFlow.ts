@@ -16,6 +16,7 @@ import { accountByEmail } from "./lib/accounts";
 import { makeGuest } from "./authInternal";
 import { sealRequestIp } from "./lib/ipBans";
 import { allow } from "./lib/rateLimit";
+import { firstNameOf } from "./lib/emailBrand";
 import { mailConfigured, sendCodeEmail } from "./lib/mail";
 import { hashPassword, verifyPassword } from "./lib/passwordHash";
 import type { AddressState, SignInStep } from "./lib/signInStep";

@@ -1,6 +1,8 @@
-import { Notification, ipcMain, nativeImage, type BrowserWindow, type NativeImage } from "electron";
+import { Notification, ipcMain, type BrowserWindow, type NativeImage } from "electron";
 import { ConvexClient } from "convex/browser";
 import { anyApi } from "convex/server";
+
+import { fetchSquareImage } from "./imageDecoder";
 
 /**
  * Watches Convex for new DM/channel messages and friend requests from the
@@ -22,6 +24,8 @@ import { anyApi } from "convex/server";
 interface FeedAttachment {
   fileName: string;
   count: number;
+  /** The first picture the message carried, when it carried one. */
+  imageUrl?: string;
 }
 
 /**
@@ -29,7 +33,7 @@ interface FeedAttachment {
  * was said — or the file itself when nothing was.
  */
 function describe(text: string, attachment: FeedAttachment | null): string {
-  const said = text.trim();
+  const said = text.trim().slice(0, MESSAGE_MAX);
   if (!attachment) return said || "Sent a message";
   const what =
     said || (attachment.count > 1 ? `${attachment.count} files` : attachment.fileName);
@@ -93,8 +97,12 @@ const ENCRYPTED_FALLBACK = "New encrypted message";
  * fallback rather than late.
  */
 const DECRYPT_TIMEOUT_MS = 2_500;
-/** A toast body is a line, not a message; and the renderer is not trusted to size it. */
-const DECRYPTED_MAX = 300;
+/**
+ * The most of a message a toast is handed. The OS decides how much of it fits and ends the rest with an
+ * ellipsis, so this only keeps an enormous message (and a misbehaving renderer) from being sent to the shell whole.
+ */
+const MESSAGE_MAX = 1_000;
+const DECRYPTED_MAX = MESSAGE_MAX;
 
 let decryptSeq = 0;
 const pendingDecrypts = new Map<string, (text: string | null) => void>();
@@ -108,10 +116,14 @@ let decryptListening = false;
  */
 function decryptInRenderer(request: DecryptRequest): Promise<string | null> {
   const win = getMainWindow?.();
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return Promise.resolve(null);
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+    console.warn("[notifier] no window to decrypt a preview in");
+    return Promise.resolve(null);
+  }
   const id = `${Date.now().toString(36)}-${(decryptSeq++).toString(36)}`;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
+      console.warn(`[notifier] the window didn't answer a decrypt within ${DECRYPT_TIMEOUT_MS}ms`);
       pendingDecrypts.delete(id);
       resolve(null);
     }, DECRYPT_TIMEOUT_MS);
@@ -138,6 +150,7 @@ function listenForDecrypts(): void {
     if (typeof id !== "string") return;
     const settle = pendingDecrypts.get(id);
     if (!settle) return;
+    if (typeof text !== "string" || !text.trim()) console.warn("[notifier] the window couldn't decrypt a preview (no keys, previews off, or another account)");
     settle(typeof text === "string" && text.trim() ? text.trim().slice(0, DECRYPTED_MAX) : null);
   });
 }
@@ -269,52 +282,69 @@ function isFocusedOn(kind: "conversation" | "channel", id: string): boolean {
  *
  * Avatar URLs are content-addressed, so an entry can never go stale — a new
  * picture is a new URL. Bounded anyway: a busy server's worth of distinct
- * senders shouldn't accumulate in the main process forever. Cut 50→30; each
- * 64×64 NativeImage is ~16KB + overhead and main process has no GC pressure
- * release for them.
+ * senders shouldn't accumulate in the main process forever. Each 128×128
+ * NativeImage is ~64KB and the main process has no GC pressure release for them.
  */
 const iconCache = new Map<string, NativeImage>();
 const ICON_CACHE_LIMIT = 30;
+const AVATAR_PX = 128;
+/** A picture sent in a message: bigger than an avatar, and never fetched twice, so not cached. */
+const PICTURE_PX = 256;
 
 /**
  * The sender's avatar as a native image, or undefined if it can't be had.
  *
- * The OS won't fetch a remote URL for us, so the bytes have to come through
- * here. Anything `nativeImage` can't decode (it has no WebP support, which
- * some avatar CDNs serve by default) simply means no icon — a toast without a
- * face is still a perfectly good toast.
+ * The OS won't fetch a remote URL for us, so the bytes have to come through here, and avatars are often
+ * WebP or SVG, which `nativeImage` can't read (see imageDecoder.ts). A toast without a face is still a
+ * perfectly good toast.
  */
 async function iconFor(url: string | undefined): Promise<NativeImage | undefined> {
   if (!url) return undefined;
   const cached = iconCache.get(url);
   if (cached) return cached;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return undefined;
-    const image = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()));
-    if (image.isEmpty()) return undefined;
-    // Toasts render this small; sending a 512px avatar to the shell is waste.
-    const sized = image.resize({ width: 64, height: 64 });
-    if (iconCache.size >= ICON_CACHE_LIMIT) {
-      const oldest = iconCache.keys().next().value;
-      if (oldest !== undefined) iconCache.delete(oldest);
-    }
-    iconCache.set(url, sized);
-    return sized;
-  } catch {
-    return undefined;
+  const image = await fetchSquareImage(url, AVATAR_PX);
+  if (!image) return undefined;
+  if (iconCache.size >= ICON_CACHE_LIMIT) {
+    const oldest = iconCache.keys().next().value;
+    if (oldest !== undefined) iconCache.delete(oldest);
   }
+  iconCache.set(url, image);
+  return image;
+}
+
+/** What a toast shows beside its text. */
+interface ToastPictures {
+  /** The sender's face. */
+  avatarUrl?: string;
+  /** A picture the message carried. */
+  imageUrl?: string;
+}
+
+/**
+ * The one picture a toast has room for. macOS draws Electron's `icon` as a thumbnail on the right of the
+ * banner and has no larger slot, so a message that carries a picture shows that (the point of the message)
+ * and the sender stays in the title; everything else shows the sender's avatar. Other platforms use `icon`
+ * for the avatar, where a picture would be the wrong thing to shrink into it.
+ */
+async function pictureFor({ avatarUrl, imageUrl }: ToastPictures): Promise<NativeImage | undefined> {
+  if (process.platform === "darwin" && imageUrl) {
+    const picture = await fetchSquareImage(imageUrl, PICTURE_PX);
+    if (picture) return picture;
+  }
+  return iconFor(avatarUrl);
 }
 
 async function notify(
   title: string,
   body: string,
   onClick: () => void,
-  iconUrl?: string
+  pictures: ToastPictures | string = {}
 ): Promise<void> {
   if (!Notification.isSupported()) return;
-  const notification = new Notification({ title, body, icon: await iconFor(iconUrl) });
+  const picture = await pictureFor(typeof pictures === "string" ? { avatarUrl: pictures } : pictures);
+  const notification = new Notification({ title, body, icon: picture });
+  // macOS refuses a banner from an unsigned or ad-hoc-signed app (a dev Electron) with no prompt; say so.
+  notification.on("failed", (_e, error) => console.warn("[notifier] the OS refused a notification:", error));
   notification.on("click", () => {
     const win = getMainWindow?.();
     win?.show();
@@ -322,6 +352,11 @@ async function notify(
     onClick();
   });
   notification.show();
+}
+
+/** "Name: text" in a room with more than one other person; a one-to-one chat's title already says who. */
+function withAuthor(authorName: string, conversationName: string, line: string): string {
+  return conversationName === authorName ? line : `${authorName}: ${line}`;
 }
 
 function handleFeed(feed: Feed): void {
@@ -344,9 +379,9 @@ function handleFeed(feed: Feed): void {
     void messageLine(c, "conversation", c.conversationId).then((line) =>
       line === null ? undefined : notify(
         c.conversationName,
-        `${c.authorName}: ${line}`,
+        withAuthor(c.authorName, c.conversationName, line),
         () => onNavigate?.({ kind: "conversation", conversationId: c.conversationId }),
-        c.authorImageUrl
+        { avatarUrl: c.authorImageUrl, imageUrl: c.attachment?.imageUrl }
       )
     );
   }
@@ -363,7 +398,7 @@ function handleFeed(feed: Feed): void {
         `#${c.channelName} · ${c.communityName}`,
         `${c.authorName}: ${line}`,
         () => onNavigate?.({ kind: "channel", communityId: c.communityId, channelId: c.channelId }),
-        c.authorImageUrl
+        { avatarUrl: c.authorImageUrl, imageUrl: c.attachment?.imageUrl }
       )
     );
   }

@@ -34,13 +34,18 @@ import {
   ArrowLeft,
   BellOff,
   ChevronDown,
+  Check,
   ChevronRight,
+  FolderInput,
   GripVertical,
   Hash,
   LayoutDashboard,
+  Megaphone,
+  Pencil,
   Plus,
   Star,
   StarOff,
+  Trash2,
   Users,
   Volume2,
   ChevronLeft,
@@ -53,13 +58,16 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { CachedBackground } from "@/components/cached-background";
 import { useCall } from "@/components/call/call-provider";
 import { useCommunityActions } from "@/components/community/community-actions";
+import { CreateChannelDialog } from "@/components/community/create-channel-dialog";
+import { EditCategoryDialog } from "@/components/community/edit-category-dialog";
+import { FollowChannelDialog } from "@/components/community/follow-channel-dialog";
 import {
   VoiceChannelHoverCard,
   VoiceChannelParticipants,
 } from "@/components/community/voice-channel-participants";
 import { useNavigation } from "@/components/home/navigation-context";
 import { useTabs } from "@/components/home/tabs-context";
-import { useOpenCreateCommunity } from "@/components/pages/page-context";
+import { useOpenCommunitySettings, useOpenCreateCommunity } from "@/components/pages/page-context";
 import { MessagePreview } from "@/components/message-preview";
 import {
   ENCRYPTED_PREVIEW_FALLBACK,
@@ -73,9 +81,21 @@ import { useOpenChannel } from "@/components/sidebar/use-open-channel";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -110,6 +130,9 @@ function communityKey(id: Id<"communities">) {
 }
 function channelKey(id: Id<"channels">) {
   return `chan:${id}`;
+}
+function categoryKey(id: Id<"channelCategories">) {
+  return `cat:${id}`;
 }
 function dropzoneKey(categoryId: Id<"channelCategories"> | null) {
   return `dropzone:${categoryId ?? "none"}`;
@@ -331,6 +354,7 @@ interface ChannelRowData {
   name: string;
   type: "text" | "voice";
   isLounge?: boolean;
+  isAnnouncement?: boolean;
   surface?: string;
   categoryId: Id<"channelCategories"> | null;
   position: number;
@@ -349,6 +373,7 @@ function ChannelRow({
   unread,
   priority,
   voiceConnected,
+  manage,
 }: {
   channel: ChannelRowData;
   communityId: Id<"communities">;
@@ -357,8 +382,13 @@ function ChannelRow({
   priority: boolean;
   /** Whether the running call is this channel. */
   voiceConnected: boolean;
+  /** What a channel manager can do from the row's menu; absent for everyone else. */
+  manage?: ChannelManage;
 }) {
   const openChannel = useOpenChannel();
+  const openCommunitySettings = useOpenCommunitySettings();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [following, setFollowing] = useState(false);
   const { controller } = useCall();
   const setPriority = useMutation(api.priority.setChannel);
 
@@ -383,6 +413,7 @@ function ChannelRow({
         type={channel.type}
         surface={channel.surface}
         isLounge={channel.isLounge}
+        isAnnouncement={channel.isAnnouncement}
         className={cn("size-4 shrink-0", channel.type === "voice" && voiceConnected && "text-emerald-500")}
       />
       <span className={cn("truncate", unread && "font-semibold text-foreground")}>
@@ -427,8 +458,63 @@ function ChannelRow({
             {priority ? <StarOff className="size-4" /> : <Star className="size-4" />}
             {priority ? "Remove from Priority" : "Add to Priority"}
           </ContextMenuItem>
+          {channel.isAnnouncement && (
+            <ContextMenuItem onSelect={() => setFollowing(true)}>
+              <Megaphone className="size-4" />
+              Follow Announcements…
+            </ContextMenuItem>
+          )}
+          {manage && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={() => openCommunitySettings(communityId, `Channels:${channel.id}@${communityId}`)}
+              >
+                <Pencil className="size-4" />
+                Edit Channel
+              </ContextMenuItem>
+              <ContextMenuSub>
+                <ContextMenuSubTrigger>
+                  <FolderInput className="size-4" />
+                  Move to…
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent>
+                  {[{ id: null, name: "No category" }, ...manage.categories].map((c) => {
+                    const current = (channel.categoryId ?? null) === c.id;
+                    return (
+                      <ContextMenuItem
+                        key={c.id ?? "none"}
+                        disabled={current}
+                        onSelect={() => manage.onMove(channel.id, c.id)}
+                      >
+                        {current ? <Check className="size-4" /> : <span className="size-4" />}
+                        <span className="truncate">{c.name}</span>
+                      </ContextMenuItem>
+                    );
+                  })}
+                </ContextMenuSubContent>
+              </ContextMenuSub>
+              <ContextMenuSeparator />
+              <ContextMenuItem variant="destructive" onSelect={() => setConfirmingDelete(true)}>
+                <Trash2 className="size-4" />
+                Delete Channel
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
+      {following && (
+        <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <FollowChannelDialog channel={channel} onClose={() => setFollowing(false)} />
+        </div>
+      )}
+      {confirmingDelete && (
+        // The dialog is portaled but React events still bubble through the
+        // draggable row it was opened from; keep them from starting a drag.
+        <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <DeleteChannelDialog channel={channel} onClose={() => setConfirmingDelete(false)} />
+        </div>
+      )}
       {channel.type === "voice" && (
         <VoiceChannelParticipants
           channelId={channel.id}
@@ -437,6 +523,51 @@ function ChannelRow({
         />
       )}
     </div>
+  );
+}
+
+/** What a channel's menu offers someone who can manage channels. */
+interface ChannelManage {
+  categories: { id: Id<"channelCategories">; name: string }[];
+  onMove: (channelId: Id<"channels">, categoryId: Id<"channelCategories"> | null) => void;
+}
+
+/** Deleting a channel takes its messages with it, so it asks first. */
+function DeleteChannelDialog({ channel, onClose }: { channel: ChannelRowData; onClose: () => void }) {
+  const remove = useMutation(api.channels.remove);
+  const [deleting, setDeleting] = useState(false);
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete channel</DialogTitle>
+          <DialogDescription>
+            Delete <span className="font-medium text-foreground">{channel.name}</span> and everything in it? This
+            can't be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={deleting}
+            onClick={async () => {
+              setDeleting(true);
+              try {
+                await remove({ channelId: channel.id });
+                onClose();
+              } finally {
+                setDeleting(false);
+              }
+            }}
+          >
+            {deleting ? "Deleting…" : "Delete channel"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -450,6 +581,7 @@ function SortableChannelRow({
   priority,
   voiceConnected,
   dragEnabled,
+  manage,
   overInfo,
 }: {
   channel: ChannelRowData;
@@ -459,6 +591,7 @@ function SortableChannelRow({
   priority: boolean;
   voiceConnected: boolean;
   dragEnabled: boolean;
+  manage?: ChannelManage;
   overInfo: { id: string; isBefore: boolean } | null;
 }) {
   const {
@@ -483,6 +616,7 @@ function SortableChannelRow({
         unread={unread}
         priority={priority}
         voiceConnected={voiceConnected}
+        manage={manage}
       />
     );
   }
@@ -512,29 +646,85 @@ function SortableChannelRow({
         unread={unread}
         priority={priority}
         voiceConnected={voiceConnected}
+        manage={manage}
       />
     </div>
   );
 }
 
+/**
+ * A category's header and its channels. Right-click for the category's own
+ * actions; with `canManage`, the header is also the drag handle for reordering
+ * categories (a plain click still collapses it — dragging needs real movement).
+ */
 function CategoryGroup({
+  id,
   name,
+  canManage,
+  onCreateChannel,
+  onEdit,
+  onDelete,
   children,
 }: {
+  id: Id<"channelCategories">;
   name: string;
+  canManage: boolean;
+  onCreateChannel: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: categoryKey(id),
+    data: { type: "category" },
+    disabled: !canManage,
+  });
+
+  const header = (
+    <button
+      type="button"
+      onClick={() => setOpen((v) => !v)}
+      className="flex w-full items-center gap-0.5 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
+      {...(canManage ? { ...attributes, ...listeners } : {})}
+    >
+      {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+      <span className="truncate">{name}</span>
+    </button>
+  );
+
   return (
-    <div className="mt-2 first:mt-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-0.5 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
-      >
-        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <span className="truncate">{name}</span>
-      </button>
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+      }}
+      className="mt-2 first:mt-0"
+    >
+      {canManage ? (
+        <ContextMenu>
+          <ContextMenuTrigger asChild>{header}</ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onClick={onCreateChannel}>
+              <Hash className="size-4" />
+              Create Channel
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={onEdit}>
+              <Pencil className="size-4" />
+              Edit Category
+            </ContextMenuItem>
+            <ContextMenuItem variant="destructive" onClick={onDelete}>
+              <Trash2 className="size-4" />
+              Delete Category
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ) : (
+        header
+      )}
       {open && <div className="flex flex-col gap-0.5">{children}</div>}
     </div>
   );
@@ -600,19 +790,33 @@ function CommunityChannelList({
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+  const reorderCategories = useMutation(api.channelCategories.reorder);
   const [activeItem, setActiveItem] = useState<ChannelRowData | null>(null);
+  const [activeCategory, setActiveCategory] = useState<CategoryData | null>(null);
+  const [createChannelIn, setCreateChannelIn] = useState<Id<"channelCategories"> | null>(null);
+  const [editingCategory, setEditingCategory] = useState<{
+    id: Id<"channelCategories">;
+    name: string;
+    deleting: boolean;
+  } | null>(null);
   const [overInfo, setOverInfo] = useState<OverHalf | null>(null);
   const pointerY = usePointerY();
   // Synchronous copy of the indicator for the drop handler — state may not
   // have flushed on the very frame the pointer is released.
   const overRef = useRef<OverHalf | null>(null);
 
+  // A category drag only ever lands on another category; a channel drag only
+  // on channels and bucket tails.
   const collisionDetection: CollisionDetection = useCallback((args) => {
+    const draggingCategory = args.active.data.current?.type === "category";
     return closestCenter({
       ...args,
-      droppableContainers: args.droppableContainers.filter(
-        (c) => String(c.id).startsWith("chan:") || String(c.id).startsWith("dropzone:"),
-      ),
+      droppableContainers: args.droppableContainers.filter((c) => {
+        const id = String(c.id);
+        return draggingCategory
+          ? id.startsWith("cat:")
+          : id.startsWith("chan:") || id.startsWith("dropzone:");
+      }),
     });
   }, []);
 
@@ -655,7 +859,7 @@ function CommunityChannelList({
     const overData = over.data.current as
       | { type?: string; categoryId?: Id<"channelCategories"> | null }
       | undefined;
-    if (overData?.type !== "channel") {
+    if (active.data.current?.type !== "channel" || overData?.type !== "channel") {
       if (overRef.current) {
         overRef.current = null;
         setOverInfo(null);
@@ -704,15 +908,32 @@ function CommunityChannelList({
     setOverInfo(null);
     const found = channels.find((c) => channelKey(c.id) === String(event.active.id));
     if (found) setActiveItem(found);
+    const category = sortedCategories.find((c) => categoryKey(c.id) === String(event.active.id));
+    if (category) setActiveCategory(category);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const halfAtDrop = overRef.current;
     setActiveItem(null);
+    setActiveCategory(null);
     setOverInfo(null);
     overRef.current = null;
     const { active, over } = event;
     if (!over) return;
+    if (active.data.current?.type === "category") {
+      if (active.id === over.id) return;
+      const order = sortedCategories.map((c) => categoryKey(c.id));
+      const from = order.indexOf(String(active.id));
+      const to = order.indexOf(String(over.id));
+      if (from === -1 || to === -1) return;
+      void reorderCategories({
+        communityId,
+        orderedCategoryIds: arrayMove(order, from, to).map(
+          (key) => key.slice(4) as Id<"channelCategories">,
+        ),
+      });
+      return;
+    }
     const activeData = active.data.current as
       | { type: string; categoryId?: Id<"channelCategories"> | null }
       | undefined;
@@ -782,6 +1003,17 @@ function CommunityChannelList({
     });
   };
 
+  // Moving to a category puts the channel at the end of it. `reorder` takes the
+  // destination's whole new ordering, same as a drag onto the bucket's tail.
+  const moveChannel = (channelId: Id<"channels">, categoryId: Id<"channelCategories"> | null) => {
+    const dest = buckets.find((b) => b.id === categoryId)?.channels ?? [];
+    void reorderChannels({
+      communityId,
+      categoryId,
+      orderedChannelIds: [...dest.filter((c) => c.id !== channelId).map((c) => c.id), channelId],
+    });
+  };
+
   const renderChannel = (channel: ChannelRowData) => (
     <SortableChannelRow
       key={channel.id}
@@ -792,6 +1024,7 @@ function CommunityChannelList({
       priority={priorityChannelIds.has(channel.id as string)}
       voiceConnected={activeVoiceId === channel.id}
       dragEnabled={canManageChannels}
+      manage={canManageChannels ? { categories: sortedCategories, onMove: moveChannel } : undefined}
       overInfo={overInfo}
     />
   );
@@ -808,6 +1041,7 @@ function CommunityChannelList({
       onDragEnd={handleDragEnd}
       onDragCancel={() => {
         setActiveItem(null);
+        setActiveCategory(null);
         setOverInfo(null);
         overRef.current = null;
       }}
@@ -824,25 +1058,69 @@ function CommunityChannelList({
           </div>
         </ChannelDropBucket>
       ) : null}
-      {sortedCategories.map((category) => {
-        const inCategory = buckets.find((b) => b.id === category.id)?.channels ?? [];
-        if (inCategory.length === 0) return null;
-        return (
-          <CategoryGroup key={category.id} name={category.name}>
-            <ChannelDropBucket bucketId={category.id}>
-              <div className="flex flex-col gap-0.5">
-                <SortableContext
-                  items={inCategory.map((c) => channelKey(c.id))}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {inCategory.map(renderChannel)}
-                </SortableContext>
-              </div>
-            </ChannelDropBucket>
-          </CategoryGroup>
-        );
-      })}
+      <SortableContext
+        items={sortedCategories.map((c) => categoryKey(c.id))}
+        strategy={verticalListSortingStrategy}
+      >
+        {sortedCategories.map((category) => {
+          const inCategory = buckets.find((b) => b.id === category.id)?.channels ?? [];
+          // A freshly created category has no channels yet. Whoever can manage
+          // channels still needs to see it (and drop channels into it); for
+          // everyone else an empty header is just noise.
+          if (inCategory.length === 0 && !canManageChannels) return null;
+          return (
+            <CategoryGroup
+              key={category.id}
+              id={category.id}
+              name={category.name}
+              canManage={canManageChannels}
+              onCreateChannel={() => setCreateChannelIn(category.id)}
+              onEdit={() =>
+                setEditingCategory({ id: category.id, name: category.name, deleting: false })
+              }
+              onDelete={() =>
+                setEditingCategory({ id: category.id, name: category.name, deleting: true })
+              }
+            >
+              <ChannelDropBucket bucketId={category.id}>
+                <div className="flex flex-col gap-0.5">
+                  <SortableContext
+                    items={inCategory.map((c) => channelKey(c.id))}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {inCategory.map(renderChannel)}
+                  </SortableContext>
+                  {inCategory.length === 0 && (
+                    <p className="px-2 py-1 text-xs text-muted-foreground">
+                      No channels yet. Drag one here.
+                    </p>
+                  )}
+                </div>
+              </ChannelDropBucket>
+            </CategoryGroup>
+          );
+        })}
+      </SortableContext>
+      {createChannelIn && (
+        <CreateChannelDialog
+          communityId={communityId}
+          categoryId={createChannelIn}
+          open
+          onOpenChange={(open) => !open && setCreateChannelIn(null)}
+        />
+      )}
+      <EditCategoryDialog
+        category={editingCategory}
+        startInDelete={editingCategory?.deleting}
+        onOpenChange={(open) => !open && setEditingCategory(null)}
+      />
       <DragOverlay dropAnimation={{ duration: 150, easing: "ease" }}>
+        {activeCategory && (
+          <div className="flex items-center gap-0.5 rounded-lg bg-white/15 px-2 py-1 text-[10px] font-semibold tracking-wide uppercase opacity-95 shadow-lg backdrop-blur-xl">
+            <ChevronDown className="size-3" />
+            <span className="truncate">{activeCategory.name}</span>
+          </div>
+        )}
         {activeItem && (
           <div className="flex items-center gap-2 rounded-lg bg-white/15 px-2 py-1.5 text-sm opacity-95 shadow-lg backdrop-blur-xl">
             <Hash className="size-4 shrink-0 text-muted-foreground" />
@@ -1029,7 +1307,7 @@ export function CommunityCard({
               <Skeleton className="h-7 rounded-lg" />
               <Skeleton className="h-7 rounded-lg" />
             </div>
-          ) : channels.length === 0 ? (
+          ) : channels.length === 0 && !(canManageChannels && categories.length > 0) ? (
             <p className="px-2 py-3 text-center text-xs text-muted-foreground">
               No channels yet.
             </p>
@@ -1304,11 +1582,7 @@ export function CommunitySidebarContext({
   );
 }
 
-export function CommunitiesSection({
-  onSelectCommunity,
-}: {
-  onSelectCommunity?: (community: CommunitySummary) => void;
-}) {
+export function CommunitiesSection() {
   const nav = useNavigation();
   const { activeTab } = useTabs();
   const [expandedId, setExpandedId] = useState<Id<"communities"> | null>(null);
@@ -1549,11 +1823,9 @@ export function CommunitiesSection({
                         onClick={() => {
                           if (shell.mobile) setExpandedId(community.id);
                           // On a phone, tapping a community unfolds its channels here, in the list; opening one
-                          // of them is what switches screens. On a desktop it opens the community beside.
-                          if (!shell.mobile) {
-                            onSelectCommunity?.(community);
-                            nav.openCommunity(community.id);
-                          }
+                          // of them is what switches screens. On a desktop it opens the community, and the sidebar
+                          // follows it (see `UnifiedSidebar`).
+                          if (!shell.mobile) nav.openCommunity(community.id);
                         }}
                       />
                     }

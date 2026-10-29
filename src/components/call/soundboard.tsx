@@ -54,6 +54,12 @@ function SoundGrid({
 function useSoundboard() {
   const { activeCall, controller } = useCall();
   const communityId = activeCall?.kind === "channel" ? activeCall.communityId : null;
+  // Calls outside a community have no permissions to hold; in a channel, Use Soundboard decides.
+  const channel = useQuery(
+    api.channels.get,
+    activeCall?.kind === "channel" ? { channelId: activeCall.channelId } : "skip"
+  );
+  const allowed = channel?.canUseSoundboard ?? true;
   const communitySounds = useQuery(
     api.soundboard.list,
     communityId ? { communityId } : "skip"
@@ -68,10 +74,10 @@ function useSoundboard() {
   }));
 
   const play = (clip: SoundboardClip) => {
-    void controller.playSoundboardClip(clip);
+    if (allowed) void controller.playSoundboardClip(clip);
   };
 
-  return { uploaded, play };
+  return { uploaded, play, allowed };
 }
 
 /**
@@ -86,7 +92,18 @@ export function SoundboardPanel({
   className?: string;
 }) {
   const { soundboardVolume, setSoundboardVolume, deafened } = useAudioPreferences();
-  const { uploaded, play } = useSoundboard();
+  const { uploaded, play, allowed } = useSoundboard();
+
+  if (!allowed) {
+    return (
+      <div className={className}>
+        <p className="text-sm font-semibold">Soundboard</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          You don&apos;t have permission to use the soundboard in this channel.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={className}>

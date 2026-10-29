@@ -7,7 +7,7 @@ import { freshToken } from "./connectedAccounts";
 import { requireCommunity, requireMember } from "./communities";
 import { PLATFORM_META, type CreatorPlatform } from "./lib/communityKinds";
 import { PLATFORMS, type Tier } from "./lib/platforms";
-import { DEFAULT_EVERYONE_PERMISSIONS, PERMISSIONS, can, getBasePermissions, requireCommunityPermission } from "./permissions";
+import { DEFAULT_EVERYONE_PERMISSIONS, ROLE_PERMS_VERSION, PERMISSIONS, can, getBasePermissions, requireCommunityPermission } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
 
 /**
@@ -313,6 +313,7 @@ export const applyTiers = internalMutation({
         name: tier.name,
         color: TIER_COLOURS[(tier.rank - 1) % TIER_COLOURS.length],
         permissions: DEFAULT_EVERYONE_PERMISSIONS,
+        permsVersion: ROLE_PERMS_VERSION,
         position: slot++,
         isEveryone: false,
         hoist: true,

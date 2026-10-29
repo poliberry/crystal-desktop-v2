@@ -23,8 +23,10 @@ export const ENCRYPTED_PREVIEW_FALLBACK = "Encrypted message";
 /** The same, for something that has just arrived (notifications). */
 export const NEW_ENCRYPTED_MESSAGE = "New encrypted message";
 
-/** Long enough for a sidebar line or a toast; the full message is one click away. */
+/** Long enough for a sidebar line; the full message is one click away. */
 const PREVIEW_MAX = 160;
+/** An OS notification lays the text out itself and ends what doesn't fit with an ellipsis, so it gets nearly all of it. */
+const NOTIFICATION_MAX = 1000;
 
 export type EncryptedSource = {
   room: Room;
@@ -54,7 +56,7 @@ type Names = { user?: (id: string) => string | undefined; role?: (id: string) =>
  * are left for `MessagePreview` to draw; `plainEmoji` flattens them to `:name:` for surfaces that
  * can only show text (an OS notification).
  */
-export function previewLine(text: string | undefined, names: Names = {}, plainEmoji = false): string | null {
+export function previewLine(text: string | undefined, names: Names = {}, plainEmoji = false, max = PREVIEW_MAX): string | null {
   if (!text) return null;
   let line = renderMentionsAsPlain(text, {
     user: (id) => names.user?.(id),
@@ -66,7 +68,7 @@ export function previewLine(text: string | undefined, names: Names = {}, plainEm
   if (plainEmoji) line = line.replace(/<a?:([\w-]+):[\w-]+>/g, ":$1:");
   line = line.replace(/\s+/g, " ").trim();
   if (!line) return null;
-  return line.length > PREVIEW_MAX ? `${line.slice(0, PREVIEW_MAX - 1)}…` : line;
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
 export type EncryptedPreview =
@@ -152,7 +154,7 @@ export async function decryptPreviewLine(source: EncryptedSource, names: Names =
   try {
     if (keyring.getSnapshot().status !== "ready") return null;
     const payload = await keyring.decrypt(source.room, source.authorId as Id<"users">, source.enc);
-    return payload ? previewLine(payload.text, names, true) : null;
+    return payload ? previewLine(payload.text, names, true, NOTIFICATION_MAX) : null;
   } catch {
     return null;
   }

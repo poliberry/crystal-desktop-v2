@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { Ban, CheckCircle2, Flag, Loader2, MessageSquarePlus, UserCheck, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, Flag, Loader2, Mail, MessageSquarePlus, Send, UserCheck, XCircle } from "lucide-react";
 
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -20,6 +20,7 @@ import {
 } from "@/components/admin/admin-ui";
 import { useConsole, useOpenEntity } from "@/components/admin/console-state";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatRelative } from "@/lib/money";
 import { attachmentKind } from "@/lib/media-type";
@@ -37,9 +38,14 @@ export function ReportRecord({ id }: { id: string }) {
   const claim = useMutation(api.reports.adminClaim);
   const setStatus = useMutation(api.reports.adminSetStatus);
   const addNote = useMutation(api.reports.adminAddNote);
+  const messageReporter = useMutation(api.reports.adminMessageReporter);
   const { run, busy } = useRun();
   const [note, setNote] = useState("");
   const [closing, setClosing] = useState<"resolved" | "dismissed" | null>(null);
+  const [closureNote, setClosureNote] = useState("");
+  const [emailReporter, setEmailReporter] = useState(true);
+  const [toReporter, setToReporter] = useState("");
+  const [emailMessage, setEmailMessage] = useState(true);
 
   useEffect(() => {
     if (report) retitle({ kind: "report", id }, `Report · ${pretty(report.category)}`, report.target ? `@${report.target.username}` : pretty(report.targetType));
@@ -132,6 +138,56 @@ export function ReportRecord({ id }: { id: string }) {
             </p>
           </Panel>
         )}
+
+        <Panel title="Tell the reporter" description="What the person who filed this has been told. They read it under Settings → Reports, and by email if you leave that on. Never put anything in here about action taken against someone else's account.">
+          <div className="space-y-3">
+            {report.updates.length === 0 && <p className="text-sm text-muted-foreground">They haven&apos;t been told anything yet.</p>}
+            {report.updates.map((u) => (
+              <div key={u.id} className="rounded-lg bg-foreground/5 px-3 py-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {u.kind === "message" ? "Message" : `Status → ${u.status ? pretty(u.status) : ""}`}
+                  {u.emailed && " · emailed"}
+                </p>
+                {u.body && <p className="mt-0.5 text-sm whitespace-pre-wrap">{u.body}</p>}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  @{u.author} · {formatRelative(u.createdAt)}
+                </p>
+              </div>
+            ))}
+            {act && (
+              <div className="space-y-2">
+                <Textarea value={toReporter} onChange={(e) => setToReporter(e.target.value)} placeholder="Write to the reporter…" className="min-h-16" maxLength={1000} />
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox checked={emailMessage} onCheckedChange={(c) => setEmailMessage(c === true)} />
+                    <Mail className="size-3.5" /> Also email them
+                  </label>
+                  <Button
+                    variant="outline"
+                    disabled={!toReporter.trim() || busy === "tell"}
+                    onClick={() =>
+                      void run("tell", () => messageReporter({ reportId, body: toReporter, email: emailMessage }), "Sent to the reporter.").then(
+                        (done) => done !== undefined && setToReporter(""),
+                      )
+                    }
+                  >
+                    {busy === "tell" ? <Loader2 className="animate-spin" /> : <Send />} Send
+                  </Button>
+                </div>
+              </div>
+            )}
+            {report.emails.length > 0 && (
+              <div className="space-y-1 border-t border-foreground/10 pt-2">
+                {report.emails.map((e) => (
+                  <p key={e.id} className="text-xs text-muted-foreground">
+                    Email “{e.subject}” — {e.status}
+                    {e.detail ? ` (${e.detail})` : ""} · {formatRelative(e.createdAt)}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        </Panel>
 
         <Panel title="Staff notes" description="Only staff see these.">
           <div className="space-y-3">
@@ -253,11 +309,24 @@ export function ReportRecord({ id }: { id: string }) {
         open={!!closing}
         onOpenChange={(open) => !open && setClosing(null)}
         title={closing === "resolved" ? "Resolve this report" : "Dismiss this report"}
-        description={closing === "resolved" ? "Say what was done. This is kept with the report." : "Say why no action is needed."}
+        description={closing === "resolved" ? "Say what was done. This is kept with the report, for staff." : "Say why no action is needed. This is kept with the report, for staff."}
         confirmLabel={closing === "resolved" ? "Resolve" : "Dismiss"}
-        placeholder={closing === "resolved" ? "What was decided and done" : "Why it's being dismissed"}
-        onConfirm={(resolution) => setStatus({ reportId, status: closing!, resolution })}
-      />
+        placeholder={closing === "resolved" ? "What was decided and done (staff only)" : "Why it's being dismissed (staff only)"}
+        onConfirm={async (resolution) => {
+          await setStatus({ reportId, status: closing!, resolution, closureNote: closureNote || undefined, emailReporter });
+          setClosureNote("");
+        }}
+      >
+        <div className="space-y-2 rounded-lg border border-foreground/10 p-3">
+          <p className="text-sm font-medium">Note to the reporter</p>
+          <p className="text-xs text-muted-foreground">Required — shown to whoever filed it and in their email, as why it ended. Thank them and say how it ended; don&apos;t name what happened to anyone else.</p>
+          <Textarea value={closureNote} onChange={(e) => setClosureNote(e.target.value)} placeholder="Required — why this is closed" className="min-h-16" maxLength={1000} />
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={emailReporter} onCheckedChange={(c) => setEmailReporter(c === true)} />
+            Email the reporter
+          </label>
+        </div>
+      </ReasonDialog>
     </div>
   );
 }

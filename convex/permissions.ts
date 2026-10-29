@@ -1,5 +1,7 @@
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
+import { bitsHas, bitsOr, bitsWithout } from "./lib/permissionBits";
+import { PERMISSIONS, type PermissionFlag } from "./lib/permissionFlags";
 import { isMutationCtx, requireAdminAssurance } from "./lib/stepUp";
 
 /**
@@ -7,41 +9,9 @@ import { isMutationCtx, requireAdminAssurance } from "./lib/stepUp";
  * the client at src/lib/permissions.ts — this file is the source of truth
  * enforced server-side.
  */
-export const PERMISSIONS = {
-  VIEW_CHANNELS: 1 << 0,
-  SEND_MESSAGES: 1 << 1,
-  MANAGE_MESSAGES: 1 << 2,
-  CONNECT: 1 << 3,
-  MANAGE_CHANNELS: 1 << 4,
-  MANAGE_ROLES: 1 << 5,
-  MANAGE_COMMUNITY: 1 << 6,
-  KICK_MEMBERS: 1 << 7,
-  ADMINISTRATOR: 1 << 8,
-  CREATE_INVITE: 1 << 9,
-  MANAGE_EMOJIS: 1 << 10,
-  /** Server-mute a member in voice. */
-  MUTE_MEMBERS: 1 << 11,
-  /** Server-deafen a member in voice. */
-  DEAFEN_MEMBERS: 1 << 12,
-  /** Disconnect a member from voice. */
-  MOVE_MEMBERS: 1 << 13,
-  BAN_MEMBERS: 1 << 14,
-  /** Time a member out — they stay in the server but can't talk. */
-  MODERATE_MEMBERS: 1 << 15,
-  MANAGE_NICKNAMES: 1 << 16,
-  /** Ping a role, `@everyone` or `@here`. Without it those still render as
-   * mentions but notify nobody — see convex/lib/mentions.ts. */
-  MENTION_EVERYONE: 1 << 17,
-  /** Connect a Pterodactyl panel and decide who may do what to its servers. */
-  MANAGE_GAME_SERVERS: 1 << 18,
-  /** Create, edit and cancel events and scrims. */
-  MANAGE_EVENTS: 1 << 19,
-  /** Add bots and integrations to the community, decide what they may do, and remove them.
-   * A person can only give a bot permissions they hold themselves — see convex/lib/botAuth.ts. */
-  MANAGE_INTEGRATIONS: 1 << 20,
-} as const;
+export { PERMISSIONS };
 
-export type PermissionFlag = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
+export type { PermissionFlag };
 
 /**
  * The permissions that count as *administering* a server — the ones Discord also asks two-factor
@@ -77,15 +47,61 @@ export const SERVER_MODERATION_PERMISSIONS: number =
   PERMISSIONS.DEAFEN_MEMBERS |
   PERMISSIONS.MOVE_MEMBERS;
 
+/**
+ * The permissions that were always allowed before they had a flag of their own — attaching a
+ * file, reacting, talking in voice. A community made before they existed has no bit for them on
+ * @everyone, so an @everyone role that has never been saved since (`permsVersion` unset) is read
+ * as holding these too — see `effectiveRolePermissions`. Nothing to migrate: the first save of
+ * the role writes the whole set down and stamps it.
+ * Not in here: anything that used to need a staff permission (pinning, creating events,
+ * uploading emoji) — those stay with the staff roles until a community chooses to hand them out.
+ */
+export const NEW_DEFAULT_EVERYONE_FLAGS: number = [
+  PERMISSIONS.CHANGE_NICKNAME,
+  PERMISSIONS.EMBED_LINKS,
+  PERMISSIONS.ATTACH_FILES,
+  PERMISSIONS.ADD_REACTIONS,
+  PERMISSIONS.USE_EXTERNAL_EMOJIS,
+  PERMISSIONS.READ_MESSAGE_HISTORY,
+  PERMISSIONS.USE_APPLICATION_COMMANDS,
+  PERMISSIONS.SPEAK,
+  PERMISSIONS.VIDEO,
+  PERMISSIONS.USE_SOUNDBOARD,
+  PERMISSIONS.USE_EXTERNAL_SOUNDS,
+  PERMISSIONS.USE_VAD,
+  PERMISSIONS.REQUEST_TO_SPEAK,
+  PERMISSIONS.USE_EMBEDDED_ACTIVITIES,
+  PERMISSIONS.CREATE_PUBLIC_THREADS,
+  PERMISSIONS.SEND_MESSAGES_IN_THREADS,
+  PERMISSIONS.USE_EXTERNAL_STICKERS,
+  PERMISSIONS.SEND_VOICE_MESSAGES,
+  PERMISSIONS.CREATE_POLLS,
+].reduce(bitsOr, 0);
+
+/** The current shape of a role's `permissions`. Roles saved before the wider set carry no version. */
+export const ROLE_PERMS_VERSION = 1;
+
+/** A role's permissions as they take effect: an old @everyone role also holds the new defaults. */
+export function effectiveRolePermissions(
+  role: Pick<Doc<"roles">, "permissions" | "isEveryone" | "permsVersion">,
+): number {
+  if (role.isEveryone && role.permsVersion === undefined) {
+    return bitsOr(role.permissions, NEW_DEFAULT_EVERYONE_FLAGS);
+  }
+  return role.permissions;
+}
+
 /** Sensible defaults for a brand-new community's @everyone role. */
-export const DEFAULT_EVERYONE_PERMISSIONS =
+export const DEFAULT_EVERYONE_PERMISSIONS: number = bitsOr(
   PERMISSIONS.VIEW_CHANNELS |
-  PERMISSIONS.SEND_MESSAGES |
-  PERMISSIONS.CONNECT |
-  PERMISSIONS.CREATE_INVITE;
+    PERMISSIONS.SEND_MESSAGES |
+    PERMISSIONS.CONNECT |
+    PERMISSIONS.CREATE_INVITE,
+  NEW_DEFAULT_EVERYONE_FLAGS,
+);
 
 function hasFlag(permissions: number, flag: number): boolean {
-  return (permissions & PERMISSIONS.ADMINISTRATOR) !== 0 || (permissions & flag) !== 0;
+  return bitsHas(permissions, PERMISSIONS.ADMINISTRATOR) || bitsHas(permissions, flag);
 }
 
 /**
@@ -112,9 +128,9 @@ export async function getBasePermissions(
     .collect();
   const roles = await Promise.all(assigned.map((m) => ctx.db.get(m.roleId)));
 
-  let perms = everyoneRole?.permissions ?? 0;
+  let perms = everyoneRole ? effectiveRolePermissions(everyoneRole) : 0;
   for (const role of roles) {
-    if (role) perms |= role.permissions;
+    if (role) perms = bitsOr(perms, role.permissions);
   }
   return perms;
 }
@@ -157,22 +173,22 @@ export async function getChannelPermissions(
     ? overwrites.find((o) => o.roleId === everyoneRole._id)
     : undefined;
   if (everyoneOverwrite) {
-    perms = (perms & ~everyoneOverwrite.deny) | everyoneOverwrite.allow;
+    perms = bitsOr(bitsWithout(perms, everyoneOverwrite.deny), everyoneOverwrite.allow);
   }
 
   let roleAllow = 0;
   let roleDeny = 0;
   for (const o of overwrites) {
     if (o.roleId && roleIds.has(o.roleId) && o.roleId !== everyoneRole?._id) {
-      roleAllow |= o.allow;
-      roleDeny |= o.deny;
+      roleAllow = bitsOr(roleAllow, o.allow);
+      roleDeny = bitsOr(roleDeny, o.deny);
     }
   }
-  perms = (perms & ~roleDeny) | roleAllow;
+  perms = bitsOr(bitsWithout(perms, roleDeny), roleAllow);
 
   const memberOverwrite = overwrites.find((o) => o.userId === userId);
   if (memberOverwrite) {
-    perms = (perms & ~memberOverwrite.deny) | memberOverwrite.allow;
+    perms = bitsOr(bitsWithout(perms, memberOverwrite.deny), memberOverwrite.allow);
   }
 
   return perms;
@@ -214,6 +230,24 @@ export async function enforceServerAssurance(
   const asksForCode = isMutationCtx(ctx) && (flag & SERVER_DESTRUCTIVE_PERMISSIONS) !== 0;
   if (!mustEnroll && !asksForCode) return;
   await requireAdminAssurance(ctx, userId, { mustEnroll, why: "server", askForCode: asksForCode });
+}
+
+/**
+ * Like `requireCommunityPermission`, for an action two permissions both cover — creating an event
+ * takes Create Events *or* Manage Events — so a staff role that only ever had the old one keeps
+ * working. Two-step verification is asked on account of whichever one the member actually used.
+ */
+export async function requireAnyCommunityPermission(
+  ctx: QueryCtx,
+  community: Doc<"communities">,
+  userId: Id<"users">,
+  flags: PermissionFlag[]
+): Promise<void> {
+  const perms = await getBasePermissions(ctx, community, userId);
+  // The stricter of the two goes first, so a member who holds both is held to its rules.
+  const used = flags.find((flag) => can(perms, flag));
+  if (used === undefined) throw new Error("You don't have permission to do that.");
+  await enforceServerAssurance(ctx, community, userId, used);
 }
 
 export async function requireChannelPermission(

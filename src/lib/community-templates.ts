@@ -18,6 +18,8 @@ export interface SetupChannel {
   surface?: string;
   /** The clan game it belongs to. */
   gameId?: string;
+  /** A text channel that is an announcements channel: read-only for @everyone, followable. */
+  announcement?: boolean;
 }
 
 export interface SetupRole {

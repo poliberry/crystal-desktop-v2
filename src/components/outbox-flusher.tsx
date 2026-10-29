@@ -27,6 +27,8 @@ import { uploadToStorage } from "@/lib/storage-upload";
 import { keyring, type Room } from "@/lib/e2ee";
 import { toConvexMentions } from "@/lib/mentions";
 
+const plaintextChannels = new Map<string, boolean>();
+
 /**
  * Drains the durable outbox to Convex.
  *
@@ -116,6 +118,16 @@ export function OutboxFlusher() {
       }
     }
 
+    /** Announcements channels are public, so their messages aren't encrypted. Asked once per channel. */
+    async function isPlaintextChannel(channelId: Id<"channels">): Promise<boolean> {
+      const known = plaintextChannels.get(channelId);
+      if (known !== undefined) return known;
+      const channel = await convex.query(api.channels.get, { channelId });
+      const plain = channel?.isAnnouncement === true;
+      if (channel) plaintextChannels.set(channelId, plain);
+      return plain;
+    }
+
     async function execute(entry: OutboxEntry): Promise<void> {
       const args = entry.args;
       const dm = entry.variant === "dm";
@@ -127,7 +139,8 @@ export function OutboxFlusher() {
         const room: Room = dm
           ? { scope: "conversation", conversationId: targetId as Id<"conversations"> }
           : { scope: "channel", channelId: targetId as Id<"channels"> };
-        const encrypted = await keyring.encrypt(room, authorId as Id<"users">, { text: args.text });
+        const plain = !dm && (await isPlaintextChannel(targetId as Id<"channels">));
+        const encrypted = plain ? null : await keyring.encrypt(room, authorId as Id<"users">, { text: args.text });
         const attachments: {
           storageId?: Id<"_storage">;
           cdnKey?: string;
@@ -176,7 +189,7 @@ export function OutboxFlusher() {
         if (dm) {
           realId = await convex.mutation(api.messages.send, {
             conversationId: args.conversationId as Id<"conversations">,
-            enc: encrypted.enc,
+            enc: encrypted!.enc,
             mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
             attachments: attachments.length ? attachments : undefined,
             birthdayWish: args.birthdayWish || undefined,
@@ -187,8 +200,10 @@ export function OutboxFlusher() {
         } else {
           realId = await convex.mutation(api.channelMessages.send, {
             channelId: args.channelId as Id<"channels">,
-            enc: encrypted.enc,
-            mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
+            // An announcements channel is public: its text goes as text, and the server finds the mentions.
+            ...(encrypted
+              ? { enc: encrypted.enc, mentions: args.mentions ? toConvexMentions(args.mentions) : undefined }
+              : { text: args.text || undefined }),
             attachments: attachments.length ? attachments : undefined,
             replyToId: args.replyToId as Id<"channelMessages"> | undefined,
             pingReply: args.pingReply,
@@ -208,18 +223,20 @@ export function OutboxFlusher() {
         const room: Room = dm
           ? { scope: "conversation", conversationId: targetId as Id<"conversations"> }
           : { scope: "channel", channelId: targetId as Id<"channels"> };
-        const encrypted = await keyring.encrypt(room, authorId as Id<"users">, { text: args.text });
+        const plain = !dm && (await isPlaintextChannel(targetId as Id<"channels">));
+        const encrypted = plain ? null : await keyring.encrypt(room, authorId as Id<"users">, { text: args.text });
         if (dm) {
           await convex.mutation(api.messages.update, {
             messageId: args.messageId as Id<"messages">,
-            enc: encrypted.enc,
+            enc: encrypted!.enc,
             mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
           });
         } else {
           await convex.mutation(api.channelMessages.update, {
             messageId: args.messageId as Id<"channelMessages">,
-            enc: encrypted.enc,
-            mentions: args.mentions ? toConvexMentions(args.mentions) : undefined,
+            ...(encrypted
+              ? { enc: encrypted.enc, mentions: args.mentions ? toConvexMentions(args.mentions) : undefined }
+              : { text: args.text }),
           });
         }
         return;

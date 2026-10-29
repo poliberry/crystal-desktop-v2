@@ -47,7 +47,16 @@ async function ensureCustomer(
   who: { userId: Id<"users">; email?: string; name?: string }
 ): Promise<string> {
   const existing = await ctx.runQuery(internal.store.stripeCustomerFor, { userId: who.userId });
-  if (existing) return existing;
+  if (existing) {
+    try {
+      await stripe.customers.retrieve(existing);
+      return existing;
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      // Another mode's customer: forget it and make one here.
+      await ctx.runMutation(internal.store.forgetStripeCustomer, { userId: who.userId });
+    }
+  }
   const customer = await stripe.customers.create(
     { email: who.email, name: who.name, metadata: { userId: who.userId } },
     // One per user even if two tabs ask at once.
@@ -68,6 +77,9 @@ async function ensureCustomer(
  * switched off — subscribers already on the old one stay on it, which is what
  * they agreed to.
  */
+/** A Stripe id from another mode reads as "no such object" on this one. */
+const isMissing = (error: unknown): boolean => (error as { code?: string } | null)?.code === "resource_missing";
+
 export const syncSku = internalAction({
   args: { skuId: v.id("skus") },
   handler: async (ctx, { skuId }) => {
@@ -82,20 +94,53 @@ export const syncSku = internalAction({
       images: sku.imageUrl ? [sku.imageUrl] : undefined,
       metadata: { skuId: sku._id, type: sku.type },
     };
-    const productId = sku.stripeProductId
-      ? (await stripe.products.update(sku.stripeProductId, productFields)).id
-      : (await stripe.products.create(productFields)).id;
+    // A stored id may belong to another mode (e.g. test ids after the keys move to
+    // live): Stripe answers "no such object", which means "make it here" rather
+    // than a failure. Anything else still throws.
+    let productId: string | undefined;
+    if (sku.stripeProductId) {
+      try {
+        productId = (await stripe.products.update(sku.stripeProductId, productFields)).id;
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
+    if (!productId) {
+      // Two publishes racing (a save landing mid-migration) must not leave twin
+      // products: if one of them already made it here, take that one.
+      try {
+        const found = await stripe.products.search({ query: `metadata['skuId']:'${sku._id}'`, limit: 1 });
+        if (found.data.length > 0) {
+          productId = (await stripe.products.update(found.data[0].id, productFields)).id;
+        }
+      } catch {
+        // Search is a best effort; creating below is still correct.
+      }
+      productId ??= (await stripe.products.create(productFields)).id;
+    }
 
     let priceId = sku.stripePriceId;
     if (priceId) {
-      const current = await stripe.prices.retrieve(priceId);
+      let current = null;
+      try {
+        current = await stripe.prices.retrieve(priceId);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
       const matches =
+        current &&
         current.active &&
         current.unit_amount === sku.priceCents &&
         current.currency === sku.currency &&
         (current.recurring?.interval ?? undefined) === sku.interval;
       if (!matches) {
-        await stripe.prices.update(priceId, { active: false });
+        if (current) {
+          try {
+            await stripe.prices.update(priceId, { active: false });
+          } catch (error) {
+            if (!isMissing(error)) throw error;
+          }
+        }
         priceId = undefined;
       }
     }
@@ -115,6 +160,78 @@ export const syncSku = internalAction({
       stripePriceId: priceId,
     });
     return { synced: true };
+  },
+});
+
+/**
+ * Move the whole catalogue onto this mode's Stripe: every paid, on-sale SKU gets
+ * its product and a matching price here. Stale ids from another mode are remade
+ * by `syncSku`, so this is safe to run after a key change and to re-run.
+ *
+ * Internal-only: run it from the dashboard or `npx convex run`.
+ */
+export const resyncAllSkus = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ total: number; synced: number; failed: { skuId: string; error: string }[] }> => {
+    const skuIds = await ctx.runQuery(internal.store.paidActiveSkuIds, {});
+    const failed: { skuId: string; error: string }[] = [];
+    let synced = 0;
+    for (const skuId of skuIds) {
+      try {
+        await ctx.runAction(internal.payments.syncSku, { skuId });
+        synced += 1;
+      } catch (error) {
+        failed.push({ skuId, error: error instanceof Error ? error.message : "unknown error" });
+      }
+    }
+    return { total: skuIds.length, synced, failed };
+  },
+});
+
+/**
+ * Clean up twin products from overlapping publishes (e.g. queued syncs firing
+ * across a key change): anything on this mode's Stripe that no SKU points at has
+ * its prices switched off and is archived, then every paid, on-sale SKU is
+ * synced so the catalogue is exactly what's live. Deactivating a price never
+ * stops an existing subscription on it — it only stops new sales on that price.
+ *
+ * Internal-only: run it from the dashboard or `npx convex run`.
+ */
+export const dedupeStripeCatalog = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{
+    archived: { product: string; prices: number }[];
+    total: number;
+    synced: number;
+    failed: { skuId: string; error: string }[];
+  }> => {
+    const stripe = stripeClient();
+    const refs = await ctx.runQuery(internal.store.allSkuStripeRefs, {});
+    const knownProducts = new Set(refs.map((r) => r.stripeProductId).filter((id): id is string => !!id));
+
+    const archived: { product: string; prices: number }[] = [];
+    let startingAfter: string | undefined;
+    for (;;) {
+      const page = await stripe.products.list({ limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) });
+      for (const product of page.data) {
+        if (knownProducts.has(product.id) || !product.active) continue;
+        const prices = await stripe.prices.list({ product: product.id, limit: 100 });
+        let switchedOff = 0;
+        for (const price of prices.data) {
+          if (price.active) {
+            await stripe.prices.update(price.id, { active: false });
+            switchedOff += 1;
+          }
+        }
+        await stripe.products.update(product.id, { active: false });
+        archived.push({ product: product.id, prices: switchedOff });
+      }
+      if (!page.has_more) break;
+      startingAfter = page.data[page.data.length - 1].id;
+    }
+
+    const resync = await ctx.runAction(internal.payments.resyncAllSkus, {});
+    return { archived, total: resync.total, synced: resync.synced, failed: resync.failed };
   },
 });
 

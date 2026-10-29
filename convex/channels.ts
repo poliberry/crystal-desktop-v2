@@ -12,6 +12,7 @@ import {
 import { internal } from "./_generated/api";
 import { dropR2Url, r2PublicUrlForKey } from "./lib/r2";
 import { requireCommunity, requireMember } from "./communities";
+import { bitsAnd, bitsOr, bitsWithout, isValidBits } from "./lib/permissionBits";
 import {
   PERMISSIONS,
   can,
@@ -71,6 +72,7 @@ export const list = query({
           type: c.type,
           topic: c.topic,
           isLounge: c.isLounge ?? false,
+          isAnnouncement: c.isAnnouncement ?? false,
           surface: c.surface,
           gameId: c.gameId,
           categoryId: c.categoryId ?? null,
@@ -108,10 +110,19 @@ export const get = query({
       .withIndex("by_community_user", (q) => q.eq("communityId", channel.communityId).eq("userId", me._id))
       .unique();
     if (!membership) return null;
+    const perms = await getChannelPermissions(ctx, community, channelId, me._id);
     return {
       id: channel._id,
       communityId: channel.communityId,
       communityName: community.name,
+      // Whether the composer should be there at all. The send itself is checked again on the server.
+      canSend: can(perms, PERMISSIONS.SEND_MESSAGES),
+      // Soundboard hits travel peer-to-peer as data packets, so this is what the soundboard
+      // offers rather than something the server can stop.
+      canUseSoundboard: can(perms, PERMISSIONS.USE_SOUNDBOARD),
+      // Emoji from other communities. Reactions are checked by the server; text is encrypted, so
+      // the composer is what keeps them out of a message.
+      canUseExternalEmojis: can(perms, PERMISSIONS.USE_EXTERNAL_EMOJIS),
       name: channel.name,
       type: channel.type,
       topic: channel.topic,
@@ -124,6 +135,7 @@ export const get = query({
       bannerTitle: channel.bannerTitle,
       bannerDescription: channel.bannerDescription,
       isLounge: channel.isLounge ?? false,
+      isAnnouncement: channel.isAnnouncement ?? false,
       surface: channel.surface,
       gameId: channel.gameId,
       communityKind: community.kind,
@@ -142,7 +154,7 @@ export async function createChannelRow(
   ctx: MutationCtx,
   community: Doc<"communities">,
   actorId: Id<"users">,
-  c: { name: string; type: "text" | "voice"; categoryId?: Id<"channelCategories">; lounge?: boolean; channelSurface?: ChannelSurface; gameId?: string; topic?: string },
+  c: { name: string; type: "text" | "voice"; categoryId?: Id<"channelCategories">; lounge?: boolean; announcement?: boolean; channelSurface?: ChannelSurface; gameId?: string; topic?: string },
 ): Promise<Id<"channels">> {
   const communityId = community._id;
   const existing = await ctx.db
@@ -160,9 +172,21 @@ export async function createChannelRow(
     createdAt: Date.now(),
     ...(c.topic ? { topic: c.topic } : {}),
     ...(c.type === "voice" && c.lounge ? { isLounge: true, loungeScene: "living-room" } : {}),
+    ...(c.type === "text" && c.announcement && !c.channelSurface ? { isAnnouncement: true } : {}),
     ...(c.channelSurface ? { surface: c.channelSurface } : {}),
     ...(c.gameId ? { gameId: c.gameId } : {}),
   });
+  // Announcements start read-only for everyone: a role or a member is let in with an overwrite on the channel.
+  if (c.type === "text" && c.announcement && !c.channelSurface) {
+    const everyone = await ctx.db
+      .query("roles")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .filter((q) => q.eq(q.field("isEveryone"), true))
+      .unique();
+    if (everyone) {
+      await ctx.db.insert("channelPermissionOverwrites", { channelId, roleId: everyone._id, allow: 0, deny: PERMISSIONS.SEND_MESSAGES });
+    }
+  }
   const created = await ctx.db.get(channelId);
   if (created) await fireChannelEvent(ctx, "channel.created", created);
   try {
@@ -195,6 +219,12 @@ export async function deleteChannelCascade(ctx: MutationCtx, channel: Doc<"chann
     await releaseFile(ctx, row.image);
   }
   for (const overwrite of overwrites) await ctx.db.delete(overwrite._id);
+  // Followers of this channel stop receiving it, and a channel that was a follow's destination stops being one.
+  const [followed, delivering] = await Promise.all([
+    ctx.db.query("channelFollows").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect(),
+    ctx.db.query("channelFollows").withIndex("by_target_channel", (q) => q.eq("targetChannelId", channelId)).collect(),
+  ]);
+  for (const follow of [...followed, ...delivering]) await ctx.db.delete(follow._id);
   for (const participant of voiceParticipants) {
     await ctx.db.delete(participant._id);
     await releaseUrl(ctx, participant.streamThumbnailUrl, participant.streamThumbnailStorageId);
@@ -219,12 +249,14 @@ export const create = mutation({
     categoryId: v.optional(v.id("channelCategories")),
     /** A voice channel that is a lounge. Ignored for text channels. */
     lounge: v.optional(v.boolean()),
+    /** A text channel that is an announcements channel. Ignored for voice channels. */
+    announcement: v.optional(v.boolean()),
     /** A text channel that shows something other than messages — only in a
      * community whose kind allows it. */
     surface: v.optional(v.string()),
     gameId: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, name, type, categoryId, lounge, surface, gameId }) => {
+  handler: async (ctx, { communityId, name, type, categoryId, lounge, announcement, surface, gameId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
@@ -242,8 +274,71 @@ export const create = mutation({
     }
     if (gameId !== undefined && !community.clanGames?.some((g) => g.id === gameId)) throw new Error("The clan doesn't play that.");
 
-    const channelId = await createChannelRow(ctx, community, me._id, { name: trimmed, type, categoryId, lounge, channelSurface, gameId });
+    const channelId = await createChannelRow(ctx, community, me._id, { name: trimmed, type, categoryId, lounge, announcement, channelSurface, gameId });
     return channelId;
+  },
+});
+
+/**
+ * Turn an existing text channel into an announcements channel, or back.
+ *
+ * Turning it on makes @everyone read-only there (the same overwrite a new announcements channel
+ * starts with; one that already denies sending is left as it is). Forwards *into* the channel are
+ * dropped, because something an announcements channel receives can't also be what it sends on.
+ * Turning it off removes its followers — there is nothing left to follow — but leaves who can
+ * post alone: that is a choice under Permissions, and undoing it silently would be a surprise
+ * either way. Returns how many forwards or followers went with the change.
+ */
+export const setAnnouncement = mutation({
+  args: { channelId: v.id("channels"), enabled: v.boolean() },
+  handler: async (ctx, { channelId, enabled }): Promise<{ removed: number }> => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await requireChannel(ctx, channelId);
+    const community = await requireCommunity(ctx, channel.communityId);
+    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
+    if (channel.type !== "text" || channel.surface) {
+      throw new Error("Only a plain text channel can be an announcements channel.");
+    }
+    if ((channel.isAnnouncement ?? false) === enabled) return { removed: 0 };
+
+    let removed = 0;
+    if (enabled) {
+      for (const follow of await ctx.db.query("channelFollows").withIndex("by_target_channel", (q) => q.eq("targetChannelId", channelId)).collect()) {
+        await ctx.db.delete(follow._id);
+        removed++;
+      }
+      const everyone = await ctx.db
+        .query("roles")
+        .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
+        .filter((q) => q.eq(q.field("isEveryone"), true))
+        .unique();
+      if (everyone) {
+        const existing = (await ctx.db.query("channelPermissionOverwrites").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect())
+          .find((o) => o.roleId === everyone._id);
+        if (existing) {
+          await ctx.db.patch(existing._id, {
+            allow: bitsWithout(existing.allow, PERMISSIONS.SEND_MESSAGES),
+            deny: bitsOr(existing.deny, PERMISSIONS.SEND_MESSAGES),
+          });
+        } else {
+          await ctx.db.insert("channelPermissionOverwrites", { channelId, roleId: everyone._id, allow: 0, deny: PERMISSIONS.SEND_MESSAGES });
+        }
+      }
+    } else {
+      for (const follow of await ctx.db.query("channelFollows").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect()) {
+        await ctx.db.delete(follow._id);
+        removed++;
+      }
+    }
+
+    await ctx.db.patch(channelId, { isAnnouncement: enabled ? true : undefined });
+    const changed = await ctx.db.get(channelId);
+    if (changed) await fireChannelEvent(ctx, "channel.updated", changed);
+    try {
+      const { cacheInvalidateKeys } = await import("./cache");
+      await cacheInvalidateKeys(`community:${channel.communityId}:user:${me._id}:channels`, `community:${channel.communityId}:channels`, `channel:${channelId}:meta`);
+    } catch {}
+    return { removed };
   },
 });
 
@@ -355,6 +450,10 @@ export const setOverwrite = mutation({
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
     if (!roleId && !userId) throw new Error("An overwrite needs a role or a member.");
+    if (!isValidBits(allow) || !isValidBits(deny)) throw new Error("Those permissions aren't valid.");
+    // A permission is allowed, denied or left alone — never two at once. Deny would otherwise
+    // be silently outranked by allow in the same row.
+    if (bitsAnd(allow, deny) !== 0) throw new Error("A permission can't be both allowed and denied.");
 
     const existing = await ctx.db
       .query("channelPermissionOverwrites")
@@ -644,7 +743,14 @@ export const getVoiceJoinContext = internalQuery({
     await requireCommunityOpen(ctx, channel.communityId, "post");
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
     if (!can(perms, PERMISSIONS.CONNECT)) throw new Error("You don't have permission to join this channel.");
-    return { userId: me._id, name: me.name, communityId: channel.communityId };
+    return {
+      userId: me._id,
+      name: me.name,
+      communityId: channel.communityId,
+      // What they may send into the room: Speak is the microphone, Video the camera and screen.
+      canSpeak: can(perms, PERMISSIONS.SPEAK),
+      canVideo: can(perms, PERMISSIONS.VIDEO),
+    };
   },
 });
 

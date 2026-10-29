@@ -1,12 +1,31 @@
 "use client";
 
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useConvex, useMutation, useQuery } from "convex/react";
 import {
   Check,
+  GripVertical,
   Hash,
   ImagePlus,
   Loader2,
   Lock,
+  Pencil,
   Plus,
   Search,
   Trash2,
@@ -19,6 +38,8 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { DEFAULT_BACKGROUND_OPACITY } from "@/components/chat-decoration";
 import { ChannelGlyph } from "@/components/community/channel-glyph";
+import { CreateCategoryDialog } from "@/components/community/create-category-dialog";
+import { EditCategoryDialog } from "@/components/community/edit-category-dialog";
 import { LOUNGE_SCENES, SceneThumbnail } from "@/lib/lounge-scenes";
 import { SettingsCard } from "@/components/settings/settings-ui";
 import { useConfirmLeave, useSettingsDraft } from "@/components/settings/settings-save";
@@ -34,6 +55,12 @@ import {
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
   PERMISSIONS,
+  TEXT_PERMISSION_KEYS,
+  UNENFORCED_PERMISSIONS,
+  VOICE_PERMISSION_KEYS,
+  bitsHas,
+  bitsOr,
+  bitsWithout,
   type PermissionKey,
 } from "@/lib/permissions";
 import { MAX_PROFILE_ASSET_BYTES, MAX_PROFILE_ASSET_LABEL } from "@/lib/upload-limits";
@@ -42,6 +69,8 @@ import { cn } from "@/lib/utils";
 interface CommunitySettingsChannelsTabProps {
   communityId: Id<"communities">;
   canManage: boolean;
+  /** Open on this channel rather than the first. */
+  initialChannelId?: Id<"channels">;
 }
 
 type ChannelRow = {
@@ -50,6 +79,7 @@ type ChannelRow = {
   type: "text" | "voice";
   surface?: string;
   isLounge?: boolean;
+  isAnnouncement?: boolean;
   topic?: string;
   categoryId: Id<"channelCategories"> | null;
 };
@@ -64,11 +94,26 @@ type ChannelRow = {
 export function CommunitySettingsChannelsTab({
   communityId,
   canManage,
+  initialChannelId,
 }: CommunitySettingsChannelsTabProps) {
   const channels = (useQuery(api.channels.list, { communityId }) ?? []) as ChannelRow[];
   const categories = useQuery(api.channelCategories.list, { communityId }) ?? [];
+  const reorderCategories = useMutation(api.channelCategories.reorder);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const confirmLeave = useConfirmLeave();
-  const [selectedId, setSelectedId] = useState<Id<"channels"> | null>(null);
+  const [selectedId, setSelectedId] = useState<Id<"channels"> | null>(initialChannelId ?? null);
+  // Asked for a different channel while this was already open.
+  useEffect(() => {
+    if (initialChannelId) setSelectedId(initialChannelId);
+  }, [initialChannelId]);
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<{
+    id: Id<"channelCategories">;
+    name: string;
+  } | null>(null);
 
   // Something is always open: the first channel until one is chosen, and the
   // first that is left when the open one is deleted.
@@ -93,42 +138,106 @@ export function CommunitySettingsChannelsTab({
         name: category.name as string | null,
         channels: byCategory.get(category.id as never) ?? [],
       })),
-    ].filter((group) => group.channels.length > 0);
+      // A category with nothing in it yet is still a category: it has to show
+      // here, or a new one looks like it was never made.
+    ].filter((group) => group.id !== null || group.channels.length > 0);
   }, [channels, categories]);
 
-  if (channels.length === 0) {
+  const categoryIds = categories.map((c: { id: string }) => c.id);
+
+  const handleCategoryDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const from = categoryIds.indexOf(String(active.id));
+    const to = categoryIds.indexOf(String(over.id));
+    if (from === -1 || to === -1) return;
+    void reorderCategories({
+      communityId,
+      orderedCategoryIds: arrayMove(categoryIds, from, to) as Id<"channelCategories">[],
+    });
+  };
+
+  const renderChannel = (channel: ChannelRow) => (
+    <button
+      key={channel.id}
+      type="button"
+      onClick={() => select(channel.id)}
+      aria-current={channel.id === selected?.id ? "true" : undefined}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+        channel.id === selected?.id
+          ? "bg-accent font-medium text-foreground"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+      )}
+    >
+      <ChannelGlyph type={channel.type} surface={channel.surface} isLounge={channel.isLounge} isAnnouncement={channel.isAnnouncement} className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{channel.name}</span>
+    </button>
+  );
+
+  if (channels.length === 0 && categories.length === 0) {
     return <p className="py-6 text-center text-sm text-muted-foreground">No channels yet.</p>;
   }
 
   return (
     <div className="flex items-start gap-6">
       <nav aria-label="Channels" className="sticky top-4 w-52 shrink-0 space-y-3 self-start">
-        {groups.map((group) => (
-          <div key={group.id ?? "uncategorised"} className="space-y-0.5">
-            {group.name && (
-              <p className="px-2 pb-0.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-                {group.name}
-              </p>
+        {groups.map((group) =>
+          group.id === null ? (
+            <div key="uncategorised" className="space-y-0.5">
+              {group.channels.map(renderChannel)}
+            </div>
+          ) : null,
+        )}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleCategoryDragEnd}>
+          <SortableContext items={categoryIds} strategy={verticalListSortingStrategy}>
+            {groups.map((group) =>
+              group.id === null ? null : (
+                <SortableCategory key={group.id} id={group.id} canManage={canManage}>
+                  {(handle) => (
+                    <>
+                      <div className="group/category flex items-center gap-1 px-2 pb-0.5">
+                        {handle}
+                        <p className="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                          {group.name}
+                        </p>
+                        {canManage && (
+                          <button
+                            type="button"
+                            aria-label={`Edit category ${group.name}`}
+                            onClick={() =>
+                              setEditingCategory({
+                                id: group.id as Id<"channelCategories">,
+                                name: group.name as string,
+                              })
+                            }
+                            className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/category:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                          >
+                            <Pencil className="size-3" />
+                          </button>
+                        )}
+                      </div>
+                      {group.channels.length === 0 && (
+                        <p className="px-2 py-1 text-xs text-muted-foreground">No channels yet.</p>
+                      )}
+                      {group.channels.map(renderChannel)}
+                    </>
+                  )}
+                </SortableCategory>
+              ),
             )}
-            {group.channels.map((channel) => (
-              <button
-                key={channel.id}
-                type="button"
-                onClick={() => select(channel.id)}
-                aria-current={channel.id === selected?.id ? "true" : undefined}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                  channel.id === selected?.id
-                    ? "bg-accent font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                )}
-              >
-                <ChannelGlyph type={channel.type} surface={channel.surface} isLounge={channel.isLounge} className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{channel.name}</span>
-              </button>
-            ))}
-          </div>
-        ))}
+          </SortableContext>
+        </DndContext>
+        {canManage && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start gap-2 text-muted-foreground"
+            onClick={() => setCreatingCategory(true)}
+          >
+            <Plus className="size-4" />
+            New category
+          </Button>
+        )}
       </nav>
 
       <div className="min-w-0 flex-1">
@@ -144,7 +253,87 @@ export function CommunitySettingsChannelsTab({
           />
         )}
       </div>
+
+      <CreateCategoryDialog communityId={communityId} open={creatingCategory} onOpenChange={setCreatingCategory} />
+      <EditCategoryDialog category={editingCategory} onOpenChange={(open) => !open && setEditingCategory(null)} />
     </div>
+  );
+}
+
+/** One category in the list, draggable by its grip. Only managers get the grip. */
+function SortableCategory({
+  id,
+  canManage,
+  children,
+}: {
+  id: string;
+  canManage: boolean;
+  children: (handle: React.ReactNode) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: !canManage,
+  });
+  const handle = canManage ? (
+    <button
+      type="button"
+      aria-label="Drag to reorder category"
+      className="-ml-1 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+      {...attributes}
+      {...listeners}
+    >
+      <GripVertical className="size-3" />
+    </button>
+  ) : null;
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 }}
+      className="space-y-0.5"
+    >
+      {children(handle)}
+    </div>
+  );
+}
+
+/** Who is receiving an announcements channel: how many newsfeeds, and the channels it is copied into. */
+function AnnouncementFollowers({ channelId }: { channelId: Id<"channels"> }) {
+  const followers = useQuery(api.announcements.listForChannel, { channelId });
+  const unfollow = useMutation(api.announcements.unfollow);
+  if (!followers) return null;
+  return (
+    <SettingsCard className="space-y-2 px-4 py-3">
+      <div>
+        <p className="text-sm font-medium">Followers</p>
+        <p className="text-xs text-muted-foreground">
+          {followers.feedCount === 1 ? "1 person follows" : `${followers.feedCount} people follow`} this in their
+          newsfeed. Followers can read it without joining.
+        </p>
+      </div>
+      {followers.forwards.length > 0 ? (
+        <ul className="space-y-1">
+          {followers.forwards.map((forward) => (
+            <li key={forward.id} className="flex items-center gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">
+                Sent to # {forward.targetChannelName}{" "}
+                <span className="text-muted-foreground">· {forward.targetCommunityName}</span>
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                aria-label="Stop sending there"
+                onClick={() => void unfollow({ followId: forward.id })}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">No community is passing it on yet.</p>
+      )}
+    </SettingsCard>
   );
 }
 
@@ -196,6 +385,7 @@ function ChannelEditor({
   const members = useQuery(api.communities.listMembers, { communityId }) ?? [];
 
   const update = useMutation(api.channels.update);
+  const setAnnouncement = useMutation(api.channels.setAnnouncement);
   const remove = useMutation(api.channels.remove);
   const setBackground = useMutation(api.channels.setBackground);
   const setBanner = useMutation(api.channels.setBanner);
@@ -220,6 +410,8 @@ function ChannelEditor({
   const [overwrites, setOverwrites] = useState<Record<string, OverwriteDraft> | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [togglingAnnouncement, setTogglingAnnouncement] = useState(false);
+  const [announcementNote, setAnnouncementNote] = useState<string | null>(null);
 
   const bgPreview = useObjectUrl(bgFile);
   const bannerPreview = useObjectUrl(bannerFile);
@@ -243,6 +435,36 @@ function ChannelEditor({
     seedFromDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [details]);
+
+  /** Applies at once, like the decoration: it is a kind of channel, not a field to save. */
+  const toggleAnnouncement = async (enabled: boolean) => {
+    setTogglingAnnouncement(true);
+    setError(null);
+    setAnnouncementNote(null);
+    try {
+      const { removed } = await setAnnouncement({ channelId: channel.id, enabled });
+      // The server made @everyone read-only here. Mirror it in the draft, or the permissions
+      // tab would see a stored overwrite it doesn't know about and offer to delete it.
+      if (enabled) {
+        setOverwrites((current) => {
+          const everyone = roles.find((r) => r.isEveryone);
+          if (!current || !everyone) return current;
+          const key = roleKey(everyone.id);
+          const draft = current[key] ?? { key, roleId: everyone.id, allow: 0, deny: 0 };
+          return { ...current, [key]: withState(draft, PERMISSIONS.SEND_MESSAGES, "deny") };
+        });
+      }
+      setAnnouncementNote(
+        enabled
+          ? `Only people you allow under Permissions can post here now.${removed ? ` ${removed} forward${removed === 1 ? "" : "s"} into this channel ${removed === 1 ? "was" : "were"} removed.` : ""}`
+          : `It's a regular text channel again. Who can post is unchanged — adjust it under Permissions.${removed ? ` ${removed} follower${removed === 1 ? "" : "s"} removed.` : ""}`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That didn't work.");
+    } finally {
+      setTogglingAnnouncement(false);
+    }
+  };
 
   const toDraft = (list: NonNullable<typeof serverOverwrites>) =>
     Object.fromEntries(
@@ -408,9 +630,9 @@ function ChannelEditor({
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
-<ChannelGlyph type={channel.type} surface={channel.surface} isLounge={channel.isLounge} className="size-5 text-muted-foreground" />
+<ChannelGlyph type={channel.type} surface={channel.surface} isLounge={channel.isLounge} isAnnouncement={channel.isAnnouncement} className="size-5 text-muted-foreground" />
         <h2 className="truncate text-lg font-semibold">{details?.name ?? channel.name}</h2>
-        <span className="text-xs text-muted-foreground capitalize">{channel.type} channel</span>
+        <span className="text-xs text-muted-foreground capitalize">{channel.isAnnouncement ? "announcements" : channel.type} channel</span>
       </div>
 
       <div className="flex items-center gap-6 border-b">
@@ -459,6 +681,27 @@ function ChannelEditor({
               </div>
             )}
           </SettingsCard>
+
+          {isText && !channel.surface && (canManage || channel.isAnnouncement) && (
+            <SettingsCard className="flex items-center justify-between gap-4 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Announcements channel</p>
+                <p className="text-xs text-muted-foreground">
+                  Only people you allow can post. Anyone who can see it can follow it into their Newsfeed, or have
+                  it forwarded into a channel in their own community. Announcements aren&apos;t end-to-end encrypted.
+                </p>
+                {announcementNote && <p className="mt-1.5 text-xs text-muted-foreground">{announcementNote}</p>}
+              </div>
+              <Switch
+                checked={!!channel.isAnnouncement}
+                disabled={!canManage || togglingAnnouncement}
+                onCheckedChange={(on) => void toggleAnnouncement(on)}
+                aria-label="Announcements channel"
+              />
+            </SettingsCard>
+          )}
+
+          {channel.isAnnouncement && canManage && <AnnouncementFollowers channelId={channel.id} />}
 
           {details?.isLounge && (
             <LoungeScenePicker
@@ -854,25 +1097,20 @@ type OverwriteState = "deny" | "inherit" | "allow";
 function permissionGroups(type: "text" | "voice"): { title: string; keys: PermissionKey[] }[] {
   return [
     { title: "General", keys: ["VIEW_CHANNELS", "MANAGE_CHANNELS", "CREATE_INVITE"] },
-    ...(type === "text"
-      ? [{ title: "Text", keys: ["SEND_MESSAGES", "MANAGE_MESSAGES", "MENTION_EVERYONE"] as PermissionKey[] }]
-      : [
-          {
-            title: "Voice",
-            keys: ["CONNECT", "MUTE_MEMBERS", "DEAFEN_MEMBERS", "MOVE_MEMBERS"] as PermissionKey[],
-          },
-        ]),
+    type === "text"
+      ? { title: "Text", keys: TEXT_PERMISSION_KEYS }
+      : { title: "Voice", keys: VOICE_PERMISSION_KEYS },
   ];
 }
 
 const stateOf = (o: OverwriteDraft, flag: number): OverwriteState =>
-  o.allow & flag ? "allow" : o.deny & flag ? "deny" : "inherit";
+  bitsHas(o.allow, flag) ? "allow" : bitsHas(o.deny, flag) ? "deny" : "inherit";
 
 function withState(o: OverwriteDraft, flag: number, state: OverwriteState): OverwriteDraft {
   return {
     ...o,
-    allow: state === "allow" ? o.allow | flag : o.allow & ~flag,
-    deny: state === "deny" ? o.deny | flag : o.deny & ~flag,
+    allow: state === "allow" ? bitsOr(o.allow, flag) : bitsWithout(o.allow, flag),
+    deny: state === "deny" ? bitsOr(o.deny, flag) : bitsWithout(o.deny, flag),
   };
 }
 
@@ -939,7 +1177,7 @@ function PermissionsEditor({
   // nobody sees it unless a role or member is allowed to below.
   const everyoneKey = everyone ? roleKey(everyone.id) : null;
   const isPrivate =
-    !!everyoneKey && !!overwrites[everyoneKey] && !!(overwrites[everyoneKey].deny & PERMISSIONS.VIEW_CHANNELS);
+    !!everyoneKey && !!overwrites[everyoneKey] && bitsHas(overwrites[everyoneKey].deny, PERMISSIONS.VIEW_CHANNELS);
   const setPrivate = (on: boolean) => {
     if (!everyone || !everyoneKey) return;
     const current = overwrites[everyoneKey] ?? { key: everyoneKey, roleId: everyone.id, allow: 0, deny: 0 };
@@ -1003,7 +1241,7 @@ function PermissionsEditor({
               const role = target.roleId ? roleById.get(target.roleId) : null;
               const member = target.userId ? memberById.get(target.userId) : null;
               const active = target.key === selected?.key;
-              const count = Number(popcount(target.allow | target.deny));
+              const count = Number(popcount(bitsOr(target.allow, target.deny)));
               return (
                 <button
                   key={target.key}
@@ -1160,7 +1398,17 @@ function PermissionsEditor({
                         )}
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">{PERMISSION_LABELS[key]}</p>
+                          <p className="flex items-center gap-2 text-sm font-medium">
+                            {PERMISSION_LABELS[key]}
+                            {UNENFORCED_PERMISSIONS.has(key) && (
+                              <span
+                                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                                title="This is saved, but Crystal doesn't check it yet."
+                              >
+                                Not enforced yet
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs text-muted-foreground">{PERMISSION_DESCRIPTIONS[key]}</p>
                         </div>
                         <TriState
@@ -1191,8 +1439,10 @@ function PermissionsEditor({
 
 /** How many bits are set. */
 function popcount(value: number): number {
+  // Two halves, because `>>>` and `&` only see the low 32 bits of a permission set.
   let count = 0;
   for (let v = value >>> 0; v; v &= v - 1) count++;
+  for (let v = Math.floor(value / 4294967296) >>> 0; v; v &= v - 1) count++;
   return count;
 }
 

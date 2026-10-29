@@ -16,6 +16,7 @@ import {
   type NotificationPolicy,
 } from "./lib/notificationPolicy";
 import { renderMentionsAsText } from "./lib/mentions";
+import { effectiveFileType } from "./lib/mediaType";
 import { e2eeEnforced, publicNotificationBody } from "./lib/e2eeEnforce";
 import {
   genericNotificationBody,
@@ -104,6 +105,30 @@ async function hasLiveDesktop(ctx: MutationCtx, userId: Id<"users">): Promise<bo
 }
 
 /**
+ * The first image on the message a notification is about, as a URL a push extension can fetch
+ * (https, no SVG), plus how many files it carried. Files aren't end-to-end encrypted — only the
+ * text is — so the phone can show the picture in the notification itself.
+ */
+async function pushAttachment(
+  ctx: MutationCtx,
+  n: { messageId?: Id<"messages">; channelMessageId?: Id<"channelMessages"> }
+): Promise<{ attachmentUrl?: string; attachmentCount?: number }> {
+  const rows = n.messageId
+    ? await ctx.db.query("messageAttachments").withIndex("by_message", (q) => q.eq("messageId", n.messageId!)).take(10)
+    : n.channelMessageId
+      ? await ctx.db.query("channelMessageAttachments").withIndex("by_message", (q) => q.eq("messageId", n.channelMessageId!)).take(10)
+      : [];
+  if (rows.length === 0) return {};
+  for (const row of rows) {
+    if (!effectiveFileType(row.fileType, row.fileName).startsWith("image/") || row.fileName.toLowerCase().endsWith(".svg")) continue;
+    const url = row.cdnUrl ?? (row.storageId ? await ctx.storage.getUrl(row.storageId) : null);
+    // Push payloads are capped at ~4 KB, and the sealed message needs most of it.
+    if (url && url.startsWith("https://") && url.length <= 512) return { attachmentUrl: url, attachmentCount: rows.length };
+  }
+  return { attachmentCount: rows.length };
+}
+
+/**
  * Inserts one `notifications` row per recipient (skipping the actor, so
  * nobody gets notified about their own message/request) and schedules an
  * Expo push for each via `push.sendExpoPush`. A plain helper — not a Convex
@@ -167,6 +192,7 @@ export async function notifyUsers(
   // (see public/sw.js). The server passes along ciphertext and each recipient's wrapped room key; it
   // never sees the text.
   const sealedSource = isMessageNotification(rest.type) ? await sealedMessageFor(ctx, rest) : null;
+  const pushFiles = isMessageNotification(rest.type) ? await pushAttachment(ctx, rest) : {};
 
   for (const userId of recipients) {
     // Checked per recipient rather than once: everyone in a channel has their
@@ -224,6 +250,8 @@ export async function notifyUsers(
           senderAvatarUrl: actorUser?.imageUrl && actorUser.imageUrl.length <= 512 ? actorUser.imageUrl : undefined,
           channelName: channel?.name,
           communityName: community?.name,
+          // The first picture on the message (and how many files), for the phone to show in the notification.
+          ...pushFiles,
           // So push.ts can apply the same body rule on its own (see `sendExpoPush`).
           systemAuthored,
           isMention,
@@ -258,7 +286,7 @@ export async function notifyUsers(
       body: rest.body,
       icon: actorUser?.imageUrl && !actorUser.imageUrl.endsWith(".svg") ? actorUser.imageUrl : undefined,
       ...deepLinkFor(rest),
-      sealed: sealedSource ? await sealFor(ctx, sealedSource, userId) : undefined,
+      sealed: sealedSource && sealedSource.ct.length <= MAX_SEALED_CT_WEB ? await sealFor(ctx, sealedSource, userId) : undefined,
     });
   }
 }
@@ -287,7 +315,12 @@ async function myRoleIds(
 }
 
 /** What a message carried, for a toast that has to say so in one line. */
-type AttachmentSummary = { fileName: string; count: number } | null;
+type AttachmentSummary = {
+  fileName: string;
+  count: number;
+  /** The first picture (not SVG), for a toast that can show one. Files aren't end-to-end encrypted, only text. */
+  imageUrl?: string;
+} | null;
 
 /**
  * The files on one message, summarised.
@@ -307,7 +340,17 @@ async function attachmentSummary(
     // table only ever sees its own.
     .withIndex("by_message", (q) => q.eq("messageId", messageId as never))
     .collect();
-  return rows[0] ? { fileName: rows[0].fileName, count: rows.length } : null;
+  if (!rows[0]) return null;
+  let imageUrl: string | undefined;
+  for (const row of rows) {
+    if (!effectiveFileType(row.fileType, row.fileName).startsWith("image/") || row.fileName.toLowerCase().endsWith(".svg")) continue;
+    const url = row.cdnUrl ?? (row.storageId ? await ctx.storage.getUrl(row.storageId) : null);
+    if (url && url.startsWith("https://")) {
+      imageUrl = url;
+      break;
+    }
+  }
+  return { fileName: rows[0].fileName, count: rows.length, ...(imageUrl ? { imageUrl } : {}) };
 }
 
 /**
@@ -775,8 +818,14 @@ type SealedSource = {
   ct: string;
 };
 
-/** Expo/FCM cap data-only pushes at about 4 KB; reserve space for the wrapped room key and sender metadata. */
-const MAX_SEALED_CT = 1400;
+/** Web push payloads are cut off at about 4 KB; reserve space for the wrapped room key and sender metadata. */
+const MAX_SEALED_CT_WEB = 1400;
+/**
+ * Expo and FCM allow about 4 KB for the whole message, which `sendExpoPush` checks against the real payload
+ * (and drops `sealed` from if it doesn't fit). This only keeps an absurdly long ciphertext from being
+ * copied through the scheduler.
+ */
+const MAX_SEALED_CT_MOBILE = 3000;
 
 async function sealedMessageFor(
   ctx: MutationCtx,
@@ -784,12 +833,12 @@ async function sealedMessageFor(
 ): Promise<SealedSource | null> {
   if (n.messageId) {
     const m = await ctx.db.get(n.messageId);
-    if (!m?.enc || m.enc.ct.length > MAX_SEALED_CT) return null;
+    if (!m?.enc || m.enc.ct.length > MAX_SEALED_CT_MOBILE) return null;
     return { scope: "conversation", targetId: m.conversationId, authorId: m.authorId, keyId: m.enc.keyId as Id<"e2eeKeys">, iv: m.enc.iv, ct: m.enc.ct };
   }
   if (n.channelMessageId) {
     const m = await ctx.db.get(n.channelMessageId);
-    if (!m?.enc || m.enc.ct.length > MAX_SEALED_CT) return null;
+    if (!m?.enc || m.enc.ct.length > MAX_SEALED_CT_MOBILE) return null;
     return { scope: "channel", targetId: m.channelId, authorId: m.authorId, keyId: m.enc.keyId as Id<"e2eeKeys">, iv: m.enc.iv, ct: m.enc.ct };
   }
   return null;

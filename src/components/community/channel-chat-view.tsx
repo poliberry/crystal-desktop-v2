@@ -2,7 +2,7 @@
 
 import { CommunityThemeWash } from "@/components/community/community-theme-wash";
 import { useQuery } from "convex/react";
-import { Hash, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Hash, Megaphone, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import moment from "moment";
 
@@ -10,6 +10,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ChannelMessageComposer } from "@/components/community/channel-message-composer";
 import { ChannelMessageList } from "@/components/community/channel-message-list";
+import { FollowChannelDialog } from "@/components/community/follow-channel-dialog";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { MemberList } from "@/components/community/member-list";
 import { RightSidebarContent, useRightSidebar } from "@/components/sidebar/right-sidebar";
@@ -34,6 +35,10 @@ interface ChannelChatViewProps {
   communityId: Id<"communities">;
   name: string;
   topic?: string;
+  /** An announcements channel: followable, and read-only for most people. */
+  isAnnouncement?: boolean;
+  /** Whether the viewer may post here — the composer is replaced by a notice when not. */
+  canSend?: boolean;
 }
 
 export function ChannelChatView({
@@ -41,7 +46,10 @@ export function ChannelChatView({
   communityId,
   name,
   topic,
+  isAnnouncement,
+  canSend = true,
 }: ChannelChatViewProps) {
+  const [following, setFollowing] = useState(false);
   // The member list lives in the right sidebar, which the window owns; this
   // view only says what goes in it and has the button for it.
   const { open: showMembers, toggle: toggleMembers } = useRightSidebar();
@@ -120,10 +128,21 @@ export function ChannelChatView({
         />
         <div className="relative flex h-12 shrink-0 items-center gap-2 px-2">
           <MobileBackButton />
-          <Hash className="size-4 shrink-0 text-muted-foreground" />
+          {isAnnouncement ? (
+            <Megaphone className="size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <Hash className="size-4 shrink-0 text-muted-foreground" />
+          )}
           <p className="shrink-0 text-sm font-semibold">{name}</p>
           {topic && (
             <p className="truncate text-xs text-muted-foreground max-md:hidden">— {topic}</p>
+          )}
+
+          {isAnnouncement && (
+            <Button variant="outline" size="sm" className="ml-auto h-7 gap-1.5" onClick={() => setFollowing(true)}>
+              <Megaphone className="size-3.5" />
+              Follow
+            </Button>
           )}
 
           <TooltipProvider>
@@ -132,7 +151,7 @@ export function ChannelChatView({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ml-auto size-7 max-md:size-10"
+                  className={isAnnouncement ? "size-7 max-md:size-10" : "ml-auto size-7 max-md:size-10"}
                   onClick={toggleMembers}
                   aria-label={showMembers ? "Hide member list" : "Show member list"}
                 >
@@ -188,13 +207,24 @@ export function ChannelChatView({
           onReply={setReplyingTo}
         />
         <TypingIndicator channelId={channelId} />
-        <ChannelMessageComposer
-          channelId={channelId}
-          communityId={communityId}
-          replyingTo={replyingTo}
-          onCancelReply={() => setReplyingTo(null)}
-        />
+        {canSend ? (
+          <ChannelMessageComposer
+            channelId={channelId}
+            communityId={communityId}
+            replyingTo={replyingTo}
+            onCancelReply={() => setReplyingTo(null)}
+          />
+        ) : (
+          <div className="shrink-0 bg-background p-2 pb-[17px] max-md:pb-2">
+            <p className="rounded-xl border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
+              {isAnnouncement
+                ? "Only people with permission can post in this channel. Follow it to get its announcements."
+                : "You don't have permission to send messages in this channel."}
+            </p>
+          </div>
+        )}
       </div>
+      {following && <FollowChannelDialog channel={{ id: channelId, name }} onClose={() => setFollowing(false)} />}
 
       <RightSidebarContent>
         <MemberList communityId={communityId} />
