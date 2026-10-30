@@ -107,7 +107,12 @@ cpSync(dist, join(out, "dist-electron"), {
   recursive: true,
   filter: (src) => !/[\\/]dist-electron[\\/]installer([\\/]|$)/.test(src) && !src.endsWith(".map"),
 });
-cpSync(join(root, "out"), join(out, "out"), { recursive: true, filter: (src) => !src.endsWith(".map") });
+// public/cosmetic-remakes is the renderer's working folder (scripts/render-cosmetics.mjs; gitignored, ~130 MB on a machine
+// that has rendered them). What it makes is uploaded and referenced by CDN URL, and nothing in the app opens the folder.
+cpSync(join(root, "out"), join(out, "out"), {
+  recursive: true,
+  filter: (src) => !src.endsWith(".map") && !/[\\/]out[\\/]cosmetic-remakes([\\/]|$)/.test(src),
+});
 for (const name of wanted) cpSync(join(root, "node_modules", name), join(out, "node_modules", name), { recursive: true });
 
 // node-pty carries a prebuilt binary for every platform; the one for this machine is the only one that can run. (Builds are
