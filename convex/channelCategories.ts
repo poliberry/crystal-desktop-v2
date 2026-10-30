@@ -2,6 +2,7 @@ import { v } from "convex/values";
 
 import { requireCommunity } from "./communities";
 import { PERMISSIONS, requireCommunityPermission } from "./permissions";
+import { logCommunityAudit } from "./lib/communityAudit";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -36,7 +37,9 @@ export const create = mutation({
       .collect();
     const position = existing.reduce((max, c) => Math.max(max, c.position), -1) + 1;
 
-    return ctx.db.insert("channelCategories", { communityId, name: trimmed, position });
+    const categoryId = await ctx.db.insert("channelCategories", { communityId, name: trimmed, position });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "category.create", target: { type: "category", id: categoryId, name: trimmed } });
+    return categoryId;
   },
 });
 
@@ -52,6 +55,7 @@ export const rename = mutation({
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Category name can't be empty.");
     await ctx.db.patch(categoryId, { name: trimmed });
+    await logCommunityAudit(ctx, { communityId: category.communityId, actorId: me._id, action: "category.rename", target: { type: "category", id: categoryId, name: trimmed }, details: `Renamed from "${category.name}"` });
   },
 });
 
@@ -74,6 +78,7 @@ export const remove = mutation({
       if (channel.categoryId === categoryId) await ctx.db.patch(channel._id, { categoryId: undefined });
     }
     await ctx.db.delete(categoryId);
+    await logCommunityAudit(ctx, { communityId: category.communityId, actorId: me._id, action: "category.delete", target: { type: "category", id: categoryId, name: category.name } });
   },
 });
 

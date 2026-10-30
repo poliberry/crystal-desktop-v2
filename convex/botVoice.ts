@@ -1,12 +1,13 @@
 "use node";
 
 import { v } from "convex/values";
-import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { AccessToken } from "livekit-server-sdk";
 
 import { internal } from "./_generated/api";
 import type { OpResult } from "./botOps";
 import { internalAction } from "./_generated/server";
-import { closeRoomIfEmpty, ensureRoom } from "./lib/liveKitAdmin";
+import { closeRoomIfEmpty, ensureRoom, trackSourcesFor } from "./lib/liveKitAdmin";
+import type { VoiceGrant } from "./lib/voiceGrant";
 
 /**
  * Joining voice as a bot — to speak and to play soundboard clips, not to share video or a screen.
@@ -27,7 +28,7 @@ export const join = internalAction({
   handler: async (ctx, { prefix, hash, params }): Promise<OpResult> => {
     const prepared: OpResult = await ctx.runMutation(internal.botOps.execute, { prefix, hash, op: "voice.prepare", params, body: {}, query: {} });
     if (!prepared.ok) return prepared;
-    const info = prepared.data as { channelId: string; userId: string; name: string };
+    const info = prepared.data as { channelId: string; userId: string; name: string; grant: VoiceGrant };
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
     const url = process.env.LIVEKIT_URL;
@@ -38,11 +39,20 @@ export const join = internalAction({
     }
     const roomName = `channel-${info.channelId}`;
     await ensureRoom(roomName);
-    const at = new AccessToken(apiKey, apiSecret, { identity: info.userId, name: info.name, ttl: "4h" });
+    const at = new AccessToken(apiKey, apiSecret, { identity: info.userId, name: info.name, ttl: "4h", attributes: info.grant.attributes });
     // Audio and soundboard only. A bot may publish a microphone track and data packets (a soundboard
     // press is a data packet); the token itself forbids camera and screen-share tracks, so LiveKit
-    // refuses them whatever the bot's code tries — it isn't a rule the bot is trusted to keep.
-    at.addGrant({ room: roomName, roomJoin: true, canPublish: true, canPublishSources: [TrackSource.MICROPHONE], canSubscribe: true, canPublishData: true });
+    // refuses them whatever the bot's code tries — it isn't a rule the bot is trusted to keep. Whether it
+    // gets the microphone at all is the channel's Speak permission, like anyone's (lib/voiceGrant.ts).
+    at.addGrant({
+      room: roomName,
+      roomJoin: true,
+      canPublish: info.grant.canPublish,
+      canPublishSources: trackSourcesFor(info.grant.sources),
+      canSubscribe: info.grant.canSubscribe,
+      canPublishData: info.grant.canPublishData,
+      canUpdateOwnMetadata: false,
+    });
     return { ok: true, status: 200, botId: prepared.botId, data: { url, token: await at.toJwt(), roomName, identity: info.userId, expiresInSeconds: 4 * 3600 } };
   },
 });

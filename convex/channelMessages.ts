@@ -5,6 +5,7 @@ import { v, type ObjectType } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
+import { logCommunityAudit } from "./lib/communityAudit";
 import { notifyUsers } from "./notifications";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { MAX_ATTACHMENT_BYTES, requireWithinUploadLimit } from "./uploadLimits";
@@ -12,7 +13,7 @@ import { getCurrentUserOrThrow } from "./users";
 import { unexpiredCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText, resolveChannelMentions } from "./lib/mentions";
-import { channelPageKey, channelPageKeys } from "./lib/messageCacheKeys";
+import { channelPageKeys } from "./lib/messageCacheKeys";
 import {
   assertPlaintextAllowed,
   encValidator,
@@ -29,7 +30,13 @@ import type { ActionRow } from "./lib/components";
 import type { Embed } from "./lib/embeds";
 import { isAcceptableAttachmentSource } from "./lib/klipy";
 import { releaseFile } from "./lib/files";
+import { recordMessageSent } from "./lib/communityInsights";
 import { effectiveFileType } from "./lib/mediaType";
+import { historyFloorFor, historyFloorIn, withinHistory, type HistoryFloor } from "./lib/history";
+import { dropPollVotes, messageExtras, pollResults } from "./lib/messageExtras";
+import { cleanPoll } from "./lib/pollPure";
+import { enforceSlowmode } from "./lib/slowmode";
+import { cleanVoiceMessage } from "./lib/voicePure";
 
 function r2UrlForKey(key: string): string | null {
   const base = process.env.R2_PUBLIC_URL ?? process.env.CDN_URL ?? "";
@@ -74,6 +81,13 @@ async function channelPermitted(ctx: QueryCtx, channelId: Id<"channels">, userId
   return can(await getChannelPermissions(ctx, community, channelId, userId), flag);
 }
 
+/** Where `userId` starts reading in a channel: see lib/history.ts. */
+async function channelHistoryFloor(ctx: QueryCtx, channelId: Id<"channels">, userId: Id<"users">): Promise<HistoryFloor> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) return { restricted: false };
+  return historyFloorIn(ctx, await requireCommunity(ctx, channel.communityId), channelId, userId);
+}
+
 /** Pinning is its own permission now; Manage Messages still does it, as it always did. */
 async function requirePinPerm(ctx: QueryCtx, channelId: Id<"channels">, userId: Id<"users">): Promise<void> {
   const channel = await ctx.db.get(channelId);
@@ -85,11 +99,14 @@ async function requirePinPerm(ctx: QueryCtx, channelId: Id<"channels">, userId: 
   }
 }
 
+const MAX_REACTION_ROWS = 200;
+
 async function reactionsFor(ctx: QueryCtx, messageId: Id<"channelMessages">, me: Id<"users">) {
   const rows = await ctx.db
     .query("channelMessageReactions")
     .withIndex("by_message", (q) => q.eq("messageId", messageId))
-    .collect();
+    // Bounded: one viral message must not make every page that shows it read thousands of rows.
+    .take(MAX_REACTION_ROWS);
   const grouped = new Map<string, { emoji: string; count: number; reactedByMe: boolean }>();
   for (const row of rows) {
     const g = grouped.get(row.emoji) ?? { emoji: row.emoji, count: 0, reactedByMe: false };
@@ -107,10 +124,26 @@ const REPLY_SNIPPET_MAX = 140;
  * convex/messages.ts. */
 async function resolveReplyPreview(
   ctx: QueryCtx,
-  replyToId: Id<"channelMessages"> | undefined
+  replyToId: Id<"channelMessages"> | undefined,
+  floor: HistoryFloor = { restricted: false },
 ) {
   if (!replyToId) return null;
   const target = await ctx.db.get(replyToId);
+  // A reply to something from before the viewer's history starts: the quote would hand it over.
+  if (target && !withinHistory(floor, target._creationTime)) {
+    return {
+      id: replyToId as string,
+      authorId: undefined as Id<"users"> | undefined,
+      createdAt: undefined as number | undefined,
+      authorName: "Earlier message",
+      authorImageUrl: undefined as string | undefined,
+      text: null as string | null,
+      enc: null as Doc<"channelMessages">["enc"] | null,
+      hasAttachment: false,
+      deleted: true,
+      hidden: true,
+    };
+  }
   if (!target) {
     return {
       id: replyToId as string,
@@ -126,10 +159,12 @@ async function resolveReplyPreview(
   }
   const [author, firstAttachment] = await Promise.all([
     ctx.db.get(target.authorId),
-    ctx.db
-      .query("channelMessageAttachments")
-      .withIndex("by_message", (q) => q.eq("messageId", target._id))
-      .take(1),
+    target.hasAttachments === false
+      ? []
+      : ctx.db
+          .query("channelMessageAttachments")
+          .withIndex("by_message", (q) => q.eq("messageId", target._id))
+          .take(1),
   ]);
   return {
     id: target._id as string,
@@ -254,7 +289,7 @@ async function communityAuthorDecorations(
   return new Map(entries);
 }
 
-const EMPTY_PAGE = { page: [], isDone: true, continueCursor: "" } as const;
+const EMPTY_PAGE = { page: [] as never[], isDone: true, continueCursor: "" };
 
 export const list = query({
   args: { channelId: v.id("channels"), paginationOpts: paginationOptsValidator },
@@ -277,20 +312,15 @@ export const list = query({
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
     if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) return EMPTY_PAGE;
 
-    const hidden = await windowsByTarget(ctx, me._id);
-    const isFirstPage = !paginationOpts.cursor;
-    const cacheKey = channelPageKey(channelId, paginationOpts.numItems);
-    if (isFirstPage) {
-      try {
-        const { cacheGetJson } = await import("./cache");
-        const cached = await cacheGetJson<any>(cacheKey);
-        if (cached) return { ...cached, page: withoutHidden(hidden, cached.page as PageMessage[]) };
-      } catch {}
-    }
+    // Without Read Message History a member starts where they last opened the channel; a member who
+    // has never opened it yet sees nothing.
+    const floor = await historyFloorFor(ctx, channelId, me._id, perms);
+    if (floor.restricted && floor.after === Number.POSITIVE_INFINITY) return EMPTY_PAGE;
 
+    const hidden = await windowsByTarget(ctx, me._id);
     const page = await ctx.db
       .query("channelMessages")
-      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+      .withIndex("by_channel", (q) => (floor.restricted ? q.eq("channelId", channelId).gt("_creationTime", floor.after) : q.eq("channelId", channelId)))
       .order("desc")
       .paginate(paginationOpts);
 
@@ -307,10 +337,14 @@ export const list = query({
         const author = authors.get(message.authorId) ?? null;
         const decoration = decorations.get(message.authorId);
         const serverProfile = decoration?.serverProfile;
-        const attachmentRows = await ctx.db
-          .query("channelMessageAttachments")
-          .withIndex("by_message", (q) => q.eq("messageId", message._id))
-          .collect();
+        // Known to have none (set on write): no lookup. Unset on older messages, which are looked up.
+        const attachmentRows =
+          message.hasAttachments === false
+            ? []
+            : await ctx.db
+                .query("channelMessageAttachments")
+                .withIndex("by_message", (q) => q.eq("messageId", message._id))
+                .collect();
         const attachments = await Promise.all(
           attachmentRows.map(async (attachment) => {
             const anyAtt = attachment as unknown as { storageId?: string; cdnUrl?: string; cdnKey?: string };
@@ -341,7 +375,7 @@ export const list = query({
           editedAt: message.editedAt ?? null,
           // A forwarded copy carries its author's name, but it isn't theirs to edit or delete here.
           isMine: message.authorId === me._id && !message.forwardedFrom,
-          replyTo: await resolveReplyPreview(ctx, message.replyToId),
+          replyTo: await resolveReplyPreview(ctx, message.replyToId, floor),
           /** Idempotency key of the send that made this row — see the twin in
            * convex/messages.ts and src/lib/outbox-overlay.ts. */
           clientId: message.clientId ?? null,
@@ -370,19 +404,13 @@ export const list = query({
           forwardedFrom: message.forwardedFrom ?? null,
           noEmbeds: message.noEmbeds ?? false,
           reactions: await reactionsFor(ctx, message._id, me._id),
+          /** Poll, voice message, sticker and text-to-speech flag — see lib/messageExtras.ts. */
+          ...(await messageExtras(ctx, message)),
         };
       })
     );
 
-    const result = { ...page, page: messages };
-    if (isFirstPage) {
-      try {
-        const { cacheSetJson } = await import("./cache");
-        // The unfiltered page: it is shared, so the filter below is per viewer.
-        await cacheSetJson(cacheKey, result, 30);
-      } catch {}
-    }
-    return { ...result, page: withoutHidden(hidden, result.page) };
+    return { ...page, page: withoutHidden(hidden, messages) };
   },
 });
 
@@ -437,6 +465,25 @@ const sendArgs = {
   enc: v.optional(encValidator),
   /** Who the message pings, in the clear — the server can't read `enc`. Only kept with `enc`. */
   mentions: v.optional(mentionsValidator),
+  /** Read aloud to people with the channel open. Takes Send TTS; refused otherwise. */
+  tts: v.optional(v.boolean()),
+  /** The one audio attachment is a recording. Takes Send Voice Messages, not Attach Files. */
+  voiceMessage: v.optional(v.object({ durationMs: v.number(), waveform: v.array(v.number()) })),
+  /**
+   * A poll on the message. Takes Create Polls. In an end-to-end encrypted channel the words travel
+   * inside `enc` and only `optionCount` is sent here; otherwise `question` and `options` are.
+   */
+  poll: v.optional(
+    v.object({
+      question: v.optional(v.string()),
+      options: v.optional(v.array(v.string())),
+      optionCount: v.optional(v.number()),
+      multi: v.optional(v.boolean()),
+      durationMs: v.optional(v.number()),
+    }),
+  ),
+  /** A community sticker as the message. One from another community takes Use External Stickers. */
+  stickerId: v.optional(v.id("communityStickers")),
 };
 export type SendArgs = ObjectType<typeof sendArgs>;
 
@@ -448,12 +495,46 @@ export type SendArgs = ObjectType<typeof sendArgs>;
 export async function sendChannelMessage(
   ctx: MutationCtx,
   me: Doc<"users">,
-  { channelId, text, attachments, replyToId, pingReply, clientId, enc, mentions }: SendArgs,
-  opts: { permissionChecked?: boolean; /** Already validated by `validateEmbeds`. Only the Bot API passes these. */ embeds?: Embed[]; /** Already validated by `validateComponents`. */ components?: ActionRow[] } = {}
+  { channelId, text, attachments, replyToId, pingReply, clientId, enc, mentions, tts, voiceMessage, poll, stickerId }: SendArgs,
+  opts: {
+    permissionChecked?: boolean;
+    /** Already validated by `validateEmbeds`. Only the Bot API passes these. */
+    embeds?: Embed[];
+    /** Already validated by `validateComponents`. */
+    components?: ActionRow[];
+  } = {}
 ): Promise<Id<"channelMessages">> {
+  const channelRow = await ctx.db.get(channelId);
+  if (!channelRow) throw new Error("Channel not found.");
+  const community = await requireCommunity(ctx, channelRow.communityId);
+  // What the sender's own account holds here, a bot's included (its grant is checked by the Bot API
+  // before it gets this far, and only ever narrows this).
+  const perms = await getChannelPermissions(ctx, community, channelId, me._id);
+  const deny = (what: string): never => {
+    throw new Error(`You don't have permission to ${what} here.`);
+  };
   if (!opts.permissionChecked) {
-    await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.SEND_MESSAGES);
-    if (attachments?.length) await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.ATTACH_FILES);
+    if (!can(perms, PERMISSIONS.SEND_MESSAGES)) throw new Error("You don't have permission to do that.");
+    // A voice message is its own permission, and doesn't need Attach Files.
+    if (attachments?.length && !voiceMessage && !can(perms, PERMISSIONS.ATTACH_FILES)) throw new Error("You don't have permission to do that.");
+  }
+  // These are checked whoever is sending, the Bot API included.
+  if (voiceMessage && !can(perms, PERMISSIONS.SEND_VOICE_MESSAGES)) deny("send voice messages");
+  if (poll && !can(perms, PERMISSIONS.CREATE_POLLS)) deny("create polls");
+  if (tts && !can(perms, PERMISSIONS.SEND_TTS)) deny("send text-to-speech messages");
+  if (stickerId) {
+    const sticker = await ctx.db.get(stickerId);
+    if (!sticker) throw new Error("That sticker doesn't exist any more.");
+    if (sticker.communityId !== channelRow.communityId) {
+      // Another community's sticker is only usable by someone who is in that community, as well as
+      // being allowed external stickers here — otherwise any id would do.
+      const membership = await ctx.db
+        .query("communityMembers")
+        .withIndex("by_community_user", (q) => q.eq("communityId", sticker.communityId).eq("userId", me._id))
+        .unique();
+      if (!membership) throw new Error("You can only use stickers from communities you're in.");
+      if (!can(perms, PERMISSIONS.USE_EXTERNAL_STICKERS)) throw new Error("You can't use stickers from other communities here.");
+    }
   }
   // Staff can take sending away from an account; a bot's user is never limited, so this
   // only ever stops a person (including one a bot acts for, which re-reads the row).
@@ -473,7 +554,8 @@ export async function sendChannelMessage(
   assertPlaintextAllowed({
     author: me,
     hasEnc: !!enc,
-    hasPlaintext: !!text?.trim() || !!opts.embeds?.length || !!opts.components?.length,
+    // A plaintext poll's question and options are as readable to the server as text is.
+    hasPlaintext: !!text?.trim() || !!opts.embeds?.length || !!opts.components?.length || (!!poll && !enc),
     plaintextRoom,
   });
 
@@ -487,9 +569,17 @@ export async function sendChannelMessage(
 
   const trimmed = text?.trim();
   // An encrypted body can't be checked for emptiness here; the sender's client does.
-  if (!enc && !trimmed && (!attachments || attachments.length === 0) && !opts.embeds?.length && !opts.components?.length) {
+  if (!enc && !trimmed && (!attachments || attachments.length === 0) && !opts.embeds?.length && !opts.components?.length && !poll && !stickerId) {
     throw new Error("Message needs text, an attachment, an embed or buttons.");
   }
+  if (tts && !enc && !trimmed) throw new Error("There's nothing to read aloud.");
+  // A sticker, a poll and a recording are each a message of their own kind.
+  if ((stickerId ? 1 : 0) + (poll ? 1 : 0) + (voiceMessage ? 1 : 0) > 1) throw new Error("A message can be a sticker, a poll or a voice message, not a mix.");
+  if (stickerId && (trimmed || enc || attachments?.length || tts)) throw new Error("A sticker is sent on its own.");
+  if (poll && attachments?.length) throw new Error("A poll can't carry attachments.");
+  if (voiceMessage && (tts || trimmed)) throw new Error("A voice message can't carry text.");
+  const cleanPollDoc = poll ? cleanPoll(poll, Date.now(), !!enc) : undefined;
+  const cleanVoice = voiceMessage ? cleanVoiceMessage(voiceMessage, attachments ?? [], { hasText: !!trimmed || !!enc }) : undefined;
   if (enc) await validateEnvelope(ctx, enc, { scope: "channel", channelId }, "send");
   const cleanMentions = enc
     ? await validateMentions(
@@ -518,15 +608,22 @@ export async function sendChannelMessage(
       ? replyTarget.authorId
       : null;
 
-  // Links only unfurl for someone who may embed them. A bot's caller has checked its own
-  // permissions, and a person's are read here once for the one flag the list can't derive later.
-  const noEmbeds =
-    !opts.permissionChecked && !(await channelPermitted(ctx, channelId, me._id, PERMISSIONS.EMBED_LINKS));
+  // Links only unfurl for someone who may embed them. Recorded on the row because the list can't
+  // derive it later, once the sender's roles have changed.
+  const noEmbeds = !can(perms, PERMISSIONS.EMBED_LINKS);
+
+  // Last, so a send refused for any other reason doesn't use up the sender's turn.
+  await enforceSlowmode(ctx, channelRow, me._id, "message", perms);
 
   const messageId = await ctx.db.insert("channelMessages", {
     channelId,
     authorId: me._id,
+    hasAttachments: (attachments?.length ?? 0) > 0,
     ...(noEmbeds ? { noEmbeds: true } : {}),
+    ...(tts ? { tts: true } : {}),
+    ...(cleanVoice ? { voiceMessage: cleanVoice } : {}),
+    ...(cleanPollDoc ? { poll: cleanPollDoc } : {}),
+    ...(stickerId ? { stickerId } : {}),
     // Never both: an encrypted row has no `text`, `embeds` or `components`.
     text: enc ? undefined : trimmed || undefined,
     replyToId: validReplyToId,
@@ -544,6 +641,7 @@ export async function sendChannelMessage(
   // Denormalised so unread state is a field comparison rather than a
   // "newest message" query per channel — see the schema.
   if (channel) await ctx.db.patch(channelId, { lastMessageAt: Date.now() });
+  if (channel && !me.isBot) await recordMessageSent(ctx, channel.communityId, me._id);
   // Having just written it, I've read it.
   if (channel) await markChannelRead(ctx, channelId, channel.communityId, me._id);
 
@@ -562,13 +660,13 @@ export async function sendChannelMessage(
         ? await resolveChannelMentions(ctx, channel.communityId, trimmed, me._id)
         : [];
 
-  if (channel && (trimmed || enc)) {
+  if (channel && (trimmed || enc || cleanPollDoc)) {
     // Rendered once and shared by both notifications below — it's a plain
     // text body, so the `<@id>` tags have to become readable names here;
     // nothing downstream of this renders them. Never for an encrypted message:
     // its notifications say only that something arrived (`notifyUsers` enforces
     // the same once E2EE_ENFORCE=1).
-    const bodyText = enc ? undefined : await renderMentionsAsText(ctx, trimmed!);
+    const bodyText = enc ? undefined : trimmed ? await renderMentionsAsText(ctx, trimmed) : `Poll: ${cleanPollDoc?.question ?? ""}`;
 
     if (mentioned.length > 0) {
       await notifyUsers(ctx, {
@@ -645,7 +743,7 @@ export async function sendChannelMessage(
         communityId: channel.communityId,
         channelMessageId: messageId,
         title: `${me.name} replied to you in #${channel.name}`,
-        body: enc ? undefined : trimmed ? await renderMentionsAsText(ctx, trimmed) : "Sent an attachment",
+        body: enc ? undefined : trimmed ? await renderMentionsAsText(ctx, trimmed) : cleanPollDoc ? "Created a poll" : stickerId ? "Sent a sticker" : cleanVoice ? "Sent a voice message" : "Sent an attachment",
         encrypted: !!enc,
       });
     }
@@ -762,6 +860,12 @@ export const update = mutation({
     if (message.authorId !== me._id) throw new Error("You can only edit your own messages.");
     // A copy delivered by following an announcements channel carries its author's name but isn't theirs to change here.
     if (message.forwardedFrom) throw new Error("A forwarded announcement can't be edited.");
+    // A poll's words, a recording and a sticker aren't text; an edit would only ever damage them.
+    if (message.poll || message.voiceMessage || message.stickerId) throw new Error("This kind of message can't be edited.");
+    // Whether its links unfurl follows what the author may do now, so an edit can't smuggle a link
+    // past an Embed Links they have lost since sending (the text may be encrypted: it can't be told).
+    const embeds = await channelPermitted(ctx, message.channelId, me._id, PERMISSIONS.EMBED_LINKS);
+    if (!embeds !== (message.noEmbeds ?? false)) await ctx.db.patch(message._id, { noEmbeds: embeds ? undefined : true });
     if (enc) {
       await editChannelMessage(ctx, message, { enc, mentions });
       return;
@@ -782,6 +886,7 @@ export async function deleteChannelMessage(ctx: MutationCtx, message: Doc<"chann
     await releaseFile(ctx, attachment);
   }
   for (const reaction of reactions) await ctx.db.delete(reaction._id);
+  await dropPollVotes(ctx, message._id);
   await ctx.db.delete(message._id);
   const channel = await ctx.db.get(message.channelId);
   if (channel) await fireCommunityEvent(ctx, channel.communityId, "message.deleted", { channelId: channel._id, messageId: message._id }, { scope: "messages.read", channelId: channel._id, exceptUserId: by });
@@ -794,10 +899,16 @@ export const remove = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) return;
 
-    if (message.authorId !== me._id) {
+    const byModerator = message.authorId !== me._id;
+    if (byModerator) {
       await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.MANAGE_MESSAGES);
     }
     await deleteChannelMessage(ctx, message, me._id);
+    if (byModerator) {
+      // Who wrote it and where — never what it said.
+      const [channel, author] = await Promise.all([ctx.db.get(message.channelId), ctx.db.get(message.authorId)]);
+      if (channel) await logCommunityAudit(ctx, { communityId: channel.communityId, actorId: me._id, action: "message.delete", target: { type: "user", id: message.authorId, name: author?.name }, details: `In #${channel.name}` });
+    }
   },
 });
 
@@ -824,6 +935,22 @@ export async function setChannelReaction(ctx: MutationCtx, message: Doc<"channel
   return changed;
 }
 
+/**
+ * What adding a reaction takes, for a person and for a bot alike: another community's emoji needs
+ * Use External Emojis, and an emoji nobody has put on the message yet needs Add Reactions.
+ * Reacting with one already there (joining in) is always allowed, as is taking your own away.
+ */
+export async function requireMayReact(ctx: QueryCtx, message: Doc<"channelMessages">, userId: Id<"users">, emoji: string): Promise<void> {
+  await requireOwnCommunityEmoji(ctx, message.channelId, userId, emoji);
+  const used = await ctx.db
+    .query("channelMessageReactions")
+    .withIndex("by_message", (q) => q.eq("messageId", message._id))
+    .collect();
+  if (!used.some((r) => r.emoji === emoji)) {
+    await requireChannelPerm(ctx, message.channelId, userId, PERMISSIONS.ADD_REACTIONS);
+  }
+}
+
 export const toggleReaction = mutation({
   args: {
     messageId: v.id("channelMessages"),
@@ -837,18 +964,11 @@ export const toggleReaction = mutation({
     const message = await ctx.db.get(messageId);
     if (!message) throw new Error("Message not found.");
     await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
+    // Nor can a message be reacted to that the member can't read.
+    if (!withinHistory(await channelHistoryFloor(ctx, message.channelId, me._id), message._creationTime)) throw new Error("Message not found.");
     // Reacting with something already on the message is always allowed; a reaction nobody has
     // used yet is a new one, and takes Add Reactions. Taking your own away never does.
-    if (desired !== "remove") {
-      await requireOwnCommunityEmoji(ctx, message.channelId, me._id, emoji);
-      const used = await ctx.db
-        .query("channelMessageReactions")
-        .withIndex("by_message", (q) => q.eq("messageId", messageId))
-        .collect();
-      if (!used.some((r) => r.emoji === emoji)) {
-        await requireChannelPerm(ctx, message.channelId, me._id, PERMISSIONS.ADD_REACTIONS);
-      }
-    }
+    if (desired !== "remove") await requireMayReact(ctx, message, me._id, emoji);
     await setChannelReaction(ctx, message, me._id, emoji, desired);
   },
 });
@@ -890,15 +1010,16 @@ export const listPinned = query({
   handler: async (ctx, { channelId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
+    // Pins from before a member's history starts are as unreadable as the rest of it.
+    const floor = await channelHistoryFloor(ctx, channelId, me._id);
 
     const pinned = await ctx.db
       .query("channelMessages")
-      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-      .filter((q) => q.neq(q.field("pinnedAt"), undefined))
+      .withIndex("by_channel_pinned", (q) => q.eq("channelId", channelId).gt("pinnedAt", 0))
+      .order("desc")
       .collect();
-    pinned.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
     const hidden = await windowsByTarget(ctx, me._id);
-    const visible = pinned.filter((m) => !isMessageHidden(hidden, m.authorId, m._creationTime));
+    const visible = pinned.filter((m) => withinHistory(floor, m._creationTime) && !isMessageHidden(hidden, m.authorId, m._creationTime));
 
     return Promise.all(
       visible.map(async (message) => {
@@ -930,10 +1051,12 @@ export const listAttachments = query({
   handler: async (ctx, { channelId, paginationOpts }) => {
     const me = await getCurrentUserOrThrow(ctx);
     await requireChannelPerm(ctx, channelId, me._id, PERMISSIONS.VIEW_CHANNELS);
+    const floor = await channelHistoryFloor(ctx, channelId, me._id);
+    if (floor.restricted && floor.after === Number.POSITIVE_INFINITY) return EMPTY_PAGE;
 
     const page = await ctx.db
       .query("channelMessages")
-      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+      .withIndex("by_channel", (q) => (floor.restricted ? q.eq("channelId", channelId).gt("_creationTime", floor.after) : q.eq("channelId", channelId)))
       .order("desc")
       .paginate(paginationOpts);
 

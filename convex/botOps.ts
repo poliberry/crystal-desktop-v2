@@ -7,11 +7,15 @@ import { internalMutation, type MutationCtx, type QueryCtx } from "./_generated/
 import {
   deleteChannelMessage,
   editChannelMessage,
+  requireMayReact,
   sendChannelMessage,
   setChannelReaction,
 } from "./channelMessages";
+import { SlowmodeError } from "./lib/slowmodePure";
 import { createChannelRow, deleteChannelCascade } from "./channels";
 import { disconnectFromAllVoice, freshInviteCode, removeMembership } from "./communities";
+import { auditUserTarget, logCommunityAudit } from "./lib/communityAudit";
+import { describeDuration } from "./lib/communityAuditActions";
 import { dmKeyFor } from "./conversations";
 import { describeMessage, fireChannelEvent, fireVoiceEvent } from "./lib/botEvents";
 import { BotApiError, audit, communityPermissions, fail, loadActing, permissionsIn, requirePermission, requireScope, spendRate, type Acting } from "./lib/botAccess";
@@ -24,9 +28,12 @@ import { validateEmbeds } from "./lib/embeds";
 import { isSuppressing } from "./lib/blocking";
 import { notifyUsers } from "./notifications";
 import { applyBotPresence, type BotActivity, type BotStatus } from "./presence";
-import { PERMISSIONS, getBasePermissions, getHighestRolePosition, requireAbove } from "./permissions";
+import { PERMISSIONS, can, getBasePermissions, getChannelPermissions, getHighestRolePosition, requireAbove } from "./permissions";
 import { MAX_SOUND_BYTES } from "./uploadLimits";
 import { releaseUrl } from "./lib/files";
+import { loadMemberVoiceAccess, scheduleVoiceSync } from "./lib/voiceAccess";
+import { resolveVoiceGrant, voiceGrantKey } from "./lib/voiceGrant";
+import { removeVoiceRow } from "./lib/voiceState";
 import { effectiveFileType } from "./lib/mediaType";
 import { fingerprintOf } from "./lib/e2eeCrypto";
 
@@ -117,6 +124,16 @@ async function inChannel(ctx: MutationCtx, req: Req): Promise<{ acting: Acting; 
   // A channel the bot can't see doesn't exist, as far as it is concerned.
   if (!holds(perms, PERMISSIONS.VIEW_CHANNELS)) return fail(404, "That channel wasn't found.");
   return { acting, channel, perms };
+}
+
+/**
+ * Whether the bot's own account, in this channel, holds a permission that is not one a bot can be
+ * granted (Attach Files, Embed Links, Read Message History…). A bot has no grant to cut these down,
+ * but a channel's overwrites and the @everyone role still apply to its account like any member's, so
+ * a channel that forbids files, cards or reading back is just as closed to a bot.
+ */
+async function accountHolds(ctx: QueryCtx, acting: Acting, channel: Doc<"channels">, flag: number, what: string): Promise<void> {
+  if (!can(await getChannelPermissions(ctx, acting.community, channel._id, acting.bot.userId), flag)) fail(403, `This channel doesn't allow the bot to ${what}.`);
 }
 
 async function messageIn(ctx: MutationCtx, channel: Doc<"channels">, raw: string): Promise<Doc<"channelMessages">> {
@@ -436,6 +453,7 @@ const ops: Record<string, Handler> = {
   async "message.list"(ctx, req) {
     const { acting, channel } = await inChannel(ctx, req);
     requireScope(acting, "messages.read");
+    await accountHolds(ctx, acting, channel, PERMISSIONS.READ_MESSAGE_HISTORY, "read this channel's history");
     const cursor = req.query.before ? await ctx.db.get(ident(ctx, "channelMessages", req.query.before, "That message")) : null;
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
     const rows = await ctx.db.query("channelMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).order("desc").filter((q) => (cursor ? q.lt(q.field("_creationTime"), cursor._creationTime) : true)).take(limit);
@@ -445,6 +463,7 @@ const ops: Record<string, Handler> = {
   async "message.get"(ctx, req) {
     const { acting, channel } = await inChannel(ctx, req);
     requireScope(acting, "messages.read");
+    await accountHolds(ctx, acting, channel, PERMISSIONS.READ_MESSAGE_HISTORY, "read this channel's history");
     return { data: await describeMessage(ctx, await messageIn(ctx, channel, req.params.messageId), acting.bot._id) };
   },
 
@@ -458,6 +477,8 @@ const ops: Record<string, Handler> = {
     const components = enc ? [] : valid(() => validateComponents(req.body.components));
     const filesIn = req.body.files === undefined ? [] : Array.isArray(req.body.files) ? req.body.files : fail(400, "`files` is a list.");
     if (filesIn.length > BOT_MESSAGE.files) return fail(400, `A message can carry up to ${BOT_MESSAGE.files} files.`);
+    if (filesIn.length) await accountHolds(ctx, acting, channel, PERMISSIONS.ATTACH_FILES, "attach files");
+    if (embeds.length) await accountHolds(ctx, acting, channel, PERMISSIONS.EMBED_LINKS, "send embeds");
     const attachments = [];
     for (const f of filesIn as Json[]) {
       const up = await checkedUpload(ctx, f?.storageId, { types: /^(image|audio|video|text|application)\/[\w.+-]+$/, maxBytes: BOT_FILE_BYTES, what: "A file" });
@@ -470,7 +491,16 @@ const ops: Record<string, Handler> = {
     if (content && MENTIONS_EVERYONE.test(content)) requirePermission(perms, PERMISSIONS.MENTION_EVERYONE, "mention everyone or a role");
     const reply = typeof req.body.replyToId === "string" ? ctx.db.normalizeId("channelMessages", req.body.replyToId) : null;
     await spendRate(ctx, req.botId, "send");
-    const id = await sendChannelMessage(ctx, acting.botUser, { channelId: channel._id, text: content, enc, replyToId: reply ?? undefined, pingReply: req.body.pingReply !== false, attachments: attachments.length ? attachments : undefined }, { permissionChecked: true, embeds, components });
+    let id: Id<"channelMessages">;
+    try {
+      // Polls, stickers, voice messages and text-to-speech are not offered to bots: none of the
+      // arguments for them is passed on, so the permissions behind them can't be got around here.
+      id = await sendChannelMessage(ctx, acting.botUser, { channelId: channel._id, text: content, enc, replyToId: reply ?? undefined, pingReply: req.body.pingReply !== false, attachments: attachments.length ? attachments : undefined }, { permissionChecked: true, embeds, components });
+    } catch (e) {
+      // Slowmode applies to a bot unless its grant includes Manage Messages / Manage Channels.
+      if (e instanceof SlowmodeError) return fail(429, e.message);
+      throw e;
+    }
     return { status: 201, data: { id } };
   },
 
@@ -521,6 +551,11 @@ const ops: Record<string, Handler> = {
     const emoji = req.params.emoji.trim();
     if (emoji.length < 1 || emoji.length > 64 || /\s/.test(emoji)) return fail(400, "That isn't an emoji.");
     const message = await messageIn(ctx, channel, req.params.messageId);
+    try {
+      await requireMayReact(ctx, message, acting.bot.userId, emoji);
+    } catch (e) {
+      return fail(403, e instanceof Error ? e.message : "This bot can't react here.");
+    }
     await spendRate(ctx, req.botId, "send");
     await setChannelReaction(ctx, message, acting.bot.userId, emoji, "add");
     return { data: { ok: true } };
@@ -544,6 +579,7 @@ const ops: Record<string, Handler> = {
   async "pin.list"(ctx, req) {
     const { acting, channel } = await inChannel(ctx, req);
     requireScope(acting, "messages.read");
+    await accountHolds(ctx, acting, channel, PERMISSIONS.READ_MESSAGE_HISTORY, "read this channel's history");
     const pinned = await ctx.db.query("channelMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).filter((q) => q.neq(q.field("pinnedAt"), undefined)).take(100);
     pinned.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
     return { data: { messages: await Promise.all(pinned.map((m) => describeMessage(ctx, m, acting.bot._id))) } };
@@ -612,7 +648,9 @@ const ops: Record<string, Handler> = {
     const a = await community(ctx, req);
     requirePermission(communityPermissions(a), PERMISSIONS.KICK_MEMBERS, "remove members");
     const target = await memberBelow(ctx, a, req.params.userId);
+    const who = await auditUserTarget(ctx, target);
     await removeMembership(ctx, a.community._id, target);
+    await logCommunityAudit(ctx, { communityId: a.community._id, actorId: a.bot.userId, action: "member.kick", target: who });
     return { data: { ok: true } };
   },
 
@@ -624,6 +662,7 @@ const ops: Record<string, Handler> = {
     const member = (await ctx.db.query("communityMembers").withIndex("by_community_user", (q) => q.eq("communityId", a.community._id).eq("userId", target)).unique())!;
     await ctx.db.patch(member._id, { timeoutUntil: seconds > 0 ? Date.now() + seconds * 1000 : undefined });
     if (seconds > 0) await disconnectFromAllVoice(ctx, a.community._id, target);
+    await logCommunityAudit(ctx, { communityId: a.community._id, actorId: a.bot.userId, action: seconds > 0 ? "member.timeout" : "member.timeout_lift", target: await auditUserTarget(ctx, target), details: seconds > 0 ? describeDuration(seconds * 1000) : undefined });
     return { data: { ok: true } };
   },
 
@@ -637,7 +676,10 @@ const ops: Record<string, Handler> = {
     const g = grantableToRole(eff, role.permissions, 0);
     if (!g.ok) return fail(403, "That role has permissions the bot doesn't have, so the bot can't give it.");
     const has = (await ctx.db.query("memberRoles").withIndex("by_member", (q) => q.eq("communityId", a.community._id).eq("userId", target)).collect()).some((m) => m.roleId === role._id);
-    if (!has) await ctx.db.insert("memberRoles", { communityId: a.community._id, userId: target, roleId: role._id });
+    if (!has) {
+      await ctx.db.insert("memberRoles", { communityId: a.community._id, userId: target, roleId: role._id });
+      await logCommunityAudit(ctx, { communityId: a.community._id, actorId: a.bot.userId, action: "role.assign", target: await auditUserTarget(ctx, target), details: `Role: ${role.name}` });
+    }
     return { data: { ok: true } };
   },
 
@@ -647,7 +689,10 @@ const ops: Record<string, Handler> = {
     const target = await memberBelow(ctx, a, req.params.userId);
     const role = await roleBelow(ctx, a, req.params.roleId);
     const row = (await ctx.db.query("memberRoles").withIndex("by_member", (q) => q.eq("communityId", a.community._id).eq("userId", target)).collect()).find((m) => m.roleId === role._id);
-    if (row) await ctx.db.delete(row._id);
+    if (row) {
+      await ctx.db.delete(row._id);
+      await logCommunityAudit(ctx, { communityId: a.community._id, actorId: a.bot.userId, action: "role.unassign", target: await auditUserTarget(ctx, target), details: `Role: ${role.name}` });
+    }
     return { data: { ok: true } };
   },
 
@@ -665,7 +710,9 @@ const ops: Record<string, Handler> = {
     const target = await memberBelow(ctx, a, req.params.userId, { allowNonMember: true });
     const existing = await ctx.db.query("communityBans").withIndex("by_community_user", (q) => q.eq("communityId", a.community._id).eq("userId", target)).unique();
     if (!existing) await ctx.db.insert("communityBans", { communityId: a.community._id, userId: target, bannedBy: a.bot.userId, reason, createdAt: Date.now() });
+    const who = await auditUserTarget(ctx, target);
     await removeMembership(ctx, a.community._id, target);
+    await logCommunityAudit(ctx, { communityId: a.community._id, actorId: a.bot.userId, action: "member.ban", target: who, details: reason ? `Reason: ${reason}` : undefined });
     return { data: { ok: true } };
   },
 
@@ -674,7 +721,10 @@ const ops: Record<string, Handler> = {
     requirePermission(communityPermissions(a), PERMISSIONS.BAN_MEMBERS, "lift bans");
     const target = ident(ctx, "users", req.params.userId, "That person");
     const ban = await ctx.db.query("communityBans").withIndex("by_community_user", (q) => q.eq("communityId", a.community._id).eq("userId", target)).unique();
-    if (ban) await ctx.db.delete(ban._id);
+    if (ban) {
+      await ctx.db.delete(ban._id);
+      await logCommunityAudit(ctx, { communityId: a.community._id, actorId: a.bot.userId, action: "member.unban", target: await auditUserTarget(ctx, target) });
+    }
     return { data: { ok: true } };
   },
 
@@ -831,8 +881,12 @@ const ops: Record<string, Handler> = {
     // A bot is in one voice channel at a time, as a person is.
     const elsewhere = await ctx.db.query("channelCallParticipants").collect();
     for (const row of elsewhere) if (row.userId === acting.bot.userId && row.channelId !== channel._id) await ctx.runMutation(internal.channels.recordVoiceLeave, { channelId: row.channelId, userId: row.userId });
-    await ctx.runMutation(internal.channels.recordVoiceJoin, { channelId: channel._id, userId: acting.bot.userId });
-    return { data: { channelId: channel._id, userId: acting.bot.userId, name: acting.bot.name, canSpeak: true } };
+    // What the room lets it send: the same rules as a person (Speak for the microphone, a stage's audience listens),
+    // minus video — a bot never gets a camera or a screen. The token is minted from this by botVoice.join.
+    const access = await loadMemberVoiceAccess(ctx, acting.community, channel, acting.bot.userId);
+    const grant = resolveVoiceGrant({ ...access.input, canVideo: false });
+    await ctx.runMutation(internal.channels.recordVoiceJoin, { channelId: channel._id, userId: acting.bot.userId, grantKey: voiceGrantKey(grant), stageSpeaker: grant.stageSpeaker });
+    return { data: { channelId: channel._id, userId: acting.bot.userId, name: acting.bot.name, grant } };
   },
 
   async "voice.leave"(ctx, req) {
@@ -867,6 +921,8 @@ const ops: Record<string, Handler> = {
     const row = await ctx.db.query("channelCallParticipants").withIndex("by_channel_user", (q) => q.eq("channelId", channel._id).eq("userId", target)).unique();
     if (!row) return fail(404, "That person isn't in this voice channel.");
     await ctx.db.patch(row._id, { ...(wantsMute ? { serverMuted: req.body.serverMuted === true } : {}), ...(wantsDeaf ? { serverDeafened: req.body.serverDeafened === true } : {}) });
+    // Held by the room, not just by the person's app: their publish / subscribe rights are rewritten now.
+    await scheduleVoiceSync(ctx, { communityId: channel.communityId, channelId: channel._id, userId: target });
     return { data: { ok: true } };
   },
 
@@ -876,7 +932,8 @@ const ops: Record<string, Handler> = {
     const target = await memberBelow(ctx, acting, req.params.userId, { skipHierarchy: true });
     const row = await ctx.db.query("channelCallParticipants").withIndex("by_channel_user", (q) => q.eq("channelId", channel._id).eq("userId", target)).unique();
     if (row) {
-      await ctx.db.delete(row._id);
+      // Ends their connection to the room as well as removing them from the channel's list.
+      await removeVoiceRow(ctx, row, { evict: true });
       await fireVoiceEvent(ctx, channel._id, target, "left");
     }
     return { data: { ok: true } };

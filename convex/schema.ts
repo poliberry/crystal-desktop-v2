@@ -948,6 +948,8 @@ export default defineSchema({
     mentions: v.optional(e2eeMentionsValidator),
   })
     .index("by_conversation", ["conversationId"])
+    // Pinned messages of a conversation without reading all of it (`pinnedAt` unset sorts first).
+    .index("by_conversation_pinned", ["conversationId", "pinnedAt"])
     .index("by_client_id", ["clientId"])
     // Finding everything one person wrote: their data export and account deletion.
     .index("by_author", ["authorId"])
@@ -1163,6 +1165,11 @@ export default defineSchema({
   communities: defineTable({
     name: v.string(),
     ownerId: v.id("users"),
+    /** How many `communityMembers` rows the community has, kept by `adjustMemberCount`
+     * (convex/lib/memberCount.ts) so a rail badge needn't read every member. Unset until a
+     * community is created with it or backfilled (`communities.backfillMemberCounts`): readers
+     * count the rows themselves then. */
+    memberCount: v.optional(v.number()),
     imageUrl: v.optional(v.string()),
     iconStorageId: v.optional(v.id("_storage")),
     createdAt: v.number(),
@@ -1247,7 +1254,9 @@ export default defineSchema({
     hoist: v.optional(v.boolean()),
   })
     .index("by_community", ["communityId"])
-    .index("by_community_position", ["communityId", "position"]),
+    .index("by_community_position", ["communityId", "position"])
+    // The @everyone role, read on every permission check.
+    .index("by_community_everyone", ["communityId", "isEveryone"]),
 
   memberRoles: defineTable({
     communityId: v.id("communities"),
@@ -1316,6 +1325,18 @@ export default defineSchema({
      */
     isLounge: v.optional(v.boolean()),
     /**
+     * A voice channel that is a **stage**: the audience joins listen-only and can raise a hand
+     * (Request to Speak); members with Mute Members bring people up to speak, or send them back.
+     * A flag on a voice channel for the same reason `isLounge` is — it is the same LiveKit room and
+     * the same participant rows, with the publish grant held back for the audience.
+     */
+    isStage: v.optional(v.boolean()),
+    /** The line under a voice channel's name ("Playing ranked"); cleared when the last person leaves.
+     * Set with Set Voice Status. */
+    voiceStatus: v.optional(v.string()),
+    voiceStatusBy: v.optional(v.id("users")),
+    voiceStatusAt: v.optional(v.number()),
+    /**
      * A text channel that is an **announcements** channel: ordinarily only people with a say
      * post in it (@everyone is denied Send Messages when it is made), and other people and
      * communities can follow it — into their Home newsfeed, or into a channel of their own
@@ -1379,6 +1400,10 @@ export default defineSchema({
     loungeTopic: v.optional(v.string()),
     loungeTopicBy: v.optional(v.id("users")),
     loungeTopicAt: v.optional(v.number()),
+    /** Slowmode: seconds a member must wait between messages here (and between forum posts, and
+     * between replies). Absent or 0 is off. People with Bypass Slowmode, Manage Messages or Manage
+     * Channels are exempt — see convex/lib/slowmode.ts. */
+    slowmodeSeconds: v.optional(v.number()),
   })
     .index("by_community", ["communityId"])
     .index("by_community_position", ["communityId", "position"]),
@@ -1700,6 +1725,9 @@ export default defineSchema({
     replyCount: v.number(),
     pinned: v.boolean(),
     locked: v.boolean(),
+    /** A private thread: only its author, the people invited (`forumPostMembers`) and whoever
+     * moderates threads can see or reply to it. Absent is a public post. */
+    private: v.optional(v.boolean()),
   })
     .index("by_channel_activity", ["channelId", "lastActivityAt"])
     .index("by_channel_pinned", ["channelId", "pinned", "lastActivityAt"]),
@@ -1710,6 +1738,17 @@ export default defineSchema({
     text: v.string(),
     createdAt: v.number(),
   }).index("by_post", ["postId", "createdAt"]),
+
+  /** Who has been invited into a private thread (its author is implicit and has no row). */
+  forumPostMembers: defineTable({
+    postId: v.id("forumPosts"),
+    userId: v.id("users"),
+    addedBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_post", ["postId"])
+    .index("by_post_user", ["postId", "userId"])
+    .index("by_user", ["userId"]),
 
   // --- Clans and the calendar ---------------------------------------------------------
 
@@ -1952,6 +1991,9 @@ export default defineSchema({
     channelId: v.id("channels"),
     authorId: v.id("users"),
     text: v.optional(v.string()),
+    /** Whether any `channelMessageAttachments` rows belong to this message, so a list can skip
+     * looking. Unset on messages sent before this existed: unknown, so they are looked up. */
+    hasAttachments: v.optional(v.boolean()),
     editedAt: v.optional(v.number()),
     pinnedAt: v.optional(v.number()),
     /** The message this one is a reply to, in the same channel. See the twin
@@ -2002,6 +2044,31 @@ export default defineSchema({
     mentions: v.optional(e2eeMentionsValidator),
     /** The author lacked Embed Links when this was sent, so links in it show as plain text. */
     noEmbeds: v.optional(v.boolean()),
+    /** Sent as text-to-speech. Only ever set for an author holding Send TTS; people with the
+     * channel open hear it as it arrives (never from history). The words are still in `text`/`enc`. */
+    tts: v.optional(v.boolean()),
+    /** A voice message: the one audio attachment is a recording, drawn with a player and this
+     * waveform (0–255 per bar). Only ever set for an author holding Send Voice Messages. The audio
+     * itself is an ordinary attachment, so it is stored and served like any other. */
+    voiceMessage: v.optional(v.object({ durationMs: v.number(), waveform: v.array(v.number()) })),
+    /** A poll attached to the message. Votes are `channelPollVotes`. In an end-to-end encrypted
+     * channel the question and options are inside `enc` and only `optionCount` is here (the server
+     * has to count votes by option); otherwise they are stored as `question` / `options`. */
+    poll: v.optional(
+      v.object({
+        optionCount: v.number(),
+        multi: v.boolean(),
+        /** When voting stops; absent for a poll that runs until someone ends it. */
+        expiresAt: v.optional(v.number()),
+        /** Ended early by its author or a moderator. */
+        endedAt: v.optional(v.number()),
+        question: v.optional(v.string()),
+        options: v.optional(v.array(v.object({ id: v.number(), text: v.string() }))),
+      }),
+    ),
+    /** A community sticker sent as the message (`communityStickers`). Stickers from another
+     * community take Use External Stickers. */
+    stickerId: v.optional(v.id("communityStickers")),
     /**
      * Set on a copy delivered by following an announcements channel: where it came from. The copy
      * is authored by whoever posted the original, and is a snapshot — editing or deleting the
@@ -2017,6 +2084,8 @@ export default defineSchema({
     ),
   })
     .index("by_channel", ["channelId"])
+    // Pinned messages of a channel without reading all of it (`pinnedAt` unset sorts first).
+    .index("by_channel_pinned", ["channelId", "pinnedAt"])
     .index("by_author", ["authorId"])
     .index("by_client_id", ["clientId"])
     // Scoped search — see convex/search.ts. Filtered by channel rather than
@@ -2049,6 +2118,54 @@ export default defineSchema({
     .index("by_message", ["messageId"])
     .index("by_message_user_emoji", ["messageId", "userId", "emoji"]),
 
+  /** One row per option a member has chosen on a poll (`channelMessages.poll`). Voting replaces the
+   * member's whole set, so a single-choice poll never has two rows for one member. */
+  channelPollVotes: defineTable({
+    messageId: v.id("channelMessages"),
+    userId: v.id("users"),
+    optionId: v.number(),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_message_user", ["messageId", "userId"])
+    .index("by_user", ["userId"]),
+
+  /** When a member last sent in a channel, for slowmode. `scope` keeps a forum's new posts and its
+   * replies on separate clocks from ordinary messages: "message" | "post" | "reply". */
+  channelSlowmode: defineTable({
+    channelId: v.id("channels"),
+    userId: v.id("users"),
+    scope: v.string(),
+    lastSentAt: v.number(),
+  })
+    .index("by_channel_user_scope", ["channelId", "userId", "scope"])
+    .index("by_user", ["userId"]),
+
+  /**
+   * Where a member without Read Message History starts: the moment they last opened the channel.
+   * They see nothing sent before it. Only written for members who lack the permission; for
+   * everyone else the row is ignored (and removed the next time they open the channel).
+   */
+  channelHistoryAnchors: defineTable({
+    channelId: v.id("channels"),
+    userId: v.id("users"),
+    anchorAt: v.number(),
+  })
+    .index("by_channel_user", ["channelId", "userId"])
+    .index("by_user", ["userId"]),
+
+  /** A custom sticker uploaded per-community, sent as a message of its own. */
+  communityStickers: defineTable({
+    communityId: v.id("communities"),
+    name: v.string(),
+    imageUrl: v.string(),
+    /** Absent for a sticker uploaded to the CDN, which has no Convex file. */
+    storageId: v.optional(v.id("_storage")),
+    uploadedBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_name", ["communityId", "name"]),
+
   channelCallParticipants: defineTable({
     channelId: v.id("channels"),
     userId: v.id("users"),
@@ -2071,10 +2188,45 @@ export default defineSchema({
      * CallProvider — so they survive a reconnect. */
     serverMuted: v.optional(v.boolean()),
     serverDeafened: v.optional(v.boolean()),
+    /** Stage channels. When the member raised their hand, while they are in the audience. */
+    handRaisedAt: v.optional(v.number()),
+    /** A moderator let them speak. Dropped when they leave the stage or the channel. */
+    stageApproved: v.optional(v.boolean()),
+    /** Whether they are up with the speakers right now (approved or a moderator, and allowed to
+     * speak). Kept by the server so the roster doesn't have to resolve permissions per row. */
+    stageSpeaker: v.optional(v.boolean()),
+    /** The publish grant their token was last minted or updated with (see convex/lib/voiceGrant.ts),
+     * so a permission change only touches LiveKit for the people it changes something for. */
+    grantKey: v.optional(v.string()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_user", ["channelId", "userId"])
     .index("by_user", ["userId"]),
+
+  /**
+   * The activity running in a voice channel ("Watch together"): one synchronised video the whole
+   * channel follows. The host (or a moderator) plays, pauses and seeks; everyone else's player
+   * follows `playing` / `positionMs` as of `updatedAt`. At most one per channel, and it ends when
+   * the channel empties. See convex/voiceActivities.ts.
+   */
+  voiceActivities: defineTable({
+    channelId: v.id("channels"),
+    communityId: v.id("communities"),
+    kind: v.literal("watch"),
+    hostId: v.id("users"),
+    startedBy: v.id("users"),
+    provider: v.union(v.literal("youtube"), v.literal("direct")),
+    /** A YouTube video id, or the media file's https URL. */
+    source: v.string(),
+    title: v.optional(v.string()),
+    playing: v.boolean(),
+    /** Where the video was at `updatedAt`, in ms. While playing it has moved on by `now - updatedAt`. */
+    positionMs: v.number(),
+    updatedAt: v.number(),
+    /** Bumped by every change, so a client can tell a stale echo of its own from the present. */
+    version: v.number(),
+    startedAt: v.number(),
+  }).index("by_channel", ["channelId"]),
 
   /** Custom emoji uploaded per-community. Emoji are referenced in message
    * text and reactions as `<:name:id>` where `id` is the Convex document _id.
@@ -2111,6 +2263,32 @@ export default defineSchema({
   })
     .index("by_community", ["communityId"])
     .index("by_community_name", ["communityId", "name"]),
+
+  /** Community insights: one counter row per community, UTC day and shard (see convex/lib/communityInsights.ts).
+   * Shards exist only so busy communities don't make every message contend for one row; readers add them up. */
+  communityInsightsDaily: defineTable({
+    communityId: v.id("communities"),
+    /** Whole days since the epoch, UTC. */
+    day: v.number(),
+    shard: v.number(),
+    joined: v.optional(v.number()),
+    left: v.optional(v.number()),
+    messages: v.optional(v.number()),
+    /** Different people who sent a message that day. */
+    active: v.optional(v.number()),
+    voiceMinutes: v.optional(v.number()),
+  })
+    .index("by_community_day_shard", ["communityId", "day", "shard"])
+    .index("by_day", ["day"]),
+
+  /** Who has already counted as active on a day, so each person counts once. Swept after two days. */
+  communityInsightsActive: defineTable({
+    communityId: v.id("communities"),
+    day: v.number(),
+    userId: v.id("users"),
+  })
+    .index("by_community_day_user", ["communityId", "day", "userId"])
+    .index("by_day", ["day"]),
 
   /** Per-server profile overrides. Fields left undefined fall back to the
    * user's global profile. */
@@ -2591,6 +2769,28 @@ export default defineSchema({
     revokedAt: v.optional(v.number()),
   }).index("by_user", ["userId"]),
 
+  /** A community's own audit log: who changed what in it. Read by View Audit Log
+   * (convex/communityAudit.ts), written by `logCommunityAudit`. Holds what changed, never
+   * message content, and is pruned past `AUDIT_RETENTION_MS`. Not the staff log below. */
+  communityAuditLog: defineTable({
+    communityId: v.id("communities"),
+    actorId: v.id("users"),
+    /** `role.update`, `member.ban`… — see convex/lib/communityAuditActions.ts. */
+    action: v.string(),
+    /** Denormalised from `action` so a category filter is an index range. */
+    category: v.string(),
+    targetType: v.optional(v.string()),
+    targetId: v.optional(v.string()),
+    /** The target's name when it happened, so the row reads after the target is gone. */
+    targetName: v.optional(v.string()),
+    details: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_community_time", ["communityId", "createdAt"])
+    .index("by_community_category", ["communityId", "category", "createdAt"])
+    .index("by_community_actor", ["communityId", "actorId", "createdAt"])
+    .index("by_time", ["createdAt"]),
+
   /** Every change a staff member makes in the console, and every look at
    * finance. Append-only: there is no mutation that edits or deletes a row. */
   staffAuditLog: defineTable({
@@ -2973,7 +3173,9 @@ export default defineSchema({
   })
     .index("by_slug", ["slug"])
     .index("by_category", ["categoryId", "position"])
-    .index("by_status", ["status", "position"]),
+    .index("by_status", ["status", "position"])
+    .index("by_stripe_price", ["stripePriceId"])
+    .index("by_creator", ["creatorId"]),
 
   /** A creator's submission before staff approves it into `skus`. */
   marketplaceSubmissions: defineTable({

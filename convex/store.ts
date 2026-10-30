@@ -48,8 +48,8 @@ export const setStripeIds = internalMutation({
 export const paidActiveSkuIds = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query("skus").collect();
-    return rows.filter((s) => s.status === "active" && s.priceCents > 0).map((s) => s._id);
+    const rows = await ctx.db.query("skus").withIndex("by_status", (q) => q.eq("status", "active")).collect();
+    return rows.filter((s) => s.priceCents > 0).map((s) => s._id);
   },
 });
 
@@ -300,10 +300,8 @@ export const adoptSubscriptionOrder = internalMutation({
       .withIndex("by_stripe_customer", (q) => q.eq("stripeCustomerId", stripeCustomerId))
       .unique();
     if (!customer) return null;
-    const sku = (await ctx.db.query("skus").collect()).find(
-      (s) => s.type === "subscription" && s.stripePriceId === priceId,
-    );
-    if (!sku) return null;
+    const sku = await ctx.db.query("skus").withIndex("by_stripe_price", (q) => q.eq("stripePriceId", priceId)).first();
+    if (!sku || sku.type !== "subscription") return null;
 
     const orderId = await ctx.db.insert("orders", {
       userId: customer.userId,

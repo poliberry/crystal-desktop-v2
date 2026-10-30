@@ -2,10 +2,11 @@ import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
-import { PERMISSIONS, requireAnyCommunityPermission, requireCommunityPermission } from "./permissions";
+import { PERMISSIONS, can, getChannelPermissions, requireAnyCommunityPermission, requireCommunityPermission } from "./permissions";
 import { MAX_SOUND_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import type { Id } from "./_generated/dataModel";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { logCommunityAudit } from "./lib/communityAudit";
 
 /**
  * Per-community soundboard clips. The app also ships a set of built-in sounds
@@ -98,7 +99,7 @@ export const add = mutation({
     const soundUrl = await ctx.storage.getUrl(storageId);
     if (!soundUrl) throw new Error("Sound upload failed — no URL returned.");
 
-    await ctx.db.insert("communitySounds", {
+    const soundId = await ctx.db.insert("communitySounds", {
       communityId,
       name: trimmed,
       emoji: emoji?.trim() || undefined,
@@ -108,6 +109,7 @@ export const add = mutation({
       uploadedBy: me._id,
       createdAt: Date.now(),
     });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "sound.create", target: { type: "sound", id: soundId, name: trimmed } });
   },
 });
 
@@ -135,6 +137,7 @@ export const update = mutation({
     }
     if (emoji !== undefined) patch.emoji = emoji.trim() || undefined;
     await ctx.db.patch(soundId, patch);
+    await logCommunityAudit(ctx, { communityId: sound.communityId, actorId: me._id, action: "sound.update", target: { type: "sound", id: soundId, name: patch.name ?? sound.name }, details: patch.name !== undefined && patch.name !== sound.name ? `Renamed from "${sound.name}"` : undefined });
   },
 });
 
@@ -149,6 +152,7 @@ export const remove = mutation({
 
     await ctx.storage.delete(sound.storageId).catch(() => {});
     await ctx.db.delete(soundId);
+    await logCommunityAudit(ctx, { communityId: sound.communityId, actorId: me._id, action: "sound.delete", target: { type: "sound", id: soundId, name: sound.name } });
   },
 });
 
@@ -204,10 +208,19 @@ export const listAccessible = query({
  * group calls, which have no server to override from.
  */
 export const myJoinSound = query({
-  args: { communityId: v.optional(v.id("communities")) },
-  handler: async (ctx, { communityId }) => {
+  args: {
+    communityId: v.optional(v.id("communities")),
+    /** The voice channel being joined: the join sound is a soundboard press, so that channel's Use Soundboard /
+     * Use External Sounds decide whether it plays (listeners check again on arrival — see `verifyClip`). */
+    channelId: v.optional(v.id("channels")),
+  },
+  handler: async (ctx, { communityId, channelId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
+    const channel = channelId ? await ctx.db.get(channelId) : null;
+    const channelCommunity = channel ? await ctx.db.get(channel.communityId) : null;
+    const perms = channel && channelCommunity ? await getChannelPermissions(ctx, channelCommunity, channel._id, me._id) : null;
+    if (perms !== null && !can(perms, PERMISSIONS.USE_SOUNDBOARD)) return null;
 
     let soundId = me.joinSoundId;
     if (communityId) {
@@ -227,6 +240,8 @@ export const myJoinSound = query({
 
     const sound = await ctx.db.get(soundId as Id<"communitySounds">).catch(() => null);
     if (!sound) return null;
+    // A clip from another community plays only where that is allowed.
+    if (perms !== null && channel && sound.communityId !== channel.communityId && !can(perms, PERMISSIONS.USE_EXTERNAL_SOUNDS)) return null;
     return { soundId, soundUrl: sound.soundUrl };
   },
 });
@@ -259,5 +274,122 @@ export const setJoinSound = mutation({
     } else if (value) {
       await ctx.db.insert("serverProfiles", { userId: me._id, communityId, joinSoundId: value });
     }
+  },
+});
+
+/**
+ * What the soundboard offers in a voice channel, which is a question about the channel and not just the
+ * community: Use Soundboard decides whether there is anything to press, and Use External Sounds whether
+ * clips from the member's other communities are on offer alongside this one's.
+ */
+export const listForChannel = query({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await ctx.db.get(channelId);
+    if (!channel) throw new Error("Channel not found.");
+    const community = await requireCommunity(ctx, channel.communityId);
+    await requireMember(ctx, channel.communityId, me._id);
+    const perms = await getChannelPermissions(ctx, community, channelId, me._id);
+    const canUse = can(perms, PERMISSIONS.USE_SOUNDBOARD);
+    const canUseExternal = canUse && can(perms, PERMISSIONS.USE_EXTERNAL_SOUNDS);
+    if (!canUse) return { canUse, canUseExternal: false, current: [], external: [] };
+
+    const sounds = await ctx.db
+      .query("communitySounds")
+      .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
+      .collect();
+    const current = sounds.map((s) => ({ id: s._id, name: s.name, emoji: s.emoji, soundUrl: s.soundUrl }));
+
+    // Other communities' clips only when this channel lets this member use them.
+    let external: { communityId: Id<"communities">; communityName: string; sounds: typeof current }[] = [];
+    if (canUseExternal) {
+      const memberships = await ctx.db
+        .query("communityMembers")
+        .withIndex("by_user", (q) => q.eq("userId", me._id))
+        .collect();
+      const groups = await Promise.all(
+        memberships
+          .filter((m) => m.communityId !== channel.communityId)
+          .map(async (m) => {
+            const other = await ctx.db.get(m.communityId);
+            if (!other) return null;
+            const clips = await ctx.db
+              .query("communitySounds")
+              .withIndex("by_community", (q) => q.eq("communityId", m.communityId))
+              .collect();
+            if (clips.length === 0) return null;
+            return {
+              communityId: other._id,
+              communityName: other.name,
+              sounds: clips.map((s) => ({ id: s._id, name: s.name, emoji: s.emoji, soundUrl: s.soundUrl })),
+            };
+          }),
+      );
+      external = groups
+        .filter((g): g is NonNullable<typeof g> => g !== null)
+        .sort((a, b) => a.communityName.localeCompare(b.communityName));
+    }
+    return { canUse, canUseExternal, current, external };
+  },
+});
+
+/**
+ * Whether a soundboard packet in a voice channel is one its sender was allowed to send, and the clip it
+ * names as the server knows it.
+ *
+ * A soundboard press is a LiveKit data packet that every listener plays for itself, so nothing about the
+ * packet can be trusted — not the clip's url, not that the sender may use the soundboard at all. Each
+ * listener asks this instead, naming the sender by the identity LiveKit stamped on the packet (which a
+ * client can't choose), and plays only what comes back: the sender needs Use Soundboard in this channel;
+ * a clip from another community also needs Use External Sounds and for the sender to belong to that
+ * community. The url played is the server's own record of the clip, never the one in the packet.
+ */
+export const verifyClip = query({
+  args: { channelId: v.id("channels"), senderId: v.string(), soundId: v.string() },
+  handler: async (ctx, { channelId, senderId, soundId }) => {
+    const deny = (reason: string) => ({ ok: false as const, reason });
+    const me = await getCurrentUserOrNull(ctx);
+    if (!me) return deny("Not signed in.");
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return deny("Channel not found.");
+    const community = await ctx.db.get(channel.communityId);
+    if (!community) return deny("Channel not found.");
+    // Only people in the channel's community hear its calls.
+    const listener = await ctx.db
+      .query("communityMembers")
+      .withIndex("by_community_user", (q) => q.eq("communityId", channel.communityId).eq("userId", me._id))
+      .unique();
+    if (!listener) return deny("Not a member.");
+
+    const sender = ctx.db.normalizeId("users", senderId);
+    if (!sender) return deny("Unknown sender.");
+    const inCall = await ctx.db
+      .query("channelCallParticipants")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", sender))
+      .unique();
+    if (!inCall) return deny("The sender isn't in this channel.");
+
+    const perms = await getChannelPermissions(ctx, community, channelId, sender);
+    if (!can(perms, PERMISSIONS.USE_SOUNDBOARD)) return deny("The sender can't use the soundboard here.");
+    // A stage's audience has no voice, and no soundboard either.
+    if (channel.isStage && !inCall.stageSpeaker) return deny("Only speakers can use the soundboard on a stage.");
+
+    // The app's own clips ship with it; the listener already has them.
+    if (soundId.startsWith("builtin:")) return { ok: true as const, builtin: true as const };
+
+    const clipId = ctx.db.normalizeId("communitySounds", soundId);
+    const clip = clipId ? await ctx.db.get(clipId) : null;
+    if (!clip) return deny("That clip no longer exists.");
+    const external = clip.communityId !== channel.communityId;
+    if (external) {
+      if (!can(perms, PERMISSIONS.USE_EXTERNAL_SOUNDS)) return deny("The sender can't use sounds from other communities here.");
+      const senderIn = await ctx.db
+        .query("communityMembers")
+        .withIndex("by_community_user", (q) => q.eq("communityId", clip.communityId).eq("userId", sender))
+        .unique();
+      if (!senderIn) return deny("The sender isn't in the community that clip belongs to.");
+    }
+    return { ok: true as const, builtin: false as const, url: clip.soundUrl, emoji: clip.emoji ?? null, name: clip.name };
   },
 });

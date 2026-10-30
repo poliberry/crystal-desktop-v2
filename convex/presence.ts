@@ -288,7 +288,12 @@ export const heartbeat = mutation({
       });
       return;
     }
-    await ctx.db.patch(existing._id, { lastHeartbeat: now });
+    // Every query that reads this row (member lists, voice participants) re-runs for every subscriber when it is written, so a
+    // beat that changes nothing anyone can see is not written every time. The session row above is what says this device is
+    // alive; this timestamp only serves the stale sweep and old clients, and the sweep's cutoff is twice this interval.
+    if (now - existing.lastHeartbeat >= STALE_MS / 2) {
+      await ctx.db.patch(existing._id, { lastHeartbeat: now });
+    }
     await clearExpiredCustomPresence(ctx, me, now);
     await reconcile(ctx, me._id);
   },

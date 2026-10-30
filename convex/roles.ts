@@ -1,9 +1,12 @@
 import { v } from "convex/values";
 
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { requireCommunity, requireMember } from "./communities";
+import { auditUserTarget, logCommunityAudit } from "./lib/communityAudit";
+import { describePermissionChange, joinDetails } from "./lib/communityAuditActions";
 import { isValidBits } from "./lib/permissionBits";
+import { scheduleVoiceSync } from "./lib/voiceAccess";
 import {
   PERMISSIONS,
   ROLE_PERMS_VERSION,
@@ -15,25 +18,58 @@ import {
 } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
+/** The caller's membership check and the community's roles, best first — shared by `list` and `listWithCounts`. */
+async function loadRolesForMember(ctx: QueryCtx, communityId: Id<"communities">) {
+  const me = await getCurrentUserOrNull(ctx);
+  if (!me) return null;
+  // Empty rather than thrown for someone who isn't (or is no longer) in it,
+  // like `channels.list` beside it: the data preloader subscribes to this for
+  // every community in the rail, and the moment one is deleted or left is a
+  // moment that query re-runs against a membership that is already gone — a
+  // throw there is an uncaught render error for the whole app.
+  const membership = await ctx.db
+    .query("communityMembers")
+    .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
+    .unique();
+  if (!membership) return null;
+  const roles = await ctx.db
+    .query("roles")
+    .withIndex("by_community", (q) => q.eq("communityId", communityId))
+    .collect();
+  return roles.sort((a, b) => b.position - a.position);
+}
+
+function roleView(r: Doc<"roles">) {
+  return {
+    id: r._id,
+    name: r.name,
+    color: r.color,
+    // As it takes effect, so the editor shows an old @everyone with the defaults it holds.
+    permissions: effectiveRolePermissions(r),
+    position: r.position,
+    isEveryone: r.isEveryone,
+    hoist: r.hoist ?? false,
+  };
+}
+
+/**
+ * The roles, without how many members hold each. Preloaded for every community in the rail, so it
+ * reads nothing but the roles themselves; the counts are `listWithCounts`, for the roles settings.
+ */
 export const list = query({
   args: { communityId: v.id("communities") },
   handler: async (ctx, { communityId }) => {
-    const me = await getCurrentUserOrNull(ctx);
-    if (!me) return [];
-    // Empty rather than thrown for someone who isn't (or is no longer) in it,
-    // like `channels.list` beside it: the data preloader subscribes to this for
-    // every community in the rail, and the moment one is deleted or left is a
-    // moment that query re-runs against a membership that is already gone — a
-    // throw there is an uncaught render error for the whole app.
-    const membership = await ctx.db
-      .query("communityMembers")
-      .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
-      .unique();
-    if (!membership) return [];
-    const roles = await ctx.db
-      .query("roles")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .collect();
+    const roles = await loadRolesForMember(ctx, communityId);
+    return (roles ?? []).map(roleView);
+  },
+});
+
+/** `list` plus a member count on every role — what the roles settings page shows. */
+export const listWithCounts = query({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, { communityId }) => {
+    const roles = await loadRolesForMember(ctx, communityId);
+    if (!roles) return [];
 
     // One pass over the assignments rather than a count query per role: the
     // list shows a member count on every row, and a server with thirty roles
@@ -47,26 +83,23 @@ export const list = query({
       const key = assignment.roleId as string;
       countByRole.set(key, (countByRole.get(key) ?? 0) + 1);
     }
-    const memberCount = (await ctx.db
-      .query("communityMembers")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .collect()).length;
+    // The denormalised count where there is one (see `communities.memberCount`).
+    const community = await ctx.db.get(communityId);
+    const memberCount =
+      community?.memberCount ??
+      (
+        await ctx.db
+          .query("communityMembers")
+          .withIndex("by_community", (q) => q.eq("communityId", communityId))
+          .collect()
+      ).length;
 
-    return roles
-      .sort((a, b) => b.position - a.position)
-      .map((r) => ({
-        id: r._id,
-        name: r.name,
-        color: r.color,
-        // As it takes effect, so the editor shows an old @everyone with the defaults it holds.
-        permissions: effectiveRolePermissions(r),
-        position: r.position,
-        isEveryone: r.isEveryone,
-        hoist: r.hoist ?? false,
-        /** @everyone is held by definition, so it counts the whole server
-         * rather than the assignment rows it doesn't have. */
-        memberCount: r.isEveryone ? memberCount : (countByRole.get(r._id as string) ?? 0),
-      }));
+    return roles.map((r) => ({
+      ...roleView(r),
+      /** @everyone is held by definition, so it counts the whole server
+       * rather than the assignment rows it doesn't have. */
+      memberCount: r.isEveryone ? memberCount : (countByRole.get(r._id as string) ?? 0),
+    }));
   },
 });
 
@@ -148,7 +181,7 @@ export const create = mutation({
       .collect();
     const position = existing.reduce((max, r) => Math.max(max, r.position), 0) + 1;
 
-    return ctx.db.insert("roles", {
+    const roleId = await ctx.db.insert("roles", {
       communityId,
       name: trimmed,
       permissions: 0,
@@ -156,6 +189,8 @@ export const create = mutation({
       position,
       isEveryone: false,
     });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "role.create", target: { type: "role", id: roleId, name: trimmed } });
+    return roleId;
   },
 });
 
@@ -192,7 +227,23 @@ export const update = mutation({
     }
     if (hoist !== undefined) patch.hoist = hoist;
 
-    if (Object.keys(patch).length > 0) await ctx.db.patch(roleId, patch);
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(roleId, patch);
+      // Anyone already in a voice channel holds the rights their token was minted with until told otherwise.
+      if (patch.permissions !== undefined) await scheduleVoiceSync(ctx, { communityId: role.communityId });
+      await logCommunityAudit(ctx, {
+        communityId: role.communityId,
+        actorId: me._id,
+        action: "role.update",
+        target: { type: "role", id: roleId, name: patch.name ?? role.name },
+        details: joinDetails(
+          patch.name !== undefined && patch.name !== role.name && `Renamed from "${role.name}"`,
+          patch.color !== undefined && patch.color !== role.color && "Changed the colour",
+          patch.hoist !== undefined && patch.hoist !== (role.hoist ?? false) && `Shown separately: ${patch.hoist ? "on" : "off"}`,
+          patch.permissions !== undefined && describePermissionChange(effectiveRolePermissions(role), patch.permissions),
+        ),
+      });
+    }
   },
 });
 
@@ -238,6 +289,7 @@ export const reorder = mutation({
 
     const everyone = roles.find((r) => r.isEveryone);
     if (everyone && everyone.position !== 0) await ctx.db.patch(everyone._id, { position: 0 });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "role.reorder" });
   },
 });
 
@@ -265,9 +317,10 @@ export const duplicate = mutation({
       .collect();
     const position = existing.reduce((max, r) => Math.max(max, r.position), 0) + 1;
 
-    return ctx.db.insert("roles", {
+    const copyName = `${role.name} copy`.slice(0, 32);
+    const copyId = await ctx.db.insert("roles", {
       communityId: role.communityId,
-      name: `${role.name} copy`.slice(0, 32),
+      name: copyName,
       color: role.color,
       permissions: effectiveRolePermissions(role),
       permsVersion: ROLE_PERMS_VERSION,
@@ -275,6 +328,8 @@ export const duplicate = mutation({
       isEveryone: false,
       hoist: role.hoist,
     });
+    await logCommunityAudit(ctx, { communityId: role.communityId, actorId: me._id, action: "role.create", target: { type: "role", id: copyId, name: copyName }, details: `Copied from "${role.name}"` });
+    return copyId;
   },
 });
 
@@ -302,6 +357,8 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(roleId);
+    await scheduleVoiceSync(ctx, { communityId: role.communityId });
+    await logCommunityAudit(ctx, { communityId: role.communityId, actorId: me._id, action: "role.delete", target: { type: "role", id: roleId, name: role.name }, details: assignments.length > 0 ? `Held by ${assignments.length} member${assignments.length === 1 ? "" : "s"}` : undefined });
   },
 });
 
@@ -324,6 +381,8 @@ export const assign = mutation({
     if (existing.some((m) => m.roleId === roleId)) return;
 
     await ctx.db.insert("memberRoles", { communityId, userId, roleId });
+    await scheduleVoiceSync(ctx, { communityId, userId });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "role.assign", target: await auditUserTarget(ctx, userId), details: `Role: ${role.name}` });
   },
 });
 
@@ -343,7 +402,11 @@ export const unassign = mutation({
       .withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId))
       .collect();
     const match = existing.find((m) => m.roleId === roleId);
-    if (match) await ctx.db.delete(match._id);
+    if (match) {
+      await ctx.db.delete(match._id);
+      await scheduleVoiceSync(ctx, { communityId, userId });
+      await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "role.unassign", target: await auditUserTarget(ctx, userId), details: `Role: ${role.name}` });
+    }
   },
 });
 
@@ -374,8 +437,7 @@ export const memberPermissions = query({
       .collect();
     const everyone = await ctx.db
       .query("roles")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .filter((q) => q.eq(q.field("isEveryone"), true))
+      .withIndex("by_community_everyone", (q) => q.eq("communityId", communityId).eq("isEveryone", true))
       .unique();
     const held = (await Promise.all(assigned.map((m) => ctx.db.get(m.roleId)))).filter(
       (r): r is Doc<"roles"> => !!r,

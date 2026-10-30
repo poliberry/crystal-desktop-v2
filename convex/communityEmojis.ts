@@ -5,6 +5,7 @@ import { mutation, query } from "./_generated/server";
 import { PERMISSIONS, requireAnyCommunityPermission } from "./permissions";
 import { isInviteOnly, requireCommunity, requireMember } from "./communities";
 import { getCurrentUserOrThrow } from "./users";
+import { logCommunityAudit } from "./lib/communityAudit";
 
 /** Maximum custom emoji slots per community. */
 const MAX_EMOJI_SLOTS = 50;
@@ -168,7 +169,7 @@ export const add = mutation({
         : null;
     if (!imageUrl) throw new Error("Emoji upload failed — no URL returned.");
 
-    await ctx.db.insert("communityEmojis", {
+    const emojiId = await ctx.db.insert("communityEmojis", {
       communityId,
       name: sanitized,
       imageUrl,
@@ -176,6 +177,7 @@ export const add = mutation({
       uploadedBy: me._id,
       createdAt: Date.now(),
     });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "emoji.create", target: { type: "emoji", id: emojiId, name: sanitized } });
   },
 });
 
@@ -199,8 +201,7 @@ export const remove = mutation({
       const roles = await Promise.all(perms.map((m) => ctx.db.get(m.roleId)));
       const everyoneRole = await ctx.db
         .query("roles")
-        .withIndex("by_community", (q) => q.eq("communityId", emoji.communityId))
-        .filter((q) => q.eq(q.field("isEveryone"), true))
+        .withIndex("by_community_everyone", (q) => q.eq("communityId", emoji.communityId).eq("isEveryone", true))
         .unique();
       let bits = everyoneRole?.permissions ?? 0;
       for (const r of roles) {
@@ -214,5 +215,6 @@ export const remove = mutation({
     if (emoji.storageId) await ctx.storage.delete(emoji.storageId).catch(() => {});
     else await dropR2Url(ctx, emoji.imageUrl);
     await ctx.db.delete(emojiId);
+    await logCommunityAudit(ctx, { communityId: emoji.communityId, actorId: me._id, action: "emoji.delete", target: { type: "emoji", id: emojiId, name: emoji.name } });
   },
 });

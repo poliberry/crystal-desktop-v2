@@ -27,7 +27,11 @@ export const MAX_DECORATION_BYTES = 2 * 1024 * 1024;
  * opens a profile rather than once per row of a member list. */
 export const MAX_PROFILE_ASSET_BYTES = 6 * 1024 * 1024;
 
-const label = (bytes: number) => `${bytes / 1024 / 1024} MB`;
+/** Community stickers. Each is fetched by everyone in the channel it is sent to, at 160px, so a
+ * small ceiling costs nothing visible. */
+export const MAX_STICKER_BYTES = 512 * 1024;
+
+const label = (bytes: number) => bytes >= 1024 * 1024 ? `${bytes / 1024 / 1024} MB` : `${bytes / 1024} KB`;
 
 /**
  * Reject an oversized upload and drop the orphaned blob.

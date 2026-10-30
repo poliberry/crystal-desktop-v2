@@ -61,7 +61,7 @@ export const releaseIfUnused = internalMutation({
   handler: async (ctx, { creatorId, keys, skuIds }) => {
     // Everything that could refer to this creator's files, as text to search.
     const haystack: string[] = [];
-    const skus = (await ctx.db.query("skus").collect()).filter((s) => s.creatorId === creatorId);
+    const skus = await ctx.db.query("skus").withIndex("by_creator", (q) => q.eq("creatorId", creatorId)).collect();
     for (const sku of skus) haystack.push(JSON.stringify([sku.grants, sku.imageUrl]));
     for (const status of ["pending", "approved"] as const) {
       const rows = (await ctx.db.query("marketplaceSubmissions").withIndex("by_creator", (q) => q.eq("creatorId", creatorId)).collect()).filter((r) => r.status === status);

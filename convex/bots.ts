@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { action, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
 import { MANAGE_INTEGRATIONS, audit, loadActing, permissionsIn, removeInstall } from "./lib/botAccess";
+import { adjustMemberCount } from "./lib/memberCount";
 import {
   BOT_LIMITS,
   BOT_PERMISSIONS,
@@ -468,6 +469,7 @@ export const install = mutation({
 
     const now = Date.now();
     await ctx.db.insert("communityMembers", { communityId, userId: bot.userId, joinedAt: now });
+    await adjustMemberCount(ctx, communityId, 1);
     await ctx.db.insert("memberRoles", { communityId, userId: bot.userId, roleId });
     const installId = await ctx.db.insert("botInstalls", {
       botId,

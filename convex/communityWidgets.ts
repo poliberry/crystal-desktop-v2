@@ -13,6 +13,7 @@
  * know that a channel widget means five more queries.
  */
 
+import { historyFloorIn } from "./lib/history";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
@@ -309,11 +310,16 @@ export const listOverview = query({
         if (!(await visibleTo(ctx, community, config.channelId, me._id))) return null;
 
         const limit = Math.min(config.limit ?? 3, MAX_PREVIEW_MESSAGES);
-        const recent = await ctx.db
-          .query("channelMessages")
-          .withIndex("by_channel", (q) => q.eq("channelId", config.channelId))
-          .order("desc")
-          .take(limit);
+        // A member without Read Message History sees only what came after they last opened the channel.
+        const floor = await historyFloorIn(ctx, community, config.channelId, me._id);
+        const recent =
+          floor.restricted && floor.after === Number.POSITIVE_INFINITY
+            ? []
+            : await ctx.db
+                .query("channelMessages")
+                .withIndex("by_channel", (q) => (floor.restricted ? q.eq("channelId", config.channelId).gt("_creationTime", floor.after) : q.eq("channelId", config.channelId)))
+                .order("desc")
+                .take(limit);
 
         const messages = await Promise.all(
           recent.map(async (message) => {

@@ -5,6 +5,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { PERMISSIONS, getChannelPermissions } from "../permissions";
 import { BOT_RATE, effectivePermissions, holds } from "./botAuth";
+import { adjustMemberCount } from "./memberCount";
 
 /**
  * What a bot may do right now, worked out from the database. Everything the Bot API does starts
@@ -155,7 +156,10 @@ export async function removeInstall(ctx: MutationCtx, install: Doc<"botInstalls"
     .query("communityMembers")
     .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", botUserId))
     .unique();
-  if (member) await ctx.db.delete(member._id);
+  if (member) {
+    await ctx.db.delete(member._id);
+    await adjustMemberCount(ctx, communityId, -1);
+  }
   await ctx.db.delete(install._id);
 }
 

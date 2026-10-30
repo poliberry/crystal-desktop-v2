@@ -104,6 +104,53 @@ function hasFlag(permissions: number, flag: number): boolean {
   return bitsHas(permissions, PERMISSIONS.ADMINISTRATOR) || bitsHas(permissions, flag);
 }
 
+/** A community's @everyone role (every community has exactly one), via `roles.by_community_everyone`. */
+export async function getEveryoneRole(
+  ctx: QueryCtx,
+  communityId: Id<"communities">
+): Promise<Doc<"roles"> | null> {
+  return await ctx.db
+    .query("roles")
+    .withIndex("by_community_everyone", (q) => q.eq("communityId", communityId).eq("isEveryone", true))
+    .unique();
+}
+
+/** What a member's permissions are built from, loaded once so any number of channels can be resolved from it. */
+type MemberPermissionState = {
+  everyoneRole: Doc<"roles"> | null;
+  /** Ids of every role assigned to the member, whether or not the role still exists. */
+  assignedRoleIds: Set<Id<"roles">>;
+  /** The assigned roles that still exist. */
+  roles: Doc<"roles">[];
+};
+
+async function loadMemberPermissionState(
+  ctx: QueryCtx,
+  community: Doc<"communities">,
+  userId: Id<"users">
+): Promise<MemberPermissionState> {
+  const [everyoneRole, assigned] = await Promise.all([
+    getEveryoneRole(ctx, community._id),
+    ctx.db
+      .query("memberRoles")
+      .withIndex("by_member", (q) => q.eq("communityId", community._id).eq("userId", userId))
+      .collect(),
+  ]);
+  const found = await Promise.all(assigned.map((m) => ctx.db.get(m.roleId)));
+  return {
+    everyoneRole,
+    assignedRoleIds: new Set(assigned.map((m) => m.roleId)),
+    roles: found.filter((r): r is Doc<"roles"> => r !== null),
+  };
+}
+
+/** The base bitfield for a non-owner: @everyone OR'd with every assigned role. */
+function baseFromState(state: MemberPermissionState): number {
+  let perms = state.everyoneRole ? effectiveRolePermissions(state.everyoneRole) : 0;
+  for (const role of state.roles) perms = bitsOr(perms, role.permissions);
+  return perms;
+}
+
 /**
  * A member's base (channel-independent) permissions: the @everyone role's
  * permissions OR'd with every role explicitly assigned to them. The
@@ -115,62 +162,27 @@ export async function getBasePermissions(
   userId: Id<"users">
 ): Promise<number> {
   if (community.ownerId === userId) return ~0;
-
-  const everyoneRole = await ctx.db
-    .query("roles")
-    .withIndex("by_community", (q) => q.eq("communityId", community._id))
-    .filter((q) => q.eq(q.field("isEveryone"), true))
-    .unique();
-
-  const assigned = await ctx.db
-    .query("memberRoles")
-    .withIndex("by_member", (q) => q.eq("communityId", community._id).eq("userId", userId))
-    .collect();
-  const roles = await Promise.all(assigned.map((m) => ctx.db.get(m.roleId)));
-
-  let perms = everyoneRole ? effectiveRolePermissions(everyoneRole) : 0;
-  for (const role of roles) {
-    if (role) perms = bitsOr(perms, role.permissions);
-  }
-  return perms;
+  return baseFromState(await loadMemberPermissionState(ctx, community, userId));
 }
 
 /**
- * Applies a channel's permission overwrites on top of a member's base
- * permissions, following Discord's precedence: @everyone overwrite, then
- * every applicable role overwrite (merged), then a member-specific
- * overwrite last (highest precedence).
+ * Applies one channel's permission overwrites on top of a member's base permissions, following
+ * Discord's precedence: @everyone overwrite, then every applicable role overwrite (merged), then a
+ * member-specific overwrite last (highest precedence). Pure: the single-channel and batch resolvers
+ * both go through here, so they can't drift apart.
  */
-export async function getChannelPermissions(
-  ctx: QueryCtx,
-  community: Doc<"communities">,
-  channelId: Id<"channels">,
+export function applyChannelOverwrites(
+  base: number,
+  overwrites: ReadonlyArray<Pick<Doc<"channelPermissionOverwrites">, "roleId" | "userId" | "allow" | "deny">>,
+  everyoneRoleId: Id<"roles"> | undefined,
+  assignedRoleIds: ReadonlySet<Id<"roles">>,
   userId: Id<"users">
-): Promise<number> {
-  const base = await getBasePermissions(ctx, community, userId);
-  if (community.ownerId === userId) return base;
-
-  const overwrites = await ctx.db
-    .query("channelPermissionOverwrites")
-    .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-    .collect();
+): number {
   if (overwrites.length === 0) return base;
-
-  const everyoneRole = await ctx.db
-    .query("roles")
-    .withIndex("by_community", (q) => q.eq("communityId", community._id))
-    .filter((q) => q.eq(q.field("isEveryone"), true))
-    .unique();
-  const assigned = await ctx.db
-    .query("memberRoles")
-    .withIndex("by_member", (q) => q.eq("communityId", community._id).eq("userId", userId))
-    .collect();
-  const roleIds = new Set(assigned.map((m) => m.roleId));
-
   let perms = base;
 
-  const everyoneOverwrite = everyoneRole
-    ? overwrites.find((o) => o.roleId === everyoneRole._id)
+  const everyoneOverwrite = everyoneRoleId
+    ? overwrites.find((o) => o.roleId === everyoneRoleId)
     : undefined;
   if (everyoneOverwrite) {
     perms = bitsOr(bitsWithout(perms, everyoneOverwrite.deny), everyoneOverwrite.allow);
@@ -179,7 +191,7 @@ export async function getChannelPermissions(
   let roleAllow = 0;
   let roleDeny = 0;
   for (const o of overwrites) {
-    if (o.roleId && roleIds.has(o.roleId) && o.roleId !== everyoneRole?._id) {
+    if (o.roleId && assignedRoleIds.has(o.roleId) && o.roleId !== everyoneRoleId) {
       roleAllow = bitsOr(roleAllow, o.allow);
       roleDeny = bitsOr(roleDeny, o.deny);
     }
@@ -192,6 +204,75 @@ export async function getChannelPermissions(
   }
 
   return perms;
+}
+
+/**
+ * A member's permissions in one channel: their base permissions with the channel's overwrites
+ * applied (see `applyChannelOverwrites`). The owner has everything.
+ */
+export async function getChannelPermissions(
+  ctx: QueryCtx,
+  community: Doc<"communities">,
+  channelId: Id<"channels">,
+  userId: Id<"users">
+): Promise<number> {
+  if (community.ownerId === userId) return ~0;
+
+  const [state, overwrites] = await Promise.all([
+    loadMemberPermissionState(ctx, community, userId),
+    ctx.db
+      .query("channelPermissionOverwrites")
+      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+      .collect(),
+  ]);
+  return applyChannelOverwrites(
+    baseFromState(state),
+    overwrites,
+    state.everyoneRole?._id,
+    state.assignedRoleIds,
+    userId
+  );
+}
+
+/**
+ * `getChannelPermissions` for many channels of one community at once — what a channel list needs.
+ * The @everyone role, the member's roles and their base permissions are read once instead of once
+ * per channel; only each channel's overwrites are read per channel (overwrites carry no
+ * communityId, so there's no single-index read for the whole community). Results are identical to
+ * calling `getChannelPermissions` per channel.
+ */
+export async function getChannelPermissionsBatch(
+  ctx: QueryCtx,
+  community: Doc<"communities">,
+  channelIds: ReadonlyArray<Id<"channels">>,
+  userId: Id<"users">
+): Promise<Map<Id<"channels">, number>> {
+  const out = new Map<Id<"channels">, number>();
+  if (channelIds.length === 0) return out;
+  if (community.ownerId === userId) {
+    for (const id of channelIds) out.set(id, ~0);
+    return out;
+  }
+
+  const [state, overwritesByChannel] = await Promise.all([
+    loadMemberPermissionState(ctx, community, userId),
+    Promise.all(
+      channelIds.map((channelId) =>
+        ctx.db
+          .query("channelPermissionOverwrites")
+          .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+          .collect()
+      )
+    ),
+  ]);
+  const base = baseFromState(state);
+  channelIds.forEach((channelId, i) => {
+    out.set(
+      channelId,
+      applyChannelOverwrites(base, overwritesByChannel[i], state.everyoneRole?._id, state.assignedRoleIds, userId)
+    );
+  });
+  return out;
 }
 
 export function can(permissions: number, flag: PermissionFlag): boolean {

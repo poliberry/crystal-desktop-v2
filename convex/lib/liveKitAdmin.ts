@@ -3,6 +3,7 @@
 import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 
 import { COMPANION_KIND_ATTRIBUTE, COMPANION_OF_ATTRIBUTE, companionIdentity } from "./companion";
+import type { VoiceGrant, VoiceSource } from "./voiceGrant";
 
 /**
  * Shared LiveKit room-lifecycle helpers used by both DM calls (callTokens.ts)
@@ -87,4 +88,74 @@ export async function mintScreenToken(
   });
 
   return { token: await at.toJwt(), url, roomName };
+}
+
+// --- Voice grants ---------------------------------------------------------------------------------
+
+const TRACK_SOURCES: Record<VoiceSource, TrackSource> = {
+  microphone: TrackSource.MICROPHONE,
+  camera: TrackSource.CAMERA,
+  screen_share: TrackSource.SCREEN_SHARE,
+  screen_share_audio: TrackSource.SCREEN_SHARE_AUDIO,
+};
+
+/** A voice grant's sources as LiveKit's enum. Once `canPublishSources` is set LiveKit denies everything not listed. */
+export function trackSourcesFor(sources: VoiceSource[]): TrackSource[] {
+  return sources.map((s) => TRACK_SOURCES[s]);
+}
+
+/** The participant attributes the server signs into a voice token (convex/lib/voiceGrant.ts). Anything in this list that a grant no longer carries is removed when it is updated. */
+const SIGNED_ATTRIBUTES = ["priority", "ptt", "stage", "sb", "xs"];
+
+/**
+ * Bring a connected participant's grant in line with `grant`, without reconnecting them: their publish
+ * rights change at once (LiveKit stops any track they may no longer send) and the attributes the rest of
+ * the room reads are rewritten. Returns false when they aren't in the room, which is fine — their next
+ * token will carry the right grant anyway.
+ */
+export async function applyParticipantGrant(roomName: string, identity: string, grant: VoiceGrant): Promise<boolean> {
+  const svc = getClient();
+  try {
+    const info = await svc.getParticipant(roomName, identity);
+    const attributes: Record<string, string> = { ...grant.attributes };
+    for (const key of SIGNED_ATTRIBUTES) if (!(key in attributes) && info.attributes?.[key] !== undefined) attributes[key] = "";
+    await svc.updateParticipant(roomName, identity, {
+      attributes,
+      // Permissions are replaced as a whole, so what isn't changing is carried over.
+      permission: {
+        ...info.permission,
+        canPublish: grant.canPublish,
+        canPublishSources: trackSourcesFor(grant.sources),
+        canSubscribe: grant.canSubscribe,
+        canPublishData: grant.canPublishData,
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove a person from a voice room: their connection and any screen-share companion. `before` (ms)
+ * spares a connection that began after the removal was decided — someone moved on and came straight back.
+ */
+export async function removeFromRoom(roomName: string, userId: string, before?: number): Promise<void> {
+  const svc = getClient();
+  for (const identity of [userId, companionIdentity(userId)]) {
+    try {
+      if (before !== undefined) {
+        const info = await svc.getParticipant(roomName, identity);
+        if (Number(info.joinedAt) * 1000 > before) continue;
+      }
+      await svc.removeParticipant(roomName, identity);
+    } catch {
+      // Not in the room (any more): nothing to remove.
+    }
+  }
+}
+
+/** Drop only the screen-share companion connection (the person's own connection stays). */
+export async function removeCompanionFromRoom(roomName: string, userId: string): Promise<void> {
+  await getClient().removeParticipant(roomName, companionIdentity(userId)).catch(() => undefined);
 }

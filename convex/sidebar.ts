@@ -4,7 +4,8 @@ import { renderMentionsAsText } from "./lib/mentions";
 import { publicNotificationBody } from "./lib/e2eeEnforce";
 import { mentionKindOf } from "./lib/e2eePure";
 import { communityLevel, loadNotificationPolicy } from "./lib/notificationPolicy";
-import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
+import { historyFloorFor, withinHistory } from "./lib/history";
+import { PERMISSIONS, can, getChannelPermissionsBatch } from "./permissions";
 import { getCurrentUserOrNull } from "./users";
 
 /**
@@ -92,8 +93,9 @@ async function latestMessage(
     .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
     .slice(0, CHANNEL_CANDIDATES);
 
+  const permsByChannel = await getChannelPermissionsBatch(ctx, community, channels.map((c) => c._id), me);
   for (const channel of channels) {
-    const perms = await getChannelPermissions(ctx, community, channel._id, me);
+    const perms = permsByChannel.get(channel._id) ?? 0;
     if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
 
     const [message] = await ctx.db
@@ -102,6 +104,8 @@ async function latestMessage(
       .order("desc")
       .take(1);
     if (!message) continue;
+    // A line of someone's message is history too: not for a member whose history starts later.
+    if (!withinHistory(await historyFloorFor(ctx, channel._id, me, perms), message._creationTime)) continue;
 
     const attachments = await ctx.db
       .query("channelMessageAttachments")
