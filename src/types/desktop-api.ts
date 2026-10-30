@@ -296,6 +296,9 @@ export interface DesktopAPI {
     download(): Promise<UpdaterState>;
     install(): Promise<void>;
     openReleases(): Promise<void>;
+    /** Whether launch installs an update on its own. Optional for a renderer running against an older preload. */
+    getLaunchUpdate?(): Promise<boolean>;
+    setLaunchUpdate?(enabled: boolean): Promise<boolean>;
     onStateChange(cb: (state: UpdaterState) => void): () => void;
   };
   systemAudio: {

@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useUpdater } from "@/hooks/use-updater";
 import type { UpdaterPhase } from "@/types/desktop-api";
@@ -23,7 +24,7 @@ const PHASE_LABEL: Record<UpdaterPhase, string> = {
  * Studio's Updates dialog: both are the same updater (electron/updater.ts), in whichever app is running.
  */
 export function UpdatesPanel() {
-  const { state, supported, check, download, install, openReleases } = useUpdater();
+  const { state, supported, check, download, install, openReleases, launchUpdate, setLaunchUpdate } = useUpdater();
 
   return (
     <div className="space-y-4">
@@ -51,6 +52,18 @@ export function UpdatesPanel() {
             : ""}
         </span>
       </div>
+
+      {launchUpdate !== null && (
+        <div className="flex items-center justify-between gap-4 text-sm">
+          <div>
+            <p className="font-medium">Update when Crystal opens</p>
+            <p className="text-muted-foreground">
+              If a newer version is out for this channel, download and install it before the app opens.
+            </p>
+          </div>
+          <Switch checked={launchUpdate} onCheckedChange={(checked) => void setLaunchUpdate(checked)} />
+        </div>
+      )}
 
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}
 

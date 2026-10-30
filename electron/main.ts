@@ -12,10 +12,7 @@ import { LinkQueue, startsNewDocument } from "./linkQueue";
 import richPresence from "./richPresence";
 import systemAudio from "./systemAudio";
 import { registerE2eeStore } from "./e2eeStore";
-import { registerStudioBuild } from "./studioBuild";
-import { registerStudioFs } from "./studioFs";
-import { registerStudioGit } from "./studioGit";
-import { registerStudioTerminal } from "./studioTerminal";
+import { showBootSplash, type BootSplash } from "./bootSplash";
 import updater from "./updater";
 
 const RELEASES_URL = `https://github.com/${REPO.owner}/${REPO.repo}/releases`;
@@ -372,6 +369,26 @@ const activeCallWebContents = new Set<number>();
 // app.whenReady().
 let isQuitting = false;
 
+// The launch splash, and the gate the main window waits at before it is shown: open while the app checks for an update, and
+// held shut for good if one is being installed (the app is about to quit and relaunch). See `startBoot`.
+let bootSplash: BootSplash | null = null;
+let bootReleased: Promise<void> = Promise.resolve();
+
+/**
+ * Let the app go so an update can replace it.
+ *
+ * Quitting to install an update closes every window first, and the main window hides itself when closed (it lives in the
+ * tray), which keeps the app running with the update uninstalled — on macOS that left a download that only applied after a
+ * manual quit. So the quit is declared first and the windows are dropped rather than closed, which also gets past Studio's
+ * unsaved-changes guard that would otherwise veto the close in silence. The splash stays: it is showing the install.
+ */
+function prepareToQuitForUpdate(): void {
+  isQuitting = true;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win !== bootSplash?.window && !win.isDestroyed()) win.destroy();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Deep links: crystal://… and https://usecrystal.app/… (see ./deeplink.ts)
 //
@@ -532,8 +549,14 @@ function createWindow(): void {
   const showOnce = () => {
     if (shown || win.isDestroyed()) return;
     shown = true;
-    markStartupStage("main window shown");
-    win.show();
+    // Behind the launch update check, if there is one still running: the splash is what is on screen until it is done.
+    void bootReleased.then(() => {
+      if (win.isDestroyed()) return;
+      markStartupStage("main window shown");
+      win.show();
+      bootSplash?.close();
+      bootSplash = null;
+    });
   };
   win.once("ready-to-show", () => {
     markStartupStage("main window ready to show (first paint)");
@@ -978,8 +1001,32 @@ function createOrFocusEditorWindow(options: {
   editorWindow = win;
 }
 
+/**
+ * Put the splash up and, in a packaged build, look for an update before the app opens (see `Updater.runLaunchUpdate`).
+ * Crystal Studio is left out: its window opens straight onto the project it was launched for.
+ */
+function startBoot(): void {
+  if (isStudioApp) return;
+  const splash = showBootSplash({ appName: identity.productName, version: app.getVersion(), iconPath: appIconPath() });
+  bootSplash = splash;
+  splash.setStatus("Starting…");
+  updater.init();
+  bootReleased = (async () => {
+    const outcome = await updater
+      .runLaunchUpdate((text, progress) => splash.setStatus(text, progress), prepareToQuitForUpdate)
+      .catch((error: unknown) => {
+        console.warn("Launch update failed; opening the app.", error);
+        return "continue" as const;
+      });
+    // The app is about to quit and relaunch as the new version: the main window never opens.
+    if (outcome === "installing") await new Promise<void>(() => {});
+    splash.setStatus("Loading…", null);
+  })();
+}
+
 app.whenReady().then(async () => {
   markStartupStage("app ready");
+  startBoot();
   // A packaged macOS app gets its Dock icon from its bundle. A run from source is the stock Electron app, whose icon is
   // Electron's, so set ours; Windows and Linux take the window icon (see `appIconPath`).
   if (!app.isPackaged && process.platform === "darwin" && app.dock) {
@@ -1310,6 +1357,14 @@ app.whenReady().then(async () => {
   // ask for them — see studioFs.ts for what is and isn't reachable. Crystal doesn't serve them at all: Studio is its own
   // application, and this is its half of the work.
   if (isStudioApp) {
+    // Loaded here and not at the top of the file: studioTerminal pulls in node-pty, a native module, and the others are
+    // only of use to Studio, so Crystal has no business paying for any of them at launch.
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const { registerStudioFs } = require("./studioFs") as typeof import("./studioFs");
+    const { registerStudioTerminal } = require("./studioTerminal") as typeof import("./studioTerminal");
+    const { registerStudioBuild } = require("./studioBuild") as typeof import("./studioBuild");
+    const { registerStudioGit } = require("./studioGit") as typeof import("./studioGit");
+    /* eslint-enable @typescript-eslint/no-require-imports */
     const isStudioSender = (sender: Electron.WebContents) => !!studioWindow && !studioWindow.isDestroyed() && sender === studioWindow.webContents;
     const studioFs = registerStudioFs(path.join(app.getPath("documents"), "Crystal Studio"), isStudioSender);
     // The code workbench: a terminal in the project folder, and the build that bundles an extension.
@@ -1501,7 +1556,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("updater:state", () => updater.getState());
   ipcMain.handle("updater:check", () => updater.check());
   ipcMain.handle("updater:download", () => updater.download());
-  ipcMain.handle("updater:install", () => updater.quitAndInstall());
+  ipcMain.handle("updater:install", () => updater.quitAndInstall(prepareToQuitForUpdate));
+  ipcMain.handle("updater:launch-update", () => updater.getLaunchUpdateEnabled());
+  ipcMain.handle("updater:set-launch-update", (_event, enabled: unknown) => updater.setLaunchUpdateEnabled(enabled === true));
   ipcMain.handle("updater:open-releases", () => shell.openExternal(RELEASES_URL));
 
   ipcMain.handle("system-audio:enable", () => systemAudio.enable());
