@@ -126,7 +126,7 @@ export function CommunitySettingsRolesTab({
   communityId,
   canManage,
 }: CommunitySettingsRolesTabProps) {
-  const roles = (useQuery(api.roles.list, { communityId }) ?? []) as RoleDoc[];
+  const roles = (useQuery(api.roles.listWithCounts, { communityId }) ?? []) as RoleDoc[];
   const [editingRoleId, setEditingRoleId] = useState<Id<"roles"> | null>(null);
 
   // A role deleted from under the editor (by someone else, or by the editor's

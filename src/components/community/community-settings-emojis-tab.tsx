@@ -6,6 +6,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import {
+  CommunitySettingsStickersSection,
+  useStickerDraft,
+} from "@/components/community/community-settings-stickers";
 import { useSettingsDraft } from "@/components/settings/settings-save";
 import { uploadImage } from "@/lib/cdn-upload";
 import { Button } from "@/components/ui/button";
@@ -49,6 +53,8 @@ export function CommunitySettingsEmojisTab({
   const generateUploadUrl = useMutation(api.communityEmojis.generateUploadUrl);
   const addEmoji = useMutation(api.communityEmojis.add);
   const removeEmoji = useMutation(api.communityEmojis.remove);
+  // Stickers share this page's one draft: see `useStickerDraft`.
+  const stickerDraft = useStickerDraft(communityId);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -136,8 +142,9 @@ export function CommunitySettingsEmojisTab({
   const slots = emojis.length - removed.size + staged.length;
 
   useSettingsDraft({
-    changes: canManage ? staged.length + removed.size : 0,
+    changes: (canManage ? staged.length + removed.size : 0) + stickerDraft.changes,
     discard: () => {
+      stickerDraft.discard();
       for (const item of staged) URL.revokeObjectURL(item.previewUrl);
       setStaged([]);
       setRemoved(new Set());
@@ -145,6 +152,7 @@ export function CommunitySettingsEmojisTab({
       setError(null);
     },
     save: async () => {
+      await stickerDraft.save();
       // Removed first: it is what frees the slots the new ones may need.
       for (const id of [...removed]) {
         await removeEmoji({ emojiId: id });
@@ -308,6 +316,9 @@ export function CommunitySettingsEmojisTab({
           })}
         </div>
       )}
+
+      <hr className="border-border" />
+      <CommunitySettingsStickersSection draft={stickerDraft} />
     </div>
   );
 }

@@ -175,32 +175,14 @@ export const VOICE_PERMISSION_KEYS: PermissionKey[] = [
 ];
 
 /**
- * Permissions that exist so the set matches Discord's, for things Crystal doesn't have (slowmode,
- * stage channels, an audit log, text-to-speech…) or can't check (see READ_MESSAGE_HISTORY below).
- * They can be given and taken away like any other, and are stored, but nothing checks them. The
- * editors say so rather than let a switch look like it does something.
- *
- * READ_MESSAGE_HISTORY is here for a different reason: what it takes is a record, kept by the
- * server, of when each member opened a channel, and Crystal doesn't keep one.
+ * Permissions that exist so the set matches Discord's, for things Crystal doesn't have or can't
+ * check. They can be given and taken away like any other, and are stored, but nothing checks them.
+ * The editors say so rather than let a switch look like it does something.
+ * Currently empty: USE_VAD, PRIORITY_SPEAKER, SET_VOICE_STATUS, REQUEST_TO_SPEAK,
+ * USE_EMBEDDED_ACTIVITIES, USE_EXTERNAL_SOUNDS, VIEW_INSIGHTS and VIEW_CREATOR_MONETIZATION are
+ * all server-enforced (see voice/admin rework), so they were removed from this set.
  */
-export const UNENFORCED_PERMISSIONS: ReadonlySet<PermissionKey> = new Set<PermissionKey>([
-  "READ_MESSAGE_HISTORY",
-  "CREATE_PRIVATE_THREADS",
-  "USE_EXTERNAL_STICKERS",
-  "SEND_TTS",
-  "SEND_VOICE_MESSAGES",
-  "CREATE_POLLS",
-  "BYPASS_SLOWMODE",
-  "USE_VAD",
-  "PRIORITY_SPEAKER",
-  "SET_VOICE_STATUS",
-  "REQUEST_TO_SPEAK",
-  "USE_EMBEDDED_ACTIVITIES",
-  "USE_EXTERNAL_SOUNDS",
-  "VIEW_AUDIT_LOG",
-  "VIEW_INSIGHTS",
-  "VIEW_CREATOR_MONETIZATION",
-]);
+export const UNENFORCED_PERMISSIONS: ReadonlySet<PermissionKey> = new Set<PermissionKey>([]);
 
 /**
  * How the permission list is broken up in the role editor, in the order shown.

@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChatDecorationEditor } from "@/components/chat-decoration-editor";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SLOWMODE_CHOICES, describeWait } from "../../../convex/lib/slowmodePure";
 
 interface EditChannelDialogProps {
   channel: { id: Id<"channels">; name: string; topic?: string; type: "text" | "voice" } | null;
@@ -35,6 +37,8 @@ export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogPr
   const remove = useMutation(api.channels.remove);
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
+  // Seconds between messages, as the menu's string value. Starts from the channel's own setting.
+  const [slowmode, setSlowmode] = useState("0");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +52,10 @@ export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogPr
     }
   }, [channel]);
 
+  useEffect(() => {
+    if (details) setSlowmode(String(details.slowmodeSeconds));
+  }, [details?.slowmodeSeconds]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!channel) return null;
 
   const handleSave = async () => {
@@ -55,7 +63,13 @@ export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogPr
     setSaving(true);
     setError(null);
     try {
-      await update({ channelId: channel.id, name, topic: channel.type === "text" ? topic : undefined });
+      await update({
+        channelId: channel.id,
+        name,
+        topic: channel.type === "text" ? topic : undefined,
+        // Only sent when it changed, so saving a rename never rewrites slowmode from a stale read.
+        slowmodeSeconds: channel.type === "text" && details && Number(slowmode) !== details.slowmodeSeconds ? Number(slowmode) : undefined,
+      });
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -117,6 +131,28 @@ export function EditChannelDialog({ channel, onOpenChange }: EditChannelDialogPr
                     placeholder="Optional"
                     maxLength={256}
                   />
+                </div>
+              )}
+
+              {channel.type === "text" && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-channel-slowmode">Slowmode</Label>
+                  <Select value={slowmode} onValueChange={setSlowmode} disabled={!details}>
+                    <SelectTrigger id="edit-channel-slowmode" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SLOWMODE_CHOICES.map((seconds) => (
+                        <SelectItem key={seconds} value={String(seconds)}>
+                          {seconds === 0 ? "Off" : describeWait(seconds * 1000)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    How long each member waits between messages (and between forum posts and replies). Members with Bypass
+                    slowmode, Manage messages or Manage channels are exempt.
+                  </p>
                 </div>
               )}
 

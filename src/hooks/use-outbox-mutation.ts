@@ -42,6 +42,7 @@ export interface OutboxSendInput {
   /** From `extractMentions(text)`; travels in the clear beside the ciphertext. */
   mentions?: OutboxMentions;
   birthdayWish?: boolean;
+  tts?: boolean;
   replyToId?: string;
   pingReply?: boolean;
   replyToPreview?: {
@@ -145,6 +146,7 @@ export function useOutboxMutation<
             text: send.text,
             mentions: send.mentions ?? extractMentions(send.text ?? ""),
             birthdayWish: send.birthdayWish,
+            tts: send.tts,
             replyToId: send.replyToId,
             pingReply: send.pingReply,
             replyToPreview: send.replyToPreview,

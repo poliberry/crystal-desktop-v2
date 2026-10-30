@@ -202,9 +202,10 @@ function ChannelPreloader({ channelId, voice }: { channelId: Id<"channels">; voi
 
 /**
  * A server's structure: its sidebar, its member list, and the permission bits
- * that decide what either of them shows.
+ * that decide what either of them shows. The per-channel queries under it are a
+ * later step (`withChannels`), see `useIdleStages`.
  */
-function CommunityPreloader({ communityId }: { communityId: Id<"communities"> }) {
+function CommunityPreloader({ communityId, channels: withChannels }: { communityId: Id<"communities">; channels: boolean }) {
   const channels = useQuery(api.channels.list, { communityId }) ?? [];
   useQuery(api.communities.get, { communityId });
   useQuery(api.communities.listMembers, { communityId });
@@ -214,7 +215,7 @@ function CommunityPreloader({ communityId }: { communityId: Id<"communities"> })
 
   return (
     <>
-      {channels.map((ch: any) => (
+      {withChannels && channels.map((ch: any) => (
         <ChannelPreloader key={ch.id} channelId={ch.id} voice={ch.type === "voice"} />
       ))}
     </>
@@ -351,6 +352,53 @@ function useHiddenFor(ms: number): boolean {
  * still hot server-side via Redis. */
 const STRUCTURE_COMMUNITY_BUDGET = 3;
 
+/**
+ * Gap before each warming step, and how long a step waits for an idle moment once the gap has passed. Together they
+ * spread the subscriptions over a few seconds instead of landing a hundred in one render.
+ */
+const STAGE_GAP_MS = 250;
+const STAGE_IDLE_TIMEOUT_MS = 1000;
+
+/**
+ * Counts up from 0 to `last`, one step each time the main thread has been idle for a moment (`requestIdleCallback`,
+ * or a plain timer where that doesn't exist). The returned stage only ever goes up.
+ *
+ * What is warmed at each stage is decided by the caller. Stage 0 is the first render, so what belongs there is exactly
+ * what the screen being used needs.
+ */
+function useIdleStages(last: number): number {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    if (stage >= last) return;
+    let idle: number | null = null;
+    const advance = () => setStage((s) => Math.min(s + 1, last));
+    const timer = window.setTimeout(() => {
+      if (typeof window.requestIdleCallback === "function") {
+        idle = window.requestIdleCallback(advance, { timeout: STAGE_IDLE_TIMEOUT_MS });
+      } else {
+        advance();
+      }
+    }, STAGE_GAP_MS);
+    return () => {
+      window.clearTimeout(timer);
+      if (idle !== null) window.cancelIdleCallback(idle);
+    };
+  }, [stage, last]);
+  return stage;
+}
+
+/** Which step each kind of warming waits for. */
+const STAGE = {
+  /** The server being used: sidebar, members, roles. */
+  currentStructure: 0,
+  /** Its channels, and the DM list's metadata. */
+  currentChannels: 1,
+  /** The other servers' structure, and message history. */
+  otherStructure: 2,
+  /** The other servers' channels. */
+  otherChannels: 3,
+} as const;
+
 function PreloadEverything() {
   const listMine = useQuery(api.communities.listMine);
   const communities = listMine ?? [];
@@ -361,6 +409,7 @@ function PreloadEverything() {
   // the window comes back. The last page of each stays in the message cache, so a view opened on
   // return still paints from it while its own subscription catches up. Structure stays warm.
   const releaseMessages = useHiddenFor(HIDDEN_RELEASE_MS);
+  const stage = useIdleStages(STAGE.otherChannels);
 
   // Same guard as `memberIds`, for DMs: a recent view or pinned tab can hold an id that was never one of this
   // account's conversations (a stale hint, a bad deep link), and subscribing to its messages throws a validation error
@@ -481,18 +530,24 @@ function PreloadEverything() {
         <AccountPreloader />
       </ErrorBoundary>
 
-      {communityIdsToPreload.map((id) => (
-        <ErrorBoundary silent key={id} label="Community preload">
-          <CommunityPreloader communityId={id} />
-        </ErrorBoundary>
-      ))}
-      {conversationIdsToPreload.map((id) => (
+      {/* The first is the server in use (see `communityIdsToPreload`); the rest wait their turn. */}
+      {communityIdsToPreload.map((id, index) =>
+        stage >= (index === 0 ? STAGE.currentStructure : STAGE.otherStructure) ? (
+          <ErrorBoundary silent key={id} label="Community preload">
+            <CommunityPreloader
+              communityId={id}
+              channels={stage >= (index === 0 ? STAGE.currentChannels : STAGE.otherChannels)}
+            />
+          </ErrorBoundary>
+        ) : null,
+      )}
+      {stage >= STAGE.currentChannels && conversationIdsToPreload.map((id) => (
         <ErrorBoundary silent key={id} label="Conversation preload">
           <ConversationPreloader conversationId={id as Id<"conversations">} />
         </ErrorBoundary>
       ))}
 
-      {!releaseMessages && messageTargets.map((target) =>
+      {stage >= STAGE.otherStructure && !releaseMessages && messageTargets.map((target) =>
         target.type === "dm" ? (
           <ErrorBoundary silent key={`dm:${target.conversationId}`} label="Message preload">
             <ConversationMessagesPreloader conversationId={target.conversationId as Id<"conversations">} />

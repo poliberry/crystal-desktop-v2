@@ -207,6 +207,7 @@ export function OutboxFlusher() {
             attachments: attachments.length ? attachments : undefined,
             replyToId: args.replyToId as Id<"channelMessages"> | undefined,
             pingReply: args.pingReply,
+            tts: args.tts || undefined,
             clientId: entry.id,
           });
         }
@@ -319,11 +320,11 @@ export function OutboxFlusher() {
   return null;
 }
 
-/** Network/transport/auth failures are retried; anything a handler threw on
- * purpose (permission, timeout, validation) stops the lane. */
+/** Network/transport/auth failures are retried, and so is slowmode (the wait is short and the send is
+ * fine); anything else a handler threw on purpose (permission, timeout, validation) stops the lane. */
 function isRetryable(message: string): boolean {
   if (typeof navigator !== "undefined" && !navigator.onLine) return true;
-  return /network|failed to fetch|fetch failed|timeout|timed out|connection|websocket|socket|ECONN|Could not reach|Unauthenticated|auth/i.test(
+  return /slowmode is on|network|failed to fetch|fetch failed|timeout|timed out|connection|websocket|socket|ECONN|Could not reach|Unauthenticated|auth/i.test(
     message,
   );
 }

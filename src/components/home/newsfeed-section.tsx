@@ -1,7 +1,6 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import moment from "moment";
 import { ArrowRight, FileText } from "lucide-react";
 
 import { api } from "../../../convex/_generated/api";
@@ -10,6 +9,8 @@ import { MessageContent } from "@/components/home/message-content";
 import { useNavigation } from "@/components/home/navigation-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
+import { useLocale } from "@/hooks/use-locale";
+import { formatRelative } from "@/lib/relative-time";
 
 function initials(name: string) {
   return name.slice(0, 2).toUpperCase();
@@ -20,6 +21,7 @@ function initials(name: string) {
  * newest first. Follow one from the channel's header or its right-click menu.
  */
 export function NewsfeedSection() {
+  useLocale();
   const nav = useNavigation();
   const items = useQuery(api.announcements.newsfeed);
 
@@ -54,7 +56,7 @@ export function NewsfeedSection() {
                 <span className="font-semibold">{item.communityName}</span>
                 <span className="text-muted-foreground"> · #{item.channelName}</span>
               </span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">{moment(item.createdAt).fromNow()}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">{formatRelative(item.createdAt)}</span>
               <ArrowRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
             </div>
             <div className="mt-2 pl-[2.625rem]">

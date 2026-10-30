@@ -16,6 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { canSpeak, useSpeakTts } from "@/lib/tts";
 
 /** The preference keys that are a plain on/off — everything except the two
  * numeric scales. Derived rather than listed so adding a switch to the
@@ -68,6 +69,9 @@ export function AccessibilityTab() {
     reset,
     ...prefs
   } = useAccessibility();
+
+  const [speakTts, setSpeakTts] = useSpeakTts();
+  const speechAvailable = canSpeak();
 
   return (
     <div className="space-y-6">
@@ -173,6 +177,29 @@ export function AccessibilityTab() {
               />
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Text-to-speech messages</CardTitle>
+          <CardDescription>
+            People with permission can send a message to be read aloud. It is spoken only if it arrives
+            while that channel is open and Crystal is in front of you; older messages are never read.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Read text-to-speech messages aloud</p>
+              <p className="text-xs text-muted-foreground">
+                {speechAvailable
+                  ? "Uses your device's own voices. Applies to this device only."
+                  : "This device can't speak: it has no speech synthesis available."}
+              </p>
+            </div>
+            <Switch checked={speakTts && speechAvailable} disabled={!speechAvailable} onCheckedChange={setSpeakTts} />
+          </div>
         </CardContent>
       </Card>
 

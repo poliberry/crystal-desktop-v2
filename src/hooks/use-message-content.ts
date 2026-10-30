@@ -6,7 +6,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { useDecryptedMessage, type Room } from "@/lib/e2ee";
 import type { Envelope } from "@/lib/e2ee/crypto";
 import { getSearchIndex, roomKeyOf } from "@/lib/e2ee/search-index";
-import { sanitizeComponents, sanitizeEmbeds, type SafeActionRow, type SafeEmbed } from "@/lib/e2ee/sanitize";
+import { safePollWords, sanitizeComponents, sanitizeEmbeds, type SafeActionRow, type SafeEmbed } from "@/lib/e2ee/sanitize";
 
 export type ContentState = "plain" | "decrypted" | "locked" | "pending" | "plaintext-in-encrypted-room";
 
@@ -14,6 +14,8 @@ export interface MessageContentValue {
   text?: string;
   embeds: SafeEmbed[];
   components: SafeActionRow[];
+  /** The words of an encrypted poll, as decrypted. A plaintext poll's words are on the row itself. */
+  pollWords: unknown;
   state: ContentState;
 }
 
@@ -58,7 +60,12 @@ export function useMessageContent(
   const embeds = useMemo(() => (rawEmbeds ? sanitizeEmbeds(rawEmbeds) : NONE), [rawEmbeds]);
   const components = useMemo(() => (rawComponents ? sanitizeComponents(rawComponents) : NONE_ROWS), [rawComponents]);
 
-  return { text, embeds, components, state };
+  return { text, embeds, components, pollWords: state === "decrypted" ? decrypted.poll : undefined, state };
+}
+
+/** A decrypted poll's words, checked against the number of options the server counts. */
+export function pollWordsOf(content: Pick<MessageContentValue, "pollWords">, optionCount: number) {
+  return safePollWords(content.pollWords, optionCount);
 }
 
 /**

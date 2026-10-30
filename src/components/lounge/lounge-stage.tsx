@@ -30,6 +30,7 @@ import type { RoomController } from "@/hooks/use-room";
 import { screenShareCarrier } from "@/lib/companion";
 import { resolveScene } from "@/lib/lounge-scenes";
 import { routeElementToPlayback } from "@/lib/system-audio";
+import { getPriorityGain, subscribePriorityGain, voiceGainFor } from "@/lib/priority-speaker";
 import { cn } from "@/lib/utils";
 
 /**
@@ -43,11 +44,13 @@ function LoungeAudio({ room }: { room: Room }) {
   const { participantVolume, deafened } = useAudioPreferences();
   const volumeRef = useRef(participantVolume);
   const deafenedRef = useRef(deafened);
+  const attachedRef = useRef(new Map<Track, HTMLMediaElement>());
   volumeRef.current = participantVolume;
   deafenedRef.current = deafened;
 
   useEffect(() => {
     const attached = new Map<Track, HTMLMediaElement>();
+    attachedRef.current = attached;
     const clear = () => {
       for (const [track, element] of attached) track.detach(element);
       attached.clear();
@@ -62,7 +65,7 @@ function LoungeAudio({ room }: { room: Room }) {
         if (!track || track.kind !== Track.Kind.Audio || publication?.isMuted) continue;
         const element = track.attach();
         element.autoplay = true;
-        element.volume = volumeRef.current;
+        element.volume = volumeRef.current * voiceGainFor(participant, getPriorityGain());
         element.style.display = "none";
         host.current.appendChild(element);
         attached.set(track, element);
@@ -93,6 +96,16 @@ function LoungeAudio({ room }: { room: Room }) {
       (element as HTMLAudioElement).volume = deafened ? 0 : participantVolume;
     });
   }, [participantVolume, deafened]);
+
+  // Priority speaker ducking (src/lib/priority-speaker.ts): turn everyone but a priority speaker down while one talks.
+  useEffect(() => {
+    return subscribePriorityGain(() => {
+      for (const [track, element] of attachedRef.current) {
+        const participant = [...room.remoteParticipants.values()].find((p) => p.getTrackPublication(Track.Source.Microphone)?.track === track);
+        (element as HTMLAudioElement).volume = deafenedRef.current ? 0 : volumeRef.current * (participant ? voiceGainFor(participant, getPriorityGain()) : getPriorityGain());
+      }
+    });
+  }, [room]);
 
   return <div ref={host} aria-hidden className="hidden" />;
 }

@@ -9,6 +9,7 @@
  */
 
 import { clampStrength } from "@/lib/audio-attention";
+import { DEFAULT_PUSH_TO_TALK_KEY, isInputMode, type InputMode } from "@/lib/push-to-talk";
 
 /** What audio to share alongside a screen share. */
 export type SystemAudioChoice =
@@ -49,6 +50,12 @@ export interface AudioPreferences {
   deafened: boolean;
   /** Mic mute state to restore when undeafening. */
   mutedBeforeDeafen: boolean;
+  /** How the microphone opens in a call: when you speak (`vad`), or while a key is held (`ptt`). A community
+   * can take voice activity away from a member, and then calls there run push-to-talk whatever this says —
+   * see src/lib/push-to-talk.ts. */
+  inputMode: InputMode;
+  /** The push-to-talk key, as a `KeyboardEvent.code`. Heard while the app has focus. */
+  pushToTalkKey: string;
   /** Run the Krisp noise filter over the microphone before publishing it.
    * A machine preference rather than a per-call one — it costs CPU, so a
    * weak machine should be able to turn it off once and be done. */
@@ -89,6 +96,8 @@ export const DEFAULT_AUDIO_PREFERENCES: AudioPreferences = {
   muted: false,
   deafened: false,
   mutedBeforeDeafen: false,
+  inputMode: "vad",
+  pushToTalkKey: DEFAULT_PUSH_TO_TALK_KEY,
   noiseSuppression: true,
   quality: { resolution: "1080p", frameRate: 30 },
   shareAudio: { mode: "off" },
@@ -166,6 +175,11 @@ export function readAudioPreferences(): AudioPreferences {
     muted: stored.muted === true,
     deafened: stored.deafened === true,
     mutedBeforeDeafen: stored.mutedBeforeDeafen === true,
+    inputMode: isInputMode(stored.inputMode) ? stored.inputMode : DEFAULT_AUDIO_PREFERENCES.inputMode,
+    pushToTalkKey:
+      typeof stored.pushToTalkKey === "string" && stored.pushToTalkKey
+        ? stored.pushToTalkKey
+        : DEFAULT_AUDIO_PREFERENCES.pushToTalkKey,
     noiseSuppression: stored.noiseSuppression !== false,
     quality: parseQuality(stored.quality) ?? DEFAULT_AUDIO_PREFERENCES.quality,
     shareAudio: shareAudio ?? DEFAULT_AUDIO_PREFERENCES.shareAudio,

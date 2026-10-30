@@ -1,13 +1,15 @@
 "use client";
 
-import { useAction, useMutation, useQuery } from "convex/react";
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { useAudioPreferences } from "@/components/audio-provider";
 import { IncomingCall } from "@/components/call/incoming-call";
 import { AudioAttentionController } from "@/components/call/audio-attention-controller";
+import { PrioritySpeakerController } from "@/components/call/priority-speaker-controller";
+import { preloadCallUi } from "@/components/call/call-lazy";
 import { SwitchCallDialog } from "@/components/call/switch-call-dialog";
 import { ScreenSharePicker } from "@/components/screen-share-picker";
 import { usePipFrameStream } from "@/hooks/use-pip-frame-stream";
@@ -95,6 +97,24 @@ interface CallContextValue {
 
 const CallContext = createContext<CallContextValue | null>(null);
 
+/**
+ * `next` itself while any of its entries changed, otherwise the object returned last time.
+ *
+ * `useRoom` builds its return value afresh on every render, but nearly everything in it is a state value or a
+ * `useCallback`, so it only really changes when one of those does. Handing out the previous object while that's true
+ * is what lets the context value below stay put, and with it the 23 components that read `useCall()`.
+ */
+function useShallowStable<T extends object>(next: T): T {
+  const ref = useRef(next);
+  const prev = ref.current as Record<string, unknown>;
+  const incoming = next as Record<string, unknown>;
+  const keys = Object.keys(incoming);
+  if (keys.length !== Object.keys(prev).length || keys.some((k) => !Object.is(prev[k], incoming[k]))) {
+    ref.current = next;
+  }
+  return ref.current;
+}
+
 function sameCall(a: ActiveCall, kind: "dm", id: Id<"conversations">): boolean;
 function sameCall(a: ActiveCall, kind: "channel", id: Id<"channels">): boolean;
 function sameCall(a: ActiveCall, kind: "dm" | "channel", id: string): boolean {
@@ -119,8 +139,9 @@ function sameCall(a: ActiveCall, kind: "dm" | "channel", id: string): boolean {
  * active before joining the new one.
  */
 export function CallProvider({ children }: { children: React.ReactNode }) {
-  const controller = useRoom();
-  const { status, connect, disconnect, screenSharing } = controller;
+  const controller = useShallowStable(useRoom());
+  const { status, connect, disconnect, screenSharing, setClipVerifier } = controller;
+  const convex = useConvex();
   const joinDmAction = useAction(api.callTokens.join);
   const leaveDmAction = useAction(api.callTokens.leave);
   const joinChannelAction = useAction(api.channelCalls.join);
@@ -254,6 +275,21 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setWatchedShares((prev) => prev.filter((identity) => screenShares.includes(identity)));
   }, [watchedShares, screenShares, unsubscribeFromScreenShare]);
 
+  // Soundboard packets in a community channel are checked with the server before they play: who sent them, whether
+  // they may use the soundboard (and sounds from other communities) here, and what the clip's url really is.
+  // A DM has no community to check against.
+  const verifyChannel = activeCall?.kind === "channel" ? activeCall.channelId : null;
+  useEffect(() => {
+    if (!verifyChannel) {
+      setClipVerifier(null);
+      return;
+    }
+    setClipVerifier((senderId, soundId) =>
+      convex.query(api.soundboard.verifyClip, { channelId: verifyChannel, senderId, soundId }),
+    );
+    return () => setClipVerifier(null);
+  }, [verifyChannel, convex, setClipVerifier]);
+
   // --- pop-out window ------------------------------------------------------
   // Owned here rather than by whichever tile happens to be on screen: the mini
   // player and the focused tile both pop things out, and a per-component
@@ -261,19 +297,21 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // — i.e. clicking the mini player to open the call would kill the pop-out it
   // had just created.
   const pip = usePipWindow();
+  // `usePipWindow` returns a new object each render; its functions are the stable part.
+  const { open: openPip, close: closePip } = pip;
 
   const popOut = useCallback(
     async (source: PoppedOutSource & { title: string }) => {
-      const opened = await pip.open({ title: source.title, width: 480, height: 270 });
+      const opened = await openPip({ title: source.title, width: 480, height: 270 });
       if (opened) setPoppedOut({ identity: source.identity, kind: source.kind });
     },
-    [pip]
+    [openPip]
   );
 
   const closePopOut = useCallback(() => {
-    pip.close();
+    closePip();
     setPoppedOut(null);
-  }, [pip]);
+  }, [closePip]);
 
   // The window has its own close button, so "is it open" is not ours to assume.
   useEffect(() => {
@@ -317,7 +355,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   const joinSound = useQuery(
     api.soundboard.myJoinSound,
-    activeCall?.kind === "channel" ? { communityId: activeCall.communityId } : {}
+    activeCall?.kind === "channel" ? { communityId: activeCall.communityId, channelId: activeCall.channelId } : {}
   );
   // Keyed on the room so switching calls re-announces, but reconnecting
   // within one doesn't chime twice.
@@ -357,6 +395,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       const myGeneration = ++joinGenerationRef.current;
       setJoinError(null);
+      preloadCallUi();
       if (activeCallRef.current) await leaveActiveCall();
 
       try {
@@ -407,6 +446,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       const myGeneration = ++joinGenerationRef.current;
       setJoinError(null);
+      preloadCallUi();
       if (activeCallRef.current) await leaveActiveCall();
 
       try {
@@ -572,6 +612,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setExpanded(false);
   }, []);
   const dismissJoinError = useCallback(() => setJoinError(null), []);
+  const clearWatchIntent = useCallback(() => setWatchIntent(null), []);
 
   // Unmounting (e.g. signing out) would otherwise leave the LiveKit Room
   // connected — local mic/camera still active — and the participant row
@@ -678,35 +719,65 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     [controller, sharePickerMode]
   );
 
+  // Rebuilt only when something in it changed: the provider re-renders for many reasons that aren't any of these
+  // (audio preferences, presence, the voice roster), and a fresh object each time re-rendered every `useCall()` reader.
+  const popOutSupported = pip.isSupported;
+  const callValue = useMemo<CallContextValue>(
+    () => ({
+      controller,
+      activeCall,
+      expanded,
+      joinDmCall,
+      joinChannelCall,
+      watchIntent,
+      clearWatchIntent,
+      leaveCall,
+      expand,
+      collapse,
+      sharedSourceName,
+      openSharePicker,
+      openShareSettings,
+      joinError,
+      dismissJoinError,
+      watchedShares,
+      watchShare,
+      unwatchShare,
+      poppedOut,
+      popOutSupported,
+      popOut,
+      closePopOut,
+    }),
+    [
+      controller,
+      activeCall,
+      expanded,
+      joinDmCall,
+      joinChannelCall,
+      watchIntent,
+      clearWatchIntent,
+      leaveCall,
+      expand,
+      collapse,
+      sharedSourceName,
+      openSharePicker,
+      openShareSettings,
+      joinError,
+      dismissJoinError,
+      watchedShares,
+      watchShare,
+      unwatchShare,
+      poppedOut,
+      popOutSupported,
+      popOut,
+      closePopOut,
+    ]
+  );
+
   return (
-    <CallContext.Provider
-      value={{
-        controller,
-        activeCall,
-        expanded,
-        joinDmCall,
-        joinChannelCall,
-        watchIntent,
-        clearWatchIntent: () => setWatchIntent(null),
-        leaveCall,
-        expand,
-        collapse,
-        sharedSourceName,
-        openSharePicker,
-        openShareSettings,
-        joinError,
-        dismissJoinError,
-        watchedShares,
-        watchShare,
-        unwatchShare,
-        poppedOut,
-        popOutSupported: pip.isSupported,
-        popOut,
-        closePopOut,
-      }}
-    >
+    <CallContext.Provider value={callValue}>
       {children}
       <AudioAttentionController room={controller.room} watchedShares={watchedShares} />
+      <PrioritySpeakerController room={controller.room} />
       <SwitchCallDialog
         target={switchRequest ? { channelId: switchRequest.channelId } : null}
         current={activeCall ? (activeCall.kind === "dm" ? { kind: "dm" } : { kind: "channel", channelId: activeCall.channelId }) : null}

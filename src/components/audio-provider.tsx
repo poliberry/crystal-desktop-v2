@@ -13,6 +13,7 @@ import {
 } from "@/lib/audio-prefs";
 import { isNoiseSuppressionSupported } from "@/lib/noise-filter";
 import { clampStrength } from "@/lib/audio-attention";
+import type { InputMode } from "@/lib/push-to-talk";
 import { playUiSound, type UiSound } from "@/lib/ui-sounds";
 
 export interface AudioDeviceOption {
@@ -34,6 +35,8 @@ interface AudioPreferencesContextValue extends AudioPreferences {
   toggleMuted: () => void;
   setDeafened: (deafened: boolean) => void;
   toggleDeafened: () => void;
+  setInputMode: (mode: InputMode) => void;
+  setPushToTalkKey: (code: string) => void;
   setNoiseSuppression: (enabled: boolean) => void;
   toggleNoiseSuppression: () => void;
   /** Whether the Krisp filter can run in this renderer at all — false hides
@@ -201,6 +204,8 @@ export function AudioPreferencesProvider({ children }: { children: React.ReactNo
       toggleMuted: () => setMuted(!prefs.muted),
       setDeafened,
       toggleDeafened: () => setDeafened(!prefs.deafened),
+      setInputMode: (inputMode) => update({ inputMode }),
+      setPushToTalkKey: (pushToTalkKey) => update({ pushToTalkKey }),
       setNoiseSuppression: (noiseSuppression) => update({ noiseSuppression }),
       toggleNoiseSuppression: () => update({ noiseSuppression: !prefs.noiseSuppression }),
       setQuality: (quality) => update({ quality }),

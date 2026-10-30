@@ -1,7 +1,6 @@
 "use client";
 
 import { usePaginatedQuery, useQuery } from "convex/react";
-import moment from "moment";
 import { useCallback, useMemo, useState } from "react";
 import { ArrowDown, ArrowRight, ArrowUp, AtSign, Eye, EyeOff, Gamepad2, Hash, MessageCircle, MessageSquare, Newspaper, Play, Settings2, Star, Users } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
@@ -15,9 +14,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useCachedQuery } from "@/hooks/use-cached-query";
+import { useLocale } from "@/hooks/use-locale";
 import type { RichPresenceActivity } from "@/types/desktop-api";
 import { MessagePreview } from "@/components/message-preview";
 import { encryptedSource, NEW_ENCRYPTED_MESSAGE, useEncryptedPreview } from "@/lib/e2ee/preview";
+import { formatRelative } from "@/lib/relative-time";
 
 function initials(name: string) { return name.slice(0, 2).toUpperCase(); }
 function greeting(name?: string) { const hour = new Date().getHours(); return `Good ${hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"}${name ? `, ${name}` : ""}`; }
@@ -50,6 +51,7 @@ const HOME_SECTION_LABELS: Record<HomeSectionId, string> = {
 };
 
 export function MyCrystal({ onOpenFriends }: { onOpenFriends: () => void }) {
+  useLocale();
   const { homeSections, setHomeSections } = useUiPreferences();
   const visible = useCallback(
     (id: HomeSectionId) => homeSections.find((section) => section.id === id)?.visible ?? true,
@@ -87,7 +89,7 @@ export function MyCrystal({ onOpenFriends }: { onOpenFriends: () => void }) {
 
   const sections: Record<HomeSectionId, React.ReactNode> = {
     "jump-back-in": <Section title="Let’s jump back in" icon={MessageCircle}>{recent.length === 0 ? <Empty>No recent server activity yet.</Empty> : <div className="flex snap-x gap-3 overflow-x-auto pb-1">{recent.map((entry) => { const community = communities.find((item: any) => item.id === entry.communityId); return <button key={entry.communityId} type="button" onClick={() => entry.preview && nav.openCommunity(entry.communityId as Id<"communities">, entry.preview.channelId as Id<"channels">)} className="group w-64 shrink-0 snap-start rounded-2xl border border-border/70 bg-card/80 p-4 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/40"><div className="flex items-center gap-2.5"><Avatar className="size-9 rounded-xl"><AvatarImage src={community?.imageUrl} alt="" /><AvatarFallback className="rounded-xl">{initials(community?.name ?? "Server")}</AvatarFallback></Avatar><span className="min-w-0 flex-1 truncate text-sm font-semibold">{community?.name ?? "Server"}</span><ArrowRight className="size-4 text-muted-foreground" /></div><p className="mt-4 truncate text-xs text-muted-foreground"><Hash className="mr-1 inline size-3" />{entry.preview?.channelName}</p><p className="mt-1 line-clamp-2 min-h-8 text-sm">{entry.preview && <PreviewText preview={entry.preview} />}</p></button>; })}</div>}</Section>,
-    missed: <Section title="What’s been missed" icon={AtSign}><Card><CardContent className="space-y-1 p-3">{mentions.length === 0 ? <Empty>You’re all caught up on mentions.</Empty> : mentions.map((item) => <button key={item.id} type="button" onClick={() => item.communityId && item.channelId && nav.openCommunity(item.communityId as Id<"communities">, item.channelId as Id<"channels">)} className="flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-accent/60"><Avatar size="sm"><AvatarImage src={item.actor?.imageUrl ?? undefined} alt="" /><AvatarFallback>{initials(item.actor?.name ?? "?")}</AvatarFallback></Avatar><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.actor?.name ?? "Someone"} mentioned you in {item.communityName ?? "a server"}</span><span className="block truncate text-xs text-muted-foreground">{item.message ? <PreviewText preview={{ ...item.message, channelId: item.channelId, text: item.body }} /> : item.body ?? "Open to view the mention"}</span></span><span className="text-[11px] text-muted-foreground">{moment(item.createdAt).fromNow()}</span></button>)}</CardContent></Card></Section>,
+    missed: <Section title="What’s been missed" icon={AtSign}><Card><CardContent className="space-y-1 p-3">{mentions.length === 0 ? <Empty>You’re all caught up on mentions.</Empty> : mentions.map((item) => <button key={item.id} type="button" onClick={() => item.communityId && item.channelId && nav.openCommunity(item.communityId as Id<"communities">, item.channelId as Id<"channels">)} className="flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-accent/60"><Avatar size="sm"><AvatarImage src={item.actor?.imageUrl ?? undefined} alt="" /><AvatarFallback>{initials(item.actor?.name ?? "?")}</AvatarFallback></Avatar><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.actor?.name ?? "Someone"} mentioned you in {item.communityName ?? "a server"}</span><span className="block truncate text-xs text-muted-foreground">{item.message ? <PreviewText preview={{ ...item.message, channelId: item.channelId, text: item.body }} /> : item.body ?? "Open to view the mention"}</span></span><span className="text-[11px] text-muted-foreground">{formatRelative(item.createdAt)}</span></button>)}</CardContent></Card></Section>,
     newsfeed: <Section title="Newsfeed" icon={Newspaper}><NewsfeedSection /></Section>,
     important: <Section title="What’s important" icon={Star}><Card><CardContent className="space-y-1 p-3">{important.length === 0 ? <Empty>Star a conversation or channel to keep it close.</Empty> : important.map((item) => <button key={item.conversationId ?? item.channelId} type="button" onClick={() => item.kind === "conversation" ? nav.openConversation(item.conversationId) : nav.openCommunity(item.communityId, item.channelId)} className="flex w-full items-center gap-3 rounded-xl p-2 text-left hover:bg-accent/60"><Star className="size-4 shrink-0 text-amber-400" /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.kind === "conversation" ? "Direct message" : `${item.communityName} · #${item.channelName}`}</span><span className="block truncate text-xs text-muted-foreground">{item.last?.text || "Open this priority item"}</span></span></button>)}</CardContent></Card></Section>,
     online: <Section title="Who’s online" icon={Users} action={<Button variant="ghost" size="sm" onClick={onOpenFriends}>All friends <ArrowRight className="ml-1 size-3.5" /></Button>}><Card><CardContent className="grid gap-1 p-3 sm:grid-cols-2">{online.length === 0 ? <div className="sm:col-span-2"><Empty>No friends are online right now.</Empty></div> : online.map((friend: any) => <FriendRow key={friend.id} name={friend.name} username={friend.username} imageUrl={friend.imageUrl} status={friend.status} customStatus={friend.customStatus} nameplateUrl={friend.nameplateUrl} avatarDecoration={friend.avatarDecoration} actions={<Button variant="ghost" size="icon" className="size-8" onClick={() => openFriend(friend.id)}><MessageSquare className="size-4" /></Button>} />)}</CardContent></Card></Section>,

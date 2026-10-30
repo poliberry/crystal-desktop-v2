@@ -48,7 +48,7 @@ export interface E2eeClient {
   encrypt(
     room: Room,
     authorId: Id<"users">,
-    payload: { text?: string; embeds?: unknown[]; components?: unknown[] },
+    payload: { text?: string; embeds?: unknown[]; components?: unknown[]; poll?: { question: string; options: string[] } },
   ): Promise<{ enc: Envelope & { keyId: Id<"e2eeKeys"> }; escrowed: boolean }>;
   /** null when we hold no key for enc.keyId (yet) or it fails to authenticate. Caches unwrapped room keys in memory. */
   decrypt(room: Room, authorId: Id<"users">, enc: Envelope): Promise<MessagePayload | null>;
@@ -369,7 +369,7 @@ class Keyring implements E2eeClient {
     }
   }
 
-  encrypt(room: Room, authorId: Id<"users">, payload: { text?: string; embeds?: unknown[]; components?: unknown[] }) {
+  encrypt(room: Room, authorId: Id<"users">, payload: { text?: string; embeds?: unknown[]; components?: unknown[]; poll?: { question: string; options: string[] } }) {
     // One sender at a time per room: two messages typed together must not each start an epoch.
     return this.inLane(roomName(room), async () => {
       await this.whenReady();
@@ -388,7 +388,7 @@ class Keyring implements E2eeClient {
     return next;
   }
 
-  private async encryptNow(room: Room, authorId: Id<"users">, payload: { text?: string; embeds?: unknown[]; components?: unknown[] }) {
+  private async encryptNow(room: Room, authorId: Id<"users">, payload: { text?: string; embeds?: unknown[]; components?: unknown[]; poll?: { question: string; options: string[] } }) {
     const convex = this.client();
     const args = roomArgs(room);
     const context = (keyId: string): MessageContext => ({ scope: room.scope, targetId: targetOf(room), keyId, authorId });

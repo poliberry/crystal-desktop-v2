@@ -14,7 +14,8 @@ import {
   Trash2,
   UserPlus,
 } from "lucide-react";
-import moment from "moment";
+import { useLocale } from "@/hooks/use-locale";
+import { formatRelative } from "@/lib/relative-time";
 import { useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -120,6 +121,7 @@ function NotificationBody({
  */
 /** The inbox's contents: the desktop's popover and the phone's Notifications sheet both show this. */
 export function InboxPanel({ fill = false, onOpened }: { fill?: boolean; onOpened?: () => void }) {
+  useLocale();
   const unreadCount = useQuery(api.notifications.unreadCount) ?? 0;
   const markRead = useMutation(api.notifications.markRead);
   const markAllRead = useMutation(api.notifications.markAllRead);
@@ -232,7 +234,7 @@ export function InboxPanel({ fill = false, onOpened }: { fill?: boolean; onOpene
                         {notification.title}
                       </p>
                       <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {moment(notification.createdAt).fromNow(true)}
+                        {formatRelative(notification.createdAt, { withoutSuffix: true })}
                       </span>
                     </div>
                     {/* Through the preview renderer, so a message that was

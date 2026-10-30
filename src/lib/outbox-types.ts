@@ -56,6 +56,8 @@ export interface SendArgs {
   /** Computed by the composer from `text`; not secret from the server by design. */
   mentions?: OutboxMentions;
   birthdayWish?: boolean;
+  /** Read aloud to people with the channel open (needs Send TTS; the server refuses it otherwise). */
+  tts?: boolean;
   /** The message this send is a reply to. */
   replyToId?: string;
   /** Whether the reply notifies its target — the composer's "@" toggle. */
