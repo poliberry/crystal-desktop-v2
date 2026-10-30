@@ -47,6 +47,8 @@ export interface OverlayReplyPreview {
   hasAttachment: boolean;
   /** The target no longer exists — render as "original message was deleted". */
   deleted: boolean;
+  /** The target exists but this reader can't see it (blocked, or from before their history starts). */
+  hidden?: boolean;
 }
 
 export interface OverlayMessage {

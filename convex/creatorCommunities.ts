@@ -6,6 +6,7 @@ import { action, internalAction, internalMutation, internalQuery, mutation, quer
 import { freshToken } from "./connectedAccounts";
 import { requireCommunity, requireMember } from "./communities";
 import { PLATFORM_META, type CreatorPlatform } from "./lib/communityKinds";
+import { tallyTiers, totalEarnings } from "./lib/creatorMonetization";
 import { PLATFORMS, type Tier } from "./lib/platforms";
 import { DEFAULT_EVERYONE_PERMISSIONS, ROLE_PERMS_VERSION, PERMISSIONS, can, getBasePermissions, requireCommunityPermission } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
@@ -76,6 +77,40 @@ export const overview = query({
         : null,
       tiers: tiers.sort((a, b) => a.rank - b.rank).map((t) => ({ key: t.tierKey, name: t.name, roleId: t.roleId })),
       membership: membership ? { tierKey: membership.tierKey ?? null, checkedAt: membership.checkedAt } : null,
+    };
+  },
+});
+
+/**
+ * A creator community's subscriber numbers and the creator's earnings. Only for someone who holds
+ * View Creator Monetization (the owner and Administrators always do) — Manage Community is not
+ * enough, so a moderator who runs the channel link can't read what the creator makes.
+ *
+ * Earnings are the owner's: the community's creator is its owner, and sales are recorded against a
+ * person rather than a community.
+ */
+export const monetization = query({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, { communityId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    await requireMember(ctx, communityId, me._id);
+    const community = await requireCommunity(ctx, communityId);
+    if (community.kind !== "creator") throw new Error("That isn't a creator community.");
+    if (!can(await getBasePermissions(ctx, community, me._id), PERMISSIONS.VIEW_CREATOR_MONETIZATION)) {
+      throw new Error("You don't have permission to see this community's earnings.");
+    }
+
+    const [tiers, memberships, earnings] = await Promise.all([
+      ctx.db.query("creatorTiers").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect(),
+      ctx.db.query("creatorMemberships").withIndex("by_community_user", (q) => q.eq("communityId", communityId)).take(10_000),
+      ctx.db.query("creatorEarnings").withIndex("by_creator", (q) => q.eq("creatorId", community.ownerId)).order("desc").take(500),
+    ]);
+    const tally = tallyTiers(tiers.map((t) => ({ key: t.tierKey, name: t.name, rank: t.rank })), memberships);
+    return {
+      ...tally,
+      earnings: totalEarnings(earnings),
+      // The newest rows are cut at 500; say so rather than let a total look complete when it isn't.
+      earningsTruncated: earnings.length === 500,
     };
   },
 });

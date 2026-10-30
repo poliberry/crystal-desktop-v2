@@ -4,6 +4,7 @@ import type { MutationCtx } from "../_generated/server";
 import { PERMISSIONS } from "../permissions";
 import { BotApiError, loadActing, permissionsIn } from "./botAccess";
 import { holds } from "./botAuth";
+import { recordMemberJoined, recordMemberLeft } from "./communityInsights";
 import { effectiveFileType } from "./mediaType";
 
 /**
@@ -199,6 +200,8 @@ export async function describeMessage(ctx: MutationCtx, message: Doc<"channelMes
 export async function fireMemberEvent(ctx: MutationCtx, communityId: Id<"communities">, type: "member.joined" | "member.left", user: Doc<"users">): Promise<void> {
   // A bot being added or removed is `bot.installed` / the Bots settings' business, not a member event.
   if (user.isBot) return;
+  // The one place every join and leave passes through, so the Insights counters hang off it too.
+  await (type === "member.joined" ? recordMemberJoined : recordMemberLeft)(ctx, communityId);
   await fireCommunityEvent(ctx, communityId, type, { member: { id: user._id, username: user.username, name: user.name, isBot: false } }, { scope: "members.read" });
 }
 

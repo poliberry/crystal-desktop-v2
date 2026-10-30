@@ -3,6 +3,7 @@ import { autoUpdater } from "electron-updater";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { downloadStatus, parseAttempt, shouldAutoInstall, type InstallAttempt } from "./launchUpdate";
 import { newestRelease } from "./releases";
 import { appIdentity, REPO, resolveRunningApp, resolveRunningChannel, type AppIdentity, type ChannelDefinition, type ReleaseChannel } from "./channels";
 
@@ -61,6 +62,16 @@ export type UpdaterListener = (state: UpdaterState) => void;
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const INITIAL_CHECK_DELAY_MS = 10_000;
+/** How long a launch waits on the update check before opening the app anyway — a slow network must not hold the app back. */
+const LAUNCH_CHECK_TIMEOUT_MS = 8_000;
+/** The most a launch spends downloading before it gives up and opens the app (the download carries on in the topbar). */
+const LAUNCH_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
+/**
+ * On macOS, if the app is still running this long after `quitAndInstall`, it is made to exit. Squirrel.Mac installs when
+ * the process ends, so a process that lingers (a window that would not close) is what makes an update need a manual quit.
+ * Generous, because Squirrel first has to finish staging the update before it will quit at all.
+ */
+const MAC_QUIT_WATCHDOG_MS = 45_000;
 
 /** Newest published tag for a channel, or null if it has never released (see `newestRelease`). */
 async function newestTagForChannel(channel: ChannelDefinition): Promise<string | null> {
@@ -224,9 +235,99 @@ class Updater {
     return this.state;
   }
 
-  quitAndInstall(): void {
+  /**
+   * `prepareToQuit` runs first: `quitAndInstall` closes every window *before* the app's own quit begins (Electron's docs
+   * say so), and a window that hides itself when closed — Crystal's does, to live in the tray — answers that by staying,
+   * which keeps the app alive and the update uninstalled until the person quits it by hand. It lets those windows go.
+   */
+  quitAndInstall(prepareToQuit?: () => void): void {
     if (this.state.phase !== "ready") return;
-    autoUpdater.quitAndInstall();
+    prepareToQuit?.();
+    autoUpdater.quitAndInstall(false, true);
+    if (process.platform === "darwin") {
+      setTimeout(() => app.exit(0), MAC_QUIT_WATCHDOG_MS);
+    }
+  }
+
+  private autoInstallOffFile(): string {
+    return path.join(app.getPath("userData"), "launch-update.disabled");
+  }
+
+  /** Whether launch installs an update by itself (Settings → Updates). On unless turned off; the marker is a file, as the GPU one is. */
+  getLaunchUpdateEnabled(): boolean {
+    return !fs.existsSync(this.autoInstallOffFile());
+  }
+
+  setLaunchUpdateEnabled(enabled: boolean): boolean {
+    try {
+      if (enabled) fs.rmSync(this.autoInstallOffFile(), { force: true });
+      else fs.writeFileSync(this.autoInstallOffFile(), "");
+    } catch {
+      // Unwritable: the answer below says what is actually in force.
+    }
+    return this.getLaunchUpdateEnabled();
+  }
+
+  private attemptFile(): string {
+    return path.join(app.getPath("userData"), "launch-update.json");
+  }
+
+  private readAttempt(): InstallAttempt | null {
+    try {
+      return parseAttempt(fs.readFileSync(this.attemptFile(), "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  private writeAttempt(version: string): void {
+    try {
+      fs.writeFileSync(this.attemptFile(), JSON.stringify({ version, at: Date.now() } satisfies InstallAttempt));
+    } catch {
+      // If it can't be written the only cost is that a failing install is retried next launch.
+    }
+  }
+
+  /**
+   * Update on the way in: check this channel's feed, and if it holds a newer version, download it and install it before the
+   * app opens. `report` is the splash's status line.
+   *
+   * Resolves "installing" once the app has been told to quit and install (the caller must not open the app), and "continue"
+   * for everything else — nothing new, an unpackaged or package-managed install, a slow or failing check or download, or a
+   * version already tried recently (see `shouldAutoInstall`). A failure here is never fatal: the updater state keeps the
+   * error for Settings → Updates and the app opens as it would have.
+   */
+  async runLaunchUpdate(
+    report: (text: string, progress: number | null) => void,
+    prepareToQuit: () => void,
+  ): Promise<"installing" | "continue"> {
+    if (!app.isPackaged || process.env.CRYSTAL_SKIP_UPDATE_CHECK === "1" || this.installedByPackageManager()) return "continue";
+    if (!this.getLaunchUpdateEnabled()) return "continue";
+
+    report("Checking for updates…", null);
+    await Promise.race([this.check(), new Promise<void>((resolve) => setTimeout(resolve, LAUNCH_CHECK_TIMEOUT_MS))]);
+    if (this.state.phase !== "available") return "continue";
+    const version = this.state.availableVersion;
+    if (!version || !shouldAutoInstall(version, this.readAttempt(), Date.now())) return "continue";
+
+    report(downloadStatus(version, 0), 0);
+    const stopListening = this.onStateChange((state) => {
+      if (state.phase === "downloading") report(downloadStatus(version, state.progressPercent), state.progressPercent);
+    });
+    try {
+      await Promise.race([this.download(), new Promise<void>((resolve) => setTimeout(resolve, LAUNCH_DOWNLOAD_TIMEOUT_MS))]);
+    } finally {
+      stopListening();
+    }
+    // Read through the method: the checks above have narrowed `this.state`, but the download has changed it since.
+    if (this.getState().phase !== "ready") return "continue";
+
+    report(`Installing v${version}…`, null);
+    // Recorded before quitting: an install that fails leaves the old version running next time, and this is what tells the
+    // next launch not to try the same one again straight away.
+    this.writeAttempt(version);
+    this.quitAndInstall(prepareToQuit);
+    return "installing";
   }
 }
 

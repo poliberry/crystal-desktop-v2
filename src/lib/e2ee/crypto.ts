@@ -35,6 +35,8 @@ export type MessagePayload = {
   text?: string;
   embeds?: unknown[];
   components?: unknown[];
+  /** The words of a poll, which the server must not read (it only counts votes by option number). */
+  poll?: { question: string; options: string[] };
 };
 
 // ---------------------------------------------------------------------------------------------

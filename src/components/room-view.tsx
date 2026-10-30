@@ -15,6 +15,9 @@ import {
   type CallTile,
   type PendingParticipant,
 } from "@/components/call/call-grid";
+import { StagePanel } from "@/components/call/stage-panel";
+import { VoiceStatusLine } from "@/components/call/voice-status";
+import { WatchTogether } from "@/components/call/watch-together";
 import { ControlBar } from "@/components/control-bar";
 import { Badge } from "@/components/ui/badge";
 import { useMediaDeviceAvailability } from "@/hooks/use-media-devices";
@@ -75,10 +78,26 @@ export function RoomView({ roomName, controller, onLeave, showSoundboardEmoji = 
   const { hasCamera, hasMicrophone } = useMediaDeviceAvailability();
   const { deafened, toggleDeafened, uiSoundVolume, outputDeviceId } = useAudioPreferences();
 
-  const allParticipants = [
+  // A stage shows its speakers as tiles and everyone else in the panel beneath; the roster is the server's
+  // word on who is up (convex/voiceChannels.ts), with the role signed into each token as the quicker source
+  // right after a promotion.
+  const voiceChannelId = activeCall?.kind === "channel" ? activeCall.channelId : null;
+  const voiceChannel = useQuery(api.channels.get, voiceChannelId ? { channelId: voiceChannelId } : "skip");
+  const stageRoster = useQuery(
+    api.channels.listVoiceParticipants,
+    voiceChannelId && voiceChannel?.isStage ? { channelId: voiceChannelId } : "skip",
+  );
+  const onStage = voiceChannel?.isStage
+    ? new Set(stageRoster?.filter((p) => p.stageSpeaker).map((p) => p.id as string) ?? [])
+    : null;
+
+  const everyone = [
     room.localParticipant,
     ...participants.filter((p) => p.identity !== room.localParticipant.identity),
   ];
+  const allParticipants = onStage
+    ? everyone.filter((p) => onStage.has(p.identity) || p.attributes?.stage === "speaker")
+    : everyone;
 
   // LiveKit only knows the name baked into the token at join time, so
   // identities are resolved here instead — against this call's community when
@@ -216,11 +235,15 @@ export function RoomView({ roomName, controller, onLeave, showSoundboardEmoji = 
         style={{ pointerEvents: chromeShown ? "auto" : "none" }}
         {...chromeHover}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-col">
+          <div className="flex items-center gap-2">
           <h1 className="text-lg font-semibold">{roomName}</h1>
-          <Badge variant="secondary">{allParticipants.length} in room</Badge>
+          {voiceChannel?.isStage && <Badge variant="secondary">Stage</Badge>}
+          <Badge variant="secondary">{everyone.length} in room</Badge>
           {systemAudioSharing && <Badge>System audio</Badge>}
           {deafened && <Badge variant="destructive">Deafened</Badge>}
+          </div>
+          {voiceChannelId && <VoiceStatusLine channelId={voiceChannelId} />}
         </div>
         <span className="text-xs text-muted-foreground">
           {isElectron() ? `Electron · ${getPlatform()}` : "Browser preview"}
@@ -234,6 +257,13 @@ export function RoomView({ roomName, controller, onLeave, showSoundboardEmoji = 
           <button className="ml-auto text-xs underline" onClick={() => setError(null)}>
             Dismiss
           </button>
+        </div>
+      )}
+
+      {voiceChannelId && (
+        <div className="max-h-[55%] shrink-0 space-y-3 overflow-y-auto empty:hidden">
+          <WatchTogether channelId={voiceChannelId} />
+          {voiceChannel?.isStage && <StagePanel channelId={voiceChannelId} />}
         </div>
       )}
 

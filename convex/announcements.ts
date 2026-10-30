@@ -6,6 +6,7 @@ import { internal } from "./_generated/api";
 import { requireCommunity, requireMember } from "./communities";
 import { renderMentionsAsText } from "./lib/mentions";
 import { r2PublicUrlForKey } from "./lib/r2";
+import { historyFloorFor, withinHistory } from "./lib/history";
 import { PERMISSIONS, can, getBasePermissions, getChannelPermissions, requireCommunityPermission } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
@@ -242,6 +243,8 @@ export const deliverToFollowers = internalMutation({
   handler: async (ctx, { messageId }) => {
     const message = await ctx.db.get(messageId);
     if (!message || message.forwardedFrom || message.enc) return;
+    // A poll or a sticker has nothing a snapshot could carry (votes and stickers belong to this community).
+    if (message.poll || message.stickerId) return;
     const source = await ctx.db.get(message.channelId);
     if (!source?.isAnnouncement) return;
     const sourceCommunity = await ctx.db.get(source.communityId);
@@ -282,6 +285,7 @@ export const deliverToFollowers = internalMutation({
         channelId: target._id,
         authorId: message.authorId,
         text,
+        hasAttachments: attachments.length > 0,
         ...(message.embeds?.length ? { embeds: message.embeds } : {}),
         forwardedFrom: {
           channelId: source._id,
@@ -328,8 +332,10 @@ export const newsfeed = query({
           .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
           .order("desc")
           .take(FEED_PER_CHANNEL);
+        // Following a channel doesn't give a member history the channel itself would withhold.
+        const floor = await historyFloorFor(ctx, channel._id, me._id, await getChannelPermissions(ctx, community, channel._id, me._id));
         return messages
-          .filter((m) => !m.enc)
+          .filter((m) => !m.enc && withinHistory(floor, m._creationTime))
           .map((message) => ({ message, channel, community }));
       }),
     );

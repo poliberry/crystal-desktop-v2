@@ -9,6 +9,10 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { DeleteMessageDialog } from "@/components/home/delete-message-dialog";
 import { MessageComponents, MessageEmbeds, type MessageButton, type MessageEmbed } from "@/components/community/message-embeds";
 import { MessageContent } from "@/components/home/message-content";
+import { MessagePoll } from "@/components/community/message-poll";
+import { MessageSticker } from "@/components/community/message-sticker";
+import { VoiceMessagePlayer } from "@/components/community/voice-message-player";
+import { claimSpeech, shouldSpeak, speak, useSpeakTts, windowIsActive } from "@/lib/tts";
 import { MessageContextMenu } from "@/components/home/message-context-menu";
 import { MessageForwardDialog } from "@/components/home/message-forward-dialog";
 import { ReportDialog } from "@/components/reports/report-dialog";
@@ -37,12 +41,13 @@ import { MessageDayDivider } from "@/components/home/message-day-divider";
 import { useOutboxOverlay, type OverlayReplyPreview } from "@/lib/outbox-overlay";
 import { useOutboxMutation } from "@/hooks/use-outbox-mutation";
 import type { ReplyDraft } from "@/lib/reply";
+import { sameData } from "@/lib/same-data";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger } from "../ui/popover";
 import { UserProfileContent } from "./member-profile-card";
 import { ProfilePopoverContent } from "@/components/profile/profile-popover";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
-import { useIndexMessage, useMessageContent } from "@/hooks/use-message-content";
+import { pollWordsOf, useIndexMessage, useMessageContent } from "@/hooks/use-message-content";
 import type { Envelope } from "@/lib/e2ee";
 import {
   AttachmentView,
@@ -119,6 +124,20 @@ interface MessageDoc {
   forwardedFrom?: { channelName: string; communityName: string } | null;
   /** The author couldn't embed links when this was sent. */
   noEmbeds?: boolean;
+  /** Sent as text-to-speech: spoken to people who have the channel open as it arrives. */
+  tts?: boolean;
+  /** A recording: the one audio attachment is drawn as a voice message. */
+  voiceMessage?: { durationMs: number; waveform: number[] } | null;
+  poll?: {
+    multi: boolean;
+    optionCount: number;
+    question: string | null;
+    options: { id: number; text: string }[] | null;
+    expiresAt: number | null;
+    endedAt: number | null;
+  } | null;
+  /** A community sticker sent as the message. */
+  sticker?: { id: string; name: string; imageUrl: string | null } | null;
   reactions: ReactionSummary[];
   /** The message this one replies to — see convex/channelMessages.ts `list`. */
   replyTo?: OverlayReplyPreview | null;
@@ -132,18 +151,7 @@ interface MessageDoc {
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
-const MessageRow = memo(function MessageRow({
-  message,
-  startsGroup,
-  mentionsMe,
-  highlighted,
-  canManageMessages,
-  communityId,
-  channelId,
-  channelName,
-  onReply,
-  onJumpTo,
-}: {
+interface MessageRowProps {
   message: MessageDoc;
   startsGroup: boolean;
   /** The message pings the reader directly — tint the row. */
@@ -151,12 +159,45 @@ const MessageRow = memo(function MessageRow({
   /** Just jumped-to from a reply preview — flash the row. */
   highlighted: boolean;
   canManageMessages: boolean;
+  /** Add Reactions: whether the react controls are offered. */
+  canReact: boolean;
+  /** The newest message the reader already had when the channel opened — a TTS message newer than this is live. */
+  ttsLiveAfter: number | null;
   communityId: Id<"communities">;
   channelId: Id<"channels">;
   channelName: string;
   onReply: (draft: ReplyDraft) => void;
   onJumpTo: (messageId: string) => void;
-}) {
+  /** The delete confirmation, report and forward dialogs are drawn once by the list, not once per row. */
+  onRequestDelete: (messageId: string) => void;
+  onRequestReport: (messageId: string) => void;
+  onRequestForward: (target: ForwardTarget) => void;
+}
+
+/** What the forward dialog is opened with: a snapshot of the message at the moment "Forward" was chosen. */
+interface ForwardTarget {
+  authorName: string;
+  text: string;
+  attachments: { fileName: string }[];
+}
+
+const MessageRow = memo(function MessageRow({
+  message,
+  startsGroup,
+  mentionsMe,
+  highlighted,
+  canManageMessages,
+  canReact,
+  ttsLiveAfter,
+  communityId,
+  channelId,
+  channelName,
+  onReply,
+  onJumpTo,
+  onRequestDelete,
+  onRequestReport,
+  onRequestForward,
+}: MessageRowProps) {
   // The time under the name is worded by the reader's region; a row is memoised, so it has to listen for a change itself.
   useLocale();
   const readable = useMessageContent(
@@ -179,6 +220,19 @@ const MessageRow = memo(function MessageRow({
     readable,
     !!message.__pending,
   );
+  // Text-to-speech: a flagged message that arrives while the channel is open and the window is in front is
+  // read aloud, once, if this device has it on. Anything older than what was here at open is history and stays silent.
+  const [speakEnabled] = useSpeakTts();
+  const spokenText = readable.text;
+  useEffect(() => {
+    if (!message.tts || message.isMine || message.__pending || !spokenText) return;
+    if (ttsLiveAfter === null || message.createdAt <= ttsLiveAfter) return;
+    // Claimed even if it isn't spoken now, so one that arrived while the window was away never plays later.
+    if (claimSpeech(message.id)) return;
+    if (shouldSpeak({ tts: true, createdAt: message.createdAt, liveAfter: ttsLiveAfter, alreadySpoken: false, enabled: speakEnabled, windowActive: windowIsActive() })) {
+      speak(spokenText);
+    }
+  }, [message.id, message.tts, message.isMine, message.__pending, message.createdAt, spokenText, ttsLiveAfter, speakEnabled]);
   // Durable: edits/deletes/reactions queue in the outbox and render through the
   // overlay, then flush to Convex (see src/lib/outbox.ts).
   const updateMessage = useOutboxMutation("edit", "channel");
@@ -190,11 +244,10 @@ const MessageRow = memo(function MessageRow({
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(readable.text ?? "");
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [reporting, setReporting] = useState(false);
-  const [forwarding, setForwarding] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const canDelete = message.isMine || canManageMessages;
+  // A poll, a recording and a sticker aren't text; there is nothing to edit.
+  const canEdit = message.isMine && !message.poll && !message.voiceMessage && !message.sticker;
 
   useEffect(() => {
     if (editing) editRef.current?.focus();
@@ -219,7 +272,7 @@ const MessageRow = memo(function MessageRow({
 
   const requestDelete = (shiftKey: boolean) => {
     if (shiftKey) void removeMessage({ channelId, messageId: message.id });
-    else setConfirmDelete(true);
+    else onRequestDelete(message.id);
   };
 
   const reply = () =>
@@ -357,16 +410,36 @@ const MessageRow = memo(function MessageRow({
             )}
             {readable.state === "locked" && <p className="text-xs text-muted-foreground">Encrypted message. Unlock your account to read it.</p>}
             {readable.state === "pending" && <p className="text-xs text-muted-foreground">Decrypting message…</p>}
+            {message.sticker && <MessageSticker sticker={message.sticker} />}
+            {message.poll && (
+              <MessagePoll
+                messageId={message.id}
+                poll={message.poll}
+                words={pollWordsOf(readable, message.poll.optionCount)}
+                canEnd={message.isMine || canManageMessages}
+                pending={!!message.__pending}
+              />
+            )}
             <MessageEmbeds embeds={readable.embeds} />
             <MessageComponents rows={readable.components} onPress={(customId) => pressComponent({ messageId: message.id, customId }).then(() => undefined)} />
-            {message.attachments.map((attachment) => (
-              <AttachmentView
-                key={attachment.id}
-                attachment={attachment}
-                author={message.author ?? undefined}
-                createdAt={message.createdAt}
-              />
-            ))}
+            {message.attachments.map((attachment) =>
+              message.voiceMessage && attachment.url ? (
+                <VoiceMessagePlayer
+                  key={attachment.id}
+                  url={attachment.url}
+                  durationMs={message.voiceMessage.durationMs}
+                  waveform={message.voiceMessage.waveform}
+                  className="mt-1"
+                />
+              ) : (
+                <AttachmentView
+                  key={attachment.id}
+                  attachment={attachment}
+                  author={message.author ?? undefined}
+                  createdAt={message.createdAt}
+                />
+              ),
+            )}
             <MessageReactions
               reactions={message.reactions}
               onToggle={(emoji, desired) =>
@@ -384,9 +457,10 @@ const MessageRow = memo(function MessageRow({
 
       {!editing && !message.__pending && (
         <MessageHoverActions
-          canEdit={message.isMine}
+          canEdit={canEdit}
           canDelete={canDelete}
           communityId={communityId}
+          canReact={canReact}
           onReact={(emoji) =>
             void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
           }
@@ -407,40 +481,46 @@ const MessageRow = memo(function MessageRow({
   return (
     <>
       <MessageContextMenu
-        canEdit={message.isMine}
+        canEdit={canEdit}
         canDelete={canDelete}
         communityId={communityId}
+        canReact={canReact}
         onReact={(emoji) =>
           void toggleReaction({ channelId, messageId: message.id, emoji, desired: "add" })
         }
         onReply={reply}
-        onForward={() => setForwarding(true)}
+        onForward={() =>
+          onRequestForward({
+            authorName: message.author?.name ?? "Unknown sender",
+            text: readable.text ?? "",
+            attachments: message.attachments.map(({ fileName }) => ({ fileName })),
+          })
+        }
         onEdit={startEdit}
         onDelete={requestDelete}
-        onReport={message.isMine ? undefined : () => setReporting(true)}
+        onReport={message.isMine ? undefined : () => onRequestReport(message.id)}
         saveTarget={{ scope: "channel", messageId: message.id as Id<"channelMessages"> }}
       >
         {content}
       </MessageContextMenu>
-      <ReportDialog
-        target={reporting ? { type: "channelMessage", id: message.id, label: "this message" } : null}
-        onClose={() => setReporting(false)}
-      />
-      {forwarding && <MessageForwardDialog
-        open
-        onOpenChange={setForwarding}
-        authorName={message.author?.name ?? "Unknown sender"}
-        text={readable.text ?? ""}
-        attachments={message.attachments.map(({ fileName }) => ({ fileName }))}
-      />}
-      <DeleteMessageDialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        onConfirm={() => void removeMessage({ channelId, messageId: message.id })}
-      />
     </>
   );
-});
+}, sameRow);
+
+/**
+ * Whether a row would draw the same thing again. Everything but `message` is a primitive or a handler that is stable
+ * across renders, so `===` does; `message` is compared by what it holds, because Convex returns fresh objects for every
+ * message whenever the query result changes, which made the default shallow comparison fail for the whole list on each
+ * new message or reaction. Comparing the data rather than a list of fields is what keeps this right for fields added
+ * to messages later.
+ */
+function sameRow(prev: MessageRowProps, next: MessageRowProps): boolean {
+  for (const key of Object.keys(next) as (keyof MessageRowProps)[]) {
+    if (key === "message") continue;
+    if (!Object.is(prev[key], next[key])) return false;
+  }
+  return sameData(prev.message, next.message);
+}
 
 /** The "couldn't send" affordance under a failed optimistic row. */
 function OutboxFailedFooter({ opId }: { opId: string }) {
@@ -516,10 +596,22 @@ export function ChannelMessageList({
     [me]
   );
   const loadingFirstPage = status === "LoadingFirstPage";
+  const channelInfo = useQuery(api.channels.get, { channelId });
+  const canReact = channelInfo?.canAddReactions ?? true;
+  // The newest message the reader had when this channel's first page arrived (server time on both
+  // sides). Text-to-speech only ever speaks what is newer than that.
+  const [liveMark, setLiveMark] = useState<{ channelId: Id<"channels">; after: number } | null>(null);
+  useEffect(() => {
+    if (loadingFirstPage || liveMark?.channelId === channelId) return;
+    setLiveMark({ channelId, after: results.reduce((newest, m) => Math.max(newest, (m as { createdAt: number }).createdAt), 0) });
+  }, [loadingFirstPage, channelId, liveMark, results]);
+  const ttsLiveAfter = liveMark?.channelId === channelId ? liveMark.after : null;
+  // A member without Read Message History never gets a remembered page: it would show what they
+  // saw in an earlier visit, which is before where their history now starts.
   const cached = useCachedFirstPage<MessageDoc>(
     channelMessagesKey(channelId),
     results,
-    loadingFirstPage
+    loadingFirstPage && channelInfo?.canReadHistory === true
   );
   // Splice in anything still queued in the outbox — downstream of the cache
   // seam, so the persistent mirror only ever sees real server rows.
@@ -553,6 +645,16 @@ export function ChannelMessageList({
 
   // One function for every row — see the same handler in home/message-list.tsx: an inline arrow defeats `MessageRow`'s memo.
   const handleReply = useCallback((draft: ReplyDraft) => onReply?.(draft), [onReply]);
+
+  // The delete confirmation, the report dialog and the forward dialog are drawn once here and pointed at whichever
+  // message asked for them, instead of a closed copy of each inside every row.
+  const removeMessage = useOutboxMutation("delete", "channel");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [reportId, setReportId] = useState<string | null>(null);
+  const [forwardTarget, setForwardTarget] = useState<ForwardTarget | null>(null);
+  const requestDelete = useCallback((messageId: string) => setDeleteId(messageId), []);
+  const requestReport = useCallback((messageId: string) => setReportId(messageId), []);
+  const requestForward = useCallback((target: ForwardTarget) => setForwardTarget(target), []);
 
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const jumpTo = useCallback((messageId: string) => {
@@ -628,16 +730,45 @@ export function ChannelMessageList({
                 }
                 highlighted={highlightId === message.id}
                 canManageMessages={canManageMessages}
+                canReact={canReact}
+                ttsLiveAfter={ttsLiveAfter}
                 communityId={communityId}
                 channelId={channelId}
                 channelName={channelName}
                 onReply={handleReply}
                 onJumpTo={jumpTo}
+                onRequestDelete={requestDelete}
+                onRequestReport={requestReport}
+                onRequestForward={requestForward}
               />
             </Fragment>
           );
         })}
       </div>
+      <ReportDialog
+        target={reportId ? { type: "channelMessage", id: reportId, label: "this message" } : null}
+        onClose={() => setReportId(null)}
+      />
+      {forwardTarget && (
+        <MessageForwardDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setForwardTarget(null);
+          }}
+          authorName={forwardTarget.authorName}
+          text={forwardTarget.text}
+          attachments={forwardTarget.attachments}
+        />
+      )}
+      <DeleteMessageDialog
+        open={deleteId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteId(null);
+        }}
+        onConfirm={() => {
+          if (deleteId) void removeMessage({ channelId, messageId: deleteId });
+        }}
+      />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { useEffect } from "react";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -14,6 +15,16 @@ interface ChannelViewProps {
 
 export function ChannelView({ channelId }: ChannelViewProps) {
   const channel = useQuery(api.channels.get, { channelId });
+
+  // Opening a channel is what starts a member's history when they lack Read Message History: they
+  // see nothing from before this moment. A no-op on the server for everyone who holds it. Runs again
+  // if the permission changes under them, so a removal takes effect without leaving the channel.
+  const openChannel = useMutation(api.channels.openChannel);
+  const readable = !!channel && channel.type !== "voice";
+  const canReadHistory = channel?.canReadHistory;
+  useEffect(() => {
+    if (readable) void openChannel({ channelId }).catch(() => {});
+  }, [channelId, readable, canReadHistory, openChannel]);
 
   if (channel === undefined) {
     return (

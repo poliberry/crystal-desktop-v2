@@ -26,7 +26,8 @@ import {
   mustGenericize,
 } from "./lib/e2eePure";
 import { hasBlocked, isMessageHidden, isSuppressing, windowsByTarget } from "./lib/blocking";
-import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
+import { historyFloorFor, withinHistory } from "./lib/history";
+import { PERMISSIONS, can, getChannelPermissions, getChannelPermissionsBatch } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { lastMessageOf, markAllConversationsRead } from "./conversations";
 import { deepLinkFor } from "./webPush";
@@ -307,8 +308,7 @@ async function myRoleIds(
       .collect(),
     ctx.db
       .query("roles")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .filter((q) => q.eq(q.field("isEveryone"), true))
+      .withIndex("by_community_everyone", (q) => q.eq("communityId", communityId).eq("isEveryone", true))
       .unique(),
   ]);
   return [...assigned.map((m) => m.roleId as string), ...(everyone ? [everyone._id as string] : [])];
@@ -492,10 +492,16 @@ export const feed = query({
         .withIndex("by_community", (q) => q.eq("communityId", cm.communityId))
         .collect();
 
+      const permsByChannel = await getChannelPermissionsBatch(
+        ctx,
+        community,
+        communityChannels.filter((c) => c.type === "text").map((c) => c._id),
+        me._id,
+      );
       for (const channel of communityChannels) {
         if (channel.type !== "text") continue;
-        const perms = await getChannelPermissions(ctx, community, channel._id, me._id);
-        if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
+        const channelPerms = permsByChannel.get(channel._id) ?? 0;
+        if (!can(channelPerms, PERMISSIONS.VIEW_CHANNELS)) continue;
 
         const [lastMessage] = await ctx.db
           .query("channelMessages")
@@ -504,6 +510,8 @@ export const feed = query({
           .take(1);
         if (!lastMessage) continue;
         if (isMessageHidden(hidden, lastMessage.authorId, lastMessage._creationTime)) continue;
+        // Nor a preview of what is before the member's history starts.
+        if (!withinHistory(await historyFloorFor(ctx, channel._id, me._id, channelPerms), lastMessage._creationTime)) continue;
 
         // An encrypted row is routed from its mention metadata (the text is
         // not the server's to parse); a legacy row keeps the old scan.

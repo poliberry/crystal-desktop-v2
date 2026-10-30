@@ -36,7 +36,15 @@ export function useUpdater() {
     return api.onStateChange(setState);
   }, [api]);
 
+  const [launchUpdate, setLaunchUpdateState] = useState<boolean | null>(null);
+  useEffect(() => {
+    void api?.getLaunchUpdate?.().then(setLaunchUpdateState);
+  }, [api]);
+
   return {
+    /** null while unknown, or when this build can't say. */
+    launchUpdate,
+    setLaunchUpdate: (enabled: boolean) => api?.setLaunchUpdate?.(enabled).then(setLaunchUpdateState),
     state,
     supported: !!api,
     check: () => api?.check().then(setState),

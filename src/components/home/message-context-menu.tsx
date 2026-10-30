@@ -24,6 +24,8 @@ interface MessageContextMenuProps {
   /** Channel messages only — omitted for DMs, which have no custom emoji. */
   communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
+  /** Whether new reactions can be added (Add Reactions). Defaults to true. */
+  canReact?: boolean;
   onReply?: () => void;
   onForward?: () => void;
   onEdit: () => void;
@@ -42,6 +44,7 @@ export function MessageContextMenu({
   canDelete,
   communityId,
   onReact,
+  canReact = true,
   onReply,
   onForward,
   onEdit,
@@ -53,17 +56,19 @@ export function MessageContextMenu({
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>
-            <Smile className="size-4" />
-            React
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent className="p-0">
-            <ReactionPickerContent
-              onSelect={(text, custom) => onReact(custom ? formatCustomEmoji(custom) : text)}
-            />
-          </ContextMenuSubContent>
-        </ContextMenuSub>
+        {canReact && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Smile className="size-4" />
+              React
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="p-0">
+              <ReactionPickerContent
+                onSelect={(text, custom) => onReact(custom ? formatCustomEmoji(custom) : text)}
+              />
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
 
         {onReply && (
           <ContextMenuItem onClick={onReply}>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useConvex, useMutation, useQuery } from "convex/react";
-import { AtSign, Paperclip, Reply, Send, Smile, X } from "lucide-react";
+import { AtSign, BarChart3, Mic, Paperclip, Reply, Send, Smile, Sticker, Volume2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -14,6 +14,14 @@ import {
 import { ComposerEmojiPicker, EMOJI_TRIGGER_ATTRIBUTE } from "@/components/composer-emoji-picker";
 import { ComposerMediaPicker, MEDIA_TRIGGER_ATTRIBUTE } from "@/components/composer-media-picker";
 import { GifIcon } from "@/components/icons/gif-icon";
+import { ComposerStickerPicker, STICKER_TRIGGER_ATTRIBUTE } from "@/components/composer-sticker-picker";
+import { PollComposerDialog, type NewPoll } from "@/components/community/poll-composer-dialog";
+import { VoiceMessageRecorder } from "@/components/community/voice-message-recorder";
+import { keyring } from "@/lib/e2ee";
+import { tryUploadViaR2 } from "@/lib/r2-client";
+import { uploadToStorage } from "@/lib/storage-upload";
+import { describeWait } from "../../../convex/lib/slowmodePure";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_LABEL } from "@/lib/upload-limits";
 import { shareKlipyItem } from "@/lib/klipy";
 import { klipyAttachment, type KlipyItem } from "../../../convex/lib/klipy";
 import { Button } from "@/components/ui/button";
@@ -79,6 +87,41 @@ export function ChannelMessageComposer({
   // out of the lookup, a typed `:name:` stays the plain text it was typed as.
   const channelDetails = useQuery(api.channels.get, { channelId });
   const externalEmojis = channelDetails?.canUseExternalEmojis ?? true;
+  // What this member may do here. Each of these hides or disables a control; the server checks every one again.
+  const canAttach = channelDetails?.canAttachFiles ?? true;
+  const canSendTts = channelDetails?.canSendTts ?? false;
+  const canPoll = channelDetails?.canCreatePolls ?? false;
+  const canVoice = channelDetails?.canSendVoiceMessages ?? false;
+  const canExternalStickers = channelDetails?.canUseExternalStickers ?? false;
+  const me = useQuery(api.users.getCurrentUser);
+  const [tts, setTts] = useState(false);
+  const [pollOpen, setPollOpen] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [stickerOpen, setStickerOpen] = useState(false);
+  const [denied, setDenied] = useState<string | null>(null);
+
+  // Slowmode: the server says when this member may next send; this counts down to it. A send also
+  // starts the clock here at once, since the server's word arrives a moment after the click.
+  const slowSeconds = channelDetails?.slowmodeSeconds ?? 0;
+  const slowExempt = channelDetails?.slowmodeExempt ?? false;
+  const [localUntil, setLocalUntil] = useState(0);
+  const slowUntil = Math.max(channelDetails?.slowmodeUntil ?? 0, localUntil);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (slowUntil <= Date.now()) return;
+    setClock(Date.now());
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      if (now >= slowUntil) clearInterval(timer);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [slowUntil]);
+  const slowRemaining = slowSeconds > 0 && !slowExempt ? Math.max(0, slowUntil - clock) : 0;
+  const slowed = slowRemaining > 0;
+  const startSlowmode = () => {
+    if (slowSeconds > 0 && !slowExempt) setLocalUntil(Date.now() + slowSeconds * 1000);
+  };
   const customEmojiByName = useMemo(() => {
     if (externalEmojis || !channelDetails) return allEmojiByName;
     return new Map([...allEmojiByName].filter(([, e]) => emojiCommunityOf.get(e.id) === channelDetails.communityId));
@@ -107,6 +150,18 @@ export function ChannelMessageComposer({
     handlePaste,
     dropZoneRef,
   } = useComposerAttachments(generateUploadUrl, { convex: convexClient as never, kind: "attachments" });
+  // Without Attach Files the picker, paste and drop all do nothing, and say why.
+  const noAttach = () => setDenied("You don't have permission to attach files in this channel.");
+  const guardedAddFiles: typeof addFiles = (files) => (canAttach ? addFiles(files) : Promise.resolve(noAttach()));
+  const guardedPaste: typeof handlePaste = (event) => {
+    if (!canAttach && Array.from(event.clipboardData?.files ?? []).length > 0) {
+      event.preventDefault();
+      noAttach();
+      return;
+    }
+    handlePaste(event);
+  };
+  const sendDirect = useMutation(api.channelMessages.send);
   const startTyping = useMutation(api.typing.start);
   const stopTyping = useMutation(api.typing.stop);
   const typingDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -114,7 +169,8 @@ export function ChannelMessageComposer({
   const serverEmojis = useQuery(api.communityEmojis.list, { communityId });
   // What the bots in this community offer. A command is run only when the text is exactly one of
   // these; anything else — a `/shrug` nobody handles — is sent as the ordinary message it is.
-  const botCommands = useQuery(api.bots.commandsFor, { communityId }) ?? [];
+  const allBotCommands = useQuery(api.bots.commandsFor, { communityId }) ?? [];
+  const botCommands = channelDetails?.canUseCommands === false ? [] : allBotCommands;
   const invokeCommand = useMutation(api.bots.invokeCommand);
   const [commandError, setCommandError] = useState<string | null>(null);
   const mentionNames = useMentionNames(communityId);
@@ -204,7 +260,16 @@ export function ChannelMessageComposer({
   })();
 
   const handleSend = async () => {
-    const trimmed = text.trim();
+    if (slowed) return;
+    setDenied(null);
+    let trimmed = text.trim();
+    // `/tts words` reads the words aloud to people with the channel open — only offered to people who may.
+    let speakAloud = tts;
+    const ttsCommand = canSendTts ? trimmed.match(/^\/tts(?:\s+([\s\S]*))?$/i) : null;
+    if (ttsCommand) {
+      trimmed = (ttsCommand[1] ?? "").trim();
+      speakAloud = true;
+    }
     if (!trimmed && pending.length === 0) return;
     const cmd = pending.length === 0 ? trimmed.match(/^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i) : null;
     const known = cmd ? botCommands.filter((c) => c.name === cmd[1].toLowerCase()) : [];
@@ -231,6 +296,7 @@ export function ChannelMessageComposer({
         channelId,
         text: trimmed ? encodeCustomEmojiShortcodes(trimmed, (name) => customEmojiByName.get(name)) : undefined,
         attachments: pending.length ? pending : undefined,
+        tts: speakAloud && !!trimmed ? true : undefined,
         replyToId: replyingTo?.id,
         pingReply: replyingTo ? pingReply : undefined,
         replyToPreview: replyingTo
@@ -242,7 +308,9 @@ export function ChannelMessageComposer({
             }
           : undefined,
       });
+      startSlowmode();
       setText("");
+      setTts(false);
       clearAttachments();
       onCancelReply?.();
     } finally {
@@ -325,6 +393,8 @@ export function ChannelMessageComposer({
    */
   const sendKlipy = async (item: KlipyItem, query: string) => {
     setMediaOpen(false);
+    if (slowed) return;
+    if (!canAttach) return noAttach();
     await sendMessage({
       channelId,
       attachments: [klipyAttachment(item)],
@@ -334,9 +404,71 @@ export function ChannelMessageComposer({
         ? { authorName: replyingTo.authorName, authorImageUrl: replyingTo.authorImageUrl, text: replyingTo.text, hasAttachment: replyingTo.hasAttachment }
         : undefined,
     });
+    startSlowmode();
     shareKlipyItem(item, query);
     onCancelReply?.();
     textareaRef.current?.focus();
+  };
+
+  /** What a thrown Convex error says to a person: the first line, without the "Uncaught Error:" wrapper. */
+  const readable = (e: unknown, fallback: string) =>
+    e instanceof Error ? e.message.replace(/^.*Uncaught Error:\s*/s, "").split("\n")[0] : fallback;
+
+  /** A community sticker is its own message, sent at once; the server checks it may be used here. */
+  const sendSticker = async (stickerId: Id<"communityStickers">) => {
+    setStickerOpen(false);
+    if (slowed) return;
+    try {
+      await sendDirect({ channelId, stickerId, replyToId: replyingTo?.id as Id<"channelMessages"> | undefined, pingReply: replyingTo ? pingReply : undefined });
+      startSlowmode();
+      onCancelReply?.();
+    } catch (e) {
+      setDenied(readable(e, "That sticker couldn't be sent."));
+    }
+    textareaRef.current?.focus();
+  };
+
+  /** A poll. In an encrypted channel its words are sealed in the message and the server only learns how many options there are. */
+  const createPoll = async (poll: NewPoll) => {
+    if (slowed) throw new Error(`Slowmode is on. You can send again in ${describeWait(slowRemaining)}.`);
+    try {
+      if (channelDetails?.isAnnouncement) {
+        await sendDirect({ channelId, poll: { question: poll.question, options: poll.options, multi: poll.multi, durationMs: poll.durationMs } });
+      } else {
+        if (!me) throw new Error("Still loading your account. Try again in a moment.");
+        const sealed = await keyring.encrypt({ scope: "channel", channelId }, me._id, { poll: { question: poll.question, options: poll.options } });
+        await sendDirect({ channelId, enc: sealed.enc, poll: { optionCount: poll.options.length, multi: poll.multi, durationMs: poll.durationMs } });
+      }
+    } catch (e) {
+      throw new Error(readable(e, "The poll couldn't be sent."));
+    }
+    startSlowmode();
+  };
+
+  /** A recording goes up like any attachment, then is sent flagged as a voice message (which is what the server checks Send Voice Messages on). */
+  const sendVoice = async (recording: { blob: Blob; mimeType: string; durationMs: number; waveform: number[] }) => {
+    if (slowed) throw new Error(`Slowmode is on. You can send again in ${describeWait(slowRemaining)}.`);
+    const extension = recording.mimeType.includes("ogg") ? "ogg" : recording.mimeType.includes("mp4") ? "m4a" : "webm";
+    const file = new File([recording.blob], `Voice message.${extension}`, { type: recording.mimeType });
+    if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`That recording is over ${MAX_ATTACHMENT_LABEL}.`);
+    try {
+      const r2 = await tryUploadViaR2(convexClient as never, file, "attachments");
+      const uploaded = r2
+        ? { cdnKey: r2.cdnKey, cdnUrl: r2.cdnUrl }
+        : { storageId: (await uploadToStorage(await generateUploadUrl(), file)) as Id<"_storage"> };
+      await sendDirect({
+        channelId,
+        attachments: [{ ...uploaded, fileName: file.name, fileType: recording.mimeType, fileSize: file.size }],
+        voiceMessage: { durationMs: recording.durationMs, waveform: recording.waveform },
+        replyToId: replyingTo?.id as Id<"channelMessages"> | undefined,
+        pingReply: replyingTo ? pingReply : undefined,
+      });
+    } catch (e) {
+      throw new Error(readable(e, "The voice message couldn't be sent."));
+    }
+    startSlowmode();
+    setRecording(false);
+    onCancelReply?.();
   };
 
   // 17px under the box, not 8: the user card is 8px (the sidebar's padding) +
@@ -430,6 +562,15 @@ export function ChannelMessageComposer({
           {attachmentError}
         </button>
       )}
+      {denied && (
+        <button
+          type="button"
+          onClick={() => setDenied(null)}
+          className="mb-2 block w-full truncate rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-left text-xs text-destructive"
+        >
+          {denied}
+        </button>
+      )}
 
       {/* The call card's surface — see `GLASS_DARK`. The focus ring is the
           border lighting up rather than a ring outside it, which the card's
@@ -444,28 +585,43 @@ export function ChannelMessageComposer({
           onSelect={insertEmoji}
         />
         <ComposerMediaPicker open={mediaOpen} onClose={() => setMediaOpen(false)} onSelect={(item, query) => void sendKlipy(item, query)} />
+        <ComposerStickerPicker
+          open={stickerOpen}
+          onClose={() => setStickerOpen(false)}
+          onSelect={(sticker) => void sendSticker(sticker.id)}
+          communityId={communityId}
+          canUseExternal={canExternalStickers}
+        />
         <div
           className={cn(
             GLASS_BASE,
             GLASS_DARK,
             GLASS_SOFT,
-            (emojiOpen || mediaOpen) && "rounded-tr-none",
+            (emojiOpen || mediaOpen || stickerOpen) && "rounded-tr-none",
             "flex h-[58px] items-center gap-1 px-2 py-1 transition-[border-color,box-shadow,border-radius] duration-200 focus-within:border-ring/70 focus-within:ring-ring/40",
           )}
         >
+          {recording ? (
+            <div className="min-w-0 flex-1">
+              <VoiceMessageRecorder disabled={slowed} onCancel={() => setRecording(false)} onSend={sendVoice} />
+            </div>
+          ) : (
+            <>
           <input
             ref={fileInputRef}
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => void addFiles(e.target.files)}
+            onChange={(e) => void guardedAddFiles(e.target.files)}
           />
           <Button
             type="button"
             variant="ghost"
             size="icon"
             className="size-8 shrink-0"
-            disabled={uploading}
+            disabled={uploading || !canAttach}
+            aria-label="Attach files"
+            title={canAttach ? "Attach files" : "You don't have permission to attach files here"}
             onClick={openFilePicker}
           >
             <Paperclip className="size-4" />
@@ -476,12 +632,12 @@ export function ChannelMessageComposer({
             value={text}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
+            onPaste={guardedPaste}
             onBlur={() => setAutocomplete(null)}
             emojiByName={customEmojiByName}
             emojiById={customEmojiById}
             mentionNames={mentionNames}
-            placeholder="Message…"
+            placeholder={slowed ? `Slowmode is on — you can send again in ${describeWait(slowRemaining)}` : "Message…"}
           />
 
           <Button
@@ -493,6 +649,7 @@ export function ChannelMessageComposer({
             {...{ [EMOJI_TRIGGER_ATTRIBUTE]: "" }}
             onClick={() => {
               setMediaOpen(false);
+              setStickerOpen(false);
               setEmojiOpen((open) => !open);
             }}
           >
@@ -510,6 +667,7 @@ export function ChannelMessageComposer({
             {...{ [MEDIA_TRIGGER_ATTRIBUTE]: "" }}
             onClick={() => {
               setEmojiOpen(false);
+              setStickerOpen(false);
               setMediaOpen((open) => !open);
             }}
           >
@@ -518,15 +676,64 @@ export function ChannelMessageComposer({
 
           <Button
             type="button"
+            variant="ghost"
             size="icon"
             className="size-8 shrink-0"
-            disabled={sending || uploading}
+            aria-label="Server stickers"
+            title="Server stickers"
+            aria-expanded={stickerOpen}
+            {...{ [STICKER_TRIGGER_ATTRIBUTE]: "" }}
+            onClick={() => {
+              setEmojiOpen(false);
+              setMediaOpen(false);
+              setStickerOpen((open) => !open);
+            }}
+          >
+            <Sticker className="size-4" />
+          </Button>
+
+          {/* Only offered to people who hold the permission behind each; the server decides all the same. */}
+          {canPoll && (
+            <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Create a poll" title="Create a poll" onClick={() => setPollOpen(true)}>
+              <BarChart3 className="size-4" />
+            </Button>
+          )}
+          {canSendTts && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn("size-8 shrink-0", tts && "bg-primary/15 text-primary hover:bg-primary/25")}
+              aria-pressed={tts}
+              aria-label="Send as text-to-speech"
+              title={tts ? "This message will be read aloud — click to turn off" : "Read the next message aloud (or start it with /tts)"}
+              onClick={() => setTts((on) => !on)}
+            >
+              <Volume2 className="size-4" />
+            </Button>
+          )}
+          {canVoice && (
+            <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Record a voice message" title="Record a voice message" onClick={() => setRecording(true)}>
+              <Mic className="size-4" />
+            </Button>
+          )}
+
+          <Button
+            type="button"
+            size="icon"
+            className="size-8 shrink-0"
+            disabled={sending || uploading || slowed}
+            aria-label={slowed ? `Slowmode: ${describeWait(slowRemaining)} left` : "Send"}
+            title={slowed ? `Slowmode: you can send again in ${describeWait(slowRemaining)}` : "Send"}
             onClick={() => void handleSend()}
           >
-            <Send className="size-4" />
+            {slowed ? <span className="text-[11px] font-semibold tabular-nums">{Math.ceil(slowRemaining / 1000)}</span> : <Send className="size-4" />}
           </Button>
+            </>
+          )}
         </div>
       </div>
+      {canPoll && <PollComposerDialog open={pollOpen} onOpenChange={setPollOpen} onCreate={createPoll} />}
     </div>
   );
 }

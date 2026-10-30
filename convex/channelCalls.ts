@@ -1,19 +1,26 @@
 "use node";
 
 import { v } from "convex/values";
-import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { AccessToken } from "livekit-server-sdk";
 
 import { internal } from "./_generated/api";
 import { action } from "./_generated/server";
-import { closeRoomIfEmpty, ensureRoom, mintScreenToken } from "./lib/liveKitAdmin";
+import { closeRoomIfEmpty, ensureRoom, mintScreenToken, trackSourcesFor } from "./lib/liveKitAdmin";
 
-/** Same shape as callTokens.ts's join/leave, but for a community voice
- * channel instead of a DM — see that file for why this needs "use node". */
+/** Same shape as callTokens.ts's join/leave, but for a community voice channel
+ * instead of a DM — see that file for why this needs "use node".
+ *
+ * The token is the server's word on what this person may do in the room (lib/voiceGrant.ts): the
+ * microphone needs Speak, the camera and screen need Video, a server mute or deafen is held in the
+ * grant itself, and on a stage the audience gets no publish rights until a moderator brings them up.
+ * Attributes (priority speaker, push-to-talk required, stage role, soundboard rights) are signed in
+ * with it, and `canUpdateOwnMetadata` is off so a client can't rewrite them. When any of that changes
+ * while someone is connected, voiceSync.ts updates the room in place. */
 export const join = action({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }): Promise<{ token: string; url: string; roomName: string }> => {
-    const { userId, name, canSpeak, canVideo } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
-    await ctx.runMutation(internal.channels.recordVoiceJoin, { channelId, userId });
+    const { userId, name, grant, grantKey } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
+    await ctx.runMutation(internal.channels.recordVoiceJoin, { channelId, userId, grantKey, stageSpeaker: grant.stageSpeaker });
 
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -25,18 +32,17 @@ export const join = action({
     const roomName = `channel-${channelId}`;
     await ensureRoom(roomName);
 
-    const at = new AccessToken(apiKey, apiSecret, { identity: userId, name, ttl: "4h" });
+    const at = new AccessToken(apiKey, apiSecret, { identity: userId, name, ttl: "4h", attributes: grant.attributes });
     at.addGrant({
       room: roomName,
       roomJoin: true,
-      // Without Speak and Video the member listens: they can be heard by nobody and seen by nobody.
-      canPublish: canSpeak || canVideo,
-      canPublishSources: [
-        ...(canSpeak ? [TrackSource.MICROPHONE] : []),
-        ...(canVideo ? [TrackSource.CAMERA] : []),
-      ],
-      canSubscribe: true,
-      canPublishData: true,
+      canPublish: grant.canPublish,
+      // Once canPublishSources is set LiveKit denies every source not listed, so this is the whole list:
+      // Speak is the microphone; Video is the camera, screen share and its audio.
+      canPublishSources: trackSourcesFor(grant.sources),
+      canSubscribe: grant.canSubscribe,
+      canPublishData: grant.canPublishData,
+      canUpdateOwnMetadata: false,
     });
 
     return { token: await at.toJwt(), url, roomName };
@@ -48,8 +54,14 @@ export const join = action({
 export const joinScreen = action({
   args: { channelId: v.id("channels") },
   handler: async (ctx, { channelId }): Promise<{ token: string; url: string; roomName: string }> => {
-    const { userId, name, canVideo } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
-    if (!canVideo) throw new Error("You don't have permission to share your screen in this channel.");
+    const { userId, name, grant, stage } = await ctx.runQuery(internal.channels.getVoiceJoinContext, { channelId });
+    if (!grant.sources.includes("screen_share")) {
+      throw new Error(
+        stage && !grant.stageSpeaker
+          ? "Only speakers can share their screen on a stage."
+          : "You don't have permission to share your screen in this channel.",
+      );
+    }
     return mintScreenToken(`channel-${channelId}`, userId, name);
   },
 });

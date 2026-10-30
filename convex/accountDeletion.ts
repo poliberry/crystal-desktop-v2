@@ -8,6 +8,7 @@ import { deleteDmMessage } from "./messages";
 import { wipeProfile } from "./lib/accountWipe";
 import { removeInstall } from "./lib/botAccess";
 import { releaseFile, releaseUrl } from "./lib/files";
+import { adjustMemberCount } from "./lib/memberCount";
 import { revokeSessions } from "./lib/sessions";
 import { requireFreshVerification } from "./lib/stepUp";
 import { getCurrentUserOrThrow } from "./users";
@@ -157,6 +158,16 @@ const STEPS: Step[] = [
     for (const row of rows) await deleteChannelMessage(ctx, row, userId);
     return rows.length < MESSAGE_BATCH;
   },
+  // Poll votes, slowmode stamps and "where my history starts" markers.
+  async (ctx, userId) => {
+    const votes = await ctx.db.query("channelPollVotes").withIndex("by_user", (q) => q.eq("userId", userId)).take(BATCH);
+    for (const row of votes) await ctx.db.delete(row._id);
+    const stamps = await ctx.db.query("channelSlowmode").withIndex("by_user", (q) => q.eq("userId", userId)).take(BATCH);
+    for (const row of stamps) await ctx.db.delete(row._id);
+    const anchors = await ctx.db.query("channelHistoryAnchors").withIndex("by_user", (q) => q.eq("userId", userId)).take(BATCH);
+    for (const row of anchors) await ctx.db.delete(row._id);
+    return votes.length < BATCH && stamps.length < BATCH && anchors.length < BATCH;
+  },
   // Communities you belong to, and what hangs off each membership.
   async (ctx, userId) => {
     const rows = await ctx.db.query("communityMembers").withIndex("by_user", (q) => q.eq("userId", userId)).take(20);
@@ -166,6 +177,7 @@ const STEPS: Step[] = [
       for (const r of await ctx.db.query("clanRoster").withIndex("by_member", (q) => q.eq("communityId", communityId).eq("userId", userId)).collect()) await ctx.db.delete(r._id);
       for (const r of await ctx.db.query("creatorMemberships").withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId)).collect()) await ctx.db.delete(r._id);
       await ctx.db.delete(member._id);
+      await adjustMemberCount(ctx, communityId, -1);
     }
     return rows.length < 20;
   },

@@ -49,6 +49,15 @@ import {
   type SoundboardPacket,
 } from "@/lib/soundboard";
 import { decodeStreamView, encodeStreamView, STREAM_VIEW_TOPIC } from "@/lib/stream-view";
+import { effectiveInputMode, matchesPushToTalk, shouldTransmit } from "@/lib/push-to-talk";
+import {
+  cameraBlockedReason,
+  readSoundboardRights,
+  readVoicePolicy,
+  screenShareBlockedReason,
+  type PermissionsLike,
+  type VoicePolicy,
+} from "@/lib/voice-policy";
 
 export type ConnectionStatus =
   | "idle"
@@ -63,6 +72,31 @@ export interface ConnectOptions {
   url: string;
   token: string;
 }
+
+/** What the server says about a soundboard clip a call member sent: the clip as the server knows it, or a refusal. */
+export type VerifiedClip =
+  | { ok: true; builtin: true }
+  | { ok: true; builtin: false; url: string; emoji: string | null; name: string }
+  | { ok: false; reason: string };
+
+/** Asks the server whether `senderId` may play `soundId` in this call (soundboard.verifyClip). Set by CallProvider for community channels. */
+export type ClipVerifier = (senderId: string, soundId: string) => Promise<VerifiedClip>;
+
+/** How long a "yes, they may play that" answer is trusted before it is asked again — and a "no", which is rechecked sooner. */
+const CLIP_VERDICT_TTL_MS = 30_000;
+const CLIP_REFUSAL_TTL_MS = 5_000;
+
+/** Time a push-to-talk key stays live after release, so the end of a word isn't clipped. */
+const PTT_RELEASE_MS = 250;
+
+const NO_POLICY: VoicePolicy = {
+  canMicrophone: true,
+  canCamera: true,
+  canScreenShare: true,
+  mustPushToTalk: false,
+  stageRole: null,
+  priority: false,
+};
 
 /** Screen-share video/audio publications get their own manual subscription
  * gating (see `useRoom`) so a screen share isn't downloaded until a viewer
@@ -186,6 +220,8 @@ export function useRoom() {
 
   const audio = useAudioPreferences();
   const {
+    inputMode: preferredInputMode,
+    pushToTalkKey,
     inputDeviceId,
     outputDeviceId,
     muted,
@@ -203,6 +239,10 @@ export function useRoom() {
   const [cameraEnabled, setCameraEnabled] = useState(false);
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false);
+  /** What the server's grant lets the local participant send, and the attributes it signed (see voice-policy.ts). */
+  const [policy, setPolicy] = useState<VoicePolicy>(NO_POLICY);
+  /** The push-to-talk key is down (or was a moment ago — see PTT_RELEASE_MS). */
+  const [pttHeld, setPttHeld] = useState(false);
   const [screenShares, setScreenShares] = useState<string[]>([]);
   const [systemAudioSharing, setSystemAudioSharing] = useState(false);
   /** Source id of the screen/window currently being shared, so the quality
@@ -234,6 +274,72 @@ export function useRoom() {
   outputDeviceIdRef.current = outputDeviceId;
   const noiseSuppressionRef = useRef(noiseSuppression);
   noiseSuppressionRef.current = noiseSuppression;
+  const policyRef = useRef(policy);
+  policyRef.current = policy;
+  const preferredInputModeRef = useRef(preferredInputMode);
+  preferredInputModeRef.current = preferredInputMode;
+  const pttHeldRef = useRef(false);
+  pttHeldRef.current = pttHeld;
+  const clipVerifierRef = useRef<ClipVerifier | null>(null);
+  const clipVerdicts = useRef(new Map<string, { until: number; verdict: VerifiedClip }>());
+
+  // The mode the call actually runs in: push-to-talk if chosen, or if the community took voice activity away.
+  const inputMode = effectiveInputMode(preferredInputMode, !policy.mustPushToTalk);
+  const transmitting =
+    policy.canMicrophone && shouldTransmit({ muted, mode: inputMode, keyHeld: pttHeld });
+  const transmittingRef = useRef(transmitting);
+  transmittingRef.current = transmitting;
+
+  const refreshPolicy = useCallback(() => {
+    const local = room.localParticipant;
+    const next =
+      room.state === "connected"
+        ? readVoicePolicy(local.permissions as PermissionsLike | undefined, local.attributes)
+        : NO_POLICY;
+    policyRef.current = next;
+    setPolicy(next);
+    return next;
+  }, [room]);
+
+  /** Whether the microphone should be sending, from the latest of everything (for callers that can't wait for a render). */
+  const wantsMicrophone = useCallback(() => {
+    const pol = policyRef.current;
+    return (
+      pol.canMicrophone &&
+      shouldTransmit({
+        muted: mutedRef.current,
+        mode: effectiveInputMode(preferredInputModeRef.current, !pol.mustPushToTalk),
+        keyHeld: pttHeldRef.current,
+      })
+    );
+  }, []);
+
+  /**
+   * Whether a clip another participant sent may play, and what to play. A clip from the app's own set only
+   * needs the sender's soundboard right (signed into their token). Any other is looked up with the server —
+   * which knows who the sender is, whether they may use the soundboard and sounds from other communities
+   * here, and what the clip's url really is — so a packet can't smuggle in a url or a clip it couldn't use.
+   * Calls without a verifier (DMs) have no community to check against and behave as they always did.
+   */
+  const verifyClip = useCallback(
+    async (sender: RemoteParticipant, soundId: string): Promise<VerifiedClip | null> => {
+      const rights = readSoundboardRights(sender.attributes);
+      if (!rights.soundboard) return { ok: false, reason: "The sender can't use the soundboard here." };
+      if (findBuiltinSound(soundId)) return { ok: true, builtin: true };
+      const verifier = clipVerifierRef.current;
+      if (!verifier) return null;
+      const key = `${sender.identity}:${soundId}`;
+      const cached = clipVerdicts.current.get(key);
+      if (cached && cached.until > Date.now()) return cached.verdict;
+      const verdict = await verifier(sender.identity, soundId).catch(
+        (): VerifiedClip => ({ ok: false, reason: "Couldn't check that clip." }),
+      );
+      // Refusals are remembered only briefly: permissions change, and a failed check isn't a verdict.
+      clipVerdicts.current.set(key, { until: Date.now() + (verdict.ok ? CLIP_VERDICT_TTL_MS : CLIP_REFUSAL_TTL_MS), verdict });
+      return verdict;
+    },
+    [],
+  );
 
   /**
    * Play a clip and highlight whoever triggered it for exactly as long as it
@@ -345,12 +451,26 @@ export function useRoom() {
       // join *after* us — without this, a joiner's participant list stays
       // empty until someone else connects or disconnects.
       refreshParticipants();
+      refreshPolicy();
       syncLocalTracks();
       syncScreenSharing();
       syncScreenShares();
     };
+    // The server changed what we may do (a role edit, a server mute, a stage promotion): see voiceSync.ts.
+    const onPermissionsChanged = (_prev: unknown, participant: Participant) => {
+      if (participant !== room.localParticipant) return;
+      refreshPolicy();
+      // A server deafen lifted gives subscribing back; our own deafen still decides which tracks to take.
+      applyDeafen();
+    };
+    const onAttributesChanged = (_changed: unknown, participant: Participant) => {
+      if (participant === room.localParticipant) refreshPolicy();
+    };
     const onDisconnected = () => {
       connectedRef.current = false;
+      setPolicy(NO_POLICY);
+      setPttHeld(false);
+      clipVerdicts.current.clear();
       setStatus("disconnected");
       setScreenSharing(false);
       setScreenShares([]);
@@ -414,16 +534,19 @@ export function useRoom() {
         // Someone's arrival chime. Treated exactly like a soundboard press,
         // ring included — from a viewer's side it's the same event: that
         // person made a sound.
+        let join: JoinSoundPacket;
         try {
-          const join = JSON.parse(new TextDecoder().decode(payload)) as JoinSoundPacket;
-          if (join?.kind !== "joinsound") return;
-          const joinUrl = resolveJoinSoundUrl(join.soundId, join.url);
-          if (joinUrl) {
-            highlightWhilePlaying(participant.identity, joinUrl, deafenedRef.current);
-          }
+          join = JSON.parse(new TextDecoder().decode(payload)) as JoinSoundPacket;
         } catch {
-          /* malformed packet */
+          return; // malformed packet
         }
+        if (join?.kind !== "joinsound") return;
+        void verifyClip(participant, join.soundId).then((verdict) => {
+          if (verdict && !verdict.ok) return;
+          // In a community channel the url is the server's, not the packet's.
+          const joinUrl = verdict && !verdict.builtin ? verdict.url : resolveJoinSoundUrl(join.soundId, join.url);
+          if (joinUrl) highlightWhilePlaying(participant.identity, joinUrl, deafenedRef.current);
+        });
         return;
       }
 
@@ -443,23 +566,26 @@ export function useRoom() {
         return;
       }
       if (packet?.kind !== "soundboard") return;
-      // Built-ins resolve from the id alone, so a packet can never point us at
-      // an arbitrary URL for a clip we already ship.
-      const url = findBuiltinSound(packet.soundId)?.url ?? packet.url;
-      if (!url || !isPlayableSoundUrl(url)) return;
-
-      highlightWhilePlaying(
-        participant.identity,
-        url,
-        deafenedRef.current,
-        findBuiltinSound(packet.soundId)?.emoji ?? safeEmoji(packet.emoji),
-      );
+      void verifyClip(participant, packet.soundId).then((verdict) => {
+        // Refused: the sender couldn't have used this clip here, so nobody hears it.
+        if (verdict && !verdict.ok) return;
+        // Built-ins resolve from the id alone, so a packet can never point us at
+        // an arbitrary URL for a clip we already ship; a community's own clip plays
+        // from the server's record of it, not from the packet.
+        const builtin = findBuiltinSound(packet.soundId);
+        const url = builtin?.url ?? (verdict && !verdict.builtin ? verdict.url : packet.url);
+        if (!url || !isPlayableSoundUrl(url)) return;
+        const emoji = builtin?.emoji ?? (verdict && !verdict.builtin ? safeEmoji(verdict.emoji ?? undefined) : safeEmoji(packet.emoji));
+        highlightWhilePlaying(participant.identity, url, deafenedRef.current, emoji);
+      });
     };
 
     room
       .on(RoomEvent.ParticipantConnected, onParticipantsChanged)
       .on(RoomEvent.ParticipantDisconnected, onParticipantsChanged)
       .on(RoomEvent.Connected, onConnected)
+      .on(RoomEvent.ParticipantPermissionsChanged, onPermissionsChanged)
+      .on(RoomEvent.ParticipantAttributesChanged, onAttributesChanged)
       .on(RoomEvent.Disconnected, onDisconnected)
       .on(RoomEvent.LocalTrackPublished, onTrackPublished)
       .on(RoomEvent.LocalTrackUnpublished, onTrackUnpublished)
@@ -477,6 +603,8 @@ export function useRoom() {
         .off(RoomEvent.ParticipantConnected, onParticipantsChanged)
         .off(RoomEvent.ParticipantDisconnected, onParticipantsChanged)
         .off(RoomEvent.Connected, onConnected)
+        .off(RoomEvent.ParticipantPermissionsChanged, onPermissionsChanged)
+        .off(RoomEvent.ParticipantAttributesChanged, onAttributesChanged)
         .off(RoomEvent.Disconnected, onDisconnected)
         .off(RoomEvent.LocalTrackPublished, onTrackPublished)
         .off(RoomEvent.LocalTrackUnpublished, onTrackUnpublished)
@@ -494,10 +622,12 @@ export function useRoom() {
     applyDeafen,
     highlightWhilePlaying,
     playCue,
+    refreshPolicy,
     syncLocalTracks,
     syncNoiseFilter,
     syncScreenSharing,
     syncScreenShares,
+    verifyClip,
   ]);
 
   const connect = useCallback(
@@ -506,6 +636,9 @@ export function useRoom() {
       setError(null);
       try {
         await room.connect(url, token, { autoSubscribe: true });
+        // What the server's token lets us do, read before anything is published: a listener (no Speak, or a
+        // stage's audience) has no microphone to open, and asking for one would fail the whole join.
+        refreshPolicy();
         // A screen share already in progress when we join is already present
         // in `remoteParticipants` at this point, but `TrackPublished` only
         // fires for publications that happen *after* we've connected — apply
@@ -538,7 +671,7 @@ export function useRoom() {
         // it gives the track an AudioContext, and an audio processor without
         // one throws. Attaching after the track is published works instead —
         // that's what `syncNoiseFilter` does off `LocalTrackPublished`.
-        await enableMicrophone(room, !mutedRef.current);
+        await enableMicrophone(room, wantsMicrophone());
         syncLocalTracks();
       } catch (err) {
         setStatus("error");
@@ -546,7 +679,7 @@ export function useRoom() {
         throw err;
       }
     },
-    [room, applyDeafen, inputDeviceId, outputDeviceId, syncLocalTracks]
+    [room, applyDeafen, inputDeviceId, outputDeviceId, refreshPolicy, syncLocalTracks, wantsMicrophone]
   );
 
   const disconnect = useCallback(async () => {
@@ -578,12 +711,47 @@ export function useRoom() {
     syncNoiseFilter();
   }, [noiseSuppression, syncNoiseFilter]);
 
+  // The microphone follows `transmitting`: not muted, allowed to speak, and — in push-to-talk — the key held.
   useEffect(() => {
     if (!connectedRef.current) return;
-    enableMicrophone(room, !muted)
+    enableMicrophone(room, transmitting)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(syncLocalTracks);
-  }, [room, muted, syncLocalTracks]);
+  }, [room, transmitting, syncLocalTracks]);
+
+  // Push-to-talk. Heard while the app has focus; a global key would need the desktop shell's help.
+  useEffect(() => {
+    if (inputMode !== "ptt" || status !== "connected") {
+      setPttHeld(false);
+      return;
+    }
+    let release: ReturnType<typeof setTimeout> | undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!matchesPushToTalk(event, pushToTalkKey)) return;
+      clearTimeout(release);
+      setPttHeld(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== pushToTalkKey) return;
+      clearTimeout(release);
+      release = setTimeout(() => setPttHeld(false), PTT_RELEASE_MS);
+    };
+    // A key released while the window wasn't looking would otherwise leave the microphone open.
+    const onBlur = () => {
+      clearTimeout(release);
+      setPttHeld(false);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      clearTimeout(release);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", onBlur);
+      setPttHeld(false);
+    };
+  }, [inputMode, status, pushToTalkKey]);
 
   useEffect(() => {
     applyDeafen();
@@ -600,6 +768,13 @@ export function useRoom() {
   const toggleCamera = useCallback(async () => {
     const local = room.localParticipant;
     const next = !local.isCameraEnabled;
+    if (next) {
+      const blocked = cameraBlockedReason(policyRef.current);
+      if (blocked) {
+        setError(blocked);
+        return;
+      }
+    }
     try {
       await local.setCameraEnabled(next);
       playCue(next ? "cameraOn" : "cameraOff");
@@ -737,6 +912,11 @@ export function useRoom() {
   /** Start (or restart) a screen share with the given source and audio. */
   const startScreenShare = useCallback(
     async (sourceId: string, choice: SystemAudioChoice) => {
+      const blocked = screenShareBlockedReason(policyRef.current);
+      if (blocked) {
+        setError(blocked);
+        throw new Error(blocked);
+      }
       try {
         // Video and audio are kicked off in parallel so the remote side hears
         // audio as soon as the capture pipeline is ready instead of waiting
@@ -771,6 +951,11 @@ export function useRoom() {
    */
   const startBrowserScreenShare = useCallback(async (): Promise<boolean> => {
     const local = room.localParticipant;
+    const blocked = screenShareBlockedReason(policyRef.current);
+    if (blocked) {
+      setError(blocked);
+      return false;
+    }
     try {
       const tracks = await createLocalScreenTracks({
         // Asks Chromium to offer the "share audio" checkbox. Whether it
@@ -867,6 +1052,12 @@ export function useRoom() {
 
   // --- soundboard --------------------------------------------------------
 
+  /** Where to check other people's soundboard packets against the server. Set for a community channel, cleared for anything else. */
+  const setClipVerifier = useCallback((verifier: ClipVerifier | null) => {
+    clipVerifierRef.current = verifier;
+    clipVerdicts.current.clear();
+  }, []);
+
   /**
    * Broadcast a soundboard clip to everyone in the call and play it locally.
    * Outside a call it still plays locally, which is what makes the picker's
@@ -875,6 +1066,13 @@ export function useRoom() {
   const playSoundboardClip = useCallback(
     async (clip: SoundboardClip) => {
       if (connectedRef.current) {
+        // The server signs the soundboard right into our token, and a stage's audience has no data channel;
+        // listeners check both again on arrival, so a press we shouldn't make is only wasted.
+        const mine = readSoundboardRights(room.localParticipant.attributes);
+        if (!mine.soundboard || policyRef.current.stageRole === "audience") {
+          setError("You don't have permission to use the soundboard here.");
+          return;
+        }
         const packet: SoundboardPacket = {
           kind: "soundboard",
           soundId: clip.id,
@@ -936,6 +1134,8 @@ export function useRoom() {
   const broadcastJoinSound = useCallback(
     async (soundId: string, url?: string) => {
       if (!connectedRef.current) return;
+      // It is a soundboard press: without the right (or on a stage, as audience) there is nothing to announce.
+      if (!readSoundboardRights(room.localParticipant.attributes).soundboard || policyRef.current.stageRole === "audience") return;
 
       // Play locally first, and independently of the publish below. The SFU
       // doesn't echo a packet back to its sender, so this is the only way the
@@ -1005,6 +1205,16 @@ export function useRoom() {
     participants,
     cameraEnabled,
     microphoneEnabled,
+    /** What the server's grant lets us send, and the attributes it signed (priority, push-to-talk, stage role). */
+    policy,
+    /** The mode the call runs in — push-to-talk if chosen or if the community requires it. */
+    inputMode,
+    pushToTalkKey,
+    /** The push-to-talk key is down right now. */
+    pttHeld,
+    /** The microphone is open this instant. */
+    transmitting,
+    setClipVerifier,
     screenSharing,
     screenShares,
     screenShareSourceId,

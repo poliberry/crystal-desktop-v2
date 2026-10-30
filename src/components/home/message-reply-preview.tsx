@@ -42,7 +42,7 @@ export function MessageReplyPreview({
       />
 
       {reply.deleted ? (
-        <span className="truncate italic opacity-70">Original message was deleted</span>
+        <span className="truncate italic opacity-70">{reply.hidden ? "Message not available" : "Original message was deleted"}</span>
       ) : (
         <>
           <Avatar className="size-4 shrink-0">

@@ -137,12 +137,6 @@ export const listMine = query({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    const cacheKey = `user:${me._id}:conversations`;
-    try {
-      const { cacheGetJson } = await import("./cache");
-      const cached = await cacheGetJson<any>(cacheKey);
-      if (cached) return cached;
-    } catch {}
     const memberships = await ctx.db
       .query("conversationMembers")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
@@ -240,10 +234,6 @@ export const listMine = query({
           (b.pinnedAt ? 1 : 0) - (a.pinnedAt ? 1 : 0) ||
           b.lastMessageAt - a.lastMessageAt,
       );
-    try {
-      const { cacheSetJson } = await import("./cache");
-      await cacheSetJson(cacheKey, result, 60);
-    } catch {}
     return result;
   },
 });
@@ -253,12 +243,6 @@ export const get = query({
   handler: async (ctx, { conversationId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
-    const cacheKey = `conversation:${conversationId}:user:${me._id}:data`;
-    try {
-      const { cacheGetJson } = await import("./cache");
-      const cached = await cacheGetJson<any>(cacheKey);
-      if (cached) return cached;
-    } catch {}
     const membership = await ctx.db
       .query("conversationMembers")
       .withIndex("by_conversation_user", (q) =>
@@ -278,18 +262,13 @@ export const get = query({
       backgroundUrl: conversation.backgroundUrl,
       backgroundOpacity: conversation.backgroundOpacity,
       members: await otherMembers(ctx, conversationId, me._id),
-      // The cache key above is per viewer, so their own ignore/block windows
-      // can shape this; blocks.ts drops these keys when the windows change.
+      // Per viewer: their own ignore/block windows shape this.
       unread: isUnread(
         await lastMessageOf(ctx, conversationId, await windowsByTarget(ctx, me._id)),
         membership.lastReadAt,
         me._id
       ),
     };
-    try {
-      const { cacheSetJson } = await import("./cache");
-      await cacheSetJson(cacheKey, result, 60);
-    } catch {}
     return result;
   },
 });

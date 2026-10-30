@@ -4,7 +4,8 @@ import { fireMemberEvent } from "./lib/botEvents";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { releaseFile, releaseUrl } from "./lib/files";
 import { r2PublicUrlForKey } from "./lib/r2";
 import {
@@ -28,7 +29,12 @@ import { sanitizeSetup, setupValidator } from "./lib/communitySetup";
 import { visibleActivities, visibleCustomStatus } from "./lib/activities";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { factorSummary } from "./lib/secondFactor";
+import { auditUserTarget, logCommunityAudit } from "./lib/communityAudit";
+import { describeDuration, joinDetails } from "./lib/communityAuditActions";
 import { forgetProfileImages, releaseWornImages } from "./profileImages";
+import { dropChannelMemberState, dropPollVotes } from "./lib/messageExtras";
+import { adjustMemberCount } from "./lib/memberCount";
+import { removeVoiceRow } from "./lib/voiceState";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 
 export async function requireMember(
@@ -99,6 +105,7 @@ export const create = mutation({
       createdAt: Date.now(),
       // New servers are invite-only until the owner opts into Discovery.
       inviteOnly: true,
+      memberCount: 1,
     });
 
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: Date.now() });
@@ -210,6 +217,7 @@ export const createFromSetup = mutation({
       clanGames: games,
       creatorPlatform,
       creatorAudience,
+      memberCount: 1,
     });
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: now });
 
@@ -265,8 +273,7 @@ export const createFromSetup = mutation({
         // Read-only for everyone until a role or a member is let in — the same default `channels.create` gives.
         const everyone = await ctx.db
           .query("roles")
-          .withIndex("by_community", (q) => q.eq("communityId", communityId))
-          .filter((q) => q.eq(q.field("isEveryone"), true))
+          .withIndex("by_community_everyone", (q) => q.eq("communityId", communityId).eq("isEveryone", true))
           .unique();
         if (everyone) {
           await ctx.db.insert("channelPermissionOverwrites", { channelId: id, roleId: everyone._id, allow: 0, deny: PERMISSIONS.SEND_MESSAGES });
@@ -314,12 +321,6 @@ export const listMine = query({
   handler: async (ctx) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return [];
-    const cacheKey = `user:${me._id}:communities`;
-    try {
-      const { cacheGetJson } = await import("./cache");
-      const cached = await cacheGetJson<any>(cacheKey);
-      if (cached) return cached;
-    } catch {}
     const memberships = await ctx.db
       .query("communityMembers")
       .withIndex("by_user", (q) => q.eq("userId", me._id))
@@ -334,10 +335,6 @@ export const listMine = query({
         ownerId: c.ownerId,
         isOwner: c.ownerId === me._id,
       }));
-    try {
-      const { cacheSetJson } = await import("./cache");
-      await cacheSetJson(cacheKey, result, 60);
-    } catch {}
     return result;
   },
 });
@@ -385,11 +382,8 @@ export const listMineActivity = query({
     return Promise.all(
       memberships.map(async (membership) => {
         const communityId = membership.communityId;
-        const [members, channels] = await Promise.all([
-          ctx.db
-            .query("communityMembers")
-            .withIndex("by_community", (q) => q.eq("communityId", communityId))
-            .collect(),
+        const [community, channels] = await Promise.all([
+          ctx.db.get(communityId),
           ctx.db
             .query("channels")
             .withIndex("by_community", (q) => q.eq("communityId", communityId))
@@ -451,9 +445,20 @@ export const listMineActivity = query({
           )
           .map((channel) => channel._id);
 
+        // The denormalised count where there is one; counting the rows only for a community
+        // that predates it (see `communities.memberCount`).
+        const memberCount =
+          community?.memberCount ??
+          (
+            await ctx.db
+              .query("communityMembers")
+              .withIndex("by_community", (q) => q.eq("communityId", communityId))
+              .collect()
+          ).length;
+
         return {
           communityId,
-          memberCount: members.length,
+          memberCount,
           voice,
           /** Everyone in voice, including those past the avatar limit. */
           voiceCount: rows.length,
@@ -464,6 +469,39 @@ export const listMineActivity = query({
         };
       })
     );
+  },
+});
+
+/** Communities counted per backfill run; kept small so each run stays well inside a mutation's read limit. */
+const MEMBER_COUNT_BACKFILL_BATCH = 5;
+/** A community with more members than this is left uncounted (readers count its rows) rather than risk the read limit. */
+const MEMBER_COUNT_BACKFILL_MAX = 8000;
+
+/**
+ * One-off: sets `memberCount` on communities made before the field. Writes only that field and
+ * deletes nothing; re-running is harmless. Run it by hand once (it pages itself through the
+ * communities by rescheduling), e.g. `npx convex run communities:backfillMemberCounts`.
+ */
+export const backfillMemberCounts = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { cursor }) => {
+    const page = await ctx.db.query("communities").paginate({ numItems: MEMBER_COUNT_BACKFILL_BATCH, cursor: cursor ?? null });
+    let counted = 0;
+    for (const community of page.page) {
+      const members = await ctx.db
+        .query("communityMembers")
+        .withIndex("by_community", (q) => q.eq("communityId", community._id))
+        .take(MEMBER_COUNT_BACKFILL_MAX + 1);
+      if (members.length > MEMBER_COUNT_BACKFILL_MAX) continue;
+      if (community.memberCount !== members.length) {
+        await ctx.db.patch(community._id, { memberCount: members.length });
+        counted++;
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.communities.backfillMemberCounts, { cursor: page.continueCursor });
+    }
+    return { counted, isDone: page.isDone };
   },
 });
 
@@ -491,12 +529,6 @@ export const get = query({
   handler: async (ctx, { communityId }) => {
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return null;
-    const cacheKey = `community:${communityId}:user:${me._id}:data`;
-    try {
-      const { cacheGetJson } = await import("./cache");
-      const cached = await cacheGetJson<any>(cacheKey);
-      if (cached) return cached;
-    } catch {}
     const community = await ctx.db.get(communityId);
     if (!community) return null;
     const membership = await ctx.db
@@ -521,10 +553,6 @@ export const get = query({
       creatorPlatform: community.creatorPlatform,
       creatorAudience: community.creatorAudience,
     };
-    try {
-      const { cacheSetJson } = await import("./cache");
-      await cacheSetJson(cacheKey, result, 60);
-    } catch {}
     return result;
   },
 });
@@ -557,6 +585,7 @@ export const join = mutation({
     }
 
     await ctx.db.insert("communityMembers", { communityId, userId: me._id, joinedAt: Date.now() });
+    await adjustMemberCount(ctx, communityId, 1);
     await fireMemberEvent(ctx, communityId, "member.joined", me);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -582,6 +611,7 @@ export const leave = mutation({
     }
     const membership = await requireMember(ctx, communityId, me._id);
     await ctx.db.delete(membership._id);
+    await adjustMemberCount(ctx, communityId, -1);
 
     const roles = await ctx.db
       .query("memberRoles")
@@ -621,15 +651,18 @@ export const updateSettings = mutation({
         throw new Error("Turn on two-step verification on your own account first, in Settings → Security.");
       }
       await ctx.db.patch(communityId, { requireTwoFactor });
+      await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.update", details: `Two-step verification required: ${requireTwoFactor ? "on" : "off"}` });
     }
 
     if (name !== undefined) {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Community name can't be empty.");
       await ctx.db.patch(communityId, { name: trimmed });
+      await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.update", target: { type: "community", id: communityId, name: trimmed }, details: `Renamed from "${community.name}"` });
     }
     if (inviteOnly !== undefined) {
       await ctx.db.patch(communityId, { inviteOnly });
+      if (inviteOnly !== (community.inviteOnly ?? false)) await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.update", details: `Invite only: ${inviteOnly ? "on" : "off"}` });
     }
     if (themeStart !== undefined || themeEnd !== undefined) {
       if (themeStart === undefined || themeEnd === undefined) {
@@ -646,6 +679,7 @@ export const updateSettings = mutation({
         themeStart: clearing ? undefined : themeStart.toLowerCase(),
         themeEnd: clearing ? undefined : themeEnd.toLowerCase(),
       });
+      await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.update", details: clearing ? "Cleared the theme" : "Changed the theme" });
     }
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -683,6 +717,7 @@ export const setIcon = mutation({
     const previous = community.iconStorageId;
     const previousUrl = community.imageUrl;
     await ctx.db.patch(communityId, { imageUrl: url, iconStorageId: storageId ?? undefined });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.icon" });
     // From whichever store it was in: an icon or banner moving between R2 and Convex storage used to leave the old one.
     if (previousUrl !== url || previous !== storageId) await releaseUrl(ctx, previousUrl !== url ? previousUrl : undefined, previous !== storageId ? previous : undefined);
     try {
@@ -718,6 +753,7 @@ export const setBanner = mutation({
     const previous = community.bannerStorageId;
     const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: url, bannerStorageId: storageId ?? undefined });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.banner", details: "Changed" });
     // From whichever store it was in: an icon or banner moving between R2 and Convex storage used to leave the old one.
     if (previousUrl !== url || previous !== storageId) await releaseUrl(ctx, previousUrl !== url ? previousUrl : undefined, previous !== storageId ? previous : undefined);
     try {
@@ -737,6 +773,7 @@ export const removeBanner = mutation({
     const previous = community.bannerStorageId;
     const previousUrl = community.bannerUrl;
     await ctx.db.patch(communityId, { bannerUrl: undefined, bannerStorageId: undefined });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.banner", details: "Removed" });
     await releaseUrl(ctx, previousUrl, previous);
     try {
       const { cacheInvalidateKeys } = await import("./cache");
@@ -798,8 +835,10 @@ export const remove = mutation({
           await releaseFile(ctx, attachment);
         }
         for (const reaction of reactions) await ctx.db.delete(reaction._id);
+        await dropPollVotes(ctx, message._id);
         await ctx.db.delete(message._id);
       }
+      await dropChannelMemberState(ctx, channel._id);
       for (const row of await ctx.db.query("loungeMessages").withIndex("by_channel", (q) => q.eq("channelId", channel._id)).collect()) {
         await ctx.db.delete(row._id);
         await releaseFile(ctx, row.image);
@@ -819,6 +858,10 @@ export const remove = mutation({
       await ctx.db.delete(emoji._id);
       await releaseUrl(ctx, emoji.imageUrl, emoji.storageId);
     }
+    for (const sticker of await ctx.db.query("communityStickers").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
+      await ctx.db.delete(sticker._id);
+      await releaseUrl(ctx, sticker.imageUrl, sticker.storageId);
+    }
     for (const sound of await ctx.db.query("communitySounds").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
       await ctx.db.delete(sound._id);
       await releaseUrl(ctx, sound.soundUrl, sound.storageId);
@@ -827,6 +870,8 @@ export const remove = mutation({
       await ctx.db.delete(widget._id);
       if (widget.config.kind === "banner") await releaseUrl(ctx, widget.config.imageUrl, widget.config.imageStorageId);
     }
+    // Its audit log goes with it, a batch at a time.
+    await ctx.scheduler.runAfter(0, internal.communityAudit.purgeCommunity, { communityId });
     // Everyone's profile for this server, and the pictures they kept for it.
     for (const profile of await ctx.db.query("serverProfiles").withIndex("by_community", (q) => q.eq("communityId", communityId)).collect()) {
       await ctx.db.delete(profile._id);
@@ -1109,12 +1154,12 @@ export const pruneInactiveMembers = mutation({
         removed++;
       }
     }
+    if (removed > 0) await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "member.prune", details: `${removed} member${removed === 1 ? "" : "s"} inactive for ${Math.max(1, Math.floor(inactiveDays))} days` });
     return removed;
   },
 });
 
-/** Drop someone out of every voice channel in a community. Their client
- * watches its own participant row and leaves when it disappears. */
+/** Drop someone out of every voice channel in a community: their row goes and so does their LiveKit connection. */
 export async function disconnectFromAllVoice(
   ctx: MutationCtx,
   communityId: Id<"communities">,
@@ -1132,7 +1177,8 @@ export async function disconnectFromAllVoice(
         q.eq("channelId", channel._id).eq("userId", userId)
       )
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    // Also ends their LiveKit connection: their app leaves when its row goes, but a kick, ban or timeout mustn't depend on that.
+    if (row) await removeVoiceRow(ctx, row, { evict: true });
   }
 }
 
@@ -1146,7 +1192,10 @@ export async function removeMembership(
     .query("communityMembers")
     .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", userId))
     .unique();
-  if (membership) await ctx.db.delete(membership._id);
+  if (membership) {
+    await ctx.db.delete(membership._id);
+    await adjustMemberCount(ctx, communityId, -1);
+  }
 
   const roles = await ctx.db
     .query("memberRoles")
@@ -1168,7 +1217,9 @@ export const kickMember = mutation({
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.KICK_MEMBERS);
     await requireAbove(ctx, community, me._id, userId);
+    const target = await auditUserTarget(ctx, userId);
     await removeMembership(ctx, communityId, userId);
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "member.kick", target });
   },
 });
 
@@ -1262,7 +1313,9 @@ export const banMember = mutation({
       });
     }
 
+    const target = await auditUserTarget(ctx, userId);
     await removeMembership(ctx, communityId, userId);
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "member.ban", target, details: joinDetails(reason?.trim() && `Reason: ${reason.trim()}`) });
   },
 });
 
@@ -1279,7 +1332,10 @@ export const unbanMember = mutation({
         q.eq("communityId", communityId).eq("userId", userId)
       )
       .unique();
-    if (ban) await ctx.db.delete(ban._id);
+    if (ban) {
+      await ctx.db.delete(ban._id);
+      await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "member.unban", target: await auditUserTarget(ctx, userId) });
+    }
   },
 });
 
@@ -1314,6 +1370,13 @@ export const timeoutMember = mutation({
 
     // A timed-out member shouldn't stay sitting in voice.
     if (durationMs > 0) await disconnectFromAllVoice(ctx, communityId, userId);
+    await logCommunityAudit(ctx, {
+      communityId,
+      actorId: me._id,
+      action: durationMs > 0 ? "member.timeout" : "member.timeout_lift",
+      target: await auditUserTarget(ctx, userId),
+      details: durationMs > 0 ? describeDuration(durationMs) : undefined,
+    });
   },
 });
 
@@ -1359,6 +1422,10 @@ export const setMemberNickname = mutation({
         displayName: trimmed,
       });
     }
+    // Someone changing their own nickname isn't moderation; changing another's is.
+    if (me._id !== userId) {
+      await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "member.nickname", target: await auditUserTarget(ctx, userId), details: trimmed ? `Set to "${trimmed}"` : "Cleared" });
+    }
   },
 });
 
@@ -1372,6 +1439,7 @@ export const getOrCreateInviteCode = mutation({
     if (community.inviteCode) return community.inviteCode;
     const code = await freshInviteCode(ctx);
     await ctx.db.patch(communityId, { inviteCode: code });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "invite.create", target: { type: "invite" } });
     return code;
   },
 });
@@ -1385,6 +1453,7 @@ export const regenerateInviteCode = mutation({
 
     const code = await freshInviteCode(ctx);
     await ctx.db.patch(communityId, { inviteCode: code });
+    await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "invite.regenerate", target: { type: "invite" }, details: "The previous code no longer works" });
     return code;
   },
 });
@@ -1460,6 +1529,7 @@ export const joinByInviteCode = mutation({
         userId: me._id,
         joinedAt: Date.now(),
       });
+      await adjustMemberCount(ctx, community._id, 1);
       await fireMemberEvent(ctx, community._id, "member.joined", me);
     }
     return community._id;

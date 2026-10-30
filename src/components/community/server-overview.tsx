@@ -16,7 +16,6 @@ import {
   Pencil,
   Volume2,
 } from "lucide-react";
-import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -25,7 +24,10 @@ import { ServerOverviewEditor } from "@/components/community/server-overview-edi
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useLocale } from "@/hooks/use-locale";
+import { formatDateOnly, formatDateTime } from "@/lib/locale";
 import { fillLayouts, resolve } from "@/lib/overview-layout";
+import { formatRelative, localDateKey, parseDateKey } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 
 /**
@@ -120,6 +122,7 @@ function RecentMessagesCard({
   widget: Extract<OverviewWidget, { kind: "recentMessages" }>;
   onOpenChannel: (channelId: Id<"channels">) => void;
 }) {
+  useLocale();
   return (
     <CardShell
       title={widget.title ?? `Latest in #${widget.channel.name}`}
@@ -141,7 +144,7 @@ function RecentMessagesCard({
                 <p className="text-xs">
                   <span className="font-semibold">{message.authorName}</span>{" "}
                   <span className="text-muted-foreground">
-                    {moment(message.createdAt).fromNow()}
+                    {formatRelative(message.createdAt)}
                   </span>
                 </p>
                 {/* Clamped: this is a preview, and a card that grows with
@@ -253,6 +256,7 @@ function NoteCard({ widget }: { widget: Extract<OverviewWidget, { kind: "note" }
 
 /** Time left, as the four numbers people read a countdown by. */
 function CountdownCard({ widget }: { widget: Extract<OverviewWidget, { kind: "countdown" }> }) {
+  useLocale();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -288,14 +292,21 @@ function CountdownCard({ widget }: { widget: Extract<OverviewWidget, { kind: "co
           </div>
         ) : (
           <p className="text-center text-lg font-semibold">
-            It started {moment(widget.target).fromNow()}.
+            It started {formatRelative(widget.target)}.
           </p>
         )}
         {widget.description && (
           <p className="text-center text-sm text-muted-foreground">{widget.description}</p>
         )}
         <p className="text-center text-xs text-muted-foreground">
-          {moment(widget.target).format("dddd D MMMM YYYY, h:mm a")}
+          {formatDateTime(widget.target, {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
         </p>
       </div>
     </CardShell>
@@ -305,8 +316,12 @@ function CountdownCard({ widget }: { widget: Extract<OverviewWidget, { kind: "co
 /** A month at a time, with the days that have something on marked. */
 function CalendarCard({ widget }: { widget: Extract<OverviewWidget, { kind: "calendar" }> }) {
   const [offset, setOffset] = useState(0);
-  const month = useMemo(() => moment().startOf("month").add(offset, "months"), [offset]);
-  const today = moment().format("YYYY-MM-DD");
+  useLocale();
+  const month = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  }, [offset]);
+  const today = localDateKey(new Date());
 
   const byDate = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -317,12 +332,14 @@ function CalendarCard({ widget }: { widget: Extract<OverviewWidget, { kind: "cal
   }, [widget.events]);
 
   // Weeks start on Monday, with blanks before the 1st to line the days up.
-  const lead = (month.isoWeekday() + 6) % 7;
-  const days = Array.from({ length: month.daysInMonth() }, (_, i) =>
-    month.clone().add(i, "days").format("YYYY-MM-DD"),
+  const lead = (month.getDay() + 6) % 7;
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, i) =>
+    localDateKey(new Date(month.getFullYear(), month.getMonth(), i + 1)),
   );
+  const monthKey = localDateKey(month).slice(0, 7);
   const inMonth = widget.events
-    .filter((e) => e.date.startsWith(month.format("YYYY-MM")))
+    .filter((e) => e.date.startsWith(monthKey))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   return (
@@ -337,7 +354,7 @@ function CalendarCard({ widget }: { widget: Extract<OverviewWidget, { kind: "cal
           >
             <ChevronLeft className="size-4" />
           </button>
-          <p className="text-sm font-semibold">{month.format("MMMM YYYY")}</p>
+          <p className="text-sm font-semibold">{formatDateOnly(month, { month: "long", year: "numeric" })}</p>
           <button
             type="button"
             aria-label="Next month"
@@ -381,7 +398,7 @@ function CalendarCard({ widget }: { widget: Extract<OverviewWidget, { kind: "cal
           {inMonth.slice(0, 5).map((event, index) => (
             <li key={index} className="flex gap-2 text-xs">
               <span className="w-12 shrink-0 text-muted-foreground tabular-nums">
-                {moment(event.date).format("D MMM")}
+                {formatDateOnly(parseDateKey(event.date), { day: "numeric", month: "short" })}
               </span>
               <span className="truncate">{event.title}</span>
             </li>
@@ -398,6 +415,7 @@ function CalendarCard({ widget }: { widget: Extract<OverviewWidget, { kind: "cal
 /** A question members vote on. Each answer is a bar that fills as it gains
  * votes; pressing yours again takes the vote back. */
 function PollCard({ widget }: { widget: Extract<OverviewWidget, { kind: "poll" }> }) {
+  useLocale();
   const vote = useMutation(api.communityWidgets.votePoll);
   const [error, setError] = useState<string | null>(null);
   const closed = widget.closesAt !== undefined && Date.now() >= widget.closesAt;
@@ -453,7 +471,7 @@ function PollCard({ widget }: { widget: Extract<OverviewWidget, { kind: "poll" }
           {closed
             ? " · closed"
             : widget.closesAt !== undefined
-              ? ` · closes ${moment(widget.closesAt).fromNow()}`
+              ? ` · closes ${formatRelative(widget.closesAt)}`
               : ""}
         </p>
         {error && <p className="text-xs text-destructive">{error}</p>}

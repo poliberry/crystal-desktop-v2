@@ -5,6 +5,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { renderMentionsAsText } from "./lib/mentions";
 import { publicNotificationBody } from "./lib/e2eeEnforce";
 import { allowsFriendRequest, loadNotificationPolicy } from "./lib/notificationPolicy";
+import { historyFloorFor, withinHistory } from "./lib/history";
 import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
 import { encryptedSourceOf } from "./notifications";
@@ -140,7 +141,7 @@ export const list = query({
         const perms = await getChannelPermissions(ctx, community, channel._id, me._id);
         if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) return null;
 
-        const [read, lastMessage] = await Promise.all([
+        const [read, newest, floor] = await Promise.all([
           ctx.db
             .query("channelReads")
             .withIndex("by_user_channel", (q) => q.eq("userId", me._id).eq("channelId", channel._id))
@@ -151,7 +152,10 @@ export const list = query({
             .order("desc")
             .take(1)
             .then((rows) => rows[0]),
+          historyFloorFor(ctx, channel._id, me._id, perms),
         ]);
+        // The preview line is history too: nothing from before the member's own starting point.
+        const lastMessage = newest && withinHistory(floor, newest._creationTime) ? newest : undefined;
 
         let last: {
           authorName: string;

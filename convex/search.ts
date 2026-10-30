@@ -4,7 +4,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { requireCommunity } from "./communities";
 import { isMessageHidden, windowsByTarget } from "./lib/blocking";
-import { PERMISSIONS, can, getChannelPermissions } from "./permissions";
+import { historyFloorFor, withinHistory } from "./lib/history";
+import { PERMISSIONS, can, getChannelPermissions, getChannelPermissionsBatch } from "./permissions";
 import { getCurrentUserOrThrow } from "./users";
 
 /**
@@ -89,6 +90,8 @@ export const inChannel = query({
     const community = await requireCommunity(ctx, channel.communityId);
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
     if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) throw new Error("You don't have permission to do that.");
+    // Search reaches only what the member could scroll back to.
+    const floor = await historyFloorFor(ctx, channelId, me._id, perms);
 
     const rows = await ctx.db
       .query("channelMessages")
@@ -98,7 +101,7 @@ export const inChannel = query({
     const hidden = await windowsByTarget(ctx, me._id);
     return decorate(
       ctx,
-      rows.filter((r) => !isMessageHidden(hidden, r.authorId, r._creationTime)),
+      rows.filter((r) => withinHistory(floor, r._creationTime) && !isMessageHidden(hidden, r.authorId, r._creationTime)),
       new Map([[channelId as string, channel.name]])
     );
   },
@@ -129,16 +132,18 @@ export const inCommunity = query({
     const channelNames = new Map<string, string>();
     const rows: Doc<"channelMessages">[] = [];
 
+    const permsByChannel = await getChannelPermissionsBatch(ctx, community, searchable.map((c) => c._id), me._id);
     for (const channel of searchable) {
-      const perms = await getChannelPermissions(ctx, community, channel._id, me._id);
+      const perms = permsByChannel.get(channel._id) ?? 0;
       if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) continue;
+      const floor = await historyFloorFor(ctx, channel._id, me._id, perms);
       channelNames.set(channel._id, channel.name);
 
       const found = await ctx.db
         .query("channelMessages")
         .withSearchIndex("search_text", (q) => q.search("text", needle).eq("channelId", channel._id))
         .take(LIMIT);
-      rows.push(...found);
+      rows.push(...found.filter((r) => withinHistory(floor, r._creationTime)));
     }
 
     // Each channel's results arrive in relevance order but the merged list has

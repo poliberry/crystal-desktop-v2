@@ -24,9 +24,12 @@ export const MAX_SOUND_BYTES = 10 * 1024 * 1024;
  * owner appears, so its weight is paid many times over per screen. */
 export const MAX_DECORATION_BYTES = 2 * 1024 * 1024;
 
-/** `25 MB` — for copy and error messages. */
+/** Community stickers. Each is fetched by everyone in the channel it is sent to. */
+export const MAX_STICKER_BYTES = 512 * 1024;
+
+/** `25 MB` or `512 KB` — for copy and error messages. */
 export function formatUploadLimit(bytes: number): string {
-  return `${bytes / 1024 / 1024} MB`;
+  return bytes >= 1024 * 1024 ? `${bytes / 1024 / 1024} MB` : `${bytes / 1024} KB`;
 }
 
 /**
@@ -42,4 +45,5 @@ export const MAX_PROFILE_ASSET_BYTES = 6 * 1024 * 1024;
 export const MAX_ATTACHMENT_LABEL = formatUploadLimit(MAX_ATTACHMENT_BYTES);
 export const MAX_SOUND_LABEL = formatUploadLimit(MAX_SOUND_BYTES);
 export const MAX_DECORATION_LABEL = formatUploadLimit(MAX_DECORATION_BYTES);
+export const MAX_STICKER_LABEL = formatUploadLimit(MAX_STICKER_BYTES);
 export const MAX_PROFILE_ASSET_LABEL = formatUploadLimit(MAX_PROFILE_ASSET_BYTES);

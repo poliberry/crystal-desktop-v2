@@ -359,6 +359,38 @@ export const startPurchase = action({
   },
 });
 
+/**
+ * Bring a subscription that was started in Stripe itself into the app (see `store.adoptSubscriptionOrder`): it gets an
+ * order, so it lists under Subscriptions and Purchase history, and gives what its SKU gives. A subscription we already
+ * know about is just brought up to date. Paid with the SKU's own price rather than the first invoice, which is nothing
+ * while a trial runs — the renewals that follow are checked against that price like any other.
+ */
+async function adoptSubscription(ctx: ActionCtx, stripe: Stripe, subscriptionId: string): Promise<void> {
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  if (!["active", "trialing", "past_due"].includes(subscription.status)) return;
+  const item = subscription.items.data[0];
+  if (!item) return;
+  const customerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
+  const adopted = await ctx.runMutation(internal.store.adoptSubscriptionOrder, {
+    stripeCustomerId: customerId,
+    subscriptionId,
+    priceId: item.price.id,
+  });
+  if (!adopted) return;
+  await ctx.runMutation(internal.store.fulfillOrder, {
+    orderId: adopted.orderId,
+    amountCents: adopted.amountCents,
+    currency: adopted.currency,
+    periodEnd: item.current_period_end ? item.current_period_end * 1000 : undefined,
+  });
+}
+
+/** Adopt one Stripe subscription by hand — for one that predates the webhook handling. Internal-only. */
+export const adoptStripeSubscription = internalAction({
+  args: { subscriptionId: v.string() },
+  handler: async (ctx, { subscriptionId }) => adoptSubscription(ctx, stripeClient(), subscriptionId),
+});
+
 /** The end of a subscription period, in epoch ms. */
 async function periodEndOf(stripe: Stripe, subscriptionId: string): Promise<number | undefined> {
   const subscription = await stripe.subscriptions.retrieve(subscriptionId);
@@ -789,13 +821,22 @@ async function applyEvent(ctx: ActionCtx, stripe: Stripe, event: Stripe.Event): 
       const order = metaOrder
         ? await ctx.runQuery(internal.store.orderById, { orderId: metaOrder })
         : await ctx.runQuery(internal.store.orderBySubscription, { subscriptionId });
-      if (!order) return;
+      if (!order) {
+        // Started in Stripe, not the app.
+        await adoptSubscription(ctx, stripe, subscriptionId);
+        return;
+      }
       await ctx.runMutation(internal.store.fulfillOrder, {
         orderId: order._id,
         amountCents: invoice.amount_paid,
         currency: invoice.currency,
         periodEnd: await periodEndOf(stripe, subscriptionId),
       });
+      return;
+    }
+
+    case "customer.subscription.created": {
+      await adoptSubscription(ctx, stripe, event.data.object.id);
       return;
     }
 

@@ -51,10 +51,10 @@ export function useDecryptedMessage(
   room: Room,
   authorId: Id<"users">,
   row: { enc?: { keyId: string; iv: string; ct: string }; text?: string },
-): { state: "plain" | "decrypted" | "locked" | "pending"; text?: string; embeds?: unknown[]; components?: unknown[] } {
+): { state: "plain" | "decrypted" | "locked" | "pending"; text?: string; embeds?: unknown[]; components?: unknown[]; poll?: unknown } {
   const snapshot = useE2eeSnapshot();
   const enc = row.enc;
-  const [content, setContent] = useState<{ state: "plain" | "decrypted" | "locked" | "pending"; text?: string; embeds?: unknown[]; components?: unknown[] }>(() => ({ state: enc ? "pending" : "plain", text: row.text }));
+  const [content, setContent] = useState<{ state: "plain" | "decrypted" | "locked" | "pending"; text?: string; embeds?: unknown[]; components?: unknown[]; poll?: unknown }>(() => ({ state: enc ? "pending" : "plain", text: row.text }));
 
   useEffect(() => {
     let live = true;
@@ -70,7 +70,7 @@ export function useDecryptedMessage(
     void keyring.decrypt(room, authorId, enc).then((payload: MessagePayload | null) => {
       if (!live) return;
       setContent(payload
-        ? { state: "decrypted", text: payload.text, embeds: payload.embeds, components: payload.components }
+        ? { state: "decrypted", text: payload.text, embeds: payload.embeds, components: payload.components, poll: payload.poll }
         : { state: "locked" });
     });
     return () => { live = false; };

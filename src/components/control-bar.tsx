@@ -2,6 +2,8 @@
 
 import {
   ChevronUp,
+  Clapperboard,
+  Hand,
   Headphones,
   HeadphoneOff,
   Mic,
@@ -17,7 +19,9 @@ import { AnimatePresence, animate, motion, useMotionValue } from "framer-motion"
 import { useEffect, useRef, useState } from "react";
 
 import { AudioDeviceWheels } from "@/components/audio-device-wheels";
+import { ActivityLauncher } from "@/components/call/activity-launcher";
 import { SoundboardPanel } from "@/components/call/soundboard";
+import { useVoiceControls } from "@/components/call/use-voice-controls";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -71,6 +75,7 @@ function ControlButton({
   danger,
   onClick,
   disabled,
+  blockedReason,
   children,
   className,
 }: {
@@ -79,6 +84,9 @@ function ControlButton({
   danger?: boolean;
   onClick: () => void;
   disabled?: boolean;
+  /** Why this isn't available to you in this channel (a permission, a stage). Dims the button and says so in
+   * its tooltip — it stays hoverable, which a `disabled` button wouldn't. */
+  blockedReason?: string | null;
   children: React.ReactNode;
   className?: string;
 }) {
@@ -89,18 +97,20 @@ function ControlButton({
           variant={active ? "default" : "ghost"}
           size="icon"
           className={cn(
-            "size-10 shrink-0",
+            "relative size-10 shrink-0",
             active && "bg-primary text-primary-foreground",
             danger && "text-destructive hover:bg-destructive/15",
+            blockedReason && "cursor-not-allowed opacity-45",
             className,
           )}
-          onClick={onClick}
+          onClick={blockedReason ? undefined : onClick}
+          aria-disabled={blockedReason ? true : undefined}
           disabled={disabled}
         >
           {children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{blockedReason ?? label}</TooltipContent>
     </Tooltip>
   );
 }
@@ -124,9 +134,12 @@ export function ControlBar({
   const [leaving, setLeaving] = useState(false);
   /** Which panel is unfolded above the buttons, if any. They share the card, so
    * only one is open at a time. */
-  const [panel, setPanel] = useState<"devices" | "soundboard" | null>(null);
+  const [panel, setPanel] = useState<"devices" | "soundboard" | "activities" | null>(null);
   const devicesOpen = panel === "devices";
   const soundboardOpen = panel === "soundboard";
+  const activitiesOpen = panel === "activities";
+  // What the server allows here, and why anything is off (permissions, a stage's audience, push-to-talk).
+  const voice = useVoiceControls();
   const cardRef = useRef<HTMLDivElement>(null);
   // The card's width, as a number only while it is moving: at rest it is
   // `auto` — as wide as its buttons, whichever of them there are right now —
@@ -134,7 +147,7 @@ export function ControlBar({
   // width, then back, then hands it back to `auto`.
   const width = useMotionValue<number | "auto">("auto");
   const restingWidth = useRef(0);
-  const toggle = (next: "devices" | "soundboard") => {
+  const toggle = (next: "devices" | "soundboard" | "activities") => {
     const card = cardRef.current;
     if (!card) return;
     if (panel === null) {
@@ -212,6 +225,12 @@ export function ControlBar({
             >
               {panel === "devices" ? (
                 <AudioDeviceWheels />
+              ) : panel === "activities" && voice.channelId ? (
+                <ActivityLauncher
+                  channelId={voice.channelId}
+                  blockedReason={voice.activities?.blockedReason ?? null}
+                  className="px-3 pt-3 pb-3"
+                />
               ) : (
                 <SoundboardPanel columns={6} className="px-3 pt-3 pb-3" />
               )}
@@ -230,15 +249,32 @@ export function ControlBar({
               label={
                 !microphoneAvailable
                   ? "No microphone detected"
-                  : microphoneEnabled
-                    ? "Mute microphone"
-                    : "Unmute microphone"
+                  : voice.pushToTalk
+                    ? `Push to talk: hold ${voice.pushToTalk.keyLabel}${voice.pushToTalk.forced ? ` (${voice.pushToTalk.forcedReason})` : ""}`
+                    : microphoneEnabled
+                      ? "Mute microphone"
+                      : "Unmute microphone"
               }
+              blockedReason={voice.micBlockedReason}
               onClick={onToggleMicrophone}
               disabled={busy || !microphoneAvailable}
               className="rounded-l-md rounded-r-none"
             >
-              {microphoneEnabled ? <Mic /> : <MicOff className="text-destructive" />}
+              {microphoneEnabled || (voice.pushToTalk && !voice.micBlockedReason && !deafened && microphoneAvailable) ? (
+                <Mic className={cn(voice.pushToTalk && !voice.pushToTalk.held && "text-muted-foreground")} />
+              ) : (
+                <MicOff className="text-destructive" />
+              )}
+              {voice.pushToTalk && !voice.micBlockedReason && (
+                <span
+                  className={cn(
+                    "absolute -right-0.5 -bottom-0.5 rounded px-1 text-[8px] leading-3 font-bold",
+                    voice.pushToTalk.held ? "bg-emerald-500 text-white" : "bg-foreground/15 text-muted-foreground",
+                  )}
+                >
+                  PTT
+                </span>
+              )}
             </ControlButton>
 
             <Button
@@ -273,6 +309,7 @@ export function ControlBar({
                   : "Turn camera on"
             }
             onClick={onToggleCamera}
+            blockedReason={voice.cameraBlockedReason}
             disabled={busy || !cameraAvailable}
           >
             {cameraEnabled ? <Video /> : <VideoOff className="text-destructive" />}
@@ -283,6 +320,7 @@ export function ControlBar({
           <ControlButton
             label={screenSharing ? "Stop sharing screen" : "Share screen"}
             onClick={onToggleScreenShare}
+            blockedReason={screenSharing ? null : voice.screenShareBlockedReason}
             disabled={busy}
           >
             {screenSharing ? <ScreenShareOff /> : <MonitorUp />}
@@ -291,6 +329,24 @@ export function ControlBar({
           {screenSharing && (
             <ControlButton label="Change screen, audio or quality" onClick={onOpenShareSettings}>
               <MonitorCog />
+            </ControlButton>
+          )}
+
+          {/* A stage's audience asks to speak with a hand; a speaker can step back down. */}
+          {voice.stage && (
+            <ControlButton
+              label={
+                voice.stage.role === "speaker"
+                  ? "Step down to the audience"
+                  : voice.stage.handRaised
+                    ? "Lower your hand"
+                    : "Raise your hand to ask to speak"
+              }
+              blockedReason={voice.stage.role === "audience" && !voice.stage.handRaised ? voice.stage.raiseBlockedReason : null}
+              active={voice.stage.role === "audience" && voice.stage.handRaised}
+              onClick={voice.stage.role === "speaker" ? voice.stage.onLeaveStage : voice.stage.onToggleHand}
+            >
+              <Hand />
             </ControlButton>
           )}
 
@@ -304,6 +360,17 @@ export function ControlBar({
           >
             <Music4 />
           </ControlButton>
+
+          {voice.activities && (
+            <ControlButton
+              label="Activities"
+              blockedReason={voice.activities.blockedReason}
+              onClick={() => toggle("activities")}
+              className={cn("shrink-0", activitiesOpen && "bg-foreground/10")}
+            >
+              <Clapperboard />
+            </ControlButton>
+          )}
 
           <Tooltip>
             <TooltipTrigger asChild>

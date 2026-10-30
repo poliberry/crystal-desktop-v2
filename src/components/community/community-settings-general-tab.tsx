@@ -2,7 +2,6 @@
 
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { Camera, Loader2 } from "lucide-react";
-import moment from "moment";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../convex/_generated/api";
@@ -16,7 +15,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useLocale } from "@/hooks/use-locale";
 import { uploadImage } from "@/lib/cdn-upload";
+import { formatDateOnly } from "@/lib/locale";
 import { cn } from "@/lib/utils";
 
 interface CommunitySettingsGeneralTabProps {
@@ -62,6 +63,7 @@ export function CommunitySettingsGeneralTab({
   communityId,
   canManage,
 }: CommunitySettingsGeneralTabProps) {
+  useLocale();
   const convex = useConvex();
   const community = useQuery(api.communities.get, { communityId });
   const communityMembers = useQuery(api.communities.listMembers, { communityId });
@@ -273,7 +275,7 @@ export function CommunitySettingsGeneralTab({
             </div>
             <div className="pt-2">
               <p className="text-sm text-muted-foreground">
-                Joined the Crystal family in {moment(community.createdAt).format("MMM yyyy")}
+                Joined the Crystal family in {formatDateOnly(community.createdAt, { month: "short", year: "numeric" })}
               </p>
             </div>
           </CardContent>

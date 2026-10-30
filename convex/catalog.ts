@@ -237,7 +237,7 @@ export const list = query({
       .withIndex("by_status", (q) => q.eq("status", "active"))
       .collect();
     const rows = all
-      .filter((s) => !categoryId || s.categoryId === categoryId)
+      .filter((s) => !s.unlisted && (!categoryId || s.categoryId === categoryId))
       .sort((a, b) => Number(b.featured) - Number(a.featured) || a.position - b.position);
     return Promise.all(rows.map((sku) => publicSku(ctx, sku)));
   },
@@ -251,7 +251,7 @@ export const get = query({
       .query("skus")
       .withIndex("by_slug", (q) => q.eq("slug", slug))
       .unique();
-    return sku && sku.status === "active" ? await publicSku(ctx, sku) : null;
+    return sku && sku.status === "active" && !sku.unlisted ? await publicSku(ctx, sku) : null;
   },
 });
 
@@ -593,6 +593,54 @@ export const seedStarterCatalog = mutation({
     }
     await audit(ctx, staff.user._id, "catalog.seed", undefined, `starter catalogue: ${created.length} SKUs`);
     return { categories: categories.size, skus: created.length };
+  },
+});
+
+/**
+ * Seed the staff-subsidised Crystal Geode plan: a monthly plan with the full Geode perks that is on sale but never
+ * shown in the Marketplace (`unlisted`). Its Stripe product and price already exist, so they are recorded as they are
+ * rather than published — `syncSku` finds the price matching and leaves it alone. Idempotent by slug.
+ *
+ * Internal-only: run it from the dashboard or `npx convex run catalog:seedStaffGeodePlan`.
+ */
+export const seedStaffGeodePlan = internalMutation({
+  args: {
+    stripeProductId: v.string(),
+    stripePriceId: v.string(),
+    priceCents: v.number(),
+    currency: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const slug = "crystal-geode-staff";
+    const category = await ctx.db.query("skuCategories").withIndex("by_slug", (q) => q.eq("slug", "crystal-geode")).unique();
+    if (!category) throw new Error("The crystal-geode category doesn't exist yet — run seedStarterCatalog first.");
+    const crystal = await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", "crystal")).unique();
+    if (!crystal) throw new Error("Crystal system user is missing.");
+    const now = Date.now();
+    const fields = {
+      name: "Crystal Geode - Poliberry Staff Subsidised Plan",
+      description: "Crystal Geode for Poliberry staff, subsidised by Poliberry.",
+      categoryId: category._id,
+      type: "subscription" as const,
+      priceCents: args.priceCents,
+      currency: args.currency.toLowerCase(),
+      interval: "month" as const,
+      // The same perks as Crystal Geode itself, and the same plan name so everything keyed on it treats it alike.
+      grants: [{ kind: "plan" as const, payload: JSON.stringify({ plan: "crystal-geode", cosmeticDiscountBps: 2500, streamResolution: "1440p", streamFrameRate: 60, profileEffects: true, earlyAccess: true, monthlyBadge: true }), label: "Crystal Geode" }],
+      status: "active" as const,
+      featured: false,
+      unlisted: true,
+      stripeProductId: args.stripeProductId,
+      stripePriceId: args.stripePriceId,
+      updatedAt: now,
+    };
+    const existing = await ctx.db.query("skus").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, fields);
+      return { skuId: existing._id, created: false };
+    }
+    const skuId = await ctx.db.insert("skus", { slug, position: 100, createdBy: crystal._id, createdAt: now, ...fields });
+    return { skuId, created: true };
   },
 });
 

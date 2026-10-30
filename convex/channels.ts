@@ -17,16 +17,27 @@ import {
   PERMISSIONS,
   can,
   getChannelPermissions,
+  getChannelPermissionsBatch,
+  requireChannelPermission,
   requireCommunityPermission,
 } from "./permissions";
 import { visibleActivities } from "./lib/activities";
 import { evictBotFromVoice } from "./lib/botAccess";
 import { fireChannelEvent, fireVoiceEvent } from "./lib/botEvents";
+import { auditUserTarget, logCommunityAudit } from "./lib/communityAudit";
+import { describePermissionChange, joinDetails } from "./lib/communityAuditActions";
 import { notifyUsers } from "./notifications";
 import { MAX_PROFILE_ASSET_BYTES, requireWithinUploadLimit } from "./uploadLimits";
 import { releaseFile, releaseUrl } from "./lib/files";
 import { requireCommunityOpen } from "./lib/moderation";
+import { loadMemberVoiceAccess, scheduleVoiceSync } from "./lib/voiceAccess";
+import { afterVoiceRowRemoved, removeVoiceRow } from "./lib/voiceState";
+import { voiceGrantKey } from "./lib/voiceGrant";
 import { getCurrentUserOrNull, getCurrentUserOrThrow } from "./users";
+import { historyFloorFor } from "./lib/history";
+import { dropChannelMemberState, dropPollVotes } from "./lib/messageExtras";
+import { anchorOnOpen } from "./lib/historyPure";
+import { cleanSlowmodeSeconds, isSlowmodeExempt } from "./lib/slowmodePure";
 
 async function requireChannel(ctx: { db: { get: (id: Id<"channels">) => Promise<Doc<"channels"> | null> } }, channelId: Id<"channels">) {
   const channel = await ctx.db.get(channelId);
@@ -46,23 +57,15 @@ export const list = query({
       .withIndex("by_community_user", (q) => q.eq("communityId", communityId).eq("userId", me._id))
       .unique();
     if (!membership) return [];
-    // Redis cache per-user (permission-filtered) — short TTL, explicit invalidate on channel create/reorder
-    try {
-      const { cacheGetJson } = await import("./cache");
-      const key = `community:${communityId}:user:${me._id}:channels`;
-      const cached = await cacheGetJson<any>(key);
-      if (cached) return cached;
-    } catch {}
-    // fetch below, will cache after
-
     const channels = await ctx.db
       .query("channels")
       .withIndex("by_community", (q) => q.eq("communityId", communityId))
       .collect();
 
+    const permsByChannel = await getChannelPermissionsBatch(ctx, community, channels.map((c) => c._id), me._id);
     const visible = await Promise.all(
       channels.map(async (c) => {
-        const perms = await getChannelPermissions(ctx, community, c._id, me._id);
+        const perms = permsByChannel.get(c._id) ?? 0;
         if ((perms & PERMISSIONS.VIEW_CHANNELS) === 0 && (perms & PERMISSIONS.ADMINISTRATOR) === 0) {
           return null;
         }
@@ -72,6 +75,7 @@ export const list = query({
           type: c.type,
           topic: c.topic,
           isLounge: c.isLounge ?? false,
+          isStage: c.isStage ?? false,
           isAnnouncement: c.isAnnouncement ?? false,
           surface: c.surface,
           gameId: c.gameId,
@@ -85,11 +89,6 @@ export const list = query({
     const result = visible
       .filter((c): c is NonNullable<typeof c> => c !== null)
       .sort((a, b) => a.position - b.position);
-    try {
-      const { cacheSetJson } = await import("./cache");
-      const key = `community:${communityId}:user:${me._id}:channels`;
-      await cacheSetJson(key, result, 60);
-    } catch {}
     return result;
   },
 });
@@ -111,18 +110,58 @@ export const get = query({
       .unique();
     if (!membership) return null;
     const perms = await getChannelPermissions(ctx, community, channelId, me._id);
+    // When this member may next send, for the composer's countdown. Read here (it changes with every
+    // send, which re-runs this) rather than guessed by the client.
+    const exempt = isSlowmodeExempt(perms);
+    const lastSend =
+      channel.slowmodeSeconds && !exempt
+        ? await ctx.db
+            .query("channelSlowmode")
+            .withIndex("by_channel_user_scope", (q) => q.eq("channelId", channelId).eq("userId", me._id).eq("scope", "message"))
+            .unique()
+        : null;
     return {
       id: channel._id,
       communityId: channel.communityId,
       communityName: community.name,
       // Whether the composer should be there at all. The send itself is checked again on the server.
       canSend: can(perms, PERMISSIONS.SEND_MESSAGES),
-      // Soundboard hits travel peer-to-peer as data packets, so this is what the soundboard
-      // offers rather than something the server can stop.
+      // What the soundboard offers. Hits travel as data packets, so every listener also checks them
+      // with the server on arrival (soundboard.verifyClip); this is so the picker doesn't offer
+      // what would be dropped.
       canUseSoundboard: can(perms, PERMISSIONS.USE_SOUNDBOARD),
+      canUseExternalSounds: can(perms, PERMISSIONS.USE_EXTERNAL_SOUNDS),
+      // Voice: what the call screen offers and why a control is off. The publish rights themselves
+      // are signed into the LiveKit token (see getVoiceJoinContext); these only decide what shows.
+      canSpeak: can(perms, PERMISSIONS.SPEAK),
+      canVideo: can(perms, PERMISSIONS.VIDEO),
+      canUseVad: can(perms, PERMISSIONS.USE_VAD),
+      canRequestToSpeak: can(perms, PERMISSIONS.REQUEST_TO_SPEAK),
+      canSetVoiceStatus: can(perms, PERMISSIONS.SET_VOICE_STATUS),
+      canUseActivities: can(perms, PERMISSIONS.USE_EMBEDDED_ACTIVITIES),
+      canMuteMembers: can(perms, PERMISSIONS.MUTE_MEMBERS),
+      canDeafenMembers: can(perms, PERMISSIONS.DEAFEN_MEMBERS),
+      canMoveMembers: can(perms, PERMISSIONS.MOVE_MEMBERS),
+      canManageChannel: can(perms, PERMISSIONS.MANAGE_CHANNELS),
+      isStage: channel.isStage ?? false,
+      voiceStatus: channel.voiceStatus,
       // Emoji from other communities. Reactions are checked by the server; text is encrypted, so
       // the composer is what keeps them out of a message.
       canUseExternalEmojis: can(perms, PERMISSIONS.USE_EXTERNAL_EMOJIS),
+      // What the composer offers. Each is a courtesy: the server checks again on send.
+      canAttachFiles: can(perms, PERMISSIONS.ATTACH_FILES),
+      canAddReactions: can(perms, PERMISSIONS.ADD_REACTIONS),
+      canPin: can(perms, PERMISSIONS.PIN_MESSAGES) || can(perms, PERMISSIONS.MANAGE_MESSAGES),
+      canUseCommands: can(perms, PERMISSIONS.USE_APPLICATION_COMMANDS),
+      canSendTts: can(perms, PERMISSIONS.SEND_TTS),
+      canSendVoiceMessages: can(perms, PERMISSIONS.SEND_VOICE_MESSAGES),
+      canCreatePolls: can(perms, PERMISSIONS.CREATE_POLLS),
+      canUseExternalStickers: can(perms, PERMISSIONS.USE_EXTERNAL_STICKERS),
+      canReadHistory: can(perms, PERMISSIONS.READ_MESSAGE_HISTORY),
+      // Slowmode: seconds between messages, and whether this member is exempt from it.
+      slowmodeSeconds: channel.slowmodeSeconds ?? 0,
+      slowmodeExempt: exempt,
+      slowmodeUntil: lastSend && channel.slowmodeSeconds ? lastSend.lastSentAt + channel.slowmodeSeconds * 1000 : null,
       name: channel.name,
       type: channel.type,
       topic: channel.topic,
@@ -154,7 +193,7 @@ export async function createChannelRow(
   ctx: MutationCtx,
   community: Doc<"communities">,
   actorId: Id<"users">,
-  c: { name: string; type: "text" | "voice"; categoryId?: Id<"channelCategories">; lounge?: boolean; announcement?: boolean; channelSurface?: ChannelSurface; gameId?: string; topic?: string },
+  c: { name: string; type: "text" | "voice"; categoryId?: Id<"channelCategories">; lounge?: boolean; stage?: boolean; announcement?: boolean; channelSurface?: ChannelSurface; gameId?: string; topic?: string },
 ): Promise<Id<"channels">> {
   const communityId = community._id;
   const existing = await ctx.db
@@ -172,6 +211,7 @@ export async function createChannelRow(
     createdAt: Date.now(),
     ...(c.topic ? { topic: c.topic } : {}),
     ...(c.type === "voice" && c.lounge ? { isLounge: true, loungeScene: "living-room" } : {}),
+    ...(c.type === "voice" && c.stage && !c.lounge ? { isStage: true } : {}),
     ...(c.type === "text" && c.announcement && !c.channelSurface ? { isAnnouncement: true } : {}),
     ...(c.channelSurface ? { surface: c.channelSurface } : {}),
     ...(c.gameId ? { gameId: c.gameId } : {}),
@@ -180,8 +220,7 @@ export async function createChannelRow(
   if (c.type === "text" && c.announcement && !c.channelSurface) {
     const everyone = await ctx.db
       .query("roles")
-      .withIndex("by_community", (q) => q.eq("communityId", communityId))
-      .filter((q) => q.eq(q.field("isEveryone"), true))
+      .withIndex("by_community_everyone", (q) => q.eq("communityId", communityId).eq("isEveryone", true))
       .unique();
     if (everyone) {
       await ctx.db.insert("channelPermissionOverwrites", { channelId, roleId: everyone._id, allow: 0, deny: PERMISSIONS.SEND_MESSAGES });
@@ -189,6 +228,7 @@ export async function createChannelRow(
   }
   const created = await ctx.db.get(channelId);
   if (created) await fireChannelEvent(ctx, "channel.created", created);
+  await logCommunityAudit(ctx, { communityId, actorId, action: "channel.create", target: { type: "channel", id: channelId, name: c.name }, details: c.type === "voice" ? "Voice channel" : "Text channel" });
   try {
     const { cacheInvalidateKeys } = await import("./cache");
     await cacheInvalidateKeys(`community:${communityId}:user:${actorId}:channels`, `community:${communityId}:channels`);
@@ -211,8 +251,10 @@ export async function deleteChannelCascade(ctx: MutationCtx, channel: Doc<"chann
       await releaseFile(ctx, attachment);
     }
     for (const reaction of await ctx.db.query("channelMessageReactions").withIndex("by_message", (q) => q.eq("messageId", message._id)).collect()) await ctx.db.delete(reaction._id);
+    await dropPollVotes(ctx, message._id);
     await ctx.db.delete(message._id);
   }
+  await dropChannelMemberState(ctx, channelId);
   // A lounge's chat and its pictures.
   for (const row of await ctx.db.query("loungeMessages").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect()) {
     await ctx.db.delete(row._id);
@@ -228,13 +270,17 @@ export async function deleteChannelCascade(ctx: MutationCtx, channel: Doc<"chann
   for (const participant of voiceParticipants) {
     await ctx.db.delete(participant._id);
     await releaseUrl(ctx, participant.streamThumbnailUrl, participant.streamThumbnailStorageId);
+    // The room goes with the channel; nobody should stay connected to a channel that no longer exists.
+    await ctx.scheduler.runAfter(0, internal.voiceSync.evict, { channelId, userId: participant.userId });
   }
+  for (const activity of await ctx.db.query("voiceActivities").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect()) await ctx.db.delete(activity._id);
   // The channel's own pictures.
   await releaseUrl(ctx, channel.backgroundUrl, channel.backgroundStorageId);
   await releaseUrl(ctx, channel.bannerUrl, channel.bannerStorageId);
   // Told before it goes, while the bots can still be checked against it.
   await fireChannelEvent(ctx, "channel.deleted", channel);
   await ctx.db.delete(channelId);
+  await logCommunityAudit(ctx, { communityId: channel.communityId, actorId, action: "channel.delete", target: { type: "channel", id: channelId, name: channel.name } });
   try {
     const { cacheInvalidateKeys } = await import("./cache");
     await cacheInvalidateKeys(`community:${channel.communityId}:user:${actorId}:channels`, `channel:${channelId}:meta`, `channel:${channelId}:messages:30`, `channel:${channelId}:messages:50`);
@@ -249,6 +295,8 @@ export const create = mutation({
     categoryId: v.optional(v.id("channelCategories")),
     /** A voice channel that is a lounge. Ignored for text channels. */
     lounge: v.optional(v.boolean()),
+    /** A voice channel that is a stage: the audience listens and raises a hand to speak. Ignored for text channels and lounges. */
+    stage: v.optional(v.boolean()),
     /** A text channel that is an announcements channel. Ignored for voice channels. */
     announcement: v.optional(v.boolean()),
     /** A text channel that shows something other than messages — only in a
@@ -256,7 +304,7 @@ export const create = mutation({
     surface: v.optional(v.string()),
     gameId: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, name, type, categoryId, lounge, announcement, surface, gameId }) => {
+  handler: async (ctx, { communityId, name, type, categoryId, lounge, stage, announcement, surface, gameId }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const community = await requireCommunity(ctx, communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
@@ -274,7 +322,7 @@ export const create = mutation({
     }
     if (gameId !== undefined && !community.clanGames?.some((g) => g.id === gameId)) throw new Error("The clan doesn't play that.");
 
-    const channelId = await createChannelRow(ctx, community, me._id, { name: trimmed, type, categoryId, lounge, announcement, channelSurface, gameId });
+    const channelId = await createChannelRow(ctx, community, me._id, { name: trimmed, type, categoryId, lounge, stage, announcement, channelSurface, gameId });
     return channelId;
   },
 });
@@ -309,8 +357,7 @@ export const setAnnouncement = mutation({
       }
       const everyone = await ctx.db
         .query("roles")
-        .withIndex("by_community", (q) => q.eq("communityId", channel.communityId))
-        .filter((q) => q.eq(q.field("isEveryone"), true))
+        .withIndex("by_community_everyone", (q) => q.eq("communityId", channel.communityId).eq("isEveryone", true))
         .unique();
       if (everyone) {
         const existing = (await ctx.db.query("channelPermissionOverwrites").withIndex("by_channel", (q) => q.eq("channelId", channelId)).collect())
@@ -332,6 +379,7 @@ export const setAnnouncement = mutation({
     }
 
     await ctx.db.patch(channelId, { isAnnouncement: enabled ? true : undefined });
+    await logCommunityAudit(ctx, { communityId: channel.communityId, actorId: me._id, action: "channel.update", target: { type: "channel", id: channelId, name: channel.name }, details: `Announcements channel: ${enabled ? "on" : "off"}` });
     const changed = await ctx.db.get(channelId);
     if (changed) await fireChannelEvent(ctx, "channel.updated", changed);
     try {
@@ -347,14 +395,21 @@ export const update = mutation({
     channelId: v.id("channels"),
     name: v.optional(v.string()),
     topic: v.optional(v.string()),
+    /** Seconds members must wait between messages; 0 turns slowmode off. */
+    slowmodeSeconds: v.optional(v.number()),
   },
-  handler: async (ctx, { channelId, name, topic }) => {
+  handler: async (ctx, { channelId, name, topic, slowmodeSeconds }) => {
     const me = await getCurrentUserOrThrow(ctx);
     const channel = await requireChannel(ctx, channelId);
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
 
-    const patch: { name?: string; topic?: string } = {};
+    const patch: { name?: string; topic?: string; slowmodeSeconds?: number } = {};
+    if (slowmodeSeconds !== undefined) {
+      if (channel.type !== "text") throw new Error("Only a text channel has slowmode.");
+      // 0 is stored as absent, so "off" is one state.
+      patch.slowmodeSeconds = cleanSlowmodeSeconds(slowmodeSeconds) || undefined;
+    }
     if (name !== undefined) {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Channel name can't be empty.");
@@ -363,6 +418,13 @@ export const update = mutation({
     if (topic !== undefined) patch.topic = topic;
     if (Object.keys(patch).length > 0) {
       await ctx.db.patch(channelId, patch);
+      await logCommunityAudit(ctx, {
+        communityId: channel.communityId,
+        actorId: me._id,
+        action: "channel.update",
+        target: { type: "channel", id: channelId, name: patch.name ?? channel.name },
+        details: joinDetails(patch.name !== undefined && patch.name !== channel.name && `Renamed from "${channel.name}"`, patch.topic !== undefined && patch.topic !== (channel.topic ?? "") && "Changed the topic"),
+      });
       const changed = await ctx.db.get(channelId);
       if (changed) await fireChannelEvent(ctx, "channel.updated", changed);
     }
@@ -468,6 +530,20 @@ export const setOverwrite = mutation({
     } else {
       await ctx.db.insert("channelPermissionOverwrites", { channelId, roleId, userId, allow, deny });
     }
+    // Someone already in this voice channel keeps the rights their token was minted with unless told otherwise.
+    if (channel.type === "voice") await scheduleVoiceSync(ctx, { communityId: channel.communityId, channelId });
+    const subject = roleId ? await ctx.db.get(roleId) : userId ? await ctx.db.get(userId) : null;
+    await logCommunityAudit(ctx, {
+      communityId: channel.communityId,
+      actorId: me._id,
+      action: "channel.overwrite_set",
+      target: { type: "channel", id: channelId, name: channel.name },
+      details: joinDetails(
+        `For ${roleId ? "role" : "member"} ${subject?.name ?? "unknown"}`,
+        describePermissionChange(match?.allow ?? 0, allow) && `Allowed: ${describePermissionChange(match?.allow ?? 0, allow)}`,
+        describePermissionChange(match?.deny ?? 0, deny) && `Denied: ${describePermissionChange(match?.deny ?? 0, deny)}`,
+      ),
+    });
     await bustChannelLists(channel.communityId, me._id);
   },
 });
@@ -492,6 +568,9 @@ export const removeOverwrite = mutation({
     const community = await requireCommunity(ctx, channel.communityId);
     await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MANAGE_CHANNELS);
     await ctx.db.delete(overwriteId);
+    if (channel.type === "voice") await scheduleVoiceSync(ctx, { communityId: channel.communityId, channelId: channel._id });
+    const subject = overwrite.roleId ? await ctx.db.get(overwrite.roleId) : overwrite.userId ? await ctx.db.get(overwrite.userId) : null;
+    await logCommunityAudit(ctx, { communityId: channel.communityId, actorId: me._id, action: "channel.overwrite_remove", target: { type: "channel", id: overwrite.channelId, name: channel.name }, details: `For ${overwrite.roleId ? "role" : "member"} ${subject?.name ?? "unknown"}` });
     await bustChannelLists(channel.communityId, me._id);
   },
 });
@@ -539,6 +618,10 @@ export const listVoiceParticipants = query({
           streaming: row.streaming ?? false,
           serverMuted: row.serverMuted ?? false,
           serverDeafened: row.serverDeafened ?? false,
+          /** On a stage: up with the speakers, and the hand raised to get there. */
+          stageSpeaker: row.stageSpeaker ?? false,
+          handRaisedAt: row.handRaisedAt,
+          joinedAt: row.joinedAt,
           /** Only meaningful while `streaming` — see the schema. */
           streamThumbnailUrl: row.streamThumbnailUrl,
           activities: visibleActivities(presence, user),
@@ -552,10 +635,12 @@ export const listVoiceParticipants = query({
 /**
  * Server-mute or server-deafen someone in a voice channel.
  *
- * Enforcement is client-side (the target's own client applies it to its
- * LiveKit tracks), so this is bookkeeping the target watches rather than a
- * hard cut — the same shape as the self-set flags beside it. Passing
- * `undefined` for a field leaves it alone, so muting doesn't clobber deafen.
+ * Held by the room itself, not just by the target's app: a server mute takes the microphone out of
+ * their LiveKit publish grant and a server deafen takes away their right to subscribe, both updated
+ * in place by voiceSync, and the grant is rebuilt from this row if they rejoin. The target's app also
+ * mirrors it onto their mute / deafen buttons. Passing `undefined` for a field leaves it alone, so
+ * muting doesn't clobber deafen. Checked against the channel's own permissions, so an overwrite that
+ * takes Mute Members away in a channel counts.
  */
 export const setMemberVoiceState = mutation({
   args: {
@@ -571,10 +656,10 @@ export const setMemberVoiceState = mutation({
     const community = await requireCommunity(ctx, channel.communityId);
 
     if (serverMuted !== undefined) {
-      await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MUTE_MEMBERS);
+      await requireChannelPermission(ctx, community, channelId, me._id, PERMISSIONS.MUTE_MEMBERS);
     }
     if (serverDeafened !== undefined) {
-      await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.DEAFEN_MEMBERS);
+      await requireChannelPermission(ctx, community, channelId, me._id, PERMISSIONS.DEAFEN_MEMBERS);
     }
     const row = await ctx.db
       .query("channelCallParticipants")
@@ -586,13 +671,20 @@ export const setMemberVoiceState = mutation({
       ...(serverMuted !== undefined ? { serverMuted } : {}),
       ...(serverDeafened !== undefined ? { serverDeafened } : {}),
     });
+    await scheduleVoiceSync(ctx, { communityId: channel.communityId, channelId, userId });
+    const target = await auditUserTarget(ctx, userId);
+    if (serverMuted !== undefined && serverMuted !== (row.serverMuted ?? false)) {
+      await logCommunityAudit(ctx, { communityId: channel.communityId, actorId: me._id, action: serverMuted ? "voice.mute" : "voice.unmute", target, details: `In #${channel.name}` });
+    }
+    if (serverDeafened !== undefined && serverDeafened !== (row.serverDeafened ?? false)) {
+      await logCommunityAudit(ctx, { communityId: channel.communityId, actorId: me._id, action: serverDeafened ? "voice.deafen" : "voice.undeafen", target, details: `In #${channel.name}` });
+    }
   },
 });
 
 /**
- * Disconnect someone from a voice channel by removing their participant row.
- * Their client is subscribed to that row and leaves the call when it vanishes
- * (see CallProvider), which also covers them being kicked or banned.
+ * Disconnect someone from a voice channel: their participant row goes and their LiveKit connection is
+ * ended. Their app is also subscribed to the row and leaves the call when it vanishes (see CallProvider).
  */
 export const disconnectMember = mutation({
   args: { channelId: v.id("channels"), userId: v.id("users") },
@@ -601,14 +693,16 @@ export const disconnectMember = mutation({
     const channel = await ctx.db.get(channelId);
     if (!channel) throw new Error("Channel not found.");
     const community = await requireCommunity(ctx, channel.communityId);
-    await requireCommunityPermission(ctx, community, me._id, PERMISSIONS.MOVE_MEMBERS);
+    await requireChannelPermission(ctx, community, channelId, me._id, PERMISSIONS.MOVE_MEMBERS);
     const row = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
       .unique();
     if (row) {
-      await ctx.db.delete(row._id);
+      // Also ends their LiveKit connection: leaving when the row goes is their app's good behaviour, not a guarantee.
+      await removeVoiceRow(ctx, row, { evict: true });
       await fireVoiceEvent(ctx, channelId, userId, "left");
+      await logCommunityAudit(ctx, { communityId: channel.communityId, actorId: me._id, action: "voice.disconnect", target: await auditUserTarget(ctx, userId), details: `From #${channel.name}` });
       // A bot doesn't notice its row going away the way a person's app does; end the connection itself.
       await evictBotFromVoice(ctx, userId, [channelId]);
     }
@@ -628,7 +722,8 @@ export const setVoiceState = mutation({
     deafened: v.boolean(),
     streaming: v.boolean(),
   },
-  handler: async (ctx, { channelId, muted, deafened, streaming }) => {
+  handler: async (ctx, { channelId, muted, deafened, streaming: reportedStreaming }) => {
+    let streaming = reportedStreaming;
     const me = await getCurrentUserOrNull(ctx);
     if (!me) return;
     const row = await ctx.db
@@ -636,6 +731,12 @@ export const setVoiceState = mutation({
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
       .unique();
     if (!row) return;
+    // The roster's LIVE badge is the client's report; LiveKit won't carry a share without Video, so neither does this.
+    if (streaming) {
+      const channel = await ctx.db.get(channelId);
+      const community = channel ? await ctx.db.get(channel.communityId) : null;
+      if (!channel || !community || !can(await getChannelPermissions(ctx, community, channelId, me._id), PERMISSIONS.VIDEO)) streaming = false;
+    }
     if (row.muted === muted && row.deafened === deafened && row.streaming === streaming) return;
     const startedStreaming = streaming && !(row.streaming ?? false);
     await ctx.db.patch(row._id, { muted, deafened, streaming });
@@ -741,32 +842,41 @@ export const getVoiceJoinContext = internalQuery({
     const community = await requireCommunity(ctx, channel.communityId);
     await requireMember(ctx, channel.communityId, me._id);
     await requireCommunityOpen(ctx, channel.communityId, "post");
-    const perms = await getChannelPermissions(ctx, community, channelId, me._id);
-    if (!can(perms, PERMISSIONS.CONNECT)) throw new Error("You don't have permission to join this channel.");
+    // Connect, and not timed out; then what the room lets them send (lib/voiceGrant.ts) — the token
+    // is minted from this, so it is the server's word on who can talk, show video, or only listen.
+    const access = await loadMemberVoiceAccess(ctx, community, channel, me._id);
+    if (!access.allowed) throw new Error(access.denial ?? "You don't have permission to join this channel.");
     return {
       userId: me._id,
       name: me.name,
       communityId: channel.communityId,
-      // What they may send into the room: Speak is the microphone, Video the camera and screen.
-      canSpeak: can(perms, PERMISSIONS.SPEAK),
-      canVideo: can(perms, PERMISSIONS.VIDEO),
+      grant: access.grant,
+      grantKey: voiceGrantKey(access.grant),
+      stage: channel.isStage === true,
     };
   },
 });
 
 export const recordVoiceJoin = internalMutation({
-  args: { channelId: v.id("channels"), userId: v.id("users") },
-  handler: async (ctx, { channelId, userId }) => {
+  args: {
+    channelId: v.id("channels"),
+    userId: v.id("users"),
+    /** The grant the token about to be minted carries (lib/voiceGrant.ts). */
+    grantKey: v.optional(v.string()),
+    stageSpeaker: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { channelId, userId, grantKey, stageSpeaker }) => {
     const existing = await ctx.db
       .query("channelCallParticipants")
       .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", userId))
       .unique();
+    const grant = { ...(grantKey !== undefined ? { grantKey } : {}), ...(stageSpeaker !== undefined ? { stageSpeaker } : {}) };
     if (existing) {
       // See calls.recordJoin: re-stamp a row left by an earlier connection so its late leave can't remove it.
-      await ctx.db.patch(existing._id, { joinedAt: Date.now() });
+      await ctx.db.patch(existing._id, { joinedAt: Date.now(), ...grant });
       return;
     }
-    await ctx.db.insert("channelCallParticipants", { channelId, userId, joinedAt: Date.now() });
+    await ctx.db.insert("channelCallParticipants", { channelId, userId, joinedAt: Date.now(), ...grant });
     await fireVoiceEvent(ctx, channelId, userId, "joined");
     await notifyVoiceChannelActivity(ctx, {
       channelId,
@@ -795,16 +905,14 @@ export const recordVoiceLeave = internalMutation({
       await fireVoiceEvent(ctx, channelId, userId, "left");
     }
 
-    const remaining = await ctx.db
-      .query("channelCallParticipants")
-      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
-      .collect();
+    // The last one out takes the channel's status and activity with them; a host who leaves hands the video on.
+    const remaining = await afterVoiceRowRemoved(ctx, channelId, userId);
     // An empty lounge forgets what was said in it and what it was about.
-    if (remaining.length === 0) {
+    if (remaining === 0) {
       const channel = await ctx.db.get(channelId);
       if (channel?.isLounge) await ctx.scheduler.runAfter(0, internal.lounge.reset, { channelId });
     }
-    return remaining.length;
+    return remaining;
   },
 });
 
@@ -860,6 +968,11 @@ export const unreadInfo = query({
       .withIndex("by_user_channel", (q) => q.eq("userId", me._id).eq("channelId", channelId))
       .unique();
     const readAt = read?.lastReadAt ?? 0;
+    // Messages from before a member's history starts don't count towards what they missed.
+    const community = await ctx.db.get(channel.communityId);
+    const floor = community
+      ? await historyFloorFor(ctx, channelId, me._id, await getChannelPermissions(ctx, community, channelId, me._id))
+      : ({ restricted: false } as const);
 
     const recent = await ctx.db
       .query("channelMessages")
@@ -869,7 +982,7 @@ export const unreadInfo = query({
 
     return {
       count: recent.filter(
-        (message) => message._creationTime > readAt && message.authorId !== me._id
+        (message) => message._creationTime > readAt && message.authorId !== me._id && (!floor.restricted || message._creationTime > floor.after)
       ).length,
       /** Where they had got to, for "since you were last here". Null when
        * they've never opened the channel. */
@@ -910,6 +1023,36 @@ export const markRead = mutation({
   },
 });
 
+/**
+ * Record that the caller has opened a channel, which is where their history starts if they lack Read
+ * Message History: they see nothing sent before now (see lib/history.ts). Members who hold the
+ * permission need nothing, and any anchor left from before they were given it is dropped.
+ * Called when a channel's view mounts.
+ */
+export const openChannel = mutation({
+  args: { channelId: v.id("channels") },
+  handler: async (ctx, { channelId }) => {
+    const me = await getCurrentUserOrThrow(ctx);
+    const channel = await ctx.db.get(channelId);
+    if (!channel) return;
+    await requireMember(ctx, channel.communityId, me._id);
+    const community = await requireCommunity(ctx, channel.communityId);
+    const perms = await getChannelPermissions(ctx, community, channelId, me._id);
+    if (!can(perms, PERMISSIONS.VIEW_CHANNELS)) return;
+    const row = await ctx.db
+      .query("channelHistoryAnchors")
+      .withIndex("by_channel_user", (q) => q.eq("channelId", channelId).eq("userId", me._id))
+      .unique();
+    if (can(perms, PERMISSIONS.READ_MESSAGE_HISTORY)) {
+      if (row) await ctx.db.delete(row._id);
+      return;
+    }
+    const now = Date.now();
+    const anchorAt = anchorOnOpen(row?.anchorAt, now);
+    if (!row) await ctx.db.insert("channelHistoryAnchors", { channelId, userId: me._id, anchorAt });
+    else if (row.anchorAt !== anchorAt) await ctx.db.patch(row._id, { anchorAt });
+  },
+});
 
 /**
  * Publish a still from my own screen share so people outside the call can see

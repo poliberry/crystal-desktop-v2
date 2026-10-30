@@ -24,6 +24,8 @@ interface MessageHoverActionsProps {
   /** Channel messages only — omitted for DMs, which have no custom emoji. */
   communityId?: Id<"communities">;
   onReact: (emoji: string) => void;
+  /** Whether new reactions can be added (Add Reactions). Defaults to true. */
+  canReact?: boolean;
   onReply?: () => void;
   onEdit: () => void;
   /** `shiftKey` — true skips the confirmation dialog entirely. */
@@ -37,6 +39,7 @@ export function MessageHoverActions({
   canDelete,
   communityId,
   onReact,
+  canReact = true,
   onReply,
   onEdit,
   onDelete,
@@ -56,18 +59,20 @@ export function MessageHoverActions({
         </TooltipProvider>
       )}
 
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="size-7">
-            <Smile className="size-3.5" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent side="top" align="end" className="w-auto p-0">
-          <ReactionPickerContent
-              onSelect={(text, custom) => onReact(custom ? formatCustomEmoji(custom) : text)}
-            />
-        </PopoverContent>
-      </Popover>
+      {canReact && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon" className="size-7">
+              <Smile className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent side="top" align="end" className="w-auto p-0">
+            <ReactionPickerContent
+                onSelect={(text, custom) => onReact(custom ? formatCustomEmoji(custom) : text)}
+              />
+          </PopoverContent>
+        </Popover>
+      )}
 
       {canEdit && (
         <TooltipProvider>

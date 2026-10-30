@@ -9,6 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { CommunitySettingsChannelsTab } from "@/components/community/community-settings-channels-tab";
 import { ClanSettings } from "@/components/community/settings/clan-settings";
 import { CreatorSettings } from "@/components/community/settings/creator-settings";
+import { InsightsSettings } from "@/components/community/settings/insights-settings";
+import { MonetizationSettings } from "@/components/community/settings/monetization-settings";
+import { AuditLogSettings } from "@/components/community/settings/audit-log-settings";
 import { BotsSettings } from "@/components/community/settings/bots-settings";
 import { ServersSettings } from "@/components/community/settings/servers-settings";
 import { CommunitySettingsEmojisTab } from "@/components/community/community-settings-emojis-tab";
@@ -128,10 +131,17 @@ function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsP
   const kind = (community as { kind?: "creator" | "clan" } | null | undefined)?.kind;
   const canManageServers = hasPermission(permissions, PERMISSIONS.MANAGE_GAME_SERVERS);
   const canManageIntegrations = hasPermission(permissions, PERMISSIONS.MANAGE_INTEGRATIONS);
+  // The owner holds every bit; Administrators pass `hasPermission` too.
+  const canViewAuditLog = hasPermission(permissions, PERMISSIONS.VIEW_AUDIT_LOG);
+  const canViewInsights = hasPermission(permissions, PERMISSIONS.VIEW_INSIGHTS);
+  const canViewMonetization = hasPermission(permissions, PERMISSIONS.VIEW_CREATOR_MONETIZATION);
   const navItems = [
     ...data.navMain[0].items,
     ...(canManageIntegrations ? [{ title: "Bots" }] : []),
+    ...(canViewAuditLog ? [{ title: "Audit log" }] : []),
+    ...(canViewInsights ? [{ title: "Insights" }] : []),
     ...(kind === "creator" ? [{ title: "Creator" }] : []),
+    ...(kind === "creator" && canViewMonetization ? [{ title: "Monetization" }] : []),
     ...(kind === "clan" ? [{ title: "Clan" }] : []),
     // Any community can run game servers, not just clans and creator communities.
     ...(canManageServers ? [{ title: "Game servers" }] : []),
@@ -239,9 +249,12 @@ function CommunitySettingsPageInner({ communityId, onClose }: CommunitySettingsP
                   canManage={canManageEmojis}
                 />
               )}
+              {selectedTab === "Insights" && canViewInsights && <InsightsSettings communityId={communityId} />}
               {selectedTab === "Creator" && <CreatorSettings communityId={communityId} />}
+              {selectedTab === "Monetization" && canViewMonetization && <MonetizationSettings communityId={communityId} />}
               {selectedTab === "Clan" && <ClanSettings communityId={communityId} canManage={canManageCommunity} />}
               {selectedTab === "Bots" && <BotsSettings communityId={communityId} />}
+              {selectedTab === "Audit log" && canViewAuditLog && <AuditLogSettings communityId={communityId} />}
               {selectedTab === "Game servers" && <ServersSettings communityId={communityId} />}
             </ErrorBoundary>
           </SettingsPageLayout>

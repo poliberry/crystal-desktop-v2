@@ -4,12 +4,13 @@ import { CommunityThemeWash } from "@/components/community/community-theme-wash"
 import { useQuery } from "convex/react";
 import { Hash, Megaphone, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import moment from "moment";
 
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { ChannelMessageComposer } from "@/components/community/channel-message-composer";
 import { ChannelMessageList } from "@/components/community/channel-message-list";
+import { useLocale } from "@/hooks/use-locale";
+import { formatRelative } from "@/lib/relative-time";
 import { FollowChannelDialog } from "@/components/community/follow-channel-dialog";
 import { TypingIndicator } from "@/components/typing-indicator";
 import { MemberList } from "@/components/community/member-list";
@@ -49,6 +50,7 @@ export function ChannelChatView({
   isAnnouncement,
   canSend = true,
 }: ChannelChatViewProps) {
+  useLocale();
   const [following, setFollowing] = useState(false);
   // The member list lives in the right sidebar, which the window owns; this
   // view only says what goes in it and has the button for it.
@@ -186,7 +188,7 @@ export function ChannelChatView({
           <div className="flex shrink-0 items-center gap-2 bg-primary/15 px-3 py-1 text-xs text-primary">
             <span className="min-w-0 flex-1 truncate">
               {missed.count === 1 ? "1 new message" : `${missed.count} new messages`}
-              {missed.since ? ` since ${moment(missed.since).fromNow()}` : ""}
+              {missed.since ? ` since ${formatRelative(missed.since)}` : ""}
             </span>
             <button
               type="button"

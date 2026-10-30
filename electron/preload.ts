@@ -52,6 +52,8 @@ const api = {
     download: () => ipcRenderer.invoke("updater:download"),
     install: () => ipcRenderer.invoke("updater:install"),
     openReleases: () => ipcRenderer.invoke("updater:open-releases"),
+    getLaunchUpdate: () => ipcRenderer.invoke("updater:launch-update"),
+    setLaunchUpdate: (enabled: boolean) => ipcRenderer.invoke("updater:set-launch-update", enabled),
     onStateChange: (cb: (state: UpdaterState) => void) => {
       const handler = (_e: IpcRendererEvent, state: UpdaterState) => cb(state);
       ipcRenderer.on("updater:state-changed", handler);

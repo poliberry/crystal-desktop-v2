@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { CallPip } from "@/components/call/call-pip";
-import { CallStage } from "@/components/call/call-stage";
+import { CallPip, CallStage } from "@/components/call/call-lazy";
 import { useCall } from "@/components/call/call-provider";
 import { CommunityFinaleHost } from "@/components/community/community-finale-host";
 import { ChannelView } from "@/components/community/channel-view";
@@ -261,6 +260,10 @@ export function HomeLayout() {
   const nav = useNavigation();
 
   const showCallStage = expanded && !!activeCall;
+  // The mini player is code-split (call-lazy.ts) and mounts with the first call, then stays so a player the user has
+  // dragged somewhere keeps its place across calls, as it did when it was always mounted.
+  const callPipMounted = useRef(false);
+  if (activeCall) callPipMounted.current = true;
 
   // On a phone the call screen lives on the content side, so opening it (from the call card, the
   // floating player, a notification) has to bring that side forward.
@@ -372,7 +375,7 @@ export function HomeLayout() {
       {/* The call's mini player, while the call screen is collapsed. Rendered
           here rather than by CallProvider so the provider doesn't have to
           import a component that reads its own context back out. */}
-      <CallPip />
+      {callPipMounted.current && <CallPip />}
 
       {/* The end-of-create-community overlay, which has to outlive the page. */}
       <CommunityFinaleHost />

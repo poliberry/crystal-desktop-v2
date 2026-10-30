@@ -24,6 +24,20 @@ export const EMBED_LIMITS = {
   total: 6000,
 } as const;
 
+/**
+ * The words of an encrypted poll, rebuilt like the rest of a decrypted payload: whoever holds the
+ * room key wrote them, so they are trusted to be neither the right shape nor the right length. Null
+ * unless they fit the poll the server counts (`optionCount` options).
+ */
+export function safePollWords(raw: unknown, optionCount: number): { question: string; options: string[] } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { question, options } = raw as { question?: unknown; options?: unknown };
+  if (typeof question !== "string" || !Array.isArray(options) || options.length !== optionCount) return null;
+  if (options.some((o) => typeof o !== "string")) return null;
+  const clip = (s: string, max: number) => s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u202a-\u202e\u2066-\u2069]/g, "").slice(0, max);
+  return { question: clip(question, 300), options: (options as string[]).map((o) => clip(o, 100)) };
+}
+
 export const COMPONENT_LIMITS = { rows: 5, buttonsPerRow: 5, label: 80, customId: 100, url: 2000 } as const;
 
 export interface SafeEmbed {

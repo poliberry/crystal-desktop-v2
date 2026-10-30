@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { HeadphoneOff, MicOff } from "lucide-react";
+import { HeadphoneOff, Megaphone, MicOff } from "lucide-react";
+import { useQuery } from "convex/react";
 import {
   ParticipantEvent,
   RoomEvent,
@@ -16,8 +17,16 @@ import {
   AvatarFallback,
   AvatarImage,
 } from "@/components/ui/avatar";
+import { api } from "../../convex/_generated/api";
+import { useCall } from "@/components/call/call-provider";
 import { useAvatarAccent } from "@/hooks/use-avatar-accent";
 import { routeElementToPlayback } from "@/lib/system-audio";
+import {
+  getPriorityGain,
+  isPriorityAttributes,
+  subscribePriorityGain,
+  voiceGainFor,
+} from "@/lib/priority-speaker";
 import { SoundboardBurst } from "@/components/call/soundboard-burst";
 import { cn } from "@/lib/utils";
 
@@ -81,9 +90,22 @@ export function ParticipantTile({
   const [micMuted, setMicMuted] = useState(true);
   // Mirrored from the participant's own attributes — see `useRoom`, which
   // publishes it whenever the local deafen state changes.
-  const [deafened, setDeafened] = useState(
+  const [attributeDeafened, setDeafened] = useState(
     participant.attributes?.deafened === "1",
   );
+  // In a community channel the room's signed attributes can't be rewritten by a client (the token turns
+  // that off, so nobody can fake priority), which includes the deafen flag above. The channel's own
+  // roster carries it instead, mirrored by each member's app.
+  const { activeCall } = useCall();
+  const roster = useQuery(
+    api.channels.listVoiceParticipants,
+    activeCall?.kind === "channel" ? { channelId: activeCall.channelId } : "skip",
+  );
+  const rosterDeafened = roster?.find((p) => p.id === participant.identity)?.deafened;
+  const deafened = rosterDeafened ?? attributeDeafened;
+  // Priority speaker, as the server signed it into their token (never something they can claim for
+  // themselves) — see src/lib/priority-speaker.ts.
+  const [priority, setPriority] = useState(isPriorityAttributes(participant.attributes));
   const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
   const avatarBg = useAvatarAccent(imageUrl, accent);
 
@@ -92,6 +114,14 @@ export function ParticipantTile({
   const localMutedRef = useRef(!!localMuted);
   localVolumeRef.current = localVolume ?? 1;
   localMutedRef.current = !!localMuted;
+  const participantRef = useRef(participant);
+  participantRef.current = participant;
+
+  /** The level this person's voice plays at: the volume set for them, turned down while a priority speaker talks (unless they are one). */
+  const voiceLevel = () => {
+    const base = localMutedRef.current ? 0 : localVolumeRef.current;
+    return Math.min(1, Math.max(0, base * voiceGainFor(participantRef.current, getPriorityGain())));
+  };
 
   useEffect(() => {
     setIsSpeaking(participant.isSpeaking);
@@ -103,7 +133,10 @@ export function ParticipantTile({
   }, [participant]);
 
   useEffect(() => {
-    const sync = () => setDeafened(participant.attributes?.deafened === "1");
+    const sync = () => {
+      setDeafened(participant.attributes?.deafened === "1");
+      setPriority(isPriorityAttributes(participant.attributes));
+    };
     sync();
     participant.on(ParticipantEvent.AttributesChanged, sync);
     return () => {
@@ -162,7 +195,7 @@ export function ParticipantTile({
       detachAudio();
       const el = track.attach() as HTMLAudioElement;
       el.style.display = "none";
-      el.volume = localMutedRef.current ? 0 : localVolumeRef.current;
+      el.volume = voiceLevel();
       audioRef.current?.appendChild(el);
       attachedAudio = { track, el };
       void routeElementToPlayback(el);
@@ -228,11 +261,25 @@ export function ParticipantTile({
 
   // Apply volume / mute changes live to existing audio elements
   useEffect(() => {
-    const vol = localMuted ? 0 : (localVolume ?? 1);
+    const vol = voiceLevel();
     audioRef.current?.querySelectorAll("audio").forEach((el) => {
       (el as HTMLAudioElement).volume = vol;
     });
-  }, [localVolume, localMuted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localVolume, localMuted, priority]);
+
+  // Priority speaker ducking: the shared level moves many times a second during a fade, so it is written
+  // straight to the audio elements instead of going through React.
+  useEffect(() => {
+    if (isLocal) return;
+    return subscribePriorityGain(() => {
+      const vol = voiceLevel();
+      audioRef.current?.querySelectorAll("audio").forEach((el) => {
+        (el as HTMLAudioElement).volume = vol;
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLocal]);
 
   const showVideo = hasVideo;
   const initials = (displayName || "?").slice(0, 2).toUpperCase();
@@ -331,6 +378,9 @@ export function ParticipantTile({
               {micMuted && <MicOff className="size-3.5" aria-label="Muted" />}
             </span>
           ))}
+        {priority && (
+          <Megaphone className="size-3.5 shrink-0 text-amber-300" aria-label="Priority speaker" />
+        )}
         <span className="text-xs font-medium text-white drop-shadow">
           {displayName}
         </span>

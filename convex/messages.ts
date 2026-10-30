@@ -5,7 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { effectiveDecoration, isBirthdayNow } from "./lib/birthday";
 import { renderMentionsAsText } from "./lib/mentions";
-import { dmPageKey, dmPageKeys } from "./lib/messageCacheKeys";
+import { dmPageKeys } from "./lib/messageCacheKeys";
 import {
   assertPlaintextAllowed,
   encValidator,
@@ -217,17 +217,6 @@ export const list = query({
     await requireMembership(ctx, conversationId, me._id);
     const hidden = await windowsByTarget(ctx, me._id);
 
-    // Redis cache for first page only (hot path) — pagination cursor = null
-    const isFirstPage = !paginationOpts.cursor;
-    const cacheKey = dmPageKey(conversationId, paginationOpts.numItems);
-    if (isFirstPage) {
-      try {
-        const { cacheGetJson } = await import("./cache");
-        const cached = await cacheGetJson<any>(cacheKey);
-        if (cached) return { ...cached, page: withoutHidden(hidden, cached.page as PageMessage[]) };
-      } catch {}
-    }
-
     const page = await ctx.db
       .query("messages")
       .withIndex("by_conversation", (q) =>
@@ -319,15 +308,7 @@ export const list = query({
       }),
     );
 
-    const result = { ...page, page: messages };
-    if (isFirstPage) {
-      try {
-        const { cacheSetJson } = await import("./cache");
-        // The unfiltered page: it is shared, so the filter below is per viewer.
-        await cacheSetJson(cacheKey, result, 30);
-      } catch {}
-    }
-    return { ...result, page: withoutHidden(hidden, result.page) };
+    return { ...page, page: withoutHidden(hidden, messages) };
   },
 });
 
@@ -693,12 +674,11 @@ export const listPinned = query({
 
     const pinned = await ctx.db
       .query("messages")
-      .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", conversationId),
+      .withIndex("by_conversation_pinned", (q) =>
+        q.eq("conversationId", conversationId).gt("pinnedAt", 0),
       )
-      .filter((q) => q.neq(q.field("pinnedAt"), undefined))
+      .order("desc")
       .collect();
-    pinned.sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
     const hidden = await windowsByTarget(ctx, me._id);
     const visible = pinned.filter((m) => !isMessageHidden(hidden, m.authorId, m._creationTime));
 
