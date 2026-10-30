@@ -33,7 +33,9 @@ export const join = action({
       canPublish: canSpeak || canVideo,
       canPublishSources: [
         ...(canSpeak ? [TrackSource.MICROPHONE] : []),
-        ...(canVideo ? [TrackSource.CAMERA] : []),
+        // Screen share is part of Video too (see getVoiceJoinContext). Once canPublishSources is set
+        // LiveKit denies every source not listed, so leaving these out blocks sharing for everyone.
+        ...(canVideo ? [TrackSource.CAMERA, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO] : []),
       ],
       canSubscribe: true,
       canPublishData: true,

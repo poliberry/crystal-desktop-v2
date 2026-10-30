@@ -279,6 +279,47 @@ export const orderByPaymentIntent = internalQuery({
       .first(),
 });
 
+/**
+ * A subscription that was started in Stripe itself (the dashboard, a payment link) rather than through the app has
+ * no order here, so it would never show under Subscriptions or Purchase history and would give nothing. This makes
+ * the order for it: the buyer is whoever owns the Stripe customer, and the item is the SKU whose price it is on.
+ * Returns null when either can't be found — a subscription that isn't ours is none of our business.
+ * The order is left pending; `fulfillOrder` then pays it and grants what the SKU gives.
+ */
+export const adoptSubscriptionOrder = internalMutation({
+  args: { stripeCustomerId: v.string(), subscriptionId: v.string(), priceId: v.string() },
+  handler: async (ctx, { stripeCustomerId, subscriptionId, priceId }) => {
+    const known = await ctx.db
+      .query("orders")
+      .withIndex("by_subscription", (q) => q.eq("stripeSubscriptionId", subscriptionId))
+      .first();
+    if (known) return { orderId: known._id, amountCents: known.amountCents, currency: known.currency };
+
+    const customer = await ctx.db
+      .query("stripeCustomers")
+      .withIndex("by_stripe_customer", (q) => q.eq("stripeCustomerId", stripeCustomerId))
+      .unique();
+    if (!customer) return null;
+    const sku = (await ctx.db.query("skus").collect()).find(
+      (s) => s.type === "subscription" && s.stripePriceId === priceId,
+    );
+    if (!sku) return null;
+
+    const orderId = await ctx.db.insert("orders", {
+      userId: customer.userId,
+      skuId: sku._id,
+      skuName: sku.name,
+      status: "pending",
+      amountCents: sku.priceCents,
+      currency: sku.currency,
+      grants: sku.grants.map((g) => ({ kind: g.kind, payload: g.payload, label: g.label })),
+      stripeSubscriptionId: subscriptionId,
+      createdAt: Date.now(),
+    });
+    return { orderId, amountCents: sku.priceCents, currency: sku.currency };
+  },
+});
+
 /** A user's paid subscription orders, newest first. */
 export const subscriptionOrdersFor = internalQuery({
   args: { userId: v.id("users") },

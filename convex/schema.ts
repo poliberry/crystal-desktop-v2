@@ -2964,6 +2964,9 @@ export default defineSchema({
     /** Published by staff as Crystal itself, without going through review (see `staffPublishCreation`): shown as "By Crystal",
      * with no creator and so no payout. Absent on everything else; a listing with no creator that isn't this is just Crystal's own. */
     byCrystal: v.optional(v.boolean()),
+    /** On sale but never shown in the Marketplace (`catalog.list` / `catalog.get` skip it): a plan that is handed to
+     * particular people, such as the staff-subsidised Geode, rather than offered to everyone. */
+    unlisted: v.optional(v.boolean()),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
