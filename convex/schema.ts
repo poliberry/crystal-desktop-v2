@@ -1,4 +1,5 @@
 import { authTables } from "@convex-dev/auth/server";
+import { axiomBridgeTables } from "./axiomBridge/bridge";
 import { setupValidator } from "./lib/communitySetup";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
@@ -317,6 +318,8 @@ export default defineSchema({
   // The auth library's tables (sessions, refresh tokens…). Its `users` table is replaced by ours below;
   // the library never inserts into it, because accounts are made by convex/authInternal.ts.
   ...authTables,
+  // Single-use request nonces for the Axiom Bridge (convex/axiom.ts). Nothing else lives here.
+  ...axiomBridgeTables(defineTable, v),
 
   users: defineTable({
     /** The Clerk user id this account was created under. Only accounts that predate the move to Convex

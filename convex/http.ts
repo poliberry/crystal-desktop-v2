@@ -23,6 +23,11 @@ for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"] as const) {
   http.route({ pathPrefix: "/bot/v1/", method, handler: botApiHandler });
 }
 
+// The Axiom Bridge (convex/axiom.ts): Poliberry's Axiom platform reads records and runs approved
+// changes through it. Requests are HMAC-signed; unset AXIOM_BRIDGE_SECRET to turn it off.
+import { axiomBridgeHttp } from "./axiomBridge/bridge";
+http.route({ pathPrefix: "/axiom/v1/", method: "POST", handler: axiomBridgeHttp(httpAction, internal.axiom) });
+
 // See convex/lib/liveKitWebhook.ts. Point your LiveKit project's webhook URL
 // at `<this deployment's .convex.site URL>/livekit/webhook`. Signature
 // verification (and all node-only work) happens in that "use node" action —
