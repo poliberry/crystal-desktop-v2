@@ -81,8 +81,8 @@ export interface BridgePolicy {
 
 /** What a sealed value looks like to Axiom. */
 export type Sealed =
-  | { $sealed: true; reason: "e2ee"; withheld: true }
-  | { $sealed: true; reason: "secret" | "pii" | "table"; fingerprint: string };
+  | { axSealed: true; reason: "e2ee"; withheld: true }
+  | { axSealed: true; reason: "secret" | "pii" | "table"; fingerprint: string };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -125,8 +125,8 @@ async function keyed(domain: string, value: unknown): Promise<string> {
 }
 
 async function seal(value: unknown, reason: SealReason | "table", field: string): Promise<Sealed> {
-  if (reason === "e2ee") return { $sealed: true, reason, withheld: true };
-  return { $sealed: true, reason, fingerprint: await keyed(`field:${field}`, value) };
+  if (reason === "e2ee") return { axSealed: true, reason, withheld: true };
+  return { axSealed: true, reason, fingerprint: await keyed(`field:${field}`, value) };
 }
 
 /**
@@ -144,7 +144,7 @@ export async function redact(doc: Record<string, unknown>, policy: TablePolicy) 
   if (policy.sealTable) {
     for (const key of policy.visible ?? []) if (key in doc) out[key] = doc[key];
     const rest = Object.fromEntries(Object.entries(doc).filter(([k]) => !(k in out)));
-    out.$record = { $sealed: true, reason: "table", fingerprint: await keyed("record", rest) } satisfies Sealed;
+    out.axRecord = { axSealed: true, reason: "table", fingerprint: await keyed("record", rest) } satisfies Sealed;
     return { record: out, sealedFields: ["*"] };
   }
   const allowed = policy.fields ? new Set(policy.fields) : null;
@@ -327,7 +327,7 @@ function keysFor(secret: string) {
   return k;
 }
 
-const OPS = new Set(["describe", "list", "get", "update", "insert", "delete"]);
+const OPS = new Set(["describe", "list", "get", "update", "insert", "delete", "admin"]);
 
 /** Unencrypted only before a key is established (bad signature, bridge off). Never contains data. */
 const plain = (status: number, error: string) => new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json" } });
@@ -386,12 +386,21 @@ export function axiomBridgeHttp(httpAction: any, fns: Record<string, any>) {
     }
     const write = op === "update" || op === "insert" || op === "delete";
     if (write && !/^CR-\d{4}-\d+$/.test(change)) return reply(403, { error: "Writes need an approved change request." });
+    if (op === "admin" && (!fns.adminRead || !fns.adminWrite)) return reply(404, { error: "This system has no admin functions." });
+    if (op === "admin" && args.kind !== "read" && !/^(CR|MA)-\d{4}-\d+$/.test(change)) return reply(403, { error: "Admin actions need a ledger reference." });
 
     try {
       const table = String(args.table ?? "");
       switch (op) {
         case "describe":
           return reply(200, await ctx.runQuery(fns.describe, {}));
+        case "admin":
+          return reply(
+            200,
+            args.kind === "read"
+              ? await ctx.runQuery(fns.adminRead, { name: String(args.name), input: args.input ?? {}, operatorSub: operator })
+              : await ctx.runMutation(fns.adminWrite, { name: String(args.name), input: args.input ?? {}, operatorSub: operator, changeRef: change }),
+          );
         case "list":
           return reply(200, await ctx.runQuery(fns.list, { table, cursor: (args.cursor as string) ?? null, limit: Number(args.limit ?? 50) }));
         case "get":

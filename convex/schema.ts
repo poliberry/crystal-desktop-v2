@@ -637,6 +637,25 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   /**
+   * Words that may not appear in a username, a display name (an account's or a community nickname)
+   * or a community name: the list that enforces Guideline 3 ("Keep it safe for work") on the names
+   * everyone sees. Edited from the admin console; see convex/bannedWords.ts and convex/lib/bannedWords.ts.
+   *
+   * `word` is stored folded (lowercase, accents and look-alike digits undone, separators dropped).
+   * `match` is how it's looked for: `contains` anywhere in the folded name, which catches
+   * "xxpornxx" and "p.o.r.n"; `word` only as a whole word, for short terms that are also parts of
+   * innocent words ("sex" in "Essex").
+   */
+  bannedWords: defineTable({
+    word: v.string(),
+    match: v.union(v.literal("contains"), v.literal("word")),
+    /** Why it's on the list, for staff. Never shown to the person refused. */
+    note: v.optional(v.string()),
+    addedBy: v.optional(v.id("users")),
+    addedAt: v.number(),
+  }).index("by_word", ["word"]),
+
+  /**
    * What each badge looks like and means — the catalogue the ids in
    * `userBadges` point at.
    *

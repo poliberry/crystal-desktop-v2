@@ -1,4 +1,5 @@
 import { requireCommunityOpen } from "./lib/moderation";
+import { assertNameAllowed } from "./lib/bannedWords";
 import { removeInstall } from "./lib/botAccess";
 import { fireMemberEvent } from "./lib/botEvents";
 import { v } from "convex/values";
@@ -98,6 +99,7 @@ export const create = mutation({
     const me = await getCurrentUserOrThrow(ctx, "create_communities");
     const trimmed = name.trim();
     if (!trimmed) throw new Error("Community name can't be empty.");
+    await assertNameAllowed(ctx, trimmed, "community name");
 
     const communityId = await ctx.db.insert("communities", {
       name: trimmed,
@@ -176,6 +178,7 @@ export const createFromSetup = mutation({
     const me = await getCurrentUserOrThrow(ctx, "create_communities");
     const trimmed = name.trim().slice(0, 64);
     if (!trimmed) throw new Error("Community name can't be empty.");
+    await assertNameAllowed(ctx, trimmed, "community name");
     const setup = sanitizeSetup(rawSetup);
     if (setup.channels.length === 0) throw new Error("A community needs at least one channel.");
 
@@ -657,6 +660,7 @@ export const updateSettings = mutation({
     if (name !== undefined) {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Community name can't be empty.");
+      if (trimmed !== community.name) await assertNameAllowed(ctx, trimmed, "community name");
       await ctx.db.patch(communityId, { name: trimmed });
       await logCommunityAudit(ctx, { communityId, actorId: me._id, action: "community.update", target: { type: "community", id: communityId, name: trimmed }, details: `Renamed from "${community.name}"` });
     }
@@ -1405,6 +1409,7 @@ export const setMemberNickname = mutation({
 
     const trimmed = nickname.trim();
     if (trimmed.length > 32) throw new Error("Nicknames are limited to 32 characters.");
+    await assertNameAllowed(ctx, trimmed, "nickname");
 
     const profile = await ctx.db
       .query("serverProfiles")

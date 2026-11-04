@@ -23,6 +23,7 @@ import {
 import { signedInIds } from "./lib/identity";
 import { GUEST_TTL_MS, GUESTS_PER_HOUR, GUESTS_PER_NETWORK_PER_DAY } from "./lib/guests";
 import { isIpBanned, recordIp, sealRequestIp } from "./lib/ipBans";
+import { bannedNameProblem } from "./lib/bannedWords";
 import { signInBlock } from "./lib/moderation";
 import { allow, clearFailures, lockedUntil, recordFailure } from "./lib/rateLimit";
 import { codeKeyMaterial, factorSummary, verifySecondFactorCode } from "./lib/secondFactor";
@@ -231,7 +232,7 @@ export const proofIsGood = internalQuery({
 export const usernameCheck = internalQuery({
   args: { username: v.string() },
   handler: async (ctx, { username }): Promise<{ ok: true } | { ok: false; message: string }> => {
-    const problem = usernameProblem(username);
+    const problem = usernameProblem(username) ?? (await bannedNameProblem(ctx, username, "username"));
     if (problem) return { ok: false, message: problem };
     const taken = await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", username)).unique();
     return taken ? { ok: false, message: "That username is taken." } : { ok: true };
@@ -269,6 +270,8 @@ export const completeWithProof = internalMutation({
       const problem = usernameProblem(username);
       if (problem) return { status: "invalid", message: problem };
       if (!name || name.length > DISPLAY_NAME_MAX) return { status: "invalid", message: `Pick a display name up to ${DISPLAY_NAME_MAX} characters.` };
+      const banned = (await bannedNameProblem(ctx, username, "username")) ?? (await bannedNameProblem(ctx, name, "display name"));
+      if (banned) return { status: "invalid", message: banned };
       const identity = await signedInIds(ctx);
       const currentUser = identity ? await ctx.db.get(identity.userId) : null;
       const guest = currentUser?.isGuest && (currentUser.guestExpiresAt ?? 0) > Date.now() ? currentUser : null;
@@ -473,7 +476,7 @@ async function requireFreshVerificationUnlessPassword(ctx: MutationCtx, userId: 
 export async function makeGuest(ctx: MutationCtx, username: string, ip: string | null | undefined): Promise<SignInStep> {
   {
     const handle = username.trim().toLowerCase();
-    const problem = usernameProblem(handle);
+    const problem = usernameProblem(handle) ?? (await bannedNameProblem(ctx, handle, "username"));
     if (problem) return { status: "invalid", message: problem };
 
     const sealed = await sealRequestIp(ip);
