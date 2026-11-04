@@ -25,6 +25,7 @@ import { UiPreferencesProvider } from "@/components/ui-preferences-provider";
 import { AppLoadingGate } from "@/components/app-loading-gate";
 import { DataPreloader } from "@/components/data-preloader";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { startTelemetry, TelemetryUser } from "@/components/telemetry";
 import { FileDropGuard } from "@/components/home/composer-attachments";
 import { CustomCssProvider } from "@/components/custom-css-provider";
 import { CustomCssProviderDialog } from "@/components/settings/custom-css-dialog";
@@ -117,6 +118,7 @@ function CacheScope() {
 }
 
 export function ApplicationProviders({ children }: { children: React.ReactNode }) {
+  useEffect(() => startTelemetry(), []);
   return (
     <MultiAccountSession>
       <ApplicationAuthProviders>{children}</ApplicationAuthProviders>
@@ -140,6 +142,7 @@ function ApplicationAuthProviders({ children }: { children: React.ReactNode }) {
                 <E2eeProvider>
                 <>
                   <CacheScope />
+                  <TelemetryUser />
                   <DeferredEmojiFont />
                   {/* Over everything while the app is starting or offline. */}
                   <AppLoadingGate />

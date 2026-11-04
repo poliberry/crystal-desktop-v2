@@ -78,6 +78,7 @@
     "next-themes": "^0.4.6",
     "node-pty": "^1.1.0",
     "paper": "^0.12.18",
+    "posthog-js": "^1.444.0",
     "qrcode": "^1.5.4",
     "quickjs-emscripten": "^0.32.0",
     "radix-ui": "^1.6.7",
