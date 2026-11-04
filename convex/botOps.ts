@@ -16,6 +16,7 @@ import { createChannelRow, deleteChannelCascade } from "./channels";
 import { disconnectFromAllVoice, freshInviteCode, removeMembership } from "./communities";
 import { auditUserTarget, logCommunityAudit } from "./lib/communityAudit";
 import { describeDuration } from "./lib/communityAuditActions";
+import { bannedNameProblem } from "./lib/bannedWords";
 import { dmKeyFor } from "./conversations";
 import { describeMessage, fireChannelEvent, fireVoiceEvent } from "./lib/botEvents";
 import { BotApiError, audit, communityPermissions, fail, loadActing, permissionsIn, requirePermission, requireScope, spendRate, type Acting } from "./lib/botAccess";
@@ -638,6 +639,8 @@ const ops: Record<string, Handler> = {
       requirePermission(communityPermissions(a), PERMISSIONS.MANAGE_NICKNAMES, "change nicknames");
       await memberBelow(ctx, a, req.params.userId);
     }
+    const banned = await bannedNameProblem(ctx, nickname, "nickname");
+    if (banned) return fail(400, banned);
     const profile = await ctx.db.query("serverProfiles").withIndex("by_user_community", (q) => q.eq("userId", target).eq("communityId", a.community._id)).unique();
     if (profile) await ctx.db.patch(profile._id, { displayName: nickname || undefined });
     else if (nickname) await ctx.db.insert("serverProfiles", { userId: target, communityId: a.community._id, displayName: nickname });

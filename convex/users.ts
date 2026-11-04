@@ -23,6 +23,8 @@ import {
 } from "./lib/profileCosmetics";
 import { abilityValidator, type Ability } from "./lib/abilities";
 import { requireNotGuestFor } from "./lib/guests";
+import { assertNameAllowed } from "./lib/bannedWords";
+import { usernameProblem } from "./lib/authPolicy";
 import { signedInIds } from "./lib/identity";
 import { revokeSessions } from "./lib/sessions";
 import { recordIp, isIpBanned, sealRequestIp } from "./lib/ipBans";
@@ -163,6 +165,8 @@ export const updateProfile = mutation({
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Display name can't be empty.");
       if (trimmed.length > NAME_MAX) throw new Error(`Display name must be ${NAME_MAX} characters or fewer.`);
+      // Only a new name is checked, so somebody whose name predates a list change can still save the rest.
+      if (trimmed !== me.name) await assertNameAllowed(ctx, trimmed, "display name");
       patch.name = trimmed;
     }
 
@@ -172,6 +176,9 @@ export const updateProfile = mutation({
         throw new Error('Usernames are 3-32 characters: lowercase letters, numbers, "." or "_".');
       }
       if (normalized !== me.username) {
+        const problem = usernameProblem(normalized);
+        if (problem) throw new Error(problem);
+        await assertNameAllowed(ctx, normalized, "username");
         const clash = await ctx.db
           .query("users")
           .withIndex("by_username", (q) => q.eq("username", normalized))

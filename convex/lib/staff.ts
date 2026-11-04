@@ -1,6 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { getCurrentUserOrNull } from "../users";
+import { AXIOM_STAFF_PERMISSIONS, axiomActorOf } from "./axiomActor";
 import { can, isDestructivePermission, type StaffPermission, type StaffRole } from "./staffPermissions";
 import { isMutationCtx, platformSecurity, requireAdminAssurance } from "./stepUp";
 
@@ -21,6 +22,12 @@ export interface StaffContext {
 
 /** The caller as staff, or `null` if they aren't (or have been revoked). */
 export async function getStaff(ctx: QueryCtx): Promise<StaffContext | null> {
+  const axiom = axiomActorOf(ctx);
+  if (axiom) {
+    // Axiom's operators aren't Crystal accounts: its actions run as the system account.
+    const staff = { userId: axiom.systemUser._id, roles: ["admin", "support"] } as unknown as Doc<"staffMembers">;
+    return { user: axiom.systemUser, staff, roles: ["admin", "support"] };
+  }
   const user = await getCurrentUserOrNull(ctx);
   if (!user) return null;
   const staff = await ctx.db
@@ -44,6 +51,11 @@ export async function requireStaff(
 ): Promise<StaffContext> {
   const staff = await getStaff(ctx);
   if (!staff || !can(staff.roles, permission)) throw new Error("Not allowed.");
+  // Axiom approves on the operator's PoliberryConnect device, and may only hold this short list.
+  if (axiomActorOf(ctx)) {
+    if (!AXIOM_STAFF_PERMISSIONS.has(permission)) throw new Error("Not allowed.");
+    return staff;
+  }
   // A query can't be paused for a code and retried, and none of the console's queries destroy
   // anything, so only a mutation is ever asked for one.
   const destructive = (options.destructive ?? isDestructivePermission(permission)) && isMutationCtx(ctx);
@@ -73,6 +85,7 @@ export async function assertStaffAssurance(
   staff: StaffContext,
   options: { destructive?: boolean } = {},
 ): Promise<void> {
+  if (axiomActorOf(ctx)) return;
   const { requireStaffTwoFactor } = await platformSecurity(ctx);
   await requireAdminAssurance(ctx, staff.user._id, {
     mustEnroll: requireStaffTwoFactor,

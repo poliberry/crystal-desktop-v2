@@ -1,4 +1,5 @@
-import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { wipeProfile } from "./lib/accountWipe";
 import { revokeSessions } from "./lib/sessions";
 
@@ -12,9 +13,10 @@ import { revokeSessions } from "./lib/sessions";
  */
 const BATCH = 25;
 
-export const sweepExpired = internalMutation({
-  args: {},
-  handler: async (ctx) => {
+/** How far Axiom's counts go. Past this it says "1000+". */
+const COUNT_CAP = 1000;
+
+async function wipeBatch(ctx: MutationCtx): Promise<number> {
     const now = Date.now();
     const due = await ctx.db
       .query("users")
@@ -44,7 +46,52 @@ export const sweepExpired = internalMutation({
       });
     }
     return due.length;
+}
+
+/** One batch, then carries on straight away while a full batch came back, so a backlog clears. */
+async function wipeAndContinue(ctx: MutationCtx): Promise<{ wiped: number; continuing: boolean }> {
+  const wiped = await wipeBatch(ctx);
+  const continuing = wiped === BATCH;
+  if (continuing) await ctx.scheduler.runAfter(0, internal.guests.sweepExpired, {});
+  return { wiped, continuing };
+}
+
+export const sweepExpired = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<number> => (await wipeAndContinue(ctx)).wiped,
+});
+
+/** What a purge would touch, for Axiom's Crystal Moderation app. */
+export const adminGuestOverview = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const due = await ctx.db
+      .query("users")
+      .withIndex("by_guest_expiry", (q) => q.gt("guestExpiresAt", 0).lte("guestExpiresAt", now))
+      .take(COUNT_CAP + 1);
+    const active = await ctx.db
+      .query("users")
+      .withIndex("by_guest_expiry", (q) => q.gt("guestExpiresAt", now))
+      .take(COUNT_CAP + 1);
+    return {
+      expired: Math.min(due.length, COUNT_CAP),
+      expiredCapped: due.length > COUNT_CAP,
+      active: Math.min(active.length, COUNT_CAP),
+      activeCapped: active.length > COUNT_CAP,
+      // Longest overdue first.
+      sample: due.slice(0, 25).map((u) => ({ _id: u._id, username: u.username ?? null, name: u.name ?? null, guestExpiresAt: u.guestExpiresAt ?? null })),
+    };
   },
+});
+
+/**
+ * Wipes expired guests now rather than at the next sweep, the same way the sweep does. Only accounts
+ * already past their expiry are touched: a guest still inside their day isn't in this index range.
+ */
+export const adminPurgeExpiredGuests = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ wiped: number; continuing: boolean }> => wipeAndContinue(ctx),
 });
 
 /** Old counters: the throttles' rows pile up one per network. */

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Doc, Id, TableNames } from "./_generated/dataModel";
-import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { deleteChannelMessage } from "./channelMessages";
 import { deleteDmMessage } from "./messages";
 import { wipeProfile } from "./lib/accountWipe";
@@ -14,7 +14,8 @@ import { requireFreshVerification } from "./lib/stepUp";
 import { getCurrentUserOrThrow } from "./users";
 
 /**
- * Deleting your own account, from Settings → Privacy.
+ * Deleting your own account, from Settings → Privacy, or an operator deleting one from Axiom with a
+ * second operator's approval (`adminDeleteAccount`). Both run the same deletion.
  *
  * `request` does what has to happen at once, in one transaction: it checks you are you (a fresh
  * password or 2FA code, asked for by the client's step-up prompt), signs you out everywhere, removes
@@ -85,7 +86,13 @@ export const request = mutation({
     }
     // A fresh password or 2FA code: the client's step-up prompt asks for it and retries this call.
     await requireFreshVerification(ctx, user._id);
+    await beginDeletion(ctx, user);
+    return { ok: true as const };
+  },
+});
 
+/** What has to happen at once. The background job does the rest. */
+async function beginDeletion(ctx: MutationCtx, user: Doc<"users">): Promise<void> {
     const now = Date.now();
     await ctx.db.insert("accountDeletions", { userId: user._id, requestedAt: now, step: 0 });
 
@@ -101,7 +108,47 @@ export const request = mutation({
     // Subscriptions stop now rather than at the end of the period: there is no account left to use them.
     await ctx.scheduler.runAfter(0, internal.payments.cancelSubscriptionsForDeletion, { userId: user._id });
     await ctx.scheduler.runAfter(0, internal.accountDeletion.run, { userId: user._id });
-    return { ok: true as const };
+}
+
+/** Why an operator can't delete this account right now, in words that say what to do about it. */
+async function operatorBlockers(ctx: QueryCtx, user: Doc<"users">): Promise<string[]> {
+  const out: string[] = [];
+  if (user.clerkId === "system:crystal") out.push("This is Crystal's system account.");
+  if (user.isBot) out.push("This is a bot. Remove it from its owner's bots instead.");
+  const staff = await ctx.db.query("staffMembers").withIndex("by_user", (q) => q.eq("userId", user._id)).unique();
+  if (staff && staff.revokedAt === undefined) out.push("This person is Crystal staff. Remove their staff access in Crystal first.");
+  for (const b of await blockersFor(ctx, user)) {
+    if (b.kind === "guest") out.push("This is a guest account. Guests are wiped when they expire: use Guest accounts to purge expired ones.");
+    else if (b.kind === "communities") out.push(`They own ${b.names.length === 1 ? "a community" : "communities"} other people may be in: ${b.names.join(", ")}. Transfer or delete ${b.names.length === 1 ? "it" : "them"} first.`);
+    else out.push("They have creator earnings waiting to be paid out. Settle them first.");
+  }
+  return out;
+}
+
+/** For Axiom: whether the account can be deleted, before anyone asks a second operator to approve it. */
+export const adminDeletionCheck = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) return { username: null, deleted: false, blockers: ["No such account."] };
+    return { username: user.username, deleted: Boolean(user.deletedAt), blockers: user.deletedAt ? [] : await operatorBlockers(ctx, user) };
+  },
+});
+
+/**
+ * Deletes an account for an operator. Only reachable from Axiom with an approved change request
+ * (lib/axiomAdmin.ts). The blockers are checked again here: they can change while a request waits.
+ */
+export const adminDeleteAccount = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error("No such account.");
+    if (user.deletedAt) return { ok: true as const, alreadyDeleted: true };
+    const blockers = await operatorBlockers(ctx, user);
+    if (blockers.length) throw new Error(blockers.join(" "));
+    await beginDeletion(ctx, user);
+    return { ok: true as const, alreadyDeleted: false };
   },
 });
 

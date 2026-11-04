@@ -17,6 +17,7 @@ import { makeGuest } from "./authInternal";
 import { sealRequestIp } from "./lib/ipBans";
 import { allow } from "./lib/rateLimit";
 import { firstNameOf } from "./lib/emailBrand";
+import { bannedNameProblem } from "./lib/bannedWords";
 import { mailConfigured, sendCodeEmail } from "./lib/mail";
 import { hashPassword, verifyPassword } from "./lib/passwordHash";
 import type { AddressState, SignInStep } from "./lib/signInStep";
@@ -79,7 +80,7 @@ export const usernameAvailable = query({
   args: { username: v.string() },
   handler: async (ctx, { username }): Promise<{ ok: true } | { ok: false; message: string }> => {
     const handle = username.trim().toLowerCase();
-    const problem = usernameProblem(handle);
+    const problem = usernameProblem(handle) ?? (await bannedNameProblem(ctx, handle, "username"));
     if (problem) return { ok: false, message: problem };
     const taken = await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", handle)).unique();
     return taken ? { ok: false, message: "That username is taken." } : { ok: true };

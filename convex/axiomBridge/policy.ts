@@ -18,6 +18,8 @@ export const policy: BridgePolicy = {
         "bio",
         "isBot",
         "isGuest",
+        "guestExpiresAt",
+        "guestExpiredAt",
         "platformSuspendedUntil",
         "platformSuspensionReason",
         "platformBannedAt",
@@ -73,6 +75,16 @@ export const policy: BridgePolicy = {
         "topic",
         "slowmodeSeconds"
       ]
+    },
+    "conversations": {
+      "fields": [
+        "type",
+        "createdBy",
+        "createdAt"
+      ],
+      "sealed": {
+        "name": "pii"
+      }
     },
     "messages": {
       "fields": [

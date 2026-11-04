@@ -48,3 +48,5 @@ export const consumeNonce = internalMutation(d.consumeNonce);
 export const update = internalMutation(d.update);
 export const insert = internalMutation(d.insert);
 export const remove = internalMutation(d.remove);
+// The Crystal Moderation app: named Admin Console functions (lib/axiomAdmin.ts).
+export { adminRead, adminWrite } from "./lib/axiomAdmin";
