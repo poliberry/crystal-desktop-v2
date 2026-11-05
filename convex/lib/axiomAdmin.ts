@@ -79,6 +79,7 @@ const WRITES: Record<string, { fn: Registered; changeRequest?: (input: Record<st
   "bannedWords.remove": { fn: fn(bannedWords.remove) },
   "bannedWords.seed": { fn: fn(bannedWords.seedDefaults) },
   "guests.purgeExpired": { fn: fn(guests.adminPurgeExpiredGuests) },
+  "guests.delete": { fn: fn(guests.adminDeleteGuest) },
   "users.delete": { fn: fn(accountDeletion.adminDeleteAccount), changeRequest: () => true },
 };
 
