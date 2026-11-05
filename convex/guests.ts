@@ -1,4 +1,6 @@
+import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { wipeProfile } from "./lib/accountWipe";
 import { revokeSessions } from "./lib/sessions";
@@ -16,6 +18,36 @@ const BATCH = 25;
 /** How far Axiom's counts go. Past this it says "1000+". */
 const COUNT_CAP = 1000;
 
+async function wipeOne(ctx: MutationCtx, user: { _id: Id<"users"> }, placeholderName: string): Promise<string> {
+  const full = await ctx.db.get(user._id);
+  if (!full) throw new Error("That account is gone.");
+  const freed = full.username ?? "";
+  await revokeSessions(ctx, full._id);
+  for (const row of await ctx.db.query("communityMembers").withIndex("by_user", (q) => q.eq("userId", full._id)).collect()) {
+    for (const role of await ctx.db.query("memberRoles").withIndex("by_member", (q) => q.eq("communityId", row.communityId).eq("userId", full._id)).collect()) {
+      await ctx.db.delete(role._id);
+    }
+    await ctx.db.delete(row._id);
+  }
+  for (const f of await ctx.db.query("friendships").withIndex("by_owner", (q) => q.eq("ownerId", full._id)).collect()) await ctx.db.delete(f._id);
+  for (const r of await ctx.db.query("friendRequests").withIndex("by_requester", (q) => q.eq("requesterId", full._id)).collect()) await ctx.db.delete(r._id);
+  for (const r of await ctx.db.query("friendRequests").withIndex("by_recipient", (q) => q.eq("recipientId", full._id)).collect()) await ctx.db.delete(r._id);
+  for (const p of await ctx.db.query("presence").withIndex("by_user", (q) => q.eq("userId", full._id)).collect()) await ctx.db.delete(p._id);
+  for (const p of await ctx.db.query("presenceSessions").withIndex("by_user", (q) => q.eq("userId", full._id)).collect()) await ctx.db.delete(p._id);
+  for (const t of await ctx.db.query("devicePushTokens").withIndex("by_user", (q) => q.eq("userId", full._id)).collect()) await ctx.db.delete(t._id);
+  for (const s of await ctx.db.query("savedMessages").withIndex("by_user_created", (q) => q.eq("userId", full._id)).collect()) await ctx.db.delete(s._id);
+
+  const now = Date.now();
+  await ctx.db.patch(full._id, { guestExpiresAt: undefined, guestExpiredAt: now });
+  // The name, pictures and the rest of the profile, files included. The
+  // username becomes free for someone else.
+  await wipeProfile(ctx, full, {
+    name: placeholderName,
+    username: `guest.${full._id.slice(-10).toLowerCase().replace(/[^a-z0-9]/g, "x")}`,
+  });
+  return freed;
+}
+
 async function wipeBatch(ctx: MutationCtx): Promise<number> {
     const now = Date.now();
     const due = await ctx.db
@@ -23,27 +55,7 @@ async function wipeBatch(ctx: MutationCtx): Promise<number> {
       .withIndex("by_guest_expiry", (q) => q.gt("guestExpiresAt", 0).lte("guestExpiresAt", now))
       .take(BATCH);
     for (const user of due) {
-      await revokeSessions(ctx, user._id);
-      for (const row of await ctx.db.query("communityMembers").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) {
-        for (const role of await ctx.db.query("memberRoles").withIndex("by_member", (q) => q.eq("communityId", row.communityId).eq("userId", user._id)).collect()) {
-          await ctx.db.delete(role._id);
-        }
-        await ctx.db.delete(row._id);
-      }
-      for (const f of await ctx.db.query("friendships").withIndex("by_owner", (q) => q.eq("ownerId", user._id)).collect()) await ctx.db.delete(f._id);
-      for (const r of await ctx.db.query("friendRequests").withIndex("by_requester", (q) => q.eq("requesterId", user._id)).collect()) await ctx.db.delete(r._id);
-      for (const r of await ctx.db.query("friendRequests").withIndex("by_recipient", (q) => q.eq("recipientId", user._id)).collect()) await ctx.db.delete(r._id);
-      for (const p of await ctx.db.query("presence").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(p._id);
-      for (const p of await ctx.db.query("presenceSessions").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(p._id);
-      for (const t of await ctx.db.query("devicePushTokens").withIndex("by_user", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(t._id);
-      for (const s of await ctx.db.query("savedMessages").withIndex("by_user_created", (q) => q.eq("userId", user._id)).collect()) await ctx.db.delete(s._id);
-
-      await ctx.db.patch(user._id, { guestExpiresAt: undefined, guestExpiredAt: now });
-      // The name, pictures and the rest of the profile, files included.
-      await wipeProfile(ctx, user, {
-        name: "Expired guest",
-        username: `guest.${user._id.slice(-10).toLowerCase().replace(/[^a-z0-9]/g, "x")}`,
-      });
+      await wipeOne(ctx, user, "Expired guest");
     }
     return due.length;
 }
@@ -92,6 +104,29 @@ export const adminGuestOverview = internalQuery({
 export const adminPurgeExpiredGuests = internalMutation({
   args: {},
   handler: async (ctx): Promise<{ wiped: number; continuing: boolean }> => wipeAndContinue(ctx),
+});
+
+/**
+ * Wipes one guest by id or username, expired or still inside their day — the
+ * same wipe the sweep does (sessions revoked first, so an active guest is
+ * signed out at once). Refuses anything that isn't a guest, and anything
+ * already wiped: usernames of real accounts are never freed by this.
+ */
+export const adminDeleteGuest = internalMutation({
+  args: { userId: v.optional(v.id("users")), username: v.optional(v.string()) },
+  handler: async (ctx, { userId, username }): Promise<{ wiped: number; username: string }> => {
+    const name = username?.trim().toLowerCase();
+    const user = userId
+      ? await ctx.db.get(userId)
+      : name
+        ? await ctx.db.query("users").withIndex("by_username", (q) => q.eq("username", name)).unique()
+        : null;
+    if (!user) throw new Error(userId ? "That account is gone." : "No account with that username.");
+    if (!user.isGuest) throw new Error(`@${user.username} is not a guest account.`);
+    if (user.guestExpiredAt) throw new Error(`@${user.username} was already wiped.`);
+    const freed = await wipeOne(ctx, user, "Deleted guest");
+    return { wiped: 1, username: freed };
+  },
 });
 
 /** Old counters: the throttles' rows pile up one per network. */
